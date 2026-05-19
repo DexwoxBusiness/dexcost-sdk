@@ -22,5 +22,9 @@
   "retry_count": 1,
   "retry_cost_usd": "0.0082",
   "failure_count": 0,
+  "network_bytes_in": 0,
+  "network_bytes_out": 0,
+  "network_call_count": 0,
+  "network_by_host": {"hosts": []},
   "schema_version": "1"
 }

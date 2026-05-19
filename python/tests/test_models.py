@@ -74,6 +74,10 @@ class TestTask:
         assert task.parent_task_id is None
         assert task.total_cost_usd == Decimal("0")
         assert task.retry_count == 0
+        assert task.network_bytes_in == 0
+        assert task.network_bytes_out == 0
+        assert task.network_call_count == 0
+        assert task.network_by_host == {"hosts": []}
         assert task.schema_version == "1"
 
     def test_explicit_creation(self) -> None:

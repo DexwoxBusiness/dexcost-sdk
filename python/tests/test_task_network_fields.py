@@ -29,6 +29,10 @@ def test_network_by_host_absent_in_dict_defaults_empty():
     legacy = Task(task_type="x").to_dict()
     del legacy["network_by_host"]
     del legacy["network_bytes_in"]
+    del legacy["network_bytes_out"]
+    del legacy["network_call_count"]
     restored = Task.from_dict(legacy)
     assert restored.network_by_host == {"hosts": []}
     assert restored.network_bytes_in == 0
+    assert restored.network_bytes_out == 0
+    assert restored.network_call_count == 0
