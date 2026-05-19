@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from dexcost.network_accountant import NetworkAccountant
+
 
 @dataclass
 class Task:
@@ -63,6 +65,12 @@ class Task:
     network_bytes_out: int = 0
     network_call_count: int = 0
     network_by_host: dict[str, Any] = field(default_factory=lambda: {"hosts": []})
+
+    # In-memory only — the per-task byte accumulator. Never serialised:
+    # to_dict()/from_dict() do not touch it; a fresh task gets a fresh one.
+    _network: NetworkAccountant = field(
+        default_factory=NetworkAccountant, compare=False, repr=False
+    )
 
     # Schema contract
     schema_version: str = "1"

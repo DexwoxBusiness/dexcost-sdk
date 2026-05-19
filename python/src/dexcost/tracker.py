@@ -1099,3 +1099,10 @@ class CostTracker:
                 task.retry_cost_usd += event.cost_usd
 
             task.total_cost_usd += event.cost_usd
+
+        # Network capture — finalize the in-process accountant onto the task.
+        net = task._network.finalize()
+        task.network_bytes_in = net["bytes_in"]
+        task.network_bytes_out = net["bytes_out"]
+        task.network_call_count = net["call_count"]
+        task.network_by_host = net["by_host"]
