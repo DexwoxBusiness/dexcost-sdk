@@ -15,6 +15,9 @@ def classify_destination(host: str) -> bool | None:
     ``False`` — host is a public IP literal.
     ``None``  — host is a name (not an IP literal); the SDK does not perform
                 an extra DNS lookup to resolve it.
+
+    Note: CGNAT shared address space (100.64.0.0/10, RFC 6598) is classified
+    ``False`` because ``ipaddress.is_private`` does not include it.
     """
     if not host:
         return None
@@ -22,6 +25,9 @@ def classify_destination(host: str) -> bool | None:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return None
+    # is_loopback and is_link_local are spelled out deliberately: it keeps the
+    # intent readable and is robust across Python versions.  On CPython 3.11+
+    # is_private already subsumes both, but the explicit terms cost nothing.
     return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
 
 
@@ -41,6 +47,7 @@ def measure_bytes_from_headers(
     ``request line + header block + body``. Used for both directions: pass
     the request method/url/headers for bytes-out, or ``"" / "" / response
     headers`` for bytes-in. *body_len* is the known body length in bytes.
+    *body_len* tolerates a numeric string — it is coerced via ``int(...)``.
     """
     request_line = len(str(method)) + len(str(url)) + 12  # method + url + " HTTP/1.1\r\n"
     return request_line + _headers_byte_len(headers) + max(0, int(body_len))
