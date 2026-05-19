@@ -207,3 +207,68 @@ def test_aiohttp_style_error_status_emits_event():
     ev = events[0]
     assert ev.event_type == "network"
     assert ev.details["status_code"] == 503
+
+
+# ---------------------------------------------------------------------------
+# track_network toggle tests
+# ---------------------------------------------------------------------------
+
+
+def test_track_network_false_skips_byte_recording_and_events():
+    """track_network=False must suppress byte recording AND network events."""
+    http_adapter.set_network_config(DexcostConfig(storage="local", track_network=False))
+    task = _task()
+    set_current_task(task)
+    # Large un-cataloged URL — well above the 100 KiB threshold.
+    _handle_http_call(
+        "https://api.uncataloged.com/big",
+        method="GET",
+        request_headers={},
+        request_body_len=0,
+        response=_Resp(200, body_len=500_000),
+        latency_ms=50,
+    )
+    assert get_recorded_events() == []
+    assert task._network.finalize()["call_count"] == 0
+
+
+def test_track_network_false_still_emits_cataloged_external_cost():
+    """Vendor-cost tracking must still fire when track_network=False."""
+    from decimal import Decimal as _D
+    http_adapter.set_network_config(DexcostConfig(storage="local", track_network=False))
+    task = _task()
+    set_current_task(task)
+    register_domain_rate("api.vendor.com", cost_usd="0.01")
+    _handle_http_call(
+        "https://api.vendor.com/charge",
+        method="POST",
+        request_headers={},
+        request_body_len=40,
+        response=_Resp(200, body_len=900),
+        latency_ms=8,
+    )
+    events = get_recorded_events()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.event_type == "external_cost"
+    assert ev.cost_usd == _D("0.01")
+
+
+def test_track_network_true_default_still_records():
+    """Sanity: with track_network=True (default), a large un-cataloged call
+    still emits a network event and records bytes."""
+    http_adapter.set_network_config(DexcostConfig(storage="local", track_network=True))
+    task = _task()
+    set_current_task(task)
+    _handle_http_call(
+        "https://api.uncataloged.com/big",
+        method="GET",
+        request_headers={},
+        request_body_len=0,
+        response=_Resp(200, body_len=500_000),
+        latency_ms=50,
+    )
+    events = get_recorded_events()
+    assert len(events) == 1
+    assert events[0].event_type == "network"
+    assert task._network.finalize()["call_count"] == 1

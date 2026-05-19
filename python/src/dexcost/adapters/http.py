@@ -567,6 +567,129 @@ def _resolve_task() -> Any | None:
     return session_mgr.get_or_create_session("http_call", _storage)
 
 
+def _measure_bytes(
+    track_network: bool,
+    method: str,
+    url: str,
+    domain: str,
+    protocol: str,
+    request_headers: dict[str, Any],
+    request_body_len: int,
+    response: Any,
+) -> tuple[int, int, dict[str, str], dict[str, Any]]:
+    """Return (bytes_out, bytes_in, response_headers, byte_details).
+
+    When *track_network* is False, byte measurement is skipped entirely;
+    ``byte_details`` is empty so callers don't embed network fields in events.
+    ``response_headers`` is still extracted in both cases because the catalog
+    path needs it for cost extraction regardless of the toggle.
+    """
+    response_headers = _get_response_headers(response) if response is not None else {}
+    if not track_network:
+        return 0, 0, response_headers, {}
+    bytes_out = measure_bytes_from_headers(method, url, request_headers, request_body_len)
+    response_body_len = _response_body_len(response) if response is not None else 0
+    bytes_in = measure_bytes_from_headers("", "", response_headers, response_body_len)
+    byte_details: dict[str, Any] = {
+        "protocol": protocol,
+        "request_bytes": bytes_out,
+        "response_bytes": bytes_in,
+        "is_internal_traffic": classify_destination(domain),
+    }
+    return bytes_out, bytes_in, response_headers, byte_details
+
+
+def _handle_domain_rate(
+    url: str, domain: str,
+    track_network: bool, bytes_in: int, bytes_out: int,
+    byte_details: dict[str, Any],
+) -> bool:
+    """Handle user-registered domain-rate path. Returns True if handled."""
+    rate = _domain_rates.get(domain)
+    if rate is None:
+        return False
+    task = _resolve_task()
+    if task is None:
+        return True
+    if track_network:
+        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    event = Event(
+        task_id=task.task_id, event_type="external_cost",
+        cost_usd=rate["cost_usd"], cost_confidence="exact",
+        pricing_source="rate_registry", service_name=domain,
+        details={"url": url, "per": rate["per"], **byte_details},
+    )
+    _persist_event(event)
+    return True
+
+
+def _handle_catalog_entry(
+    url: str, domain: str,
+    track_network: bool, bytes_in: int, bytes_out: int,
+    response_headers: dict[str, str], response: Any,
+    byte_details: dict[str, Any],
+) -> bool:
+    """Handle service-catalog path. Returns True if handled."""
+    catalog = get_catalog()
+    entry = catalog.lookup(url)
+    if entry is None:
+        return False
+    task = _resolve_task()
+    if task is None:
+        return True
+    if track_network:
+        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    result = catalog.extract_cost(
+        entry, response_headers, _get_response_body(response) if response else None
+    )
+    if result is not None:
+        event = Event(
+            task_id=task.task_id, event_type="external_cost",
+            cost_usd=result.amount, cost_confidence=result.confidence,
+            pricing_source=result.pricing_source,
+            pricing_version=catalog.catalog_version,
+            service_name=result.service_name,
+            details={"url": url, **byte_details},
+        )
+    else:
+        event = Event(
+            task_id=task.task_id, event_type="external_cost",
+            cost_usd=Decimal("0"), cost_confidence="unknown",
+            pricing_source="service_catalog", service_name=entry.display_name,
+            details={"url": url, **byte_details},
+        )
+    _persist_event(event)
+    return True
+
+
+def _handle_uncataloged(
+    url: str, method: str, domain: str,
+    bytes_in: int, bytes_out: int, status_code: int, latency_ms: int,
+    byte_details: dict[str, Any], cfg: DexcostConfig,
+) -> None:
+    """Handle un-cataloged path: record bytes and emit network event if notable."""
+    task = get_current_task()
+    if task is None:
+        return  # anonymous traffic — never create orphan rows
+    task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    if is_network_event_suppressed():
+        return  # the `llm_call` event already represents this call
+    notable = (
+        (bytes_in + bytes_out) > cfg.network_event_threshold_bytes
+        or (cfg.network_event_on_error and status_code >= 400)
+        or (cfg.network_event_latency_ms > 0 and latency_ms > cfg.network_event_latency_ms)
+    )
+    if not notable:
+        return  # counters already updated; below threshold → no event
+    event = Event(
+        task_id=task.task_id, event_type="network",
+        cost_usd=Decimal("0"), cost_confidence="unknown",
+        pricing_source=None, service_name=domain,
+        details={"url": url, "method": method, "status_code": status_code, **byte_details},
+    )
+    _persist_event(event)
+
+
 def _handle_http_call_inner(
     url: str,
     method: str,
@@ -579,101 +702,37 @@ def _handle_http_call_inner(
     domain = parsed.hostname or ""
     protocol = parsed.scheme or "https"
 
-    # ── byte measurement ──────────────────────────────────────────────
-    bytes_out = measure_bytes_from_headers(method, url, request_headers, request_body_len)
-    response_headers = _get_response_headers(response) if response is not None else {}
-    response_body_len = _response_body_len(response) if response is not None else 0
-    bytes_in = measure_bytes_from_headers("", "", response_headers, response_body_len)
+    cfg = _cfg()
+    track_network = cfg.track_network
+
+    bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
+        track_network, method, url, domain, protocol,
+        request_headers, request_body_len, response,
+    )
     status_code = int(
         getattr(response, "status_code", None)
         or getattr(response, "status", 0)
         or 0
     )
 
-    byte_details = {
-        "protocol": protocol,
-        "request_bytes": bytes_out,
-        "response_bytes": bytes_in,
-        "is_internal_traffic": classify_destination(domain),
-    }
-
-    # ── 1. user-registered domain rate (cataloged) ────────────────────
-    rate = _domain_rates.get(domain)
-    if rate is not None:
-        task = _resolve_task()
-        if task is None:
-            return
-        # ── always: feed the task's byte counters (lossless) ──────────────
-        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
-        event = Event(
-            task_id=task.task_id, event_type="external_cost",
-            cost_usd=rate["cost_usd"], cost_confidence="exact",
-            pricing_source="rate_registry", service_name=domain,
-            details={"url": url, "per": rate["per"], **byte_details},
-        )
-        _persist_event(event)
+    # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
+    if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
         return
 
-    # ── 2. service-catalog match (cataloged) ──────────────────────────
-    catalog = get_catalog()
-    entry = catalog.lookup(url)
-    if entry is not None:
-        task = _resolve_task()
-        if task is None:
-            return
-        # ── always: feed the task's byte counters (lossless) ──────────────
-        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
-        result = catalog.extract_cost(
-            entry, response_headers, _get_response_body(response) if response else None
-        )
-        if result is not None:
-            event = Event(
-                task_id=task.task_id, event_type="external_cost",
-                cost_usd=result.amount, cost_confidence=result.confidence,
-                pricing_source=result.pricing_source,
-                pricing_version=catalog.catalog_version,
-                service_name=result.service_name,
-                details={"url": url, **byte_details},
-            )
-        else:
-            event = Event(
-                task_id=task.task_id, event_type="external_cost",
-                cost_usd=Decimal("0"), cost_confidence="unknown",
-                pricing_source="service_catalog", service_name=entry.display_name,
-                details={"url": url, **byte_details},
-            )
-        _persist_event(event)
+    # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
+    if _handle_catalog_entry(
+        url, domain, track_network, bytes_in, bytes_out,
+        response_headers, response, byte_details,
+    ):
         return
 
-    # ── 3. un-cataloged — only act if there is an active task ─────────
-    # Do NOT auto-create a session for un-cataloged traffic.
-    task = get_current_task()
-    if task is None:
-        return  # anonymous traffic — never create orphan rows
+    # ── 3. un-cataloged: skip entirely when track_network=False ────────────
+    if not track_network:
+        return
 
-    # ── always: feed the task's byte counters (lossless) ──────────────
-    task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
-
-    # emit a `network` event when notable, unless suppressed
-    if is_network_event_suppressed():
-        return  # the `llm_call` event already represents this call
-
-    cfg = _cfg()
-    notable = (
-        (bytes_in + bytes_out) > cfg.network_event_threshold_bytes
-        or (cfg.network_event_on_error and status_code >= 400)
-        or (cfg.network_event_latency_ms > 0 and latency_ms > cfg.network_event_latency_ms)
+    _handle_uncataloged(
+        url, method, domain, bytes_in, bytes_out, status_code, latency_ms, byte_details, cfg,
     )
-    if not notable:
-        return  # counters already updated; below threshold → no event
-
-    event = Event(
-        task_id=task.task_id, event_type="network",
-        cost_usd=Decimal("0"), cost_confidence="unknown",
-        pricing_source=None, service_name=domain,
-        details={"url": url, "method": method, "status_code": status_code, **byte_details},
-    )
-    _persist_event(event)
 
 
 # Module-level list for events recorded by the HTTP adapter.
