@@ -34,6 +34,9 @@ class NetworkAccountant:
 
     def record(self, host: str, bytes_in: int, bytes_out: int) -> None:
         """Add one HTTP call's bytes. No-op once finalized."""
+        # Clamp negatives — network bytes can never be negative.
+        bytes_in = max(0, bytes_in)
+        bytes_out = max(0, bytes_out)
         with self._lock:
             if self._frozen:
                 return
@@ -81,9 +84,21 @@ class NetworkAccountant:
                 other[1] += b_in
                 other[2] += b_out
 
+            # If a real host is literally named "_other" it would collide with
+            # the synthetic overflow bucket.  Fold it into `other` so the
+            # output list never contains two entries with the same host name.
+            top_clean = []
+            for item in top:
+                if item[0] == "_other":
+                    other[0] += item[1][0]
+                    other[1] += item[1][1]
+                    other[2] += item[1][2]
+                else:
+                    top_clean.append(item)
+
             hosts: list[dict[str, Any]] = [
                 {"host": host, "calls": c, "bytes_in": bi, "bytes_out": bo}
-                for host, (c, bi, bo) in top
+                for host, (c, bi, bo) in top_clean
             ]
             if other[0] > 0:
                 hosts.append(
