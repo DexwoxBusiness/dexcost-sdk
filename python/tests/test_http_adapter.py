@@ -129,19 +129,28 @@ class TestTrackHttp:
         assert events[0].service_name == "api.example.com"
 
     def test_unmatched_domain_records_unknown(self) -> None:
-        """When the domain has no registered rate, an event with unknown confidence is recorded."""
+        """Un-cataloged domains with a small/no-body response emit no event.
+
+        The old behaviour was to record an ``external_cost $0`` with
+        ``cost_confidence='unknown'`` for every un-cataloged call.  The new
+        behaviour (noise-removal) records bytes into the task counters but only
+        emits a ``network`` event when the call is notable (combined bytes >
+        threshold, HTTP error, or slow).  A no-body request to an unknown
+        domain is below all thresholds → no event.
+        """
         register_domain_rate("api.example.com", cost_usd="0.01")
 
         task = _make_task()
         with task_context(task):
-            from dexcost.adapters.http import _maybe_record_cost
+            from dexcost.adapters.http import _handle_http_call
 
-            _maybe_record_cost("https://unregistered.example.com/v1/query")
+            _handle_http_call("https://unregistered.example.com/v1/query",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=None, latency_ms=0)
 
+        # No event — call was small and successful (below threshold).
         events = get_recorded_events()
-        assert len(events) == 1
-        assert events[0].cost_usd == Decimal("0")
-        assert events[0].cost_confidence == "unknown"
+        assert len(events) == 0
 
     def test_no_task_context_auto_creates_session(self) -> None:
         """Outside a task context, a session is auto-created and event is recorded."""

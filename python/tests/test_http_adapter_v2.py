@@ -153,18 +153,47 @@ class TestKnownServiceExtraction:
 
 
 class TestUnknownDomain:
-    """HTTP calls to unknown domains record with cost_confidence='unknown'."""
+    """HTTP calls to unknown domains: noise-removal means no event for small calls."""
 
-    def test_unknown_domain_records_zero_cost(self) -> None:
+    def test_unknown_domain_small_response_emits_no_event(self) -> None:
+        """Un-cataloged calls with a small body produce no event (noise removal).
+
+        The old ``external_cost $0 / unknown`` event is replaced by nothing
+        when the combined bytes are below the 100 KiB threshold and the
+        response is successful.  Bytes are still recorded in task counters.
+        """
+        from dexcost.adapters.http import _handle_http_call
+
         task = _make_task()
+        # response with no Content-Length → body_len=0 → well below threshold
         response = _make_response(body={"data": "hello"})
 
         with task_context(task):
-            _maybe_record_cost("https://unknown-api.example.com/v1/data", response)
+            _handle_http_call("https://unknown-api.example.com/v1/data",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=response, latency_ms=5)
+
+        # No event — small successful call to un-cataloged domain.
+        events = get_recorded_events()
+        assert len(events) == 0
+
+    def test_unknown_domain_large_response_emits_network_event(self) -> None:
+        """Un-cataloged call above the byte threshold emits a ``network`` event."""
+        from dexcost.adapters.http import _handle_http_call
+
+        task = _make_task()
+        # Simulate a response with Content-Length above the 100 KiB threshold.
+        response = _make_response(body={"data": "x"}, content_length=200_000)
+
+        with task_context(task):
+            _handle_http_call("https://unknown-api.example.com/v1/bulk",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=response, latency_ms=50)
 
         events = get_recorded_events()
         assert len(events) == 1
         event = events[0]
+        assert event.event_type == "network"
         assert event.cost_usd == Decimal("0")
         assert event.cost_confidence == "unknown"
         assert event.service_name == "unknown-api.example.com"
