@@ -628,10 +628,10 @@ class SQLiteStorage:
             parent_task_id=parent_task_id,
             experiment_id=row["experiment_id"],
             variant=row["variant"],
-            network_bytes_in=row["network_bytes_in"] if "network_bytes_in" in row.keys() else 0,
-            network_bytes_out=row["network_bytes_out"] if "network_bytes_out" in row.keys() else 0,
-            network_call_count=row["network_call_count"] if "network_call_count" in row.keys() else 0,
-            network_by_host=_json_loads(row["network_by_host"] if "network_by_host" in row.keys() else None) or {"hosts": []},
+            network_bytes_in=row["network_bytes_in"] or 0,
+            network_bytes_out=row["network_bytes_out"] or 0,
+            network_call_count=row["network_call_count"] or 0,
+            network_by_host=_json_loads(row["network_by_host"]) or {"hosts": []},
         )
 
     @staticmethod

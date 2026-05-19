@@ -32,6 +32,20 @@ def test_task_network_fields_round_trip_through_storage(tmp_path):
     assert got.network_call_count == 5
     assert got.network_by_host == {"hosts": [{"host": "x.com", "calls": 5,
                                               "bytes_in": 9000, "bytes_out": 1200}]}
+
+    # Also verify the update_task path writes and reads back new values.
+    got.network_bytes_in = 42000
+    got.network_bytes_out = 3300
+    got.network_call_count = 17
+    got.network_by_host = {"hosts": [{"host": "y.com", "calls": 17,
+                                      "bytes_in": 42000, "bytes_out": 3300}]}
+    st.update_task(got)
+    updated = st.get_task(str(t.task_id))
+    assert updated.network_bytes_in == 42000
+    assert updated.network_bytes_out == 3300
+    assert updated.network_call_count == 17
+    assert updated.network_by_host == {"hosts": [{"host": "y.com", "calls": 17,
+                                                  "bytes_in": 42000, "bytes_out": 3300}]}
     st.close()
 
 
@@ -59,6 +73,14 @@ def test_v3_db_migrates_to_v4(tmp_path):
     conn.execute(
         "INSERT INTO schema_version (version_number, migration_name) VALUES (3, 'seed')"
     )
+    # Insert a pre-existing row using only the v3 columns; after migration the
+    # four new network columns must carry their DEFAULT values.
+    pre_existing_id = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO tasks (task_id, task_type, status, started_at, sync_status) "
+        "VALUES (?, 'smoke', 'running', '2024-01-01T00:00:00+00:00', 'pending')",
+        (pre_existing_id,),
+    )
     conn.commit()
     conn.close()
 
@@ -66,4 +88,13 @@ def test_v3_db_migrates_to_v4(tmp_path):
     cols = {r[1] for r in st._conn.execute("PRAGMA table_info(tasks)").fetchall()}
     assert "network_by_host" in cols
     assert st.get_schema_version() == 4
+
+    # Verify that the pre-existing row received the column DEFAULTs.
+    row = st.get_task(pre_existing_id)
+    assert row is not None
+    assert row.network_bytes_in == 0
+    assert row.network_bytes_out == 0
+    assert row.network_call_count == 0
+    assert row.network_by_host == {"hosts": []}
+
     st.close()
