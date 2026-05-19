@@ -81,6 +81,38 @@ def set_current_task(task: Task | None) -> contextvars.Token[Task | None]:
 
 
 # ---------------------------------------------------------------------------
+# Per-call network-event suppression flag
+# ---------------------------------------------------------------------------
+# When set, the HTTP adapter records bytes for the call but does NOT emit a
+# standalone `network` event — used by the LLM instruments so an LLM API call
+# does not produce both an `llm_call` event and a `network` event.
+
+_suppress_network: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_suppress_network", default=False
+)
+
+
+def is_network_event_suppressed() -> bool:
+    """Return True when the current call must not emit a `network` event."""
+    return _suppress_network.get()
+
+
+@contextmanager
+def suppress_network_event() -> Generator[None, None, None]:
+    """Within this block, the HTTP adapter suppresses standalone network events.
+
+    Bytes are still recorded into the task counters; only the per-call
+    `network` event is withheld. Used by LLM instruments around their HTTP
+    call so it does not double-emit (`llm_call` + `network`).
+    """
+    token = _suppress_network.set(True)
+    try:
+        yield
+    finally:
+        _suppress_network.reset(token)
+
+
+# ---------------------------------------------------------------------------
 # ThreadPoolExecutor monkey-patch — propagate contextvars to child threads
 # ---------------------------------------------------------------------------
 # Python's ThreadPoolExecutor does NOT propagate contextvars to worker
