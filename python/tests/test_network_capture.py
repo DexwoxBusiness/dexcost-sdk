@@ -17,6 +17,7 @@ from dexcost.adapters.http import (
     register_domain_rate,
     reset_network_error_count,
 )
+from dexcost.config import DexcostConfig
 from dexcost.context import clear_context, set_current_task, suppress_network_event
 from dexcost.models.task import Task
 from dexcost.session import reset_session_manager
@@ -31,6 +32,7 @@ def _clean():
     clear_context()
     reset_session_manager()
     http_adapter.set_catalog(None)
+    http_adapter.set_network_config(None)
     yield
     clear_domain_rates()
     clear_recorded_events()
@@ -39,6 +41,7 @@ def _clean():
     clear_context()
     reset_session_manager()
     http_adapter.set_catalog(None)
+    http_adapter.set_network_config(None)
 
 
 class _Resp:
@@ -51,7 +54,7 @@ class _Resp:
                         "Content-Length": str(body_len)}
         self._body_len = body_len
 
-    def json(self):  # noqa: D401 - test stub
+    def json(self):  # test stub
         return {}
 
 
@@ -166,3 +169,41 @@ def test_handler_failure_is_swallowed_and_counted():
                       request_headers={}, request_body_len=0,
                       response=_Bad(), latency_ms=1)
     assert get_network_error_count() >= 1  # observable, not hidden
+
+
+def test_uncataloged_latency_trigger_emits_event():
+    """Latency threshold trigger fires a network event for slow un-cataloged calls."""
+    task = _task()
+    set_current_task(task)
+    # Wire a config with a very low latency threshold (10 ms)
+    http_adapter.set_network_config(DexcostConfig(storage="local", network_event_latency_ms=10))
+    # Call is small (below byte threshold) but slow (above latency threshold)
+    _handle_http_call("https://api.uncataloged.com/latency", method="GET",
+                      request_headers={}, request_body_len=0,
+                      response=_Resp(200, body_len=100), latency_ms=50)
+    events = get_recorded_events()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.event_type == "network"
+
+
+def test_aiohttp_style_error_status_emits_event():
+    """status_code extraction falls back to .status for aiohttp/urllib3-style responses."""
+    task = _task()
+    set_current_task(task)
+
+    class _AiohttpResp:
+        """Response stub that exposes error status via .status (not .status_code)."""
+
+        def __init__(self) -> None:
+            self.status = 503
+            self.headers: dict[str, str] = {"Content-Length": "0"}
+
+    _handle_http_call("https://api.uncataloged.com/aiohttp-fail", method="GET",
+                      request_headers={}, request_body_len=0,
+                      response=_AiohttpResp(), latency_ms=5)
+    events = get_recorded_events()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.event_type == "network"
+    assert ev.details["status_code"] == 503

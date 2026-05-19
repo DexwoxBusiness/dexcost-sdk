@@ -31,8 +31,8 @@ from dexcost.adapters._netbytes import classify_destination, measure_bytes_from_
 from dexcost.config import DexcostConfig
 from dexcost.context import get_current_task, is_network_event_suppressed
 from dexcost.models.event import Event
-from dexcost.service_catalog import CostExtractionResult, ServiceCatalog
-from dexcost.session import SessionManager, get_session_manager
+from dexcost.service_catalog import ServiceCatalog
+from dexcost.session import get_session_manager
 
 _log = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ _network_config: DexcostConfig | None = None
 # Count of exceptions swallowed by network accounting — surfaced by
 # get_network_error_count() so silent capture failure is observable.
 _network_error_count = 0
+_network_error_lock = threading.Lock()
 
 
 def set_network_config(config: DexcostConfig | None) -> None:
@@ -80,11 +81,8 @@ def set_network_config(config: DexcostConfig | None) -> None:
 
 
 def _cfg() -> DexcostConfig:
-    """Return the active config, or a defaults instance if none wired."""
-    global _network_config
-    if _network_config is None:
-        _network_config = DexcostConfig(storage="local")
-    return _network_config
+    """Return the wired network config, or a defaults instance if none set."""
+    return _network_config if _network_config is not None else DexcostConfig(storage="local")
 
 
 def get_network_error_count() -> int:
@@ -95,7 +93,8 @@ def get_network_error_count() -> int:
 def reset_network_error_count() -> None:
     """Reset the swallowed-exception counter (tests / `dexcost status`)."""
     global _network_error_count
-    _network_error_count = 0
+    with _network_error_lock:
+        _network_error_count = 0
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +386,7 @@ async def _aiohttp_wrapper(
     latency_ms = int((time.monotonic() - t0) * 1000)
     method = str(args[0]) if args else str(kwargs.get("method", "GET"))
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
+    # bytes-out is approximate (request-line overhead): no prepared-request object available here
     _handle_http_call(url, method=method, request_headers={},
                       request_body_len=0, response=response, latency_ms=latency_ms)
     return response
@@ -446,6 +446,7 @@ def _urllib3_wrapper(
         full_url = f"{scheme}://{host}:{port}{url_path}"
     else:
         full_url = f"{scheme}://{host}{url_path}"
+    # bytes-out is approximate (request-line overhead): no prepared-request object available here
     _handle_http_call(full_url, method=req_method, request_headers={},
                       request_body_len=0, response=response, latency_ms=latency_ms)
     return response
@@ -550,9 +551,10 @@ def _handle_http_call(
         _handle_http_call_inner(
             url, method, request_headers or {}, request_body_len, response, latency_ms
         )
-    except Exception:  # noqa: BLE001 - byte capture must never break the call
+    except Exception:  # broad catch intentional: must never break the caller's HTTP call
         global _network_error_count
-        _network_error_count += 1
+        with _network_error_lock:
+            _network_error_count += 1
         _log.warning("network capture failed for %s", url, exc_info=True)
 
 
@@ -582,7 +584,11 @@ def _handle_http_call_inner(
     response_headers = _get_response_headers(response) if response is not None else {}
     response_body_len = _response_body_len(response) if response is not None else 0
     bytes_in = measure_bytes_from_headers("", "", response_headers, response_body_len)
-    status_code = int(getattr(response, "status_code", 0) or 0)
+    status_code = int(
+        getattr(response, "status_code", None)
+        or getattr(response, "status", 0)
+        or 0
+    )
 
     byte_details = {
         "protocol": protocol,
