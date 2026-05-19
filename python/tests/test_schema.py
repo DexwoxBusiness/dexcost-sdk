@@ -109,6 +109,12 @@ class TestValidPayloads:
         errors = validate(event.to_dict())
         assert errors == [], f"Unexpected validation errors: {errors}"
 
+    def test_network_event_type_passes(self) -> None:
+        """event_type='network' is a valid enum value and should validate clean."""
+        event = Event(event_type="network")
+        errors = validate(event.to_dict())
+        assert errors == [], f"Unexpected validation errors: {errors}"
+
 
 # ------------------------------------------------------------------
 # Invalid payloads

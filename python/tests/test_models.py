@@ -34,6 +34,7 @@ class TestEnums:
         assert EventType.EXTERNAL_COST.value == "external_cost"
         assert EventType.COMPUTE_COST.value == "compute_cost"
         assert EventType.RETRY_MARKER.value == "retry_marker"
+        assert EventType.NETWORK.value == "network"
 
     def test_cost_confidence_values(self) -> None:
         assert CostConfidence.EXACT.value == "exact"
