@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dexcost.io/schemas/dexcost-task.v1.json",
+  "title": "Dexcost Task v1",
+  "description": "Standard Event Schema v1 — Task payload. Represents a tracked business task with aggregated costs, tokens, and waste metrics.",
+  "type": "object",
+  "required": [
+    "task_id",
+    "task_type",
+    "status",
+    "started_at",
+    "schema_version",
+    "llm_cost_usd",
+    "external_cost_usd",
+    "compute_cost_usd",
+    "total_cost_usd",
+    "total_input_tokens",
+    "total_output_tokens",
+    "total_cached_tokens",
+    "retry_count",
+    "retry_cost_usd",
+    "failure_count"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for the task."
+    },
+    "task_type": {
+      "type": "string",
+      "description": "Business task type (e.g. resolve_ticket, generate_report)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "success", "failed"],
+      "description": "Lifecycle status of the task."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the task started."
+    },
+    "ended_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the task ended, or null if still running."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Caller-defined context (customer tier, ticket id, etc.)."
+    },
+    "customer_id": {
+      "type": ["string", "null"],
+      "description": "Denormalised customer identifier for fast queries."
+    },
+    "project_id": {
+      "type": ["string", "null"],
+      "description": "Denormalised project identifier for fast queries."
+    },
+    "parent_task_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "UUID of the parent task, or null for top-level tasks."
+    },
+    "experiment_id": {
+      "type": ["string", "null"],
+      "description": "Groups tasks into an experiment for variant comparison."
+    },
+    "variant": {
+      "type": ["string", "null"],
+      "description": "Labels which variant this task run belongs to within an experiment."
+    },
+    "llm_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated LLM cost in USD (Decimal as string)."
+    },
+    "external_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated external service cost in USD (Decimal as string)."
+    },
+    "compute_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated compute cost in USD (Decimal as string)."
+    },
+    "total_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Total aggregated cost in USD (Decimal as string)."
+    },
+    "total_input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total input tokens across all LLM events."
+    },
+    "total_output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total output tokens across all LLM events."
+    },
+    "total_cached_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total cached tokens across all LLM events."
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of retried events in this task."
+    },
+    "retry_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated retry waste in USD (Decimal as string)."
+    },
+    "failure_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failed events in this task."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Schema version — always '1' for v1 payloads."
+    }
+  }
+}

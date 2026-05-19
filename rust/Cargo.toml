@@ -1,0 +1,53 @@
+[package]
+name = "dexcost"
+version = "0.1.0"
+edition = "2021"
+description = "Agent Unit Economics SDK for Rust"
+license = "MIT"
+repository = "https://github.com/DexwoxBusiness/dexcost"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest-middleware = { version = "0.4", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+sha2 = "0.10"
+hex = "0.4"
+async-trait = "0.1"
+futures = "0.3"
+async-stream = { version = "0.3", optional = true }
+bytes = "1"
+http = "1"
+axum = { version = "0.7", optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", optional = true }
+actix-web = { version = "4", optional = true }
+actix-service = { version = "2", optional = true }
+regex = "1"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+dirs-next = "2"
+jsonschema = "0.45.0"
+rust_decimal_macros = "1.40.0"
+thiserror = "2"
+anyhow = "1"
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[features]
+default = []
+axum-middleware = ["axum"]
+tower-middleware = ["tower", "tower-http"]
+actix-middleware = ["actix-web", "actix-service"]
+reqwest-middleware = ["dep:reqwest-middleware"]
+streaming = ["async-stream"]
+tracing-bridge = ["tracing", "tracing-subscriber"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
+wiremock = "0.6"

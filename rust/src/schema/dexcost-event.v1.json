@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dexcost.io/schemas/dexcost-event.v1.json",
+  "title": "Dexcost Event v1",
+  "description": "Standard Event Schema v1 — Event payload. Represents a single cost-generating event within a task.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "task_id",
+    "event_type",
+    "occurred_at",
+    "cost_usd",
+    "cost_confidence",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for the event."
+    },
+    "task_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID of the parent task this event belongs to."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["llm_call", "external_cost", "compute_cost", "retry_marker"],
+      "description": "Discriminator for the event category."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the event occurred."
+    },
+    "cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Cost of this event in USD (Decimal as string)."
+    },
+    "cost_confidence": {
+      "type": "string",
+      "enum": ["exact", "computed", "estimated", "unknown"],
+      "description": "How trustworthy the reported cost_usd value is."
+    },
+    "pricing_source": {
+      "type": ["string", "null"],
+      "description": "Where the cost_usd figure was derived from (litellm, tokencost, provider_response, manual)."
+    },
+    "pricing_version": {
+      "type": ["string", "null"],
+      "description": "Version of the pricing data used."
+    },
+    "service_name": {
+      "type": ["string", "null"],
+      "description": "Name of the service that generated this cost event."
+    },
+    "provider": {
+      "type": ["string", "null"],
+      "description": "LLM provider name (e.g. openai, anthropic). Null for non-LLM events."
+    },
+    "model": {
+      "type": ["string", "null"],
+      "description": "LLM model identifier (e.g. gpt-4o). Null for non-LLM events."
+    },
+    "input_tokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Input token count. Null for non-LLM events."
+    },
+    "output_tokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Output token count. Null for non-LLM events."
+    },
+    "cached_tokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Cached token count. Null for non-LLM events."
+    },
+    "latency_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Latency in milliseconds. Null for non-LLM events."
+    },
+    "is_retry": {
+      "type": "boolean",
+      "description": "Whether this event is a retry of a previous event."
+    },
+    "retry_reason": {
+      "type": ["string", "null"],
+      "description": "Reason for the retry (rate_limit, timeout, parse_error, 5xx)."
+    },
+    "retry_of": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "UUID of the original event this is a retry of."
+    },
+    "details": {
+      "type": "object",
+      "description": "Extensible type-specific details."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Schema version — always '1' for v1 payloads."
+    }
+  }
+}

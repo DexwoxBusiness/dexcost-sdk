@@ -1,0 +1,2595 @@
+{
+  "_meta": {
+    "version": "3.0.0",
+    "last_updated": "2026-05-11",
+    "service_count": 163,
+    "description": "Dexcost Service Catalog \u2014 per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
+    "how_cost_is_extracted": {
+      "response_body": "Read a field from the JSON response body (e.g. credits_used)",
+      "response_header": "Read a value from a response header (e.g. X-Credits-Spent)",
+      "endpoint_match": "Fixed cost per request, matched by URL path",
+      "fixed": "Fixed cost per request regardless of endpoint"
+    }
+  },
+  "tavily_search": {
+    "display_name": "Tavily Search",
+    "domains": [
+      "api.tavily.com"
+    ],
+    "category": "search",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.008",
+    "default_credits_per_request": 1,
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "usage.credits",
+      "fallback_credits": 1
+    },
+    "source": "https://docs.tavily.com/documentation/api-credits",
+    "last_verified": "2026-04-01"
+  },
+  "serper_search": {
+    "display_name": "Serper (Google Search)",
+    "domains": [
+      "google.serper.dev"
+    ],
+    "category": "search",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.0003",
+    "default_credits_per_request": 1,
+    "cost_extraction": {
+      "type": "fixed",
+      "note": "Credits field in response body unverified. Using 1 credit per request default."
+    },
+    "source": "https://serper.dev/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "exa_search": {
+    "display_name": "Exa Search",
+    "domains": [
+      "api.exa.ai"
+    ],
+    "category": "search",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.007",
+    "note": "Exa Deep is $0.012/request",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://exa.ai/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "perplexity_search": {
+    "display_name": "Perplexity Sonar API",
+    "domains": [
+      "api.perplexity.ai"
+    ],
+    "category": "search",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.005",
+    "note": "Search API flat rate. Sonar models use token-based pricing.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://docs.perplexity.ai/docs/getting-started/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "brave_search": {
+    "display_name": "Brave Search",
+    "domains": [
+      "api.search.brave.com"
+    ],
+    "category": "search",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.005",
+    "note": "$5/1K queries. Includes $5 monthly credit.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://brave.com/search/api/",
+    "last_verified": "2026-04-07"
+  },
+  "bing_search": {
+    "display_name": "Bing Web Search",
+    "domains": [
+      "api.bing.microsoft.com"
+    ],
+    "category": "search",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.00028",
+    "note": "Bing Web Search v7. $7/25K transactions (S1 tier).",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.microsoft.com/en-us/bing/apis/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "serpapi": {
+    "display_name": "SerpAPI",
+    "domains": [
+      "serpapi.com"
+    ],
+    "category": "search",
+    "pricing_model": "per_search",
+    "cost_per_search_usd": "0.01",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://serpapi.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "firecrawl_scrape": {
+    "display_name": "Firecrawl",
+    "domains": [
+      "api.firecrawl.dev"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.00083",
+    "cost_extraction": {
+      "type": "fixed",
+      "units": 1
+    },
+    "source": "https://www.firecrawl.dev/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "browserbase": {
+    "display_name": "Browserbase",
+    "domains": [
+      "api.browserbase.com",
+      "connect.browserbase.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.002",
+    "note": "$0.10-0.12/hr overage. Billed minimum 1 minute per session.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "duration_ms",
+      "transform": "ms_to_minutes"
+    },
+    "source": "https://www.browserbase.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "scrapingbee": {
+    "display_name": "ScrapingBee",
+    "domains": [
+      "app.scrapingbee.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.000327",
+    "note": "JS rendering uses 5 credits by default",
+    "cost_extraction": {
+      "type": "response_header",
+      "header": "Spb-cost"
+    },
+    "source": "https://www.scrapingbee.com/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "apify": {
+    "display_name": "Apify",
+    "domains": [
+      "api.apify.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "compute_unit",
+    "cost_per_compute_unit_usd": "0.25",
+    "note": "1 CU = 1 GB-RAM x 1 hour. Scale plan: $0.25/CU.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "data.stats.computeUnits"
+    },
+    "source": "https://apify.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "scrapingdog": {
+    "display_name": "ScrapingDog",
+    "domains": [
+      "api.scrapingdog.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.0004",
+    "note": "PAYG: $10/25K credits. JS rendering uses 5 credits. Google Search API uses 5 credits.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.scrapingdog.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "diffbot": {
+    "display_name": "Diffbot",
+    "domains": [
+      "api.diffbot.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.001",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.diffbot.com/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "jina_reader": {
+    "display_name": "Jina Reader",
+    "domains": [
+      "r.jina.ai",
+      "s.jina.ai"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Token-based pricing. Free 10M tokens per API key. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://jina.ai/reader",
+    "last_verified": "2026-04-07"
+  },
+  "pinecone_query": {
+    "display_name": "Pinecone",
+    "domains": [
+      "*.pinecone.io"
+    ],
+    "category": "vector_db",
+    "pricing_model": "read_unit",
+    "cost_per_read_unit_usd": "0.000016",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "usage.readUnits"
+    },
+    "source": "https://www.pinecone.io/pricing/",
+    "last_verified": "2026-04-01"
+  },
+  "weaviate_cloud": {
+    "display_name": "Weaviate Cloud",
+    "domains": [
+      "*.weaviate.network",
+      "*.semi.technology"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Subscription-based (Flex $45/mo). Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://weaviate.io/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "qdrant_cloud": {
+    "display_name": "Qdrant Cloud",
+    "domains": [
+      "*.qdrant.io"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Resource-based pricing. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://qdrant.tech/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "milvus_zilliz": {
+    "display_name": "Milvus (Zilliz Cloud)",
+    "domains": [
+      "*.zillizcloud.com"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "CU-based pricing. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://zilliz.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "astra_db": {
+    "display_name": "DataStax Astra DB",
+    "domains": [
+      "*.apps.astra.datastax.com"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Read/write unit pricing. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.datastax.com/products/datastax-astra/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "e2b_sandbox": {
+    "display_name": "E2B Code Sandbox",
+    "domains": [
+      "api.e2b.dev",
+      "49999-*.e2b.dev"
+    ],
+    "category": "compute",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.000014",
+    "note": "$0.0504/vCPU-hour. Price is per vCPU-second.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "duration_ms",
+      "transform": "ms_to_seconds"
+    },
+    "source": "https://e2b.dev/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "modal_compute": {
+    "display_name": "Modal",
+    "domains": [
+      "*.modal.run",
+      "api.modal.com"
+    ],
+    "category": "compute",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.0000131",
+    "note": "Base rate $0.0000131/core-sec. Non-preemptible US: 3.75x multiplier.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://modal.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "aws_lambda": {
+    "display_name": "AWS Lambda",
+    "domains": [
+      "lambda.*.amazonaws.com",
+      "*.execute-api.*.amazonaws.com"
+    ],
+    "category": "compute",
+    "pricing_model": "per_ms",
+    "cost_per_ms_usd": "0.0000000167",
+    "note": "Varies by memory allocation and region.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/lambda/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "twilio_sms": {
+    "display_name": "Twilio SMS",
+    "domains": [
+      "api.twilio.com"
+    ],
+    "endpoints": [
+      "/Messages"
+    ],
+    "category": "communication",
+    "pricing_model": "per_message",
+    "cost_per_message_usd": "0.0083",
+    "note": "US domestic. International rates vary by destination.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://www.twilio.com/en-us/sms/pricing/us",
+    "last_verified": "2026-04-01"
+  },
+  "sendgrid_email": {
+    "display_name": "SendGrid",
+    "domains": [
+      "api.sendgrid.com"
+    ],
+    "endpoints": [
+      "/v3/mail/send"
+    ],
+    "category": "communication",
+    "pricing_model": "per_email",
+    "cost_per_email_usd": "0.00035",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://sendgrid.com/en-us/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "resend_email": {
+    "display_name": "Resend",
+    "domains": [
+      "api.resend.com"
+    ],
+    "endpoints": [
+      "/emails"
+    ],
+    "category": "communication",
+    "pricing_model": "per_email",
+    "cost_per_email_usd": "0.0009",
+    "note": "Scale plan: $90/100K emails = $0.0009/email.",
+    "cost_extraction": {
+      "type": "endpoint_match",
+      "endpoints": [
+        "/emails"
+      ]
+    },
+    "source": "https://resend.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "mailgun": {
+    "display_name": "Mailgun",
+    "domains": [
+      "api.mailgun.net"
+    ],
+    "category": "communication",
+    "pricing_model": "per_email",
+    "cost_per_email_usd": "0.0008",
+    "note": "Foundation plan: $0.80/1K emails.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.mailgun.com/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "postmark": {
+    "display_name": "Postmark",
+    "domains": [
+      "api.postmarkapp.com"
+    ],
+    "category": "communication",
+    "pricing_model": "per_email",
+    "cost_per_email_usd": "0.0015",
+    "note": "$1.50/1K on Basic plan overages. Pro: $1.30/1K.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://postmarkapp.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "google_maps_geocode": {
+    "display_name": "Google Maps Geocoding",
+    "domains": [
+      "maps.googleapis.com"
+    ],
+    "endpoints": [
+      "/maps/api/geocode"
+    ],
+    "category": "maps",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.005",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://developers.google.com/maps/documentation/geocoding/usage-and-billing",
+    "last_verified": "2026-04-01"
+  },
+  "google_maps_directions": {
+    "display_name": "Google Maps Directions",
+    "domains": [
+      "maps.googleapis.com"
+    ],
+    "endpoints": [
+      "/maps/api/directions"
+    ],
+    "category": "maps",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.005",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://developers.google.com/maps/documentation/directions/usage-and-billing",
+    "last_verified": "2026-04-01"
+  },
+  "google_maps_places": {
+    "display_name": "Google Maps Places",
+    "domains": [
+      "maps.googleapis.com"
+    ],
+    "endpoints": [
+      "/maps/api/place"
+    ],
+    "category": "maps",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.017",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://developers.google.com/maps/documentation/places/web-service/usage-and-billing",
+    "last_verified": "2026-04-01"
+  },
+  "mapbox_geocoding": {
+    "display_name": "Mapbox Geocoding",
+    "domains": [
+      "api.mapbox.com"
+    ],
+    "endpoints": [
+      "/geocoding"
+    ],
+    "category": "maps",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.00075",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://www.mapbox.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "people_data_labs": {
+    "display_name": "People Data Labs",
+    "domains": [
+      "api.peopledatalabs.com"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.10",
+    "cost_extraction": {
+      "type": "response_header",
+      "header": "X-Call-Credits-Spent"
+    },
+    "source": "https://www.peopledatalabs.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "clearbit_enrichment": {
+    "display_name": "Clearbit",
+    "domains": [
+      "person.clearbit.com",
+      "company.clearbit.com",
+      "risk.clearbit.com"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.10",
+    "note": "Now HubSpot Breeze Intelligence.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://clearbit.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "hunter_io": {
+    "display_name": "Hunter.io",
+    "domains": [
+      "api.hunter.io"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.02",
+    "note": "Business plan: $199/10K searches. Starter: $0.098/search. Uses credit system.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://hunter.io/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "crunchbase": {
+    "display_name": "Crunchbase",
+    "domains": [
+      "api.crunchbase.com"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.01",
+    "note": "Enterprise pricing varies",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://data.crunchbase.com/docs/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "stripe_payment": {
+    "display_name": "Stripe",
+    "domains": [
+      "api.stripe.com"
+    ],
+    "endpoints": [
+      "/v1/charges",
+      "/v1/payment_intents"
+    ],
+    "category": "payment",
+    "pricing_model": "percentage",
+    "percentage": "0.029",
+    "fixed_fee_usd": "0.30",
+    "note": "2.9% + $0.30 per successful card charge. Actual fee varies by card type and country.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "amount",
+      "transform": "stripe_fee"
+    },
+    "source": "https://stripe.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "eleven_labs": {
+    "display_name": "ElevenLabs",
+    "domains": [
+      "api.elevenlabs.io"
+    ],
+    "category": "speech",
+    "pricing_model": "per_character",
+    "cost_per_1k_characters_usd": "0.06",
+    "note": "$0.06/1K chars for Flash/Turbo models. $0.12/1K for Multilingual v2/v3.",
+    "cost_extraction": {
+      "type": "response_header",
+      "header": "character-cost"
+    },
+    "source": "https://elevenlabs.io/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "deepgram_transcription": {
+    "display_name": "Deepgram",
+    "domains": [
+      "api.deepgram.com"
+    ],
+    "category": "speech",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.0077",
+    "note": "$0.0077/min Nova-3 PAYG.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "metadata.duration"
+    },
+    "source": "https://deepgram.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "assemblyai": {
+    "display_name": "AssemblyAI",
+    "domains": [
+      "api.assemblyai.com"
+    ],
+    "category": "speech",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.0025",
+    "note": "Add-on features (diarization, PII, etc.) cost extra.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "audio_duration"
+    },
+    "source": "https://www.assemblyai.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "openai_whisper": {
+    "display_name": "OpenAI Whisper",
+    "domains": [
+      "api.openai.com"
+    ],
+    "endpoints": [
+      "/v1/audio/transcriptions",
+      "/v1/audio/translations"
+    ],
+    "category": "speech",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.006",
+    "note": "Whisper model transcription/translation",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://openai.com/api/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "openai_dalle": {
+    "display_name": "OpenAI DALL-E",
+    "domains": [
+      "api.openai.com"
+    ],
+    "endpoints": [
+      "/v1/images/generations"
+    ],
+    "category": "image",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.04",
+    "note": "Price varies by model, size, quality",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://openai.com/api/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "stability_ai": {
+    "display_name": "Stability AI",
+    "domains": [
+      "api.stability.ai"
+    ],
+    "category": "image",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.002",
+    "note": "Per credit, 1 credit = 1 generation on SD3",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://platform.stability.ai/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "replicate": {
+    "display_name": "Replicate",
+    "domains": [
+      "api.replicate.com"
+    ],
+    "category": "image",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.00023",
+    "note": "Billed per second of hardware time. Rate varies by hardware (T4/A40/A100).",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "metrics.predict_time"
+    },
+    "source": "https://replicate.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "amazon_textract": {
+    "display_name": "Amazon Textract",
+    "domains": [
+      "textract.*.amazonaws.com"
+    ],
+    "category": "document",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.0015",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/textract/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "google_document_ai": {
+    "display_name": "Google Document AI",
+    "domains": [
+      "*.googleapis.com"
+    ],
+    "endpoints": [
+      "/v1/projects/*/locations/*/processors"
+    ],
+    "category": "document",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.01",
+    "note": "General form processor. OCR is $0.0015/page.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloud.google.com/document-ai/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "unstructured_io": {
+    "display_name": "Unstructured.io",
+    "domains": [
+      "api.unstructuredapp.io",
+      "api.unstructured.io"
+    ],
+    "category": "document",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.01",
+    "note": "SaaS API pricing",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://unstructured.io/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "llamaparse": {
+    "display_name": "LlamaParse",
+    "domains": [
+      "api.cloud.llamaindex.ai"
+    ],
+    "category": "document",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.003",
+    "note": "1 credit = 1 page. $0.003/credit.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloud.llamaindex.ai/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "twelve_data": {
+    "display_name": "Twelve Data",
+    "domains": [
+      "api.twelvedata.com"
+    ],
+    "category": "financial_data",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.001",
+    "cost_extraction": {
+      "type": "response_header",
+      "header": "api-credits-used"
+    },
+    "source": "https://twelvedata.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "alpha_vantage": {
+    "display_name": "Alpha Vantage",
+    "domains": [
+      "www.alphavantage.co"
+    ],
+    "category": "financial_data",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.01",
+    "note": "Premium plans",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.alphavantage.co/premium/",
+    "last_verified": "2026-04-07"
+  },
+  "polygon_io": {
+    "display_name": "Polygon.io",
+    "domains": [
+      "api.polygon.io"
+    ],
+    "category": "financial_data",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Monthly subscription ($29-199/mo). Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://polygon.io/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "coinapi": {
+    "display_name": "CoinAPI",
+    "domains": [
+      "rest.coinapi.io"
+    ],
+    "category": "financial_data",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.001",
+    "cost_extraction": {
+      "type": "response_header",
+      "header": "X-RateLimit-Request-Cost"
+    },
+    "source": "https://www.coinapi.io/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "aws_s3": {
+    "display_name": "AWS S3",
+    "domains": [
+      "*.s3.amazonaws.com",
+      "s3.*.amazonaws.com"
+    ],
+    "category": "cloud_storage",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0000004",
+    "note": "GET request price. PUT is $0.000005. Varies by region and storage class.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/s3/pricing/",
+    "last_verified": "2026-04-01"
+  },
+  "supabase": {
+    "display_name": "Supabase",
+    "domains": [
+      "*.supabase.co"
+    ],
+    "category": "cloud_storage",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Supabase pricing is per-project (subscription), not per-request. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://supabase.com/pricing",
+    "last_verified": "2026-04-01"
+  },
+  "composio": {
+    "display_name": "Composio",
+    "domains": [
+      "backend.composio.dev"
+    ],
+    "category": "agent_tools",
+    "pricing_model": "per_action",
+    "cost_per_action_usd": "0.0098",
+    "note": "Starter: $49/5K actions = $0.0098/action.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://composio.dev/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "wolfram_alpha": {
+    "display_name": "Wolfram Alpha",
+    "domains": [
+      "api.wolframalpha.com"
+    ],
+    "category": "agent_tools",
+    "pricing_model": "per_query",
+    "cost_per_query_usd": "0.0025",
+    "note": "Estimated. Pricing not publicly detailed.",
+    "cost_confidence_override": "estimated",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://products.wolframalpha.com/api/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "openai_embeddings": {
+    "display_name": "OpenAI Embeddings",
+    "domains": [
+      "api.openai.com"
+    ],
+    "endpoints": [
+      "/v1/embeddings"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.00002",
+    "note": "text-embedding-3-small. text-embedding-3-large is $0.00013/1K tokens.",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "usage.total_tokens"
+    },
+    "source": "https://openai.com/api/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "cohere_embed": {
+    "display_name": "Cohere Embed",
+    "domains": [
+      "api.cohere.com"
+    ],
+    "endpoints": [
+      "/v1/embed",
+      "/v2/embed"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.0001",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "meta.billed_units.input_tokens"
+    },
+    "source": "https://cohere.com/pricing",
+    "last_verified": "2026-04-07"
+  },
+  "voyage_ai": {
+    "display_name": "Voyage AI",
+    "domains": [
+      "api.voyageai.com"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.00012",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "usage.total_tokens"
+    },
+    "source": "https://docs.voyageai.com/pricing/",
+    "last_verified": "2026-04-07"
+  },
+  "jina_embeddings": {
+    "display_name": "Jina Embeddings",
+    "domains": [
+      "api.jina.ai"
+    ],
+    "endpoints": [
+      "/v1/embeddings"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.00002",
+    "cost_extraction": {
+      "type": "response_body",
+      "path": "usage.total_tokens"
+    },
+    "source": "https://jina.ai/embeddings",
+    "last_verified": "2026-04-07"
+  },
+  "deepl_translate": {
+    "display_name": "DeepL API",
+    "domains": [
+      "api-free.deepl.com",
+      "api.deepl.com"
+    ],
+    "category": "translation",
+    "pricing_model": "per_character",
+    "cost_per_1m_characters_usd": "25.00",
+    "cost_per_request_usd": "0.000025",
+    "note": "API Pro: $25/1M chars + $5.49/mo base. Free tier: 500K chars/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.deepl.com/en/pro-api",
+    "last_verified": "2026-05-11"
+  },
+  "google_translate": {
+    "display_name": "Google Cloud Translation",
+    "domains": [
+      "translation.googleapis.com"
+    ],
+    "category": "translation",
+    "pricing_model": "per_character",
+    "cost_per_1m_characters_usd": "20.00",
+    "cost_per_request_usd": "0.00002",
+    "note": "NMT v3: $20/1M chars. First 500K/mo free.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloud.google.com/translate/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "aws_translate": {
+    "display_name": "Amazon Translate",
+    "domains": [
+      "translate.*.amazonaws.com"
+    ],
+    "category": "translation",
+    "pricing_model": "per_character",
+    "cost_per_1m_characters_usd": "15.00",
+    "cost_per_request_usd": "0.000015",
+    "note": "Standard: $15/1M chars. Free tier: 2M chars/mo for 12 months.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/translate/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "azure_translator": {
+    "display_name": "Azure AI Translator",
+    "domains": [
+      "api.cognitive.microsofttranslator.com"
+    ],
+    "category": "translation",
+    "pricing_model": "per_character",
+    "cost_per_1m_characters_usd": "10.00",
+    "cost_per_request_usd": "0.00001",
+    "note": "S1 tier: $10/1M chars. Free tier: 2M chars/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/translator/",
+    "last_verified": "2026-05-11"
+  },
+  "google_vision": {
+    "display_name": "Google Cloud Vision",
+    "domains": [
+      "vision.googleapis.com"
+    ],
+    "category": "vision",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.0015",
+    "note": "OCR/text detection: $1.50/1K images. Label detection: $1.50/1K. First 1K/mo free.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloud.google.com/vision/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "azure_computer_vision": {
+    "display_name": "Azure AI Vision",
+    "domains": [
+      "*.cognitiveservices.azure.com"
+    ],
+    "category": "vision",
+    "pricing_model": "per_transaction",
+    "cost_per_request_usd": "0.001",
+    "note": "S1: ~$1/1K transactions for image analysis. OCR similar. Free: 5K/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/computer-vision/",
+    "last_verified": "2026-05-11"
+  },
+  "aws_rekognition": {
+    "display_name": "AWS Rekognition",
+    "domains": [
+      "rekognition.*.amazonaws.com"
+    ],
+    "category": "vision",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.001",
+    "note": "Label detection: $1/1K images (first 1M/mo). Face detection same. Free: 5K/mo for 12 months.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/rekognition/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "mathpix_ocr": {
+    "display_name": "Mathpix OCR",
+    "domains": [
+      "api.mathpix.com"
+    ],
+    "category": "vision",
+    "pricing_model": "per_page",
+    "cost_per_page_usd": "0.004",
+    "note": "Education: $0.004/page. Business: $0.01/page. Free: 20 pages/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://mathpix.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "runway_video": {
+    "display_name": "Runway",
+    "domains": [
+      "api.dev.runwayml.com"
+    ],
+    "category": "video_ai",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.05",
+    "note": "Gen-3 Alpha: 10 credits/sec at ~$0.01/credit = $0.10/sec for 10s video. Gen-3 Turbo: 5 credits/sec.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://docs.dev.runwayml.com/guides/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "heygen_video": {
+    "display_name": "HeyGen",
+    "domains": [
+      "api.heygen.com"
+    ],
+    "category": "video_ai",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.01",
+    "default_credits_per_request": 1,
+    "note": "Credit-based. 1 credit ~= 1 second of video. Plans from $24/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.heygen.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "luma_video": {
+    "display_name": "Luma Dream Machine",
+    "domains": [
+      "api.lumalabs.ai"
+    ],
+    "category": "video_ai",
+    "pricing_model": "per_generation",
+    "cost_per_request_usd": "0.032",
+    "note": "API: $0.032/generation (5s clip). Plans from $23.99/mo for 150 generations.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://lumalabs.ai/dream-machine",
+    "last_verified": "2026-05-11"
+  },
+  "mux_video": {
+    "display_name": "Mux Video",
+    "domains": [
+      "api.mux.com"
+    ],
+    "category": "video_ai",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.04",
+    "note": "Delivery: ~$0.04/min (1080p). Encoding: $0.015/min. Storage: $0.003/min. 100K delivery mins free/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.mux.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "slack_api": {
+    "display_name": "Slack API",
+    "domains": [
+      "slack.com",
+      "api.slack.com"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API is free with workspace subscription ($7.25-$12.50/user/mo). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://slack.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "discord_api": {
+    "display_name": "Discord API",
+    "domains": [
+      "discord.com",
+      "discordapp.com"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free API. Rate limited. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://discord.com/developers/docs",
+    "last_verified": "2026-05-11"
+  },
+  "telegram_api": {
+    "display_name": "Telegram Bot API",
+    "domains": [
+      "api.telegram.org"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free API. Tracked for call counting only.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://core.telegram.org/bots/api",
+    "last_verified": "2026-05-11"
+  },
+  "twilio_voice": {
+    "display_name": "Twilio Voice",
+    "domains": [
+      "api.twilio.com"
+    ],
+    "endpoints": [
+      "/Calls"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_minute",
+    "cost_per_minute_usd": "0.014",
+    "note": "Outbound US: $0.014/min. Inbound: $0.0085/min. Rates vary by country.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://www.twilio.com/en-us/voice/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "onesignal": {
+    "display_name": "OneSignal",
+    "domains": [
+      "onesignal.com",
+      "api.onesignal.com"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_mau",
+    "cost_per_request_usd": "0",
+    "note": "Free unlimited push notifications. Paid plans by MAU ($0.012/mobile MAU on Growth). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://onesignal.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "pusher": {
+    "display_name": "Pusher Channels",
+    "domains": [
+      "api-*.pusher.com"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_message",
+    "cost_per_request_usd": "0",
+    "note": "Free: 200K messages/day. Paid plans from $49/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://pusher.com/channels/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "novu": {
+    "display_name": "Novu",
+    "domains": [
+      "api.novu.co"
+    ],
+    "category": "messaging",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0.0012",
+    "note": "Business: $0.0012/event. Free: 30K events/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://novu.co/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "neon_postgres": {
+    "display_name": "Neon Serverless Postgres",
+    "domains": [
+      "console.neon.tech",
+      "*.neon.tech"
+    ],
+    "category": "database",
+    "pricing_model": "per_compute_hour",
+    "cost_per_request_usd": "0",
+    "note": "Launch: $0.106/CU-hour. Scale: $0.222/CU-hour. Storage: $0.35/GB-mo. Free: 100 CU-hours/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://neon.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "planetscale": {
+    "display_name": "PlanetScale",
+    "domains": [
+      "api.planetscale.com",
+      "*.psdb.cloud"
+    ],
+    "category": "database",
+    "pricing_model": "per_row_read",
+    "cost_per_request_usd": "0",
+    "note": "Scaler Pro: $39/mo base. Reads: $1.50/billion. Writes: $1.50/million. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://planetscale.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "turso_db": {
+    "display_name": "Turso (libSQL)",
+    "domains": [
+      "api.turso.tech",
+      "*.turso.io"
+    ],
+    "category": "database",
+    "pricing_model": "per_row_read",
+    "cost_per_request_usd": "0",
+    "note": "Scaler: $29/mo for 25B row reads. Free: 9GB storage + 500 DBs. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://turso.tech/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "mongodb_atlas": {
+    "display_name": "MongoDB Atlas",
+    "domains": [
+      "*.mongodb.net",
+      "cloud.mongodb.com"
+    ],
+    "category": "database",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Serverless: $0.10/million reads + $1.00/million writes. Shared free tier available. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.mongodb.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "upstash_redis": {
+    "display_name": "Upstash Redis",
+    "domains": [
+      "*.upstash.io"
+    ],
+    "category": "database",
+    "pricing_model": "per_command",
+    "cost_per_request_usd": "0.000002",
+    "note": "PAYG: $0.20/100K commands = $0.000002/command. Free: 500K commands/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://upstash.com/pricing/redis",
+    "last_verified": "2026-05-11"
+  },
+  "upstash_kafka": {
+    "display_name": "Upstash Kafka",
+    "domains": [
+      "*.upstash.io"
+    ],
+    "category": "database",
+    "pricing_model": "per_message",
+    "cost_per_request_usd": "0.00006",
+    "note": "PAYG: $0.60/100K messages. Free: 10K messages/day.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://upstash.com/pricing/kafka",
+    "last_verified": "2026-05-11"
+  },
+  "fauna_db": {
+    "display_name": "Fauna",
+    "domains": [
+      "db.fauna.com"
+    ],
+    "category": "database",
+    "pricing_model": "per_read_op",
+    "cost_per_request_usd": "0",
+    "note": "Reads: $0.45/million. Writes: $2.03/million. Compute: $0.18/million TROs. Free tier available. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://fauna.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "cockroachdb": {
+    "display_name": "CockroachDB Serverless",
+    "domains": [
+      "*.cockroachlabs.cloud"
+    ],
+    "category": "database",
+    "pricing_model": "per_request_unit",
+    "cost_per_request_usd": "0",
+    "note": "Basic: $0.20/million RUs. Free: 50M RUs/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.cockroachlabs.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "auth0": {
+    "display_name": "Auth0 (Okta)",
+    "domains": [
+      "*.auth0.com",
+      "*.us.auth0.com"
+    ],
+    "category": "authentication",
+    "pricing_model": "per_mau",
+    "cost_per_request_usd": "0",
+    "note": "B2C Essentials: $35/mo for 500 MAU ($0.07/MAU overage). Free: 25K MAU. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://auth0.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "clerk_auth": {
+    "display_name": "Clerk",
+    "domains": [
+      "api.clerk.com",
+      "*.clerk.accounts.dev"
+    ],
+    "category": "authentication",
+    "pricing_model": "per_mau",
+    "cost_per_request_usd": "0",
+    "note": "Pro: $25/mo + $0.02/MAU above 10K. Free: 10K MAU. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://clerk.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "firebase_auth": {
+    "display_name": "Firebase Authentication",
+    "domains": [
+      "identitytoolkit.googleapis.com"
+    ],
+    "category": "authentication",
+    "pricing_model": "per_mau",
+    "cost_per_request_usd": "0",
+    "note": "Free: 50K MAU. Phone auth: $0.01-0.06/verification. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://firebase.google.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "workos": {
+    "display_name": "WorkOS",
+    "domains": [
+      "api.workos.com"
+    ],
+    "category": "authentication",
+    "pricing_model": "per_mau",
+    "cost_per_request_usd": "0",
+    "note": "AuthKit free up to 1M MAU. SSO: $125/mo per connection. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://workos.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "cloudinary": {
+    "display_name": "Cloudinary",
+    "domains": [
+      "api.cloudinary.com",
+      "res.cloudinary.com"
+    ],
+    "category": "cdn_media",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.37",
+    "note": "1 credit = 1K transformations or 1GB storage or 1GB bandwidth. Overage: ~$0.37/credit. Free: 25 credits/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloudinary.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "imgix": {
+    "display_name": "imgix",
+    "domains": [
+      "*.imgix.net"
+    ],
+    "category": "cdn_media",
+    "pricing_model": "per_image",
+    "cost_per_request_usd": "0",
+    "note": "Rendering: from $5/1K master images. Bandwidth extra. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://imgix.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "uploadthing": {
+    "display_name": "Uploadthing",
+    "domains": [
+      "api.uploadthing.com",
+      "uploadthing.com"
+    ],
+    "category": "cdn_media",
+    "pricing_model": "per_gb",
+    "cost_per_request_usd": "0",
+    "note": "Free: 2GB storage. Pro: $10/mo for 100GB. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://uploadthing.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "sentry": {
+    "display_name": "Sentry",
+    "domains": [
+      "sentry.io",
+      "*.ingest.sentry.io"
+    ],
+    "category": "monitoring",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0",
+    "note": "Team: $29/mo for 50K events. Business: $89/mo for 100K. Dev free: 5K events. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://sentry.io/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "datadog": {
+    "display_name": "Datadog",
+    "domains": [
+      "api.datadoghq.com",
+      "*.datadoghq.com"
+    ],
+    "category": "monitoring",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0",
+    "note": "Logs: $0.10/GB ingested. APM: $31/host/mo. Infra: $15/host/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.datadoghq.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "posthog": {
+    "display_name": "PostHog",
+    "domains": [
+      "app.posthog.com",
+      "us.posthog.com",
+      "eu.posthog.com"
+    ],
+    "category": "monitoring",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0",
+    "note": "Product analytics: Free 1M events/mo, then $0.00031/event. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://posthog.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "mixpanel": {
+    "display_name": "Mixpanel",
+    "domains": [
+      "api.mixpanel.com",
+      "*.mixpanel.com"
+    ],
+    "category": "monitoring",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0",
+    "note": "Growth: $28/mo for 10K MTU. Free: 20M events/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://mixpanel.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "segment": {
+    "display_name": "Segment (Twilio)",
+    "domains": [
+      "api.segment.io",
+      "cdn.segment.com"
+    ],
+    "category": "monitoring",
+    "pricing_model": "per_event",
+    "cost_per_request_usd": "0",
+    "note": "Free: 1K visitors/mo. Team: $120/mo for 10K MTU. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://segment.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "huggingface_inference": {
+    "display_name": "Hugging Face Inference",
+    "domains": [
+      "api-inference.huggingface.co",
+      "*.endpoints.huggingface.cloud"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.00012",
+    "note": "Pay per second of compute. Rate depends on hardware (GPU/CPU). Endpoints from $0.03/hr.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://huggingface.co/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "roboflow": {
+    "display_name": "Roboflow",
+    "domains": [
+      "api.roboflow.com",
+      "detect.roboflow.com"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_inference",
+    "cost_per_request_usd": "0.001",
+    "note": "Starter: $0.001/inference. Free: 10K inferences/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://roboflow.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "scale_ai": {
+    "display_name": "Scale AI",
+    "domains": [
+      "api.scale.com"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_task",
+    "cost_per_request_usd": "0.08",
+    "note": "Data labeling from $0.08/task. Enterprise pricing. Volume discounts.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://scale.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "together_ai": {
+    "display_name": "Together AI",
+    "domains": [
+      "api.together.xyz"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "Per-token pricing varies by model. Llama 3 70B: $0.88/1M tokens. Mixtral: $0.60/1M. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.together.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "groq_inference": {
+    "display_name": "Groq",
+    "domains": [
+      "api.groq.com"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "Per-token pricing varies by model. Llama 3 70B: $0.59/1M input. Free tier available. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://groq.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "fireworks_ai": {
+    "display_name": "Fireworks AI",
+    "domains": [
+      "api.fireworks.ai"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "Per-token pricing. Llama 3 70B: $0.90/1M tokens. Serverless or dedicated. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://fireworks.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "zapier": {
+    "display_name": "Zapier",
+    "domains": [
+      "hooks.zapier.com",
+      "nla.zapier.com"
+    ],
+    "category": "workflow_automation",
+    "pricing_model": "per_task",
+    "cost_per_request_usd": "0.012",
+    "note": "Pro: starts $29.99/mo for 750 tasks (~$0.04/task). Team: $103.50/mo for 2K tasks. Pay-per-task available.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://zapier.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "make_integromat": {
+    "display_name": "Make (Integromat)",
+    "domains": [
+      "hook.*.make.com",
+      "*.make.com"
+    ],
+    "category": "workflow_automation",
+    "pricing_model": "per_operation",
+    "cost_per_request_usd": "0.00037",
+    "note": "Core: $10.59/mo for 10K ops. Pro: $18.82/mo for 10K ops. Free: 1K ops/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.make.com/en/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "pipedream": {
+    "display_name": "Pipedream",
+    "domains": [
+      "*.pipedream.net",
+      "api.pipedream.com"
+    ],
+    "category": "workflow_automation",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.000197",
+    "note": "Advanced: $29/mo for ~165K credits. Free: 10K credits/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://pipedream.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "paypal": {
+    "display_name": "PayPal",
+    "domains": [
+      "api.paypal.com",
+      "api-m.paypal.com"
+    ],
+    "category": "payment",
+    "pricing_model": "percentage",
+    "percentage": "0.0349",
+    "fixed_fee_usd": "0.49",
+    "note": "3.49% + $0.49 per transaction (online). Rates vary by type and region.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.paypal.com/us/business/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "razorpay": {
+    "display_name": "Razorpay",
+    "domains": [
+      "api.razorpay.com"
+    ],
+    "category": "payment",
+    "pricing_model": "percentage",
+    "percentage": "0.02",
+    "note": "Standard: 2% per transaction (India). International: 3%. No setup fee.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://razorpay.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "shopify_api": {
+    "display_name": "Shopify API",
+    "domains": [
+      "*.myshopify.com"
+    ],
+    "category": "ecommerce",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with plan subscription ($29-$399/mo). Rate limited: 2-20 req/sec. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.shopify.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "twitter_api": {
+    "display_name": "X (Twitter) API",
+    "domains": [
+      "api.twitter.com",
+      "api.x.com"
+    ],
+    "category": "social_media",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free: 1.5K posts write/mo. Basic: $100/mo for 10K reads. Pro: $5K/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://developer.x.com/en/products/twitter-api",
+    "last_verified": "2026-05-11"
+  },
+  "linkedin_api": {
+    "display_name": "LinkedIn API",
+    "domains": [
+      "api.linkedin.com"
+    ],
+    "category": "social_media",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free with developer app. Rate limited. Premium APIs require partnership. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://developer.linkedin.com/",
+    "last_verified": "2026-05-11"
+  },
+  "reddit_api": {
+    "display_name": "Reddit API",
+    "domains": [
+      "oauth.reddit.com",
+      "www.reddit.com"
+    ],
+    "category": "social_media",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free: 100 req/min (OAuth). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.reddit.com/dev/api/",
+    "last_verified": "2026-05-11"
+  },
+  "youtube_data_api": {
+    "display_name": "YouTube Data API",
+    "domains": [
+      "www.googleapis.com"
+    ],
+    "endpoints": [
+      "/youtube"
+    ],
+    "category": "social_media",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free: 10K units/day. Most reads cost 1 unit. Search costs 100 units. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://developers.google.com/youtube/v3/getting-started",
+    "last_verified": "2026-05-11"
+  },
+  "openweathermap": {
+    "display_name": "OpenWeatherMap",
+    "domains": [
+      "api.openweathermap.org"
+    ],
+    "category": "weather",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.00015",
+    "note": "One Call 3.0: 1K calls/day free, then $0.15/100 calls. Other APIs: Free 60 calls/min.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://openweathermap.org/price",
+    "last_verified": "2026-05-11"
+  },
+  "weatherapi": {
+    "display_name": "WeatherAPI",
+    "domains": [
+      "api.weatherapi.com"
+    ],
+    "category": "weather",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free: 1M calls/mo. Pro: $9/mo for 2M. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.weatherapi.com/pricing.aspx",
+    "last_verified": "2026-05-11"
+  },
+  "newsapi": {
+    "display_name": "NewsAPI",
+    "domains": [
+      "newsapi.org"
+    ],
+    "category": "news",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.001",
+    "note": "Business: $449/mo for 250K req. Developer: free 100 req/day.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://newsapi.org/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "ipinfo": {
+    "display_name": "IPinfo",
+    "domains": [
+      "ipinfo.io"
+    ],
+    "category": "geolocation",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0001",
+    "note": "Basic: $99/mo for 250K req = $0.0004/req. Free: 50K/mo. Business: $249/mo for 1M.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://ipinfo.io/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "maxmind_geoip": {
+    "display_name": "MaxMind GeoIP",
+    "domains": [
+      "geoip.maxmind.com"
+    ],
+    "category": "geolocation",
+    "pricing_model": "per_query",
+    "cost_per_request_usd": "0.0001",
+    "note": "GeoIP2 Web: $0.10/1K queries. Free GeoLite2 DB downloads available.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.maxmind.com/en/geoip2-precision-services",
+    "last_verified": "2026-05-11"
+  },
+  "aws_sqs": {
+    "display_name": "AWS SQS",
+    "domains": [
+      "sqs.*.amazonaws.com"
+    ],
+    "category": "queue",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0000004",
+    "note": "Standard: $0.40/million requests. FIFO: $0.50/million. Free: 1M requests/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://aws.amazon.com/sqs/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "redis_cloud": {
+    "display_name": "Redis Cloud",
+    "domains": [
+      "*.redis.cloud",
+      "redis-*.c*.*.ec2.cloud.redislabs.com"
+    ],
+    "category": "queue",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Fixed: from $5/mo for 250MB. Free: 30MB. Per-operation pricing not applicable. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://redis.io/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "github_api": {
+    "display_name": "GitHub API",
+    "domains": [
+      "api.github.com"
+    ],
+    "category": "devops",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free API. Rate limited: 5K req/hr (authenticated). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://docs.github.com/en/rest",
+    "last_verified": "2026-05-11"
+  },
+  "gitlab_api": {
+    "display_name": "GitLab API",
+    "domains": [
+      "gitlab.com"
+    ],
+    "category": "devops",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free with GitLab account. Rate limited. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://docs.gitlab.com/ee/api/",
+    "last_verified": "2026-05-11"
+  },
+  "sonarcloud": {
+    "display_name": "SonarCloud",
+    "domains": [
+      "sonarcloud.io"
+    ],
+    "category": "devops",
+    "pricing_model": "per_loc",
+    "cost_per_request_usd": "0",
+    "note": "Free for public repos. Private: from $10/mo for 100K LoC. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.sonarsource.com/products/sonarcloud/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "snyk": {
+    "display_name": "Snyk",
+    "domains": [
+      "api.snyk.io",
+      "snyk.io"
+    ],
+    "category": "devops",
+    "pricing_model": "per_test",
+    "cost_per_request_usd": "0",
+    "note": "Free: 200 tests/mo. Team: $25/dev/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://snyk.io/plans/",
+    "last_verified": "2026-05-11"
+  },
+  "vercel_api": {
+    "display_name": "Vercel",
+    "domains": [
+      "api.vercel.com"
+    ],
+    "category": "devops",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Free: 100GB bandwidth. Pro: $20/user/mo. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://vercel.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "docusign": {
+    "display_name": "DocuSign eSignature",
+    "domains": [
+      "*.docusign.net",
+      "*.docusign.com"
+    ],
+    "category": "esignature",
+    "pricing_model": "per_envelope",
+    "cost_per_request_usd": "0.50",
+    "note": "API starter: $600/yr. Metered overages: $0.10-$2.00/envelope depending on plan.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://ecom.docusign.com/plans-and-pricing/developer",
+    "last_verified": "2026-05-11"
+  },
+  "calendly_api": {
+    "display_name": "Calendly",
+    "domains": [
+      "api.calendly.com"
+    ],
+    "category": "calendar",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with plan ($10-$16/user/mo). Rate limited. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://calendly.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "jira_api": {
+    "display_name": "Jira (Atlassian)",
+    "domains": [
+      "*.atlassian.net"
+    ],
+    "category": "project_management",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with subscription ($7-$12/user/mo). Rate limited. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.atlassian.com/software/jira/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "linear_api": {
+    "display_name": "Linear",
+    "domains": [
+      "api.linear.app"
+    ],
+    "category": "project_management",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with plan (Free for small teams, $8/user/mo Plus). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://linear.app/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "asana_api": {
+    "display_name": "Asana",
+    "domains": [
+      "app.asana.com"
+    ],
+    "category": "project_management",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with subscription ($10.99-$24.99/user/mo). Rate limited: 1.5K/min. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://asana.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "clickup_api": {
+    "display_name": "ClickUp",
+    "domains": [
+      "api.clickup.com"
+    ],
+    "category": "project_management",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with plan ($7-$12/user/mo). Rate limited: 100 req/min. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://clickup.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "notion_api": {
+    "display_name": "Notion",
+    "domains": [
+      "api.notion.com"
+    ],
+    "category": "project_management",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with plan ($8-$15/user/mo). Rate limited: 3 req/sec. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.notion.so/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "salesforce_api": {
+    "display_name": "Salesforce API",
+    "domains": [
+      "*.salesforce.com",
+      "*.force.com"
+    ],
+    "category": "crm",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API included in subscription ($25-$500/user/mo). Daily limits by edition (15K-100K calls). Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.salesforce.com/editions-pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "hubspot_api": {
+    "display_name": "HubSpot API",
+    "domains": [
+      "api.hubapi.com",
+      "api.hubspot.com"
+    ],
+    "category": "crm",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "API free with subscription. Rate limited: 100-200 req/10sec. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.hubspot.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "scraperapi": {
+    "display_name": "ScraperAPI",
+    "domains": [
+      "api.scraperapi.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.00085",
+    "default_credits_per_request": 1,
+    "note": "Hobby: $49/mo for ~5.8K credits. 1 credit = 1 successful request. JS rendering uses 10 credits.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.scraperapi.com/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "zenrows": {
+    "display_name": "ZenRows",
+    "domains": [
+      "api.zenrows.com"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.00028",
+    "note": "Basic: $0.28/1K req. JS rendering: $0.50/1K. Premium proxy: $1.00/1K. Business plan.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.zenrows.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "oxylabs_scraper": {
+    "display_name": "Oxylabs Scraper API",
+    "domains": [
+      "realtime.oxylabs.io"
+    ],
+    "category": "scraping",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.002",
+    "note": "Micro: $49/mo for 25K results ($0.002/result). JS rendering uses more.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://oxylabs.io/products/scraper-api/web/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "openai_tts": {
+    "display_name": "OpenAI TTS",
+    "domains": [
+      "api.openai.com"
+    ],
+    "endpoints": [
+      "/v1/audio/speech"
+    ],
+    "category": "speech",
+    "pricing_model": "per_character",
+    "cost_per_1k_characters_usd": "0.015",
+    "note": "TTS: $15/1M chars. TTS HD: $30/1M chars.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://openai.com/api/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "resemble_ai": {
+    "display_name": "Resemble AI",
+    "domains": [
+      "api.resemble.ai"
+    ],
+    "category": "speech",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.006",
+    "note": "API: $0.006/sec of generated audio (~$0.36/min). Plans from $30/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.resemble.ai/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "playht": {
+    "display_name": "Play.ht",
+    "domains": [
+      "api.play.ht"
+    ],
+    "category": "speech",
+    "pricing_model": "per_character",
+    "cost_per_1k_characters_usd": "0.03",
+    "note": "Pro: $31.20/mo for unlimited chars. API: ~$0.03/1K chars on Creator plan.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://play.ht/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "google_custom_search": {
+    "display_name": "Google Custom Search",
+    "domains": [
+      "www.googleapis.com"
+    ],
+    "endpoints": [
+      "/customsearch"
+    ],
+    "category": "search",
+    "pricing_model": "per_query",
+    "cost_per_request_usd": "0.005",
+    "note": "$5/1K queries. First 100 queries/day free.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://developers.google.com/custom-search/v1/overview",
+    "last_verified": "2026-05-11"
+  },
+  "you_search": {
+    "display_name": "You.com Search API",
+    "domains": [
+      "api.ydc-index.io"
+    ],
+    "category": "search",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.005",
+    "note": "Web Search: $0.005/req. News: $0.005/req. RAG: $0.005/req. Free tier available.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://api.you.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "midjourney_api": {
+    "display_name": "Midjourney",
+    "domains": [
+      "api.midjourney.com"
+    ],
+    "category": "image",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.05",
+    "note": "Estimated: Basic $10/mo for ~200 images. No official API yet \u2014 proxied services available.",
+    "cost_confidence_override": "estimated",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.midjourney.com/",
+    "last_verified": "2026-05-11"
+  },
+  "flux_fal": {
+    "display_name": "Fal.ai (Flux)",
+    "domains": [
+      "fal.run",
+      "*.fal.ai"
+    ],
+    "category": "image",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.025",
+    "note": "Flux Pro: $0.05/image. Flux Schnell: $0.003/image. SDXL: $0.01/image.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://fal.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "leonardo_ai": {
+    "display_name": "Leonardo.Ai",
+    "domains": [
+      "cloud.leonardo.ai"
+    ],
+    "category": "image",
+    "pricing_model": "per_image",
+    "cost_per_image_usd": "0.01",
+    "note": "API: ~$0.006-$0.012/image depending on model. Apprentice: $12/mo for 8.5K tokens.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://leonardo.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "mixedbread_embed": {
+    "display_name": "Mixedbread Embeddings",
+    "domains": [
+      "api.mixedbread.ai"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.0001",
+    "note": "mxbai-embed-large: $0.10/1M tokens. Free tier available.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.mixedbread.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "nomic_embed": {
+    "display_name": "Nomic Embeddings",
+    "domains": [
+      "api-atlas.nomic.ai"
+    ],
+    "category": "embedding",
+    "pricing_model": "per_token",
+    "cost_per_1k_tokens_usd": "0.00001",
+    "note": "nomic-embed-text: $0.01/1M tokens. Very low cost.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.nomic.ai/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "chroma_cloud": {
+    "display_name": "Chroma Cloud",
+    "domains": [
+      "api.trychroma.com",
+      "*.trychroma.com"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Cloud: from $30/mo. Open source self-hosted is free. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.trychroma.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "turbopuffer": {
+    "display_name": "Turbopuffer",
+    "domains": [
+      "api.turbopuffer.com"
+    ],
+    "category": "vector_db",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0",
+    "note": "Pay-per-use: $0.2/million vectors stored/mo, $0.04/1K queries. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://turbopuffer.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "fly_machines": {
+    "display_name": "Fly.io Machines",
+    "domains": [
+      "api.machines.dev",
+      "*.fly.dev"
+    ],
+    "category": "compute",
+    "pricing_model": "per_second",
+    "cost_per_second_usd": "0.0000058",
+    "note": "shared-cpu-1x: $0.0000058/sec (~$1.94/mo). Billed per second when running.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://fly.io/docs/about/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "cloudflare_workers": {
+    "display_name": "Cloudflare Workers",
+    "domains": [
+      "*.workers.dev"
+    ],
+    "category": "compute",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0000005",
+    "note": "Paid: $5/mo includes 10M requests, then $0.50/million. Free: 100K requests/day.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://developers.cloudflare.com/workers/platform/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "adobe_pdf_services": {
+    "display_name": "Adobe PDF Services",
+    "domains": [
+      "pdf-services.adobe.io"
+    ],
+    "category": "document",
+    "pricing_model": "per_transaction",
+    "cost_per_request_usd": "0.05",
+    "note": "Pay-as-you-go: $0.05/document transaction. Free: 500 transactions/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://developer.adobe.com/document-services/pricing/main/",
+    "last_verified": "2026-05-11"
+  },
+  "docraptor": {
+    "display_name": "DocRaptor (HTML to PDF)",
+    "domains": [
+      "docraptor.com"
+    ],
+    "category": "document",
+    "pricing_model": "per_document",
+    "cost_per_request_usd": "0.02",
+    "note": "Growth: $29/mo for 1.25K docs. Test documents always free.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://docraptor.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "browserless": {
+    "display_name": "Browserless",
+    "domains": [
+      "chrome.browserless.io",
+      "*.browserless.io"
+    ],
+    "category": "agent_tools",
+    "pricing_model": "per_unit",
+    "cost_per_request_usd": "0.01",
+    "note": "Usage: ~$0.01-0.02/browser session. Free: 6 hrs/mo. Plans from $200/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.browserless.io/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "tavily_extract": {
+    "display_name": "Tavily Extract",
+    "domains": [
+      "api.tavily.com"
+    ],
+    "endpoints": [
+      "/extract"
+    ],
+    "category": "agent_tools",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.04",
+    "default_credits_per_request": 1,
+    "note": "Extract API: 5 credits/request (vs 1 for search). $0.04/extraction at $0.008/credit.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://docs.tavily.com/documentation/api-credits",
+    "last_verified": "2026-05-11"
+  },
+  "gcs": {
+    "display_name": "Google Cloud Storage",
+    "domains": [
+      "storage.googleapis.com",
+      "*.storage.googleapis.com"
+    ],
+    "category": "cloud_storage",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.000004",
+    "note": "Class A ops (write): $0.005/1K. Class B ops (read): $0.004/10K. Storage: $0.020/GB-mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://cloud.google.com/storage/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "azure_blob": {
+    "display_name": "Azure Blob Storage",
+    "domains": [
+      "*.blob.core.windows.net"
+    ],
+    "category": "cloud_storage",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0000036",
+    "note": "Hot: Write $0.065/10K ops, Read $0.005/10K ops. Storage: $0.018/GB-mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://azure.microsoft.com/en-us/pricing/details/storage/blobs/",
+    "last_verified": "2026-05-11"
+  },
+  "r2_cloudflare": {
+    "display_name": "Cloudflare R2",
+    "domains": [
+      "*.r2.cloudflarestorage.com"
+    ],
+    "category": "cloud_storage",
+    "pricing_model": "per_request",
+    "cost_per_request_usd": "0.0000036",
+    "note": "Class A (write): $4.50/million. Class B (read): $0.36/million. Zero egress fees. Free: 10M reads/mo.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://developers.cloudflare.com/r2/pricing/",
+    "last_verified": "2026-05-11"
+  },
+  "apollo_io": {
+    "display_name": "Apollo.io",
+    "domains": [
+      "api.apollo.io"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.03",
+    "note": "Basic: $49/mo for 900 credits. 1 credit = 1 email/phone lookup. Free: 10K credits/yr.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.apollo.io/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "zoominfo_api": {
+    "display_name": "ZoomInfo",
+    "domains": [
+      "api.zoominfo.com"
+    ],
+    "category": "data_enrichment",
+    "pricing_model": "credit",
+    "cost_per_credit_usd": "0.10",
+    "note": "Enterprise pricing from ~$15K/yr. Estimated $0.10/credit. Volume discounts.",
+    "cost_confidence_override": "estimated",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://www.zoominfo.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "cohere_rerank": {
+    "display_name": "Cohere Rerank",
+    "domains": [
+      "api.cohere.com"
+    ],
+    "endpoints": [
+      "/v1/rerank",
+      "/v2/rerank"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_search",
+    "cost_per_request_usd": "0.002",
+    "note": "Rerank: $2/1K searches.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://cohere.com/pricing",
+    "last_verified": "2026-05-11"
+  },
+  "jina_reranker": {
+    "display_name": "Jina Reranker",
+    "domains": [
+      "api.jina.ai"
+    ],
+    "endpoints": [
+      "/v1/rerank"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_search",
+    "cost_per_request_usd": "0.00002",
+    "note": "jina-reranker-v2: $0.02/1K searches. Very low cost.",
+    "cost_extraction": {
+      "type": "endpoint_match"
+    },
+    "source": "https://jina.ai/reranker",
+    "last_verified": "2026-05-11"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "task_type": "resolve_ticket",
+  "status": "success",
+  "started_at": "2025-11-15T10:30:00+00:00",
+  "ended_at": "2025-11-15T10:32:45+00:00",
+  "metadata": {
+    "ticket_id": "SUPPORT-4521",
+    "customer_tier": "enterprise",
+    "priority": "high"
+  },
+  "customer_id": "cust_acme_corp",
+  "project_id": "proj_helpdesk_ai",
+  "parent_task_id": "f0e1d2c3-b4a5-6789-0fed-cba987654321",
+  "llm_cost_usd": "0.0347",
+  "external_cost_usd": "0.005",
+  "compute_cost_usd": "0.0012",
+  "total_cost_usd": "0.0409",
+  "total_input_tokens": 2450,
+  "total_output_tokens": 680,
+  "total_cached_tokens": 512,
+  "retry_count": 1,
+  "retry_cost_usd": "0.0082",
+  "failure_count": 0,
+  "schema_version": "1"
+}

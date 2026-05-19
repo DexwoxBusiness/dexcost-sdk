@@ -1,0 +1,24 @@
+{
+  "event_id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "event_type": "llm_call",
+  "occurred_at": "2025-11-15T10:35:00+00:00",
+  "cost_usd": "0.0082",
+  "cost_confidence": "computed",
+  "pricing_source": "litellm",
+  "pricing_version": "2025-11-01",
+  "service_name": "openai",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "input_tokens": 600,
+  "output_tokens": 260,
+  "cached_tokens": 0,
+  "latency_ms": 890,
+  "is_retry": true,
+  "retry_reason": "timeout",
+  "retry_of": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "details": {
+    "note": "Late event — occurred_at is after parent task ended_at (2025-11-15T10:32:45+00:00)"
+  },
+  "schema_version": "1"
+}

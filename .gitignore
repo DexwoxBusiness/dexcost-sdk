@@ -1,0 +1,61 @@
+# ── Rust ─────────────────────────────────────────────
+rust/target/
+**/*.rs.bk
+# Cargo.lock IS committed (binary + reproducible builds) — not ignored.
+
+# ── Node / TypeScript ────────────────────────────────
+node_modules/
+typescript/dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+# package-lock.json IS committed — not ignored.
+
+# ── Python ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+python/build/
+python/dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+
+# ── Go ───────────────────────────────────────────────
+go/bin/
+*.exe
+*.test
+coverage.out
+*.cover
+
+# ── dexcost runtime artifacts ────────────────────────
+# SQLite event buffers — created at runtime, never source.
+*.db
+*.sqlite
+*.sqlite3
+.dexcost/
+
+# ── Secrets / environment ────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Editors / OS ─────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────
+*.log

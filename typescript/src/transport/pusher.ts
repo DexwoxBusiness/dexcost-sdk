@@ -1,0 +1,345 @@
+/**
+ * Background HTTP event pusher for dexcost.
+ *
+ * Periodically reads pending events from the buffer and POSTs them
+ * to a remote endpoint using the built-in `fetch` API (Node 18+).
+ */
+
+import type { CostEvent, Task } from "../core/models.js";
+import type { TrackerOptions } from "../core/tracker.js";
+import type { EventBuffer } from "./buffer.js";
+import { eventToDict, taskToDict } from "../core/models.js";
+import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
+
+/** Hardcoded default endpoint; overridable only via DEXCOST_ENDPOINT env var. */
+const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+
+/** Maximum backoff in milliseconds (5 minutes). */
+const MAX_BACKOFF_MS = 300_000;
+
+/** Maximum payload size in bytes — well under SQS 256KB limit. */
+const MAX_PAYLOAD_BYTES = 200_000;
+
+/** Minimum interval between purge runs in milliseconds (1 hour). */
+const PURGE_INTERVAL_MS = 3_600_000;
+
+/**
+ * Pushes buffered events to a remote endpoint on a periodic interval.
+ *
+ * Implements exponential backoff on failure, resetting on success.
+ */
+export class EventPusher {
+  private _interval: ReturnType<typeof setInterval> | null = null;
+  private _purgeInterval: ReturnType<typeof setInterval> | null = null;
+  private _backoffMs = 1000;
+  private _buffer: EventBuffer;
+  private _options: TrackerOptions;
+  private _pushing = false;
+  private _lastPurgeMs = 0;
+  /** Set permanently when the API key is rejected (HTTP 401/403). */
+  private _authFailed = false;
+
+  constructor(buffer: EventBuffer, options: TrackerOptions) {
+    this._buffer = buffer;
+    this._options = options;
+  }
+
+  /**
+   * Start the periodic background push loop.
+   */
+  start(): void {
+    if (this._interval) {
+      return; // Already running
+    }
+    const intervalMs = this._options.flushIntervalMs ?? 30000;
+    this._interval = setInterval(() => {
+      void this.push();
+    }, intervalMs);
+
+    // Allow the process to exit even if the interval is running
+    if (this._interval.unref) {
+      this._interval.unref();
+    }
+
+    // Independent purge interval (runs even when pushes are failing).
+    // Purges old synced events AND stale pending events so a permanently
+    // failing sync can't grow the local buffer without bound.
+    this._purgeInterval = setInterval(() => {
+      try {
+        this._buffer.purgeSynced();
+        this._buffer.purgeOldPending();
+      } catch {
+        // Non-fatal — purge will be retried next cycle
+      }
+    }, 60 * 60 * 1000);
+    if (this._purgeInterval.unref) {
+      this._purgeInterval.unref();
+    }
+  }
+
+  /**
+   * Stop the periodic background push loop.
+   */
+  stop(): void {
+    if (this._interval) {
+      clearInterval(this._interval);
+      this._interval = null;
+    }
+    if (this._purgeInterval) {
+      clearInterval(this._purgeInterval);
+      this._purgeInterval = null;
+    }
+  }
+
+  /**
+   * Force an immediate flush of all pending events.
+   */
+  async flush(): Promise<void> {
+    await this.push();
+  }
+
+  /**
+   * Push pending events to the remote endpoint.
+   *
+   * Uses exponential backoff on failure, capping at MAX_BACKOFF_MS.
+   * Resets backoff on success.
+   */
+  private async push(): Promise<void> {
+    if (this._pushing) {
+      return; // Avoid concurrent pushes
+    }
+    if (this._authFailed) {
+      // API key was rejected — sync is permanently disabled.
+      return;
+    }
+
+    const batchSize = this._options.batchSize ?? 100;
+    const pending = this._buffer.getPendingEvents(batchSize);
+    if (pending.length === 0) {
+      return;
+    }
+
+    this._pushing = true;
+
+    try {
+      // Only send tasks that have changed since the last successful push
+      // (sync_status = 'pending'). Sending every task on every push wastes
+      // bandwidth and re-ingests unchanged rows server-side.
+      const tasks = this._buffer.getPendingTasks();
+
+      const ok = await this.pushWithSplit(pending, tasks);
+      if (ok) {
+        this._buffer.markSynced(pending.map((e) => e.eventId));
+        // Mark the pushed tasks synced so they are not re-sent next cycle.
+        this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
+        this._backoffMs = 1000; // Reset backoff on success
+
+        // Purge old synced events + stale pending events (throttled to
+        // once per hour). purgeOldPending is the safety net for events
+        // that can never be delivered (mirrors Python sync.py).
+        const now = Date.now();
+        if (now - this._lastPurgeMs >= PURGE_INTERVAL_MS) {
+          try {
+            this._buffer.purgeSynced();
+            this._buffer.purgeOldPending();
+          } catch {
+            // Non-fatal — purge will be retried next cycle
+          }
+          this._lastPurgeMs = now;
+        }
+      } else {
+        this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+      }
+    } catch {
+      this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+    } finally {
+      this._pushing = false;
+    }
+  }
+
+  /**
+   * Serialise a single event to its wire dict, applying PII redaction,
+   * customer/project hashing, and the metadata size limit to `details`.
+   *
+   * Mirrors the Python SyncWorker (`sync.py`): redactFields are stripped,
+   * customer_id/project_id in details are SHA-256 hashed when
+   * hashCustomerId is set, and oversized details are replaced with a stub.
+   */
+  private _serializeEvent(event: CostEvent): Record<string, unknown> {
+    const dict = eventToDict(event);
+    let details = dict["details"] as Record<string, unknown> | undefined | null;
+
+    if (details && typeof details === "object") {
+      // Apply PII redaction to details
+      const redactFields = this._options.redactFields;
+      if (redactFields && redactFields.length > 0) {
+        details = redactDict(details, redactFields);
+      }
+
+      // Hash customer-adjacent fields when configured
+      if (this._options.hashCustomerId) {
+        for (const key of ["customer_id", "project_id"]) {
+          const val = details[key];
+          if (typeof val === "string") {
+            details[key] = hashValue(val);
+          }
+        }
+      }
+
+      // Enforce the metadata size limit
+      details = enforceMetadataLimit(details);
+      dict["details"] = details;
+    }
+
+    return dict;
+  }
+
+  /**
+   * Serialise a single task to its wire dict, applying the same PII
+   * protections as `_serializeEvent` does for events: `redactFields` are
+   * stripped from `metadata`, `customer_id`/`project_id` are SHA-256
+   * hashed when `hashCustomerId` is set, and oversized metadata is
+   * replaced with a stub.
+   *
+   * Without this, task `metadata` (which can carry user PII) and the raw
+   * `customer_id`/`project_id` would be POSTed unredacted — a leak the
+   * event path already guards against. Mirrors the Python SyncWorker.
+   */
+  private _serializeTask(task: Task): Record<string, unknown> {
+    const dict = taskToDict(task);
+
+    let metadata = dict["metadata"] as Record<string, unknown> | undefined | null;
+    if (metadata && typeof metadata === "object") {
+      // Strip configured PII fields from task metadata.
+      const redactFields = this._options.redactFields;
+      if (redactFields && redactFields.length > 0) {
+        metadata = redactDict(metadata, redactFields);
+      }
+      // Enforce the metadata size limit.
+      metadata = enforceMetadataLimit(metadata);
+      dict["metadata"] = metadata;
+    }
+
+    // Hash customer/project identifiers when configured.
+    if (this._options.hashCustomerId) {
+      for (const key of ["customer_id", "project_id"]) {
+        const val = dict[key];
+        if (typeof val === "string") {
+          dict[key] = hashValue(val);
+        }
+      }
+    }
+
+    return dict;
+  }
+
+  /**
+   * POST events with automatic batch splitting if payload exceeds size limit.
+   *
+   * Recursively splits the events array in half until each chunk fits within
+   * the SQS payload limit. Tasks are sent with the first chunk only.
+   */
+  private async pushWithSplit(
+    events: CostEvent[],
+    tasks: Task[],
+    depth: number = 0,
+  ): Promise<boolean> {
+    const MAX_DEPTH = 5;
+
+    let payload: string;
+    try {
+      payload = JSON.stringify({
+        events: events.map((e) => this._serializeEvent(e)),
+        tasks: tasks.map((t) => this._serializeTask(t)),
+      });
+    } catch {
+      return false; // Unserializable payload — skip this batch
+    }
+
+    if (payload.length <= MAX_PAYLOAD_BYTES || depth >= MAX_DEPTH) {
+      return this.postRaw(payload);
+    }
+
+    if (events.length <= 1) {
+      // Single event too large — skip it with warning
+      console.warn(
+        `[dexcost] Single event exceeds payload limit (${payload.length} bytes), skipping`,
+      );
+      return true;
+    }
+
+    // Split events in half
+    const mid = Math.floor(events.length / 2);
+    const firstOk = await this.pushWithSplit(
+      events.slice(0, mid),
+      tasks,
+      depth + 1,
+    );
+    const secondOk = await this.pushWithSplit(
+      events.slice(mid),
+      [],
+      depth + 1,
+    );
+    return firstOk && secondOk;
+  }
+
+  /**
+   * POST a pre-serialised JSON payload to the cloud ingest endpoint.
+   *
+   * Returns `true` on 2xx, `false` otherwise.
+   */
+  private async postRaw(body: string): Promise<boolean> {
+    const endpoint = process.env.DEXCOST_ENDPOINT ?? DEFAULT_ENDPOINT;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this._options.apiKey) {
+      headers["Authorization"] = `Bearer ${this._options.apiKey}`;
+    }
+
+    const url = `${endpoint}/v1/ingest`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (response.ok) {
+      return true;
+    }
+
+    if (response.status === 413) {
+      // Permanent error — batch too large, don't retry
+      // This shouldn't happen with pre-split but handle gracefully
+      console.warn("[dexcost] Server returned 413 despite pre-split check");
+      return false;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      // API key rejected — stop sync permanently rather than retrying
+      // a rejected key forever (mirrors Python sync.py).
+      console.error(
+        `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
+      );
+      this._authFailed = true;
+      this.stop();
+      return false;
+    }
+
+    return false;
+  }
+
+  /** Whether sync has been permanently disabled due to a rejected API key. */
+  get authFailed(): boolean {
+    return this._authFailed;
+  }
+}
