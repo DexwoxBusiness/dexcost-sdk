@@ -25,7 +25,7 @@ from typing import Any
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task
+from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -474,7 +474,8 @@ async def _async_call_tool_handler(
         event: Event | None = None
 
         try:
-            result = await wrapped(*args, **kwargs)
+            with suppress_network_event():
+                result = await wrapped(*args, **kwargs)
         except Exception:
             is_error = True
             latency_ms = int((time.perf_counter() - start_time) * 1000)

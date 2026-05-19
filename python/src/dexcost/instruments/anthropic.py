@@ -29,7 +29,7 @@ from typing import Any
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task
+from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -147,10 +147,12 @@ def _sync_create_wrapper(
         start_time = time.perf_counter()
 
         if stream:
-            raw_stream = wrapped(*args, **kwargs)
+            with suppress_network_event():
+                raw_stream = wrapped(*args, **kwargs)
             return _SyncStreamWrapper(raw_stream, start_time)
 
-        response = wrapped(*args, **kwargs)
+        with suppress_network_event():
+            response = wrapped(*args, **kwargs)
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -211,7 +213,8 @@ async def _async_non_stream_handler(
 ) -> Any:
     """Await the async create call and record the response."""
     try:
-        response = await wrapped(*args, **kwargs)
+        with suppress_network_event():
+            response = await wrapped(*args, **kwargs)
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -243,7 +246,8 @@ async def _async_stream_handler(
 ) -> Any:
     """Wrap async streaming to capture usage from the final events."""
     try:
-        raw_stream = await wrapped(*args, **kwargs)
+        with suppress_network_event():
+            raw_stream = await wrapped(*args, **kwargs)
         return _AsyncStreamWrapper(raw_stream, start_time)
     finally:
         if auto_token is not None:
