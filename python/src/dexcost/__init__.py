@@ -139,6 +139,14 @@ def init(
             heuristic retry detection. Defaults to the tracker's retry window.
         retry_heuristic_threshold: Optional confidence threshold (0.0–1.0)
             for flagging an event as a heuristic retry.
+        track_network: Enable or disable network/egress byte capture. Default ``True``.
+        network_event_threshold_bytes: Combined request+response bytes above which
+            an un-cataloged HTTP call emits a ``network`` event. Default 100 KiB
+            (102 400 bytes).
+        network_event_on_error: Emit a ``network`` event for un-cataloged HTTP calls
+            whose response status is >= 400. Default ``True``.
+        network_event_latency_ms: Emit a ``network`` event when call latency exceeds
+            this many milliseconds. ``0`` disables latency-based emission (default).
     """
     global _global_config, _sync_worker, _global_tracker
     _global_config = DexcostConfig(
