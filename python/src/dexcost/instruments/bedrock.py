@@ -31,7 +31,7 @@ from typing import Any
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task
+from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -161,7 +161,8 @@ def _make_api_call_wrapper(
     try:
         start_time = time.perf_counter()
 
-        response = wrapped(*args, **kwargs)
+        with suppress_network_event():
+            response = wrapped(*args, **kwargs)
         api_params = args[1] if len(args) > 1 else kwargs.get("api_params", {})
 
         if streaming:

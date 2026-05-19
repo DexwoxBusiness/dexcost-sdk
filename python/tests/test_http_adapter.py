@@ -117,10 +117,9 @@ class TestTrackHttp:
 
         task = _make_task()
         with task_context(task):
-            # Simulate calling _maybe_record_cost directly
-            from dexcost.adapters.http import _maybe_record_cost
+            from dexcost.adapters.http import _handle_http_call
 
-            _maybe_record_cost("https://api.example.com/v1/query")
+            _handle_http_call("https://api.example.com/v1/query", response=None)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -129,19 +128,28 @@ class TestTrackHttp:
         assert events[0].service_name == "api.example.com"
 
     def test_unmatched_domain_records_unknown(self) -> None:
-        """When the domain has no registered rate, an event with unknown confidence is recorded."""
+        """Un-cataloged domains with a small/no-body response emit no event.
+
+        The old behaviour was to record an ``external_cost $0`` with
+        ``cost_confidence='unknown'`` for every un-cataloged call.  The new
+        behaviour (noise-removal) records bytes into the task counters but only
+        emits a ``network`` event when the call is notable (combined bytes >
+        threshold, HTTP error, or slow).  A no-body request to an unknown
+        domain is below all thresholds → no event.
+        """
         register_domain_rate("api.example.com", cost_usd="0.01")
 
         task = _make_task()
         with task_context(task):
-            from dexcost.adapters.http import _maybe_record_cost
+            from dexcost.adapters.http import _handle_http_call
 
-            _maybe_record_cost("https://unregistered.example.com/v1/query")
+            _handle_http_call("https://unregistered.example.com/v1/query",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=None, latency_ms=0)
 
+        # No event — call was small and successful (below threshold).
         events = get_recorded_events()
-        assert len(events) == 1
-        assert events[0].cost_usd == Decimal("0")
-        assert events[0].cost_confidence == "unknown"
+        assert len(events) == 0
 
     def test_no_task_context_auto_creates_session(self) -> None:
         """Outside a task context, a session is auto-created and event is recorded."""
@@ -150,9 +158,9 @@ class TestTrackHttp:
         # No task context active
         set_current_task(None)
 
-        from dexcost.adapters.http import _maybe_record_cost
+        from dexcost.adapters.http import _handle_http_call
 
-        _maybe_record_cost("https://api.example.com/v1/query")
+        _handle_http_call("https://api.example.com/v1/query", response=None)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -164,9 +172,9 @@ class TestTrackHttp:
 
         task = _make_task()
         with task_context(task):
-            from dexcost.adapters.http import _maybe_record_cost
+            from dexcost.adapters.http import _handle_http_call
 
-            _maybe_record_cost("https://maps.googleapis.com/maps/api/geocode")
+            _handle_http_call("https://maps.googleapis.com/maps/api/geocode", response=None)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -225,9 +233,9 @@ class TestTrackHttp:
 
         task = _make_task()
         with task_context(task):
-            from dexcost.adapters.http import _maybe_record_cost
+            from dexcost.adapters.http import _handle_http_call
 
-            _maybe_record_cost("https://ocr.example.com/process")
+            _handle_http_call("https://ocr.example.com/process", response=None)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -246,7 +254,7 @@ class TestStoragePersistence:
     not only the in-memory _recorded_events list."""
 
     def test_recorded_event_persists_to_storage(self, tmp_path: Any) -> None:
-        from dexcost.adapters.http import _maybe_record_cost, set_storage
+        from dexcost.adapters.http import _handle_http_call, set_storage
         from dexcost.storage.sqlite import SQLiteStorage
 
         storage = SQLiteStorage(db_path=str(tmp_path / "buffer.db"))
@@ -256,7 +264,7 @@ class TestStoragePersistence:
         register_domain_rate("api.example.com", cost_usd="0.01", per="request")
         set_storage(storage)
         try:
-            _maybe_record_cost("https://api.example.com/v1/thing")
+            _handle_http_call("https://api.example.com/v1/thing", response=None)
         finally:
             set_storage(None)
 
@@ -270,7 +278,7 @@ class TestStoragePersistence:
         storage.close()
 
     def test_no_storage_keeps_in_memory_only(self, tmp_path: Any) -> None:
-        from dexcost.adapters.http import _maybe_record_cost, set_storage
+        from dexcost.adapters.http import _handle_http_call, set_storage
         from dexcost.storage.sqlite import SQLiteStorage
 
         storage = SQLiteStorage(db_path=str(tmp_path / "buffer.db"))
@@ -278,7 +286,7 @@ class TestStoragePersistence:
         set_current_task(task)
         register_domain_rate("api.example.com", cost_usd="0.01", per="request")
         set_storage(None)  # explicitly detached
-        _maybe_record_cost("https://api.example.com/v1/thing")
+        _handle_http_call("https://api.example.com/v1/thing", response=None)
 
         assert storage.query_events(task_id=str(task.task_id)) == []
         assert len(get_recorded_events()) == 1

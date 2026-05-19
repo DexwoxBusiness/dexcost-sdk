@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dexcost.adapters.http import (
-    _maybe_record_cost,
+    _handle_http_call,
     clear_domain_rates,
     clear_recorded_events,
     get_recorded_events,
@@ -97,7 +97,7 @@ class TestKnownServiceExtraction:
         response = _make_response(body={"usage": {"credits": 2}, "results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -117,9 +117,9 @@ class TestKnownServiceExtraction:
         )
 
         with task_context(task):
-            _maybe_record_cost(
+            _handle_http_call(
                 "https://my-index.svc.us-east1-gcp.pinecone.io/query",
-                response,
+                response=response,
             )
 
         events = get_recorded_events()
@@ -136,9 +136,9 @@ class TestKnownServiceExtraction:
         response = _make_response(body={"results": [], "status": "OK"})
 
         with task_context(task):
-            _maybe_record_cost(
+            _handle_http_call(
                 "https://maps.googleapis.com/maps/api/geocode/json?address=foo",
-                response,
+                response=response,
             )
 
         events = get_recorded_events()
@@ -153,18 +153,47 @@ class TestKnownServiceExtraction:
 
 
 class TestUnknownDomain:
-    """HTTP calls to unknown domains record with cost_confidence='unknown'."""
+    """HTTP calls to unknown domains: noise-removal means no event for small calls."""
 
-    def test_unknown_domain_records_zero_cost(self) -> None:
+    def test_unknown_domain_small_response_emits_no_event(self) -> None:
+        """Un-cataloged calls with a small body produce no event (noise removal).
+
+        The old ``external_cost $0 / unknown`` event is replaced by nothing
+        when the combined bytes are below the 100 KiB threshold and the
+        response is successful.  Bytes are still recorded in task counters.
+        """
+        from dexcost.adapters.http import _handle_http_call
+
         task = _make_task()
+        # response with no Content-Length → body_len=0 → well below threshold
         response = _make_response(body={"data": "hello"})
 
         with task_context(task):
-            _maybe_record_cost("https://unknown-api.example.com/v1/data", response)
+            _handle_http_call("https://unknown-api.example.com/v1/data",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=response, latency_ms=5)
+
+        # No event — small successful call to un-cataloged domain.
+        events = get_recorded_events()
+        assert len(events) == 0
+
+    def test_unknown_domain_large_response_emits_network_event(self) -> None:
+        """Un-cataloged call above the byte threshold emits a ``network`` event."""
+        from dexcost.adapters.http import _handle_http_call
+
+        task = _make_task()
+        # Simulate a response with Content-Length above the 100 KiB threshold.
+        response = _make_response(body={"data": "x"}, content_length=200_000)
+
+        with task_context(task):
+            _handle_http_call("https://unknown-api.example.com/v1/bulk",
+                              method="GET", request_headers={}, request_body_len=0,
+                              response=response, latency_ms=50)
 
         events = get_recorded_events()
         assert len(events) == 1
         event = events[0]
+        assert event.event_type == "network"
         assert event.cost_usd == Decimal("0")
         assert event.cost_confidence == "unknown"
         assert event.service_name == "unknown-api.example.com"
@@ -183,7 +212,7 @@ class TestAutoSession:
         response = _make_response(body={"results": []})
 
         # No task context active
-        _maybe_record_cost("https://api.tavily.com/search", response)
+        _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -195,8 +224,8 @@ class TestAutoSession:
         response1 = _make_response(body={"api_credits_used": 1})
         response2 = _make_response(body={"api_credits_used": 2})
 
-        _maybe_record_cost("https://api.tavily.com/search", response1)
-        _maybe_record_cost("https://api.tavily.com/search", response2)
+        _handle_http_call("https://api.tavily.com/search", response=response1)
+        _handle_http_call("https://api.tavily.com/search", response=response2)
 
         events = get_recorded_events()
         assert len(events) == 2
@@ -219,7 +248,7 @@ class TestDomainRateOverride:
         response = _make_response(body={"api_credits_used": 3})
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -245,7 +274,7 @@ class TestResponseBodyEdgeCases:
         )
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -262,7 +291,7 @@ class TestResponseBodyEdgeCases:
         )
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -277,7 +306,7 @@ class TestResponseBodyEdgeCases:
         response.json.side_effect = ValueError("Broken JSON")
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -298,7 +327,7 @@ class TestEventFields:
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search?query=test", response)
+            _handle_http_call("https://api.exa.ai/search?query=test", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -309,7 +338,7 @@ class TestEventFields:
         response = _make_response(body={})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search", response)
+            _handle_http_call("https://api.exa.ai/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -321,7 +350,7 @@ class TestEventFields:
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search", response)
+            _handle_http_call("https://api.exa.ai/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1

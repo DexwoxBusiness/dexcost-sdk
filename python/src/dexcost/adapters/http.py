@@ -20,16 +20,19 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
 
 import wrapt
 
-from dexcost.context import get_current_task
+from dexcost.adapters._netbytes import classify_destination, measure_bytes_from_headers
+from dexcost.config import DexcostConfig
+from dexcost.context import get_current_task, is_network_event_suppressed
 from dexcost.models.event import Event
-from dexcost.service_catalog import CostExtractionResult, ServiceCatalog
-from dexcost.session import SessionManager, get_session_manager
+from dexcost.service_catalog import ServiceCatalog
+from dexcost.session import get_session_manager
 
 _log = logging.getLogger(__name__)
 
@@ -61,6 +64,37 @@ _in_patched_call = threading.local()
 
 # Maximum response body size to parse (1 MB)
 _MAX_BODY_SIZE = 1_000_000
+
+# Active config — wired by set_network_config(); falls back to defaults.
+_network_config: DexcostConfig | None = None
+
+# Count of exceptions swallowed by network accounting — surfaced by
+# get_network_error_count() so silent capture failure is observable.
+_network_error_count = 0
+_network_error_lock = threading.Lock()
+
+
+def set_network_config(config: DexcostConfig | None) -> None:
+    """Wire the adapter to the SDK config (thresholds, on/off toggles)."""
+    global _network_config
+    _network_config = config
+
+
+def _cfg() -> DexcostConfig:
+    """Return the wired network config, or a defaults instance if none set."""
+    return _network_config if _network_config is not None else DexcostConfig(storage="local")
+
+
+def get_network_error_count() -> int:
+    """Number of exceptions swallowed by network accounting since reset."""
+    return _network_error_count
+
+
+def reset_network_error_count() -> None:
+    """Reset the swallowed-exception counter (tests / `dexcost status`)."""
+    global _network_error_count
+    with _network_error_lock:
+        _network_error_count = 0
 
 
 # ---------------------------------------------------------------------------
@@ -298,13 +332,21 @@ def _requests_wrapper(
 ) -> Any:
     """wrapt wrapper for ``requests.Session.send``."""
     _in_patched_call.active = True
+    t0 = time.monotonic()
     try:
         response = wrapped(*args, **kwargs)
     finally:
         _in_patched_call.active = False
+    latency_ms = int((time.monotonic() - t0) * 1000)
     if args:
-        url = getattr(args[0], "url", "") or ""
-        _maybe_record_cost(str(url), response)
+        req = args[0]
+        url = str(getattr(req, "url", "") or "")
+        body = getattr(req, "body", None)
+        body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
+        headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
+        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
+                          request_headers=headers, request_body_len=body_len,
+                          response=response, latency_ms=latency_ms)
     return response
 
 
@@ -313,13 +355,21 @@ def _httpx_wrapper(
 ) -> Any:
     """wrapt wrapper for ``httpx.Client.send``."""
     _in_patched_call.active = True
+    t0 = time.monotonic()
     try:
         response = wrapped(*args, **kwargs)
     finally:
         _in_patched_call.active = False
+    latency_ms = int((time.monotonic() - t0) * 1000)
     if args:
-        url = getattr(args[0], "url", "") or ""
-        _maybe_record_cost(str(url), response)
+        req = args[0]
+        url = str(getattr(req, "url", "") or "")
+        content = getattr(req, "content", None)
+        body_len = len(content) if isinstance(content, (bytes, bytearray)) else 0
+        headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
+        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
+                          request_headers=headers, request_body_len=body_len,
+                          response=response, latency_ms=latency_ms)
     return response
 
 
@@ -331,10 +381,14 @@ async def _aiohttp_wrapper(
     All public methods (get, post, put, etc.) funnel through _request.
     Signature: _request(method, str_or_url, ...) -> ClientResponse.
     """
+    t0 = time.monotonic()
     response = await wrapped(*args, **kwargs)
-    # args[1] is str_or_url (the URL)
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    method = str(args[0]) if args else str(kwargs.get("method", "GET"))
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
-    _maybe_record_cost(url, response)
+    # bytes-out is approximate (request-line overhead): no prepared-request object available here
+    _handle_http_call(url, method=method, request_headers={},
+                      request_body_len=0, response=response, latency_ms=latency_ms)
     return response
 
 
@@ -347,13 +401,20 @@ def _botocore_wrapper(
     ``AWSPreparedRequest`` with a ``.url`` attribute.
     """
     _in_patched_call.active = True
+    t0 = time.monotonic()
     try:
         response = wrapped(*args, **kwargs)
     finally:
         _in_patched_call.active = False
+    latency_ms = int((time.monotonic() - t0) * 1000)
     if args:
-        url = getattr(args[0], "url", "") or ""
-        _maybe_record_cost(str(url), response)
+        req = args[0]
+        url = str(getattr(req, "url", "") or "")
+        body = getattr(req, "body", None)
+        body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
+        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
+                          request_headers={}, request_body_len=body_len,
+                          response=response, latency_ms=latency_ms)
     return response
 
 
@@ -371,10 +432,12 @@ def _urllib3_wrapper(
     if getattr(_in_patched_call, "active", False):
         return wrapped(*args, **kwargs)
 
+    t0 = time.monotonic()
     response = wrapped(*args, **kwargs)
+    latency_ms = int((time.monotonic() - t0) * 1000)
 
     # Reconstruct URL from the pool's scheme/host/port + the request path
-    method = args[0] if args else kwargs.get("method", "")
+    req_method = str(args[0]) if args else str(kwargs.get("method", "GET"))
     url_path = args[1] if len(args) > 1 else kwargs.get("url", "")
     scheme = getattr(instance, "scheme", "https")
     host = getattr(instance, "host", "")
@@ -383,8 +446,9 @@ def _urllib3_wrapper(
         full_url = f"{scheme}://{host}:{port}{url_path}"
     else:
         full_url = f"{scheme}://{host}{url_path}"
-
-    _maybe_record_cost(full_url, response)
+    # bytes-out is approximate (request-line overhead): no prepared-request object available here
+    _handle_http_call(full_url, method=req_method, request_headers={},
+                      request_body_len=0, response=response, latency_ms=latency_ms)
     return response
 
 
@@ -445,102 +509,243 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
     return None
 
 
+def _response_body_len(response: Any) -> int:
+    """Best-effort response body length in bytes.
+
+    Uses the ``Content-Length`` header when present; otherwise falls back to
+    the length of an already-materialised body. Never forces a stream read.
+    """
+    headers = _get_response_headers(response)
+    for key, value in headers.items():
+        if key.lower() == "content-length":
+            try:
+                return max(0, int(value))
+            except (ValueError, TypeError):
+                break
+    content = getattr(response, "content", None)
+    if isinstance(content, (bytes, bytearray)):
+        return len(content)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Cost recording logic
 # ---------------------------------------------------------------------------
 
 
-def _maybe_record_cost(url: str, response: Any = None) -> None:
-    """Check URL against domain rates and service catalog, record an event.
+def _handle_http_call(
+    url: str,
+    *,
+    method: str = "GET",
+    request_headers: dict[str, Any] | None = None,
+    request_body_len: int = 0,
+    response: Any = None,
+    latency_ms: int = 0,
+) -> None:
+    """Record cost + network bytes for one instrumented HTTP call.
 
-    Uses the session manager to auto-create a task if none is active.
+    Fail-silent: any exception is swallowed and counted (see
+    get_network_error_count) so a measurement bug never breaks the call.
     """
     try:
-        parsed = urlparse(str(url))
-        domain = parsed.hostname or ""
-    except Exception:
-        domain = ""
-
-    # 1. Check user-registered domain rates first (takes precedence)
-    rate = _domain_rates.get(domain)
-    if rate is not None:
-        task = get_current_task()
-        if task is None:
-            session_mgr = get_session_manager()
-            task = session_mgr.get_or_create_session("http_call", _storage)
-
-        cost_usd: Decimal = rate["cost_usd"]
-        per: str = rate["per"]
-        event = Event(
-            task_id=task.task_id,
-            event_type="external_cost",
-            cost_usd=cost_usd,
-            cost_confidence="exact",
-            pricing_source="rate_registry",
-            service_name=domain,
-            details={"url": url, "per": per},
+        _handle_http_call_inner(
+            url, method, request_headers or {}, request_body_len, response, latency_ms
         )
-        _persist_event(event)
-        return
+    except Exception:  # broad catch intentional: must never break the caller's HTTP call
+        global _network_error_count
+        with _network_error_lock:
+            _network_error_count += 1
+        _log.warning("network capture failed for %s", url, exc_info=True)
 
-    # 2. Check service catalog
-    catalog = get_catalog()
-    entry = catalog.lookup(url)
 
-    # Get response data for extraction
-    response_headers = _get_response_headers(response) if response else {}
-    response_body = _get_response_body(response) if response else None
-
-    if entry is not None:
-        result = catalog.extract_cost(entry, response_headers, response_body)
-
-        # Ensure we have a task (auto-create via session if needed)
-        task = get_current_task()
-        if task is None:
-            session_mgr = get_session_manager()
-            task = session_mgr.get_or_create_session("http_call", _storage)
-
-        if result is not None:
-            event = Event(
-                task_id=task.task_id,
-                event_type="external_cost",
-                cost_usd=result.amount,
-                cost_confidence=result.confidence,
-                pricing_source=result.pricing_source,
-                pricing_version=catalog.catalog_version,
-                service_name=result.service_name,
-                details={"url": url},
-            )
-        else:
-            # Matched catalog entry but couldn't extract cost
-            event = Event(
-                task_id=task.task_id,
-                event_type="external_cost",
-                cost_usd=Decimal("0"),
-                cost_confidence="unknown",
-                pricing_source="service_catalog",
-                service_name=entry.display_name,
-                details={"url": url},
-            )
-        _persist_event(event)
-        return
-
-    # 3. Unknown domain — still record with unknown confidence
+def _resolve_task() -> Any | None:
+    """Return the active task, or an auto-session task, or None."""
     task = get_current_task()
-    if task is None:
-        session_mgr = get_session_manager()
-        task = session_mgr.get_or_create_session("http_call", _storage)
+    if task is not None:
+        return task
+    session_mgr = get_session_manager()
+    return session_mgr.get_or_create_session("http_call", _storage)
 
+
+def _measure_bytes(
+    method: str,
+    url: str,
+    domain: str,
+    protocol: str,
+    request_headers: dict[str, Any],
+    request_body_len: int,
+    response: Any,
+    track_network: bool,
+) -> tuple[int, int, dict[str, str], dict[str, Any]]:
+    """Return (bytes_out, bytes_in, response_headers, byte_details).
+
+    When *track_network* is False, byte measurement is skipped entirely;
+    ``byte_details`` is empty so callers don't embed network fields in events.
+    ``response_headers`` is still extracted in both cases because the catalog
+    path needs it for cost extraction regardless of the toggle.
+    """
+    response_headers = _get_response_headers(response) if response is not None else {}
+    if not track_network:
+        return 0, 0, response_headers, {}
+    bytes_out = measure_bytes_from_headers(method, url, request_headers, request_body_len)
+    response_body_len = _response_body_len(response) if response is not None else 0
+    bytes_in = measure_bytes_from_headers("", "", response_headers, response_body_len)
+    byte_details: dict[str, Any] = {
+        "protocol": protocol,
+        "request_bytes": bytes_out,
+        "response_bytes": bytes_in,
+        "is_internal_traffic": classify_destination(domain),
+    }
+    return bytes_out, bytes_in, response_headers, byte_details
+
+
+def _handle_domain_rate(
+    url: str, domain: str,
+    track_network: bool, bytes_in: int, bytes_out: int,
+    byte_details: dict[str, Any],
+) -> bool:
+    """Handle user-registered domain-rate path. Returns True if handled."""
+    rate = _domain_rates.get(domain)
+    if rate is None:
+        return False
+    task = _resolve_task()
+    if task is None:
+        # Domain is ours (registered rate) but no resolvable task exists — silently
+        # swallow the call.  Consistent with the no-active-task no-op rule; no
+        # orphan rows are created.
+        return True
+    if track_network:
+        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
     event = Event(
-        task_id=task.task_id,
-        event_type="external_cost",
-        cost_usd=Decimal("0"),
-        cost_confidence="unknown",
-        pricing_source="none",
-        service_name=domain,
-        details={"url": url},
+        task_id=task.task_id, event_type="external_cost",
+        cost_usd=rate["cost_usd"], cost_confidence="exact",
+        pricing_source="rate_registry", service_name=domain,
+        details={"url": url, "per": rate["per"], **byte_details},
     )
     _persist_event(event)
+    return True
+
+
+def _handle_catalog_entry(
+    url: str, domain: str,
+    track_network: bool, bytes_in: int, bytes_out: int,
+    response_headers: dict[str, str], response: Any,
+    byte_details: dict[str, Any],
+) -> bool:
+    """Handle service-catalog path. Returns True if handled."""
+    catalog = get_catalog()
+    entry = catalog.lookup(url)
+    if entry is None:
+        return False
+    task = _resolve_task()
+    if task is None:
+        # URL matched the catalog (it's a known service) but no resolvable task
+        # exists — silently swallow the call.  Consistent with the no-active-task
+        # no-op rule; no orphan rows are created.
+        return True
+    if track_network:
+        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    result = catalog.extract_cost(
+        entry, response_headers, _get_response_body(response) if response else None
+    )
+    if result is not None:
+        event = Event(
+            task_id=task.task_id, event_type="external_cost",
+            cost_usd=result.amount, cost_confidence=result.confidence,
+            pricing_source=result.pricing_source,
+            pricing_version=catalog.catalog_version,
+            service_name=result.service_name,
+            details={"url": url, **byte_details},
+        )
+    else:
+        event = Event(
+            task_id=task.task_id, event_type="external_cost",
+            cost_usd=Decimal("0"), cost_confidence="unknown",
+            pricing_source="service_catalog", service_name=entry.display_name,
+            details={"url": url, **byte_details},
+        )
+    _persist_event(event)
+    return True
+
+
+def _handle_uncataloged(
+    url: str, method: str, domain: str,
+    bytes_in: int, bytes_out: int, status_code: int, latency_ms: int,
+    byte_details: dict[str, Any], cfg: DexcostConfig,
+) -> None:
+    """Handle un-cataloged path: record bytes and emit network event if notable.
+
+    Precondition: only called when ``track_network`` is True.  The dispatcher
+    (_handle_http_call_inner) guards with ``if not track_network: return``
+    immediately before invoking this helper, so bytes are recorded
+    unconditionally here without a redundant inner guard.
+    """
+    task = get_current_task()
+    if task is None:
+        return  # anonymous traffic — never create orphan rows
+    task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    if is_network_event_suppressed():
+        return  # the `llm_call` event already represents this call
+    notable = (
+        (bytes_in + bytes_out) > cfg.network_event_threshold_bytes
+        or (cfg.network_event_on_error and status_code >= 400)
+        or (cfg.network_event_latency_ms > 0 and latency_ms > cfg.network_event_latency_ms)
+    )
+    if not notable:
+        return  # counters already updated; below threshold → no event
+
+    event = Event(
+        task_id=task.task_id, event_type="network",
+        cost_usd=Decimal("0"), cost_confidence="unknown",
+        pricing_source=None, service_name=domain,
+        details={"url": url, "method": method, "status_code": status_code, **byte_details},
+    )
+    _persist_event(event)
+
+
+def _handle_http_call_inner(
+    url: str,
+    method: str,
+    request_headers: dict[str, Any],
+    request_body_len: int,
+    response: Any,
+    latency_ms: int,
+) -> None:
+    parsed = urlparse(str(url))
+    domain = parsed.hostname or ""
+    protocol = parsed.scheme or "https"
+
+    cfg = _cfg()
+    track_network = cfg.track_network
+
+    bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
+        method, url, domain, protocol,
+        request_headers, request_body_len, response, track_network,
+    )
+    status_code = int(
+        getattr(response, "status_code", None)
+        or getattr(response, "status", 0)
+        or 0
+    )
+
+    # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
+    if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
+        return
+
+    # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
+    if _handle_catalog_entry(
+        url, domain, track_network, bytes_in, bytes_out,
+        response_headers, response, byte_details,
+    ):
+        return
+
+    # ── 3. un-cataloged: skip entirely when track_network=False ────────────
+    if not track_network:
+        return
+
+    _handle_uncataloged(
+        url, method, domain, bytes_in, bytes_out, status_code, latency_ms, byte_details, cfg,
+    )
 
 
 # Module-level list for events recorded by the HTTP adapter.

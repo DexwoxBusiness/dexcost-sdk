@@ -18,6 +18,7 @@ class EventType(str, Enum):
     EXTERNAL_COST = "external_cost"
     COMPUTE_COST = "compute_cost"
     RETRY_MARKER = "retry_marker"
+    NETWORK = "network"
 
 
 class CostConfidence(str, Enum):

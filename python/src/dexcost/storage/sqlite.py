@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_task_id      TEXT,
     experiment_id       TEXT,
     variant             TEXT,
-    sync_status         TEXT NOT NULL DEFAULT 'pending'
+    sync_status         TEXT NOT NULL DEFAULT 'pending',
+    network_bytes_in    INTEGER NOT NULL DEFAULT 0,
+    network_bytes_out   INTEGER NOT NULL DEFAULT 0,
+    network_call_count  INTEGER NOT NULL DEFAULT 0,
+    network_by_host     TEXT NOT NULL DEFAULT '{"hosts": []}'
 );
 """
 
@@ -240,8 +244,9 @@ class SQLiteStorage:
                     total_input_tokens, total_output_tokens, total_cached_tokens,
                     retry_count, retry_cost_usd, failure_count,
                     customer_id, project_id, parent_task_id,
-                    experiment_id, variant
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    experiment_id, variant,
+                    network_bytes_in, network_bytes_out, network_call_count, network_by_host
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(task.task_id),
                     task.task_type,
@@ -264,6 +269,10 @@ class SQLiteStorage:
                     str(task.parent_task_id) if task.parent_task_id else None,
                     task.experiment_id,
                     task.variant,
+                    task.network_bytes_in,
+                    task.network_bytes_out,
+                    task.network_call_count,
+                    _json_dumps(task.network_by_host),
                 ),
             )
             self._conn.commit()
@@ -283,7 +292,9 @@ class SQLiteStorage:
                     total_input_tokens=?, total_output_tokens=?, total_cached_tokens=?,
                     retry_count=?, retry_cost_usd=?, failure_count=?,
                     customer_id=?, project_id=?, parent_task_id=?,
-                    experiment_id=?, variant=?, sync_status='pending'
+                    experiment_id=?, variant=?,
+                    network_bytes_in=?, network_bytes_out=?, network_call_count=?, network_by_host=?,
+                    sync_status='pending'
                 WHERE task_id=?""",
                 (
                     task.task_type,
@@ -306,6 +317,10 @@ class SQLiteStorage:
                     str(task.parent_task_id) if task.parent_task_id else None,
                     task.experiment_id,
                     task.variant,
+                    task.network_bytes_in,
+                    task.network_bytes_out,
+                    task.network_call_count,
+                    _json_dumps(task.network_by_host),
                     str(task.task_id),
                 ),
             )
@@ -613,6 +628,10 @@ class SQLiteStorage:
             parent_task_id=parent_task_id,
             experiment_id=row["experiment_id"],
             variant=row["variant"],
+            network_bytes_in=row["network_bytes_in"] or 0,
+            network_bytes_out=row["network_bytes_out"] or 0,
+            network_call_count=row["network_call_count"] or 0,
+            network_by_host=_json_loads(row["network_by_host"]) or {"hosts": []},
         )
 
     @staticmethod

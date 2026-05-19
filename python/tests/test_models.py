@@ -34,6 +34,7 @@ class TestEnums:
         assert EventType.EXTERNAL_COST.value == "external_cost"
         assert EventType.COMPUTE_COST.value == "compute_cost"
         assert EventType.RETRY_MARKER.value == "retry_marker"
+        assert EventType.NETWORK.value == "network"
 
     def test_cost_confidence_values(self) -> None:
         assert CostConfidence.EXACT.value == "exact"
@@ -73,6 +74,10 @@ class TestTask:
         assert task.parent_task_id is None
         assert task.total_cost_usd == Decimal("0")
         assert task.retry_count == 0
+        assert task.network_bytes_in == 0
+        assert task.network_bytes_out == 0
+        assert task.network_call_count == 0
+        assert task.network_by_host == {"hosts": []}
         assert task.schema_version == "1"
 
     def test_explicit_creation(self) -> None:

@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from dexcost.network_accountant import NetworkAccountant
+
 
 @dataclass
 class Task:
@@ -58,6 +60,18 @@ class Task:
     retry_cost_usd: Decimal = Decimal("0")
     failure_count: int = 0
 
+    # Network capture (rolled up from instrumented HTTP calls)
+    network_bytes_in: int = 0
+    network_bytes_out: int = 0
+    network_call_count: int = 0
+    network_by_host: dict[str, Any] = field(default_factory=lambda: {"hosts": []})
+
+    # In-memory only — the per-task byte accumulator. Never serialised:
+    # to_dict()/from_dict() do not touch it; a fresh task gets a fresh one.
+    _network: NetworkAccountant = field(
+        init=False, default_factory=NetworkAccountant, compare=False, repr=False
+    )
+
     # Schema contract
     schema_version: str = "1"
 
@@ -89,6 +103,10 @@ class Task:
             "retry_count": self.retry_count,
             "retry_cost_usd": str(self.retry_cost_usd),
             "failure_count": self.failure_count,
+            "network_bytes_in": self.network_bytes_in,
+            "network_bytes_out": self.network_bytes_out,
+            "network_call_count": self.network_call_count,
+            "network_by_host": self.network_by_host,
             "schema_version": self.schema_version,
         }
 
@@ -124,6 +142,10 @@ class Task:
                 retry_count=data["retry_count"],
                 retry_cost_usd=Decimal(data["retry_cost_usd"]),
                 failure_count=data["failure_count"],
+                network_bytes_in=data.get("network_bytes_in", 0),
+                network_bytes_out=data.get("network_bytes_out", 0),
+                network_call_count=data.get("network_call_count", 0),
+                network_by_host=data.get("network_by_host") or {"hosts": []},
                 schema_version=data.get("schema_version", "1"),
             )
         except (KeyError, ValueError, TypeError, decimal.InvalidOperation) as exc:

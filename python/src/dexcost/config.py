@@ -48,6 +48,11 @@ class DexcostConfig:
     redact_fields: list[str] = field(default_factory=list)
     hash_customer_id: bool = False
     environment: str | None = None
+    # Network capture (spec: 2026-05-19-network-capture-design)
+    track_network: bool = True
+    network_event_threshold_bytes: int = 102_400  # 100 KiB; combined req+resp
+    network_event_on_error: bool = True
+    network_event_latency_ms: int = 0  # 0 = latency trigger disabled
 
     _key_type: str | None = field(default=None, init=False, repr=False)
 
