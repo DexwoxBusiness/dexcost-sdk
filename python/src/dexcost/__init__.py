@@ -120,6 +120,10 @@ def init(
     enable_retry_heuristics: bool = False,
     retry_heuristic_window: float | None = None,
     retry_heuristic_threshold: float | None = None,
+    track_network: bool = True,
+    network_event_threshold_bytes: int = 102_400,
+    network_event_on_error: bool = True,
+    network_event_latency_ms: int = 0,
 ) -> DexcostConfig:
     """Initialize dexcost SDK configuration (US-017).
 
@@ -146,6 +150,10 @@ def init(
         redact_fields=redact_fields or [],
         hash_customer_id=hash_customer_id,
         environment=environment,
+        track_network=track_network,
+        network_event_threshold_bytes=network_event_threshold_bytes,
+        network_event_on_error=network_event_on_error,
+        network_event_latency_ms=network_event_latency_ms,
     )
 
     # Dev mode — console output, no cloud push
@@ -202,6 +210,7 @@ def init(
     if track_http:
         from dexcost.adapters.http import (
             get_catalog,
+            set_network_config as _set_network_config,
             set_storage as _set_http_storage,
             track_http as _track_http_fn,
         )
@@ -211,6 +220,9 @@ def init(
         # persisted durably and shipped by the SyncWorker — without this they
         # would only land in the adapter's in-memory list and never sync.
         _set_http_storage(_global_tracker._storage)
+        # Wire the SDK config so the adapter uses the caller's network-capture
+        # settings (thresholds, on/off toggles) rather than hard-coded defaults.
+        _set_network_config(_global_config)
         if service_catalog_url:
             catalog = get_catalog()
             catalog.refresh_from_url(service_catalog_url)
