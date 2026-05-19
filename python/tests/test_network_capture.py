@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -234,7 +235,6 @@ def test_track_network_false_skips_byte_recording_and_events():
 
 def test_track_network_false_still_emits_cataloged_external_cost():
     """Vendor-cost tracking must still fire when track_network=False."""
-    from decimal import Decimal as _D
     http_adapter.set_network_config(DexcostConfig(storage="local", track_network=False))
     task = _task()
     set_current_task(task)
@@ -251,7 +251,7 @@ def test_track_network_false_still_emits_cataloged_external_cost():
     assert len(events) == 1
     ev = events[0]
     assert ev.event_type == "external_cost"
-    assert ev.cost_usd == _D("0.01")
+    assert ev.cost_usd == Decimal("0.01")
 
 
 def test_track_network_true_default_still_records():
@@ -271,4 +271,7 @@ def test_track_network_true_default_still_records():
     events = get_recorded_events()
     assert len(events) == 1
     assert events[0].event_type == "network"
-    assert task._network.finalize()["call_count"] == 1
+    snap = task._network.finalize()
+    assert snap["call_count"] == 1
+    assert snap["bytes_in"] > 0
+    assert snap["bytes_out"] > 0

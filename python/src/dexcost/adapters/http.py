@@ -568,7 +568,6 @@ def _resolve_task() -> Any | None:
 
 
 def _measure_bytes(
-    track_network: bool,
     method: str,
     url: str,
     domain: str,
@@ -576,6 +575,7 @@ def _measure_bytes(
     request_headers: dict[str, Any],
     request_body_len: int,
     response: Any,
+    track_network: bool,
 ) -> tuple[int, int, dict[str, str], dict[str, Any]]:
     """Return (bytes_out, bytes_in, response_headers, byte_details).
 
@@ -610,6 +610,9 @@ def _handle_domain_rate(
         return False
     task = _resolve_task()
     if task is None:
+        # Domain is ours (registered rate) but no resolvable task exists — silently
+        # swallow the call.  Consistent with the no-active-task no-op rule; no
+        # orphan rows are created.
         return True
     if track_network:
         task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
@@ -636,6 +639,9 @@ def _handle_catalog_entry(
         return False
     task = _resolve_task()
     if task is None:
+        # URL matched the catalog (it's a known service) but no resolvable task
+        # exists — silently swallow the call.  Consistent with the no-active-task
+        # no-op rule; no orphan rows are created.
         return True
     if track_network:
         task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
@@ -667,7 +673,13 @@ def _handle_uncataloged(
     bytes_in: int, bytes_out: int, status_code: int, latency_ms: int,
     byte_details: dict[str, Any], cfg: DexcostConfig,
 ) -> None:
-    """Handle un-cataloged path: record bytes and emit network event if notable."""
+    """Handle un-cataloged path: record bytes and emit network event if notable.
+
+    Precondition: only called when ``track_network`` is True.  The dispatcher
+    (_handle_http_call_inner) guards with ``if not track_network: return``
+    immediately before invoking this helper, so bytes are recorded
+    unconditionally here without a redundant inner guard.
+    """
     task = get_current_task()
     if task is None:
         return  # anonymous traffic — never create orphan rows
@@ -681,6 +693,7 @@ def _handle_uncataloged(
     )
     if not notable:
         return  # counters already updated; below threshold → no event
+
     event = Event(
         task_id=task.task_id, event_type="network",
         cost_usd=Decimal("0"), cost_confidence="unknown",
@@ -706,8 +719,8 @@ def _handle_http_call_inner(
     track_network = cfg.track_network
 
     bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
-        track_network, method, url, domain, protocol,
-        request_headers, request_body_len, response,
+        method, url, domain, protocol,
+        request_headers, request_body_len, response, track_network,
     )
     status_code = int(
         getattr(response, "status_code", None)
