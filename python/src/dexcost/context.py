@@ -83,6 +83,14 @@ def set_current_task(task: Task | None) -> contextvars.Token[Task | None]:
 # ---------------------------------------------------------------------------
 # Per-call network-event suppression flag
 # ---------------------------------------------------------------------------
+# Internal API — intentionally NOT re-exported from the top-level `dexcost`
+# package (__init__.py / __all__).  Only two internal modules consume these
+# symbols:
+#   • dexcost.adapters.http  — imports `is_network_event_suppressed` to decide
+#     whether to emit a standalone `network` event for an outbound HTTP call.
+#   • dexcost.instruments.*  — import `suppress_network_event` to wrap the
+#     outbound LLM HTTP call so it does not double-emit (`llm_call` + `network`).
+#
 # When set, the HTTP adapter records bytes for the call but does NOT emit a
 # standalone `network` event — used by the LLM instruments so an LLM API call
 # does not produce both an `llm_call` event and a `network` event.
