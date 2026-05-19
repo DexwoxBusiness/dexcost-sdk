@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dexcost.adapters.http import (
-    _maybe_record_cost,
+    _handle_http_call,
     clear_domain_rates,
     clear_recorded_events,
     get_recorded_events,
@@ -97,7 +97,7 @@ class TestKnownServiceExtraction:
         response = _make_response(body={"usage": {"credits": 2}, "results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -117,9 +117,9 @@ class TestKnownServiceExtraction:
         )
 
         with task_context(task):
-            _maybe_record_cost(
+            _handle_http_call(
                 "https://my-index.svc.us-east1-gcp.pinecone.io/query",
-                response,
+                response=response,
             )
 
         events = get_recorded_events()
@@ -136,9 +136,9 @@ class TestKnownServiceExtraction:
         response = _make_response(body={"results": [], "status": "OK"})
 
         with task_context(task):
-            _maybe_record_cost(
+            _handle_http_call(
                 "https://maps.googleapis.com/maps/api/geocode/json?address=foo",
-                response,
+                response=response,
             )
 
         events = get_recorded_events()
@@ -212,7 +212,7 @@ class TestAutoSession:
         response = _make_response(body={"results": []})
 
         # No task context active
-        _maybe_record_cost("https://api.tavily.com/search", response)
+        _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -224,8 +224,8 @@ class TestAutoSession:
         response1 = _make_response(body={"api_credits_used": 1})
         response2 = _make_response(body={"api_credits_used": 2})
 
-        _maybe_record_cost("https://api.tavily.com/search", response1)
-        _maybe_record_cost("https://api.tavily.com/search", response2)
+        _handle_http_call("https://api.tavily.com/search", response=response1)
+        _handle_http_call("https://api.tavily.com/search", response=response2)
 
         events = get_recorded_events()
         assert len(events) == 2
@@ -248,7 +248,7 @@ class TestDomainRateOverride:
         response = _make_response(body={"api_credits_used": 3})
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -274,7 +274,7 @@ class TestResponseBodyEdgeCases:
         )
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -291,7 +291,7 @@ class TestResponseBodyEdgeCases:
         )
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -306,7 +306,7 @@ class TestResponseBodyEdgeCases:
         response.json.side_effect = ValueError("Broken JSON")
 
         with task_context(task):
-            _maybe_record_cost("https://api.tavily.com/search", response)
+            _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -327,7 +327,7 @@ class TestEventFields:
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search?query=test", response)
+            _handle_http_call("https://api.exa.ai/search?query=test", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -338,7 +338,7 @@ class TestEventFields:
         response = _make_response(body={})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search", response)
+            _handle_http_call("https://api.exa.ai/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -350,7 +350,7 @@ class TestEventFields:
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _maybe_record_cost("https://api.exa.ai/search", response)
+            _handle_http_call("https://api.exa.ai/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1

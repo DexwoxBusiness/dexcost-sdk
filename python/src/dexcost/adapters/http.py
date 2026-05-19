@@ -670,17 +670,6 @@ def _handle_http_call_inner(
     _persist_event(event)
 
 
-def _maybe_record_cost(url: str, response: Any = None) -> None:
-    """Backward-compatible shim — delegates to _handle_http_call.
-
-    .. deprecated::
-        Use :func:`_handle_http_call` directly.  This shim exists only so
-        existing tests that import ``_maybe_record_cost`` continue to work
-        while they are being migrated.
-    """
-    _handle_http_call(url, response=response)
-
-
 # Module-level list for events recorded by the HTTP adapter.
 # In a fully-wired setup, users would use CostTracker which handles storage.
 # This list allows tests and simple setups to verify events were recorded.
