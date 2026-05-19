@@ -32,6 +32,16 @@ class NetworkAccountant:
         self._other = [0, 0, 0]
         self._frozen = False
 
+    def __copy__(self) -> "NetworkAccountant":
+        # threading.Lock is not copyable; a copied task must start a fresh,
+        # empty accountant — it must not share or inherit frozen state.
+        return NetworkAccountant()
+
+    def __deepcopy__(self, memo: dict) -> "NetworkAccountant":
+        # threading.Lock is not picklable/deepcopyable; return a fresh instance
+        # so that deepcopy(task) works and the copy starts with a clean slate.
+        return NetworkAccountant()
+
     def record(self, host: str, bytes_in: int, bytes_out: int) -> None:
         """Add one HTTP call's bytes. No-op once finalized."""
         # Clamp negatives — network bytes can never be negative.

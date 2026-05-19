@@ -69,7 +69,7 @@ class Task:
     # In-memory only — the per-task byte accumulator. Never serialised:
     # to_dict()/from_dict() do not touch it; a fresh task gets a fresh one.
     _network: NetworkAccountant = field(
-        default_factory=NetworkAccountant, compare=False, repr=False
+        init=False, default_factory=NetworkAccountant, compare=False, repr=False
     )
 
     # Schema contract
