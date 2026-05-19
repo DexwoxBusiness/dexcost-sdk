@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 3
+TARGET_SCHEMA_VERSION = 4
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -177,13 +177,15 @@ async def run_pg_migrations_async(conn: Any, current_version: int) -> int:
 
 # ── Migrations ────────────────────────────────────────────────────────
 
+_TASKS_TABLE_INFO = "PRAGMA table_info(tasks)"
+
 
 @register_sqlite_migration(1, 2)
 def _sqlite_v1_to_v2(conn: sqlite3.Connection) -> None:
     """Add experiment_id and variant columns to tasks table (idempotent)."""
     existing = {
         row[1]
-        for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+        for row in conn.execute(_TASKS_TABLE_INFO).fetchall()
     }
     if "experiment_id" not in existing:
         conn.execute("ALTER TABLE tasks ADD COLUMN experiment_id TEXT")
@@ -201,7 +203,7 @@ def _sqlite_v2_to_v3(conn: sqlite3.Connection) -> None:
     """
     existing = {
         row[1]
-        for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+        for row in conn.execute(_TASKS_TABLE_INFO).fetchall()
     }
     if "sync_status" not in existing:
         conn.execute(
@@ -210,3 +212,33 @@ def _sqlite_v2_to_v3(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_sync ON tasks(sync_status, started_at)"
     )
+
+
+@register_sqlite_migration(3, 4)
+def _sqlite_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add network capture columns to tasks table (idempotent).
+
+    Four new columns track egress/ingress byte counts, HTTP call counts,
+    and a per-host JSON breakdown.  Existing rows default to zero / empty
+    so they are valid without a data backfill.
+    """
+    existing = {
+        row[1]
+        for row in conn.execute(_TASKS_TABLE_INFO).fetchall()
+    }
+    if "network_bytes_in" not in existing:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN network_bytes_in INTEGER NOT NULL DEFAULT 0"
+        )
+    if "network_bytes_out" not in existing:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN network_bytes_out INTEGER NOT NULL DEFAULT 0"
+        )
+    if "network_call_count" not in existing:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN network_call_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "network_by_host" not in existing:
+        conn.execute(
+            """ALTER TABLE tasks ADD COLUMN network_by_host TEXT NOT NULL DEFAULT '{"hosts": []}'"""
+        )
