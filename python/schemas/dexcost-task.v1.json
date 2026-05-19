@@ -122,6 +122,21 @@
       "minimum": 0,
       "description": "Number of failed events in this task."
     },
+    "network_bytes_in": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "network_bytes_out": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "network_call_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "network_by_host": {
+      "type": "object"
+    },
     "schema_version": {
       "type": "string",
       "const": "1",
