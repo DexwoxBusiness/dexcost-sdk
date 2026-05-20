@@ -763,6 +763,11 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> SqlResult<Task> {
         parent_task_id: row.get(18)?,
         experiment_id: row.get(19)?,
         variant: row.get(20)?,
+        // Network capture v1 — not yet persisted to SQLite; defaults reapplied on load.
+        network_bytes_in: 0,
+        network_bytes_out: 0,
+        network_call_count: 0,
+        network_by_host: serde_json::json!({"hosts": []}),
         schema_version: "1".to_string(),
     })
 }

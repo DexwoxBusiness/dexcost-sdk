@@ -76,7 +76,22 @@ pub struct Task {
     pub retry_count: i32,
     pub retry_cost_usd: Decimal,
     pub failure_count: i32,
+    // Network capture v1 — bytes-only counters + per-host breakdown.
+    // `network_by_host` is a free-form JSON blob (matches existing pattern)
+    // and defaults to `{"hosts": []}` so legacy payloads round-trip cleanly.
+    #[serde(default)]
+    pub network_bytes_in: i64,
+    #[serde(default)]
+    pub network_bytes_out: i64,
+    #[serde(default)]
+    pub network_call_count: i64,
+    #[serde(default = "default_network_by_host")]
+    pub network_by_host: serde_json::Value,
     pub schema_version: String,
+}
+
+fn default_network_by_host() -> serde_json::Value {
+    serde_json::json!({"hosts": []})
 }
 
 impl Task {
@@ -104,6 +119,10 @@ impl Task {
             retry_count: 0,
             retry_cost_usd: Decimal::ZERO,
             failure_count: 0,
+            network_bytes_in: 0,
+            network_bytes_out: 0,
+            network_call_count: 0,
+            network_by_host: default_network_by_host(),
             schema_version: "1".to_string(),
         }
     }
@@ -133,6 +152,10 @@ impl Task {
             "retry_count": self.retry_count,
             "retry_cost_usd": self.retry_cost_usd.to_string(),
             "failure_count": self.failure_count,
+            "network_bytes_in": self.network_bytes_in,
+            "network_bytes_out": self.network_bytes_out,
+            "network_call_count": self.network_call_count,
+            "network_by_host": self.network_by_host,
             "schema_version": self.schema_version,
         })
     }
@@ -292,5 +315,62 @@ mod tests {
     fn test_event_type_network_round_trip() {
         let parsed: EventType = serde_json::from_str("\"network\"").unwrap();
         assert_eq!(parsed, EventType::Network);
+    }
+
+    #[test]
+    fn test_task_network_field_defaults() {
+        let task = Task::new("x");
+        assert_eq!(task.network_bytes_in, 0);
+        assert_eq!(task.network_bytes_out, 0);
+        assert_eq!(task.network_call_count, 0);
+        assert_eq!(task.network_by_host, serde_json::json!({"hosts": []}));
+    }
+
+    #[test]
+    fn test_task_network_fields_in_to_dict() {
+        let task = Task::new("x");
+        let dict = task.to_dict();
+        assert_eq!(dict["network_bytes_in"], serde_json::json!(0));
+        assert_eq!(dict["network_bytes_out"], serde_json::json!(0));
+        assert_eq!(dict["network_call_count"], serde_json::json!(0));
+        assert_eq!(dict["network_by_host"], serde_json::json!({"hosts": []}));
+    }
+
+    #[test]
+    fn test_task_network_fields_round_trip() {
+        let mut task = Task::new("x");
+        task.network_bytes_in = 4096;
+        task.network_bytes_out = 512;
+        task.network_call_count = 3;
+        task.network_by_host = serde_json::json!({
+            "hosts": [{"host": "a.com", "calls": 3, "bytes_in": 4096, "bytes_out": 512}]
+        });
+        let value = serde_json::to_value(&task).unwrap();
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.network_bytes_in, 4096);
+        assert_eq!(restored.network_bytes_out, 512);
+        assert_eq!(restored.network_call_count, 3);
+        assert_eq!(
+            restored.network_by_host,
+            serde_json::json!({
+                "hosts": [{"host": "a.com", "calls": 3, "bytes_in": 4096, "bytes_out": 512}]
+            })
+        );
+    }
+
+    #[test]
+    fn test_task_network_fields_absent_in_payload_default() {
+        // Legacy payloads without the four network_* keys round-trip with defaults.
+        let mut value = serde_json::to_value(Task::new("x")).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        obj.remove("network_bytes_in");
+        obj.remove("network_bytes_out");
+        obj.remove("network_call_count");
+        obj.remove("network_by_host");
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.network_bytes_in, 0);
+        assert_eq!(restored.network_bytes_out, 0);
+        assert_eq!(restored.network_call_count, 0);
+        assert_eq!(restored.network_by_host, serde_json::json!({"hosts": []}));
     }
 }
