@@ -97,6 +97,19 @@ pub fn log_event(event: &CostEvent, task_type: &str) {
                 task_tag(task_type),
             ));
         }
+        EventType::Network => {
+            let host = event
+                .details
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            print_line(&format!(
+                "\x1b[36m\u{2192}\x1b[0m network  {}  ${}{}",
+                host,
+                cost,
+                task_tag(task_type),
+            ));
+        }
     }
 }
 

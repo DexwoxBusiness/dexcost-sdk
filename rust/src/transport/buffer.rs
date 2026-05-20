@@ -105,6 +105,7 @@ fn event_type_to_str(et: &EventType) -> &'static str {
         EventType::ExternalCost => "external_cost",
         EventType::ComputeCost => "compute_cost",
         EventType::RetryMarker => "retry_marker",
+        EventType::Network => "network",
     }
 }
 
@@ -113,6 +114,7 @@ fn event_type_from_str(s: &str) -> EventType {
         "external_cost" => EventType::ExternalCost,
         "compute_cost" => EventType::ComputeCost,
         "retry_marker" => EventType::RetryMarker,
+        "network" => EventType::Network,
         _ => EventType::LlmCall,
     }
 }

@@ -22,6 +22,7 @@ pub enum EventType {
     ExternalCost,
     ComputeCost,
     RetryMarker,
+    Network,
 }
 
 /// CostConfidence indicates how trustworthy the reported cost is.
@@ -279,5 +280,17 @@ mod tests {
         assert_eq!(val, "\"llm_call\"");
         let val = serde_json::to_string(&EventType::RetryMarker).unwrap();
         assert_eq!(val, "\"retry_marker\"");
+    }
+
+    #[test]
+    fn test_event_type_network_serializes_to_network() {
+        let val = serde_json::to_string(&EventType::Network).unwrap();
+        assert_eq!(val, "\"network\"");
+    }
+
+    #[test]
+    fn test_event_type_network_round_trip() {
+        let parsed: EventType = serde_json::from_str("\"network\"").unwrap();
+        assert_eq!(parsed, EventType::Network);
     }
 }

@@ -69,6 +69,7 @@ pub fn finalize_auto_task(
             EventType::ExternalCost => task.external_cost_usd += ev.cost_usd,
             EventType::ComputeCost => task.compute_cost_usd += ev.cost_usd,
             EventType::RetryMarker => { /* retry markers don't add to category costs */ }
+            EventType::Network => { /* network events are back-filled in Phase B/D */ }
         }
         task.total_cost_usd = task.llm_cost_usd + task.external_cost_usd + task.compute_cost_usd;
 
