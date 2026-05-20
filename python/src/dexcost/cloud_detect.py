@@ -94,11 +94,16 @@ class CloudEnv:
     """Detected cloud environment.
 
     ``source`` is the audit trail: ``"env" | "dmi" | "imds" | "none"``.
+    ``instance_type`` is the IaaS SKU when known (e.g. ``"c7g.xlarge"``,
+    ``"n2-standard-2"``, ``"Standard_D2s_v3"``); compute pricing reads it at
+    task finalize for EC2 / GCE / Azure VM SKU rate resolution (Decision #3 —
+    extracted in the same Phase 2 background thread as the region probe).
     """
 
     provider: str | None
     region: str | None
     source: str
+    instance_type: str | None = None
 
 
 _lock = threading.Lock()
@@ -330,9 +335,23 @@ def _probe_aws() -> CloudEnv | None:
         )
         with urllib.request.urlopen(req2, timeout=_PROBE_TIMEOUT) as resp:
             region = resp.read().decode("ascii").strip()
-        return CloudEnv("aws", region or None, "imds")
     except (urllib.error.URLError, OSError, ValueError):
         return None
+
+    # Decision #3: extract instance-type in the same probe. Wrap separately so
+    # a failure here doesn't lose the region we already resolved.
+    instance_type: str | None = None
+    try:
+        req3 = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-type",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        with urllib.request.urlopen(req3, timeout=_PROBE_TIMEOUT) as resp:
+            instance_type = resp.read().decode("ascii").strip() or None
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+
+    return CloudEnv("aws", region or None, "imds", instance_type=instance_type)
 
 
 def _probe_gcp() -> CloudEnv | None:
@@ -341,6 +360,7 @@ def _probe_gcp() -> CloudEnv | None:
     # /region also returns projects/.../regions/<region>).  Fall back to
     # /zone for the rare case where /region is unavailable.
     headers = {"Metadata-Flavor": "Google"}
+    region: str | None = None
     try:
         req = urllib.request.Request(
             "http://metadata.google.internal/computeMetadata/v1/instance/region",
@@ -349,21 +369,39 @@ def _probe_gcp() -> CloudEnv | None:
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
             region_path = resp.read().decode("ascii").strip()
         region = _gcp_path_to_region(region_path, drop_zone_letter=False)
-        if region:
-            return CloudEnv("gcp", region, "imds")
     except (urllib.error.URLError, OSError, ValueError):
-        pass
+        region = None
 
+    if region is None:
+        try:
+            req = urllib.request.Request(
+                "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+                headers=headers,
+            )
+            with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+                zone = resp.read().decode("ascii").strip()
+            region = _gcp_path_to_region(zone, drop_zone_letter=True)
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+
+    # Decision #3: machine-type lives under /instance/machine-type and shares
+    # the projects/.../machineTypes/<name> path shape — strip the prefix to
+    # get e.g. "n2-standard-2". Fail-silent so a missing endpoint does not
+    # discard the region we already resolved.
+    instance_type: str | None = None
     try:
         req = urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+            "http://metadata.google.internal/computeMetadata/v1/instance/machine-type",
             headers=headers,
         )
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
-            zone = resp.read().decode("ascii").strip()
-        return CloudEnv("gcp", _gcp_path_to_region(zone, drop_zone_letter=True), "imds")
+            machine_path = resp.read().decode("ascii").strip()
+        if machine_path:
+            instance_type = machine_path.rsplit("/", 1)[-1] or None
     except (urllib.error.URLError, OSError, ValueError):
-        return None
+        pass
+
+    return CloudEnv("gcp", region, "imds", instance_type=instance_type)
 
 
 def _probe_azure() -> CloudEnv | None:
@@ -374,8 +412,12 @@ def _probe_azure() -> CloudEnv | None:
         )
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        region = payload.get("compute", {}).get("location") or None
-        return CloudEnv("azure", region, "imds")
+        compute = payload.get("compute", {}) or {}
+        region = compute.get("location") or None
+        # Decision #3: vmSize is already in the same IMDS payload — zero extra
+        # HTTP cost. Returns None when absent (some non-VM Azure runtimes).
+        instance_type = compute.get("vmSize") or None
+        return CloudEnv("azure", region, "imds", instance_type=instance_type)
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return None
 
@@ -507,8 +549,18 @@ def start_background_detection(track_network: bool = True) -> None:
         try:
             env = _run_probe(initial.provider)
             if env.provider is not None:
-                if initial.region and not env.region:
-                    env = CloudEnv(env.provider, initial.region, env.source)
+                # Preserve region from env when IMDS only got the provider, and
+                # preserve instance_type from whichever source has it.
+                region = env.region if env.region else initial.region
+                instance_type = (
+                    env.instance_type
+                    if env.instance_type is not None
+                    else initial.instance_type
+                )
+                env = CloudEnv(
+                    env.provider, region, env.source,
+                    instance_type=instance_type,
+                )
                 _set_result(env)
         except Exception:  # noqa: BLE001 — fail-silent
             _log.warning("cloud_detect background probe failed", exc_info=True)
