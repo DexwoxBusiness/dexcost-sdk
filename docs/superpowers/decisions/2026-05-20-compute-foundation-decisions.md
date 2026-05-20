@@ -188,13 +188,12 @@ Subsystems C (GPU), D (storage), E (catalog updates) inherit these. New subsyste
 
 ## What happens next
 
-§6b research follow-ups are ordered by load-bearing-ness; pricing re-verification is the one item that **must** complete before any code lands.
+§6b research follow-ups are ordered by load-bearing-ness. **Pricing re-verification lives in the implementation plan**, not as a research-doc edit — the research doc is a point-in-time snapshot whose value is the locked decisions, not its rate numbers. The spec doesn't depend on specific rate values (only on the shape of pricing); re-editing the doc to refresh numbers would create a stale-again window before code starts.
 
-1. **Pricing re-verification against live provider docs** — highest silent-error risk if skipped. Re-check every rate cited in the research doc against the live provider page; update the values that will land in `compute_prices.json` before the spec is locked.
-2. **Azure Functions duration measurement per language binding** — confirm via Azure Functions runtime docs for each language (Python, Node, Go) before the Python implementation. Can happen during spec writing; cheaper to verify than to refactor.
-3. **GCP Cloud Functions Gen1 env vars** — confirms the "support if trivial via Gen2/Cloud Run code path" framing. Lower priority because Gen1 is shrinking (full sunset Sep 2026).
-4. **Spec writing:** `docs/superpowers/specs/2026-05-XX-compute-capture-design.md` (capture design) + `docs/superpowers/specs/2026-05-XX-compute-cost-attribution-design.md` (cost math + catalog).
-5. **Plan + implementation:** Python first (mirrors the network capture rollout), then cross-SDK port.
+1. **Azure Functions duration measurement per language binding** — confirm via Azure Functions runtime docs for each language (Python, Node, Go) during spec writing. Cheaper to verify than to refactor.
+2. **GCP Cloud Functions Gen1 env vars** — confirms the "support if trivial via Gen2/Cloud Run code path" framing. Lower priority because Gen1 is shrinking (full sunset Sep 2026).
+3. **Spec writing:** `docs/superpowers/specs/2026-05-XX-compute-capture-design.md` (capture design) + `docs/superpowers/specs/2026-05-XX-compute-cost-attribution-design.md` (cost math + catalog).
+4. **Plan + implementation:** Python first (mirrors the network capture rollout), then cross-SDK port. The Python plan includes a specific task: **"populate `compute_prices.json` with rates re-verified against live provider docs"** — this is where rate freshness lives, with the catalog refresh tooling (§3 of research doc) as the ongoing mechanism.
 
 Cloud Run Admin API field path is moot per Decision #1 staying at option (a) — no follow-up needed.
 
