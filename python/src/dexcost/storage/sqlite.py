@@ -412,7 +412,12 @@ class SQLiteStorage:
             self._conn.commit()
 
     def update_event(self, event: Event) -> None:
-        """Update an existing event (matched by event_id)."""
+        """Update an existing event (matched by event_id).
+
+        Re-marks ``sync_status='pending'`` so any mutation after the row
+        was previously synced is re-pushed by the SyncWorker. Mirrors the
+        behaviour of :meth:`update_task`.
+        """
         with self._lock:
             self._conn.execute(
                 """UPDATE events SET
@@ -421,7 +426,8 @@ class SQLiteStorage:
                     service_name=?, cost_usd=?, latency_ms=?,
                     cost_confidence=?, pricing_source=?, pricing_version=?,
                     is_retry=?, retry_reason=?, retry_of=?,
-                    details=?, timestamp=?
+                    details=?, timestamp=?,
+                    sync_status='pending'
                 WHERE event_id=?""",
                 (
                     event.event_type,
