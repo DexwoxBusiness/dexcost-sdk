@@ -72,55 +72,199 @@ def test_gcp_cloud_run_provider_no_region(monkeypatch):
 def test_no_env_no_dmi_returns_undetected(monkeypatch, tmp_path):
     _reset_module()
     _clear_env(monkeypatch)
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(tmp_path / "nope"),)):
+    with patch("dexcost.cloud_detect._read_dmi", lambda: {}):
         env = detect_now()
     assert env.provider is None
     assert env.region is None
     assert env.source == "none"
 
 
-def test_dmi_amazon_resolves_provider(tmp_path, monkeypatch):
+def _dmi_fixture(tmp_path, monkeypatch, fields: dict[str, str]):
+    """Mock _read_dmi() to return the provided field→value map."""
+    monkeypatch.setattr(
+        "dexcost.cloud_detect._read_dmi", lambda: {k: v.lower() for k, v in fields.items()}
+    )
+
+
+def test_dmi_aws_via_sys_vendor_amazon_ec2(tmp_path, monkeypatch):
+    """Nitro EC2 instances: sys_vendor = 'Amazon EC2'."""
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "board_vendor"
-    dmi.write_text("Amazon EC2\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "Amazon EC2"})
+    env = detect_now()
     assert env.provider == "aws"
     assert env.source == "dmi"
 
 
-def test_dmi_google_resolves_provider(tmp_path, monkeypatch):
+def test_dmi_gcp_via_product_name(tmp_path, monkeypatch):
+    """Canonical GCE signal — product_name='Google Compute Engine'."""
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "board_vendor"
-    dmi.write_text("Google\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(tmp_path, monkeypatch, {"product_name": "Google Compute Engine"})
+    env = detect_now()
     assert env.provider == "gcp"
 
 
-def test_dmi_microsoft_resolves_provider(tmp_path, monkeypatch):
+def test_dmi_azure_via_chassis_asset_tag(tmp_path, monkeypatch):
+    """Canonical Azure signal — chassis_asset_tag is the Azure fingerprint."""
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "board_vendor"
-    dmi.write_text("Microsoft Corporation\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(
+        tmp_path,
+        monkeypatch,
+        {"chassis_asset_tag": "7783-7084-3265-9085-8269-3286-77"},
+    )
+    env = detect_now()
     assert env.provider == "azure"
 
 
-def test_gcp_zone_to_region_strips_trailing_letter():
-    from dexcost.cloud_detect import _gcp_zone_to_region
-    assert _gcp_zone_to_region("projects/123/zones/us-central1-a") == "us-central1"
-    assert _gcp_zone_to_region("us-central1-a") == "us-central1"
-    assert _gcp_zone_to_region("") is None
+def test_dmi_azure_via_sys_vendor_microsoft_corporation(tmp_path, monkeypatch):
+    """Backup Azure signal — sys_vendor='Microsoft Corporation'."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "Microsoft Corporation"})
+    env = detect_now()
+    assert env.provider == "azure"
+
+
+def test_dmi_oci_via_chassis_asset_tag_not_sys_vendor(tmp_path, monkeypatch):
+    """OCI fingerprint is in chassis_asset_tag — NOT sys_vendor (caught the bug)."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    _dmi_fixture(tmp_path, monkeypatch, {"chassis_asset_tag": "OracleCloud.com"})
+    env = detect_now()
+    assert env.provider == "oci"
+
+
+def test_dmi_alibaba_via_product_name(tmp_path, monkeypatch):
+    """Alibaba ECS fingerprint is in product_name — NOT sys_vendor."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    _dmi_fixture(tmp_path, monkeypatch, {"product_name": "Alibaba Cloud ECS"})
+    env = detect_now()
+    assert env.provider == "alibaba"
+
+
+def test_gcp_path_to_region_zone_form():
+    """Zone form: projects/123/zones/us-central1-a → us-central1."""
+    from dexcost.cloud_detect import _gcp_path_to_region
+    assert _gcp_path_to_region(
+        "projects/123/zones/us-central1-a", drop_zone_letter=True
+    ) == "us-central1"
+    assert _gcp_path_to_region(
+        "us-central1-a", drop_zone_letter=True
+    ) == "us-central1"
+    assert _gcp_path_to_region("", drop_zone_letter=True) is None
+
+
+def test_gcp_path_to_region_region_form():
+    """Region form: projects/123/regions/us-central1 → us-central1
+    (no zone-letter strip)."""
+    from dexcost.cloud_detect import _gcp_path_to_region
+    assert _gcp_path_to_region(
+        "projects/123/regions/us-central1", drop_zone_letter=False
+    ) == "us-central1"
+    assert _gcp_path_to_region(
+        "projects/123/regions/europe-west4", drop_zone_letter=False
+    ) == "europe-west4"
+
+
+def test_gcp_probe_prefers_region_endpoint(monkeypatch):
+    """Cloud Run's /zone returns a placeholder — /region is the real signal."""
+    from dexcost import cloud_detect as cd
+
+    calls: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, body):
+            self._body = body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return self._body
+
+    def _fake_urlopen(req, timeout=None):
+        url = req.full_url
+        calls.append(url)
+        if url.endswith("/instance/region"):
+            return _FakeResp(b"projects/12345/regions/europe-west4")
+        raise OSError("zone endpoint should not be hit on Cloud Run")
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    env = cd._probe_gcp()
+    assert env is not None
+    assert env.provider == "gcp"
+    assert env.region == "europe-west4"
+    assert any("/instance/region" in u for u in calls)
+
+
+def test_gcp_probe_falls_back_to_zone_on_region_failure(monkeypatch):
+    """Older GCE images may not have /region — falls back to /zone."""
+    from dexcost import cloud_detect as cd
+
+    class _FakeResp:
+        def __init__(self, body):
+            self._body = body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return self._body
+
+    def _fake_urlopen(req, timeout=None):
+        url = req.full_url
+        if url.endswith("/instance/region"):
+            raise OSError("simulated /region missing")
+        if url.endswith("/instance/zone"):
+            return _FakeResp(b"projects/12345/zones/us-central1-a")
+        raise OSError(f"unexpected url {url}")
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    env = cd._probe_gcp()
+    assert env is not None
+    assert env.region == "us-central1"
+
+
+def test_oci_probe_uses_canonical_region_name(monkeypatch):
+    """OCI must use /canonicalRegionName to get full names (us-phoenix-1),
+    NOT /region which returns abbreviated codes (phx) for some regions.
+    """
+    from dexcost import cloud_detect as cd
+
+    calls: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, body):
+            self._body = body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return self._body
+
+    def _fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        if "/canonicalRegionName" in req.full_url:
+            assert req.headers.get("Authorization") == "Bearer Oracle"
+            return _FakeResp(b"us-phoenix-1")
+        raise OSError(f"wrong endpoint {req.full_url}")
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    env = cd._probe_oci()
+    assert env is not None
+    assert env.provider == "oci"
+    assert env.region == "us-phoenix-1"
+    assert all("/canonicalRegionName" in u for u in calls)
 
 
 def test_init_never_blocks_when_metadata_unreachable(monkeypatch):
     _reset_module()
     _clear_env(monkeypatch)
-    with patch("dexcost.cloud_detect._DMI_PATHS", ()):
+    with patch("dexcost.cloud_detect._read_dmi", lambda: {}):
         t0 = time.perf_counter()
         start_background_detection()
         elapsed = time.perf_counter() - t0
@@ -237,7 +381,7 @@ def test_bare_aws_region_now_classifies_as_aws(monkeypatch):
     _reset_module()
     _clear_env(monkeypatch)
     monkeypatch.setenv("AWS_REGION", "us-east-1")
-    with patch("dexcost.cloud_detect._DMI_PATHS", ()):
+    with patch("dexcost.cloud_detect._read_dmi", lambda: {}):
         env = detect_now()
     assert env.provider == "aws"
     assert env.region == "us-east-1"
@@ -274,54 +418,56 @@ def test_vercel_region_resolves_provider_and_region(monkeypatch):
     assert env.region == "iad1"
 
 
-def test_dmi_oraclecloud_resolves_oci(tmp_path, monkeypatch):
+def test_dmi_digitalocean_via_sys_vendor(tmp_path, monkeypatch):
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "board_vendor"
-    dmi.write_text("OracleCloud.com\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
-    assert env.provider == "oci"
-
-
-def test_dmi_digitalocean_resolves(tmp_path, monkeypatch):
-    _reset_module()
-    _clear_env(monkeypatch)
-    dmi = tmp_path / "sys_vendor"
-    dmi.write_text("DigitalOcean\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "DigitalOcean"})
+    env = detect_now()
     assert env.provider == "digitalocean"
 
 
-def test_dmi_hetzner_resolves(tmp_path, monkeypatch):
+def test_dmi_hetzner_via_sys_vendor(tmp_path, monkeypatch):
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "sys_vendor"
-    dmi.write_text("Hetzner\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "Hetzner"})
+    env = detect_now()
     assert env.provider == "hetzner"
 
 
-def test_dmi_vultr_resolves(tmp_path, monkeypatch):
+def test_dmi_vultr_via_sys_vendor(tmp_path, monkeypatch):
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "sys_vendor"
-    dmi.write_text("Vultr\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "Vultr"})
+    env = detect_now()
     assert env.provider == "vultr"
 
 
-def test_dmi_alibaba_resolves(tmp_path, monkeypatch):
+def test_dmi_canonical_field_wins_over_backup(tmp_path, monkeypatch):
+    """When BOTH canonical and backup signals are present, the canonical wins.
+
+    E.g. a host with chassis_asset_tag="OracleCloud.com" AND
+    sys_vendor="Google" (unlikely, but defensive) should resolve to OCI
+    because the canonical OCI rule fires first in _DMI_RULES.
+    """
     _reset_module()
     _clear_env(monkeypatch)
-    dmi = tmp_path / "board_vendor"
-    dmi.write_text("Alibaba Cloud\n")
-    with patch("dexcost.cloud_detect._DMI_PATHS", (str(dmi),)):
-        env = detect_now()
-    assert env.provider == "alibaba"
+    _dmi_fixture(
+        tmp_path,
+        monkeypatch,
+        {"chassis_asset_tag": "OracleCloud.com", "sys_vendor": "Google"},
+    )
+    env = detect_now()
+    assert env.provider == "oci"
+
+
+def test_dmi_unknown_vendor_returns_none(tmp_path, monkeypatch):
+    """A laptop with sys_vendor='LENOVO' must not be misclassified."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    _dmi_fixture(tmp_path, monkeypatch, {"sys_vendor": "LENOVO"})
+    env = detect_now()
+    assert env.provider is None
+    assert env.source == "none"
 
 
 # ── ML / GPU clouds (zero-egress detection prevents over-attribution) ────

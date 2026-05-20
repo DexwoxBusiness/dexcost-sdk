@@ -42,9 +42,50 @@ from dataclasses import dataclass
 _log = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = 0.25  # seconds — bounds Phase 2 wall time
-_DMI_PATHS: tuple[str, ...] = (
-    "/sys/class/dmi/id/board_vendor",
-    "/sys/class/dmi/id/sys_vendor",
+# DMI files exposed by Linux at /sys/class/dmi/id/.  Each provider has
+# canonical fields per cloud-init's ds-identify; we read all of them and
+# apply per-provider matching rules below.
+_DMI_FIELDS: tuple[str, ...] = (
+    "sys_vendor",
+    "board_vendor",
+    "product_name",
+    "chassis_asset_tag",
+    "bios_vendor",
+    "product_serial",
+)
+# Resolved against /sys/class/dmi/id/<field>.  Tuple of (field, needle,
+# match_mode, provider) where match_mode is "eq" (case-insensitive equality
+# after strip) or "contains" (case-insensitive substring).  Rules are
+# transcribed from cloud-init's ds-identify (canonical) plus provider
+# documentation, verified May 2026.
+_DMI_RULES: tuple[tuple[str, str, str, str], ...] = (
+    # ── Canonical signals (chassis_asset_tag / product_name) — these are
+    # the per-cloud-init ds-identify fingerprints. Listed FIRST so they
+    # win when both a canonical and a backup signal are present on the
+    # same host.
+    ("chassis_asset_tag", "oraclecloud.com", "eq", "oci"),
+    ("chassis_asset_tag", "7783-7084-3265-9085-8269-3286-77", "eq", "azure"),
+    ("product_name", "google compute engine", "eq", "gcp"),
+    ("product_name", "alibaba cloud ecs", "eq", "alibaba"),
+
+    # ── sys_vendor exact matches — providers whose canonical signal IS
+    # sys_vendor per cloud-init.
+    ("sys_vendor", "amazon ec2", "eq", "aws"),
+    ("sys_vendor", "digitalocean", "eq", "digitalocean"),
+    ("sys_vendor", "hetzner", "eq", "hetzner"),
+    ("sys_vendor", "vultr", "eq", "vultr"),
+    ("sys_vendor", "scaleway", "eq", "scaleway"),
+    ("sys_vendor", "microsoft corporation", "eq", "azure"),
+
+    # ── Looser substring backups — older hypervisor generations whose
+    # exact sys_vendor varies. Listed LAST.
+    ("sys_vendor", "amazon", "contains", "aws"),
+    ("sys_vendor", "google", "contains", "gcp"),
+    ("sys_vendor", "alibaba cloud", "contains", "alibaba"),
+    ("sys_vendor", "ovh", "contains", "ovh"),
+)
+_DMI_PATHS: tuple[str, ...] = tuple(
+    f"/sys/class/dmi/id/{field}" for field in _DMI_FIELDS
 )
 
 
@@ -217,34 +258,35 @@ def _detect_env() -> CloudEnv | None:
 # ---------------------------------------------------------------------------
 
 
-# DMI vendor strings — matched against /sys/class/dmi/id/{board,sys}_vendor
-# in lowercase substring form. Sources: dmidecode output samples,
-# upstream cloud-detect library, and provider documentation.
-_DMI_VENDORS: tuple[tuple[str, str], ...] = (
-    ("amazon", "aws"),
-    ("ec2", "aws"),
-    ("google", "gcp"),
-    ("microsoft", "azure"),
-    ("oraclecloud", "oci"),
-    ("digitalocean", "digitalocean"),
-    ("hetzner", "hetzner"),
-    ("vultr", "vultr"),
-    ("alibaba", "alibaba"),
-    ("scaleway", "scaleway"),
-    ("ovh", "ovh"),
-)
+def _read_dmi() -> dict[str, str]:
+    """Read all DMI fields we care about; missing files are silently skipped."""
+    result: dict[str, str] = {}
+    for field in _DMI_FIELDS:
+        try:
+            with open(f"/sys/class/dmi/id/{field}", encoding="utf-8") as f:
+                result[field] = f.read().strip().lower()
+        except OSError:
+            continue
+    return result
 
 
 def _detect_dmi() -> CloudEnv | None:
-    for path in _DMI_PATHS:
-        try:
-            with open(path, encoding="utf-8") as f:
-                value = f.read().strip().lower()
-        except OSError:
+    """Resolve the cloud provider from DMI fields.
+
+    Rules are ordered from most specific to most generic; the first match
+    wins. The canonical signals (chassis_asset_tag, product_name) take
+    precedence over sys_vendor where both are documented (per cloud-init's
+    ds-identify).
+    """
+    dmi = _read_dmi()
+    for field, needle, mode, provider in _DMI_RULES:
+        value = dmi.get(field, "")
+        if not value:
             continue
-        for needle, provider in _DMI_VENDORS:
-            if needle in value:
-                return CloudEnv(provider, None, "dmi")
+        if mode == "eq" and value == needle:
+            return CloudEnv(provider, None, "dmi")
+        if mode == "contains" and needle in value:
+            return CloudEnv(provider, None, "dmi")
     return None
 
 
@@ -253,13 +295,24 @@ def _detect_dmi() -> CloudEnv | None:
 # ---------------------------------------------------------------------------
 
 
-def _gcp_zone_to_region(zone: str) -> str | None:
-    if not zone:
+def _gcp_path_to_region(value: str, drop_zone_letter: bool) -> str | None:
+    """Strip GCP metadata-server response to a bare region.
+
+    Both ``/instance/zone`` (returns ``projects/PROJECT/zones/us-central1-a``)
+    and ``/instance/region`` (returns ``projects/PROJECT/regions/us-central1``)
+    use the same ``projects/.../X/<name>`` shape. ``drop_zone_letter`` strips
+    the trailing ``-<letter>`` from the zone form to yield a region.
+    """
+    if not value:
         return None
-    last = zone.rsplit("/", 1)[-1]
-    if "-" not in last:
+    last = value.rsplit("/", 1)[-1]
+    if not last:
         return None
-    return last.rsplit("-", 1)[0]
+    if drop_zone_letter:
+        if "-" not in last:
+            return None
+        return last.rsplit("-", 1)[0]
+    return last
 
 
 def _probe_aws() -> CloudEnv | None:
@@ -283,14 +336,32 @@ def _probe_aws() -> CloudEnv | None:
 
 
 def _probe_gcp() -> CloudEnv | None:
+    # Try /region first — works on Cloud Run / Cloud Functions Gen2 (which
+    # return a placeholder on /zone) and on GCE VMs (where /zone exists but
+    # /region also returns projects/.../regions/<region>).  Fall back to
+    # /zone for the rare case where /region is unavailable.
+    headers = {"Metadata-Flavor": "Google"}
+    try:
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/region",
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+            region_path = resp.read().decode("ascii").strip()
+        region = _gcp_path_to_region(region_path, drop_zone_letter=False)
+        if region:
+            return CloudEnv("gcp", region, "imds")
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+
     try:
         req = urllib.request.Request(
             "http://metadata.google.internal/computeMetadata/v1/instance/zone",
-            headers={"Metadata-Flavor": "Google"},
+            headers=headers,
         )
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
             zone = resp.read().decode("ascii").strip()
-        return CloudEnv("gcp", _gcp_zone_to_region(zone), "imds")
+        return CloudEnv("gcp", _gcp_path_to_region(zone, drop_zone_letter=True), "imds")
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
@@ -310,11 +381,15 @@ def _probe_azure() -> CloudEnv | None:
 
 
 def _probe_oci() -> CloudEnv | None:
-    # OCI exposes instance metadata at 169.254.169.254/opc/v2/instance/
-    # (v2 requires a bearer token "Authorization: Bearer Oracle"; v1 is open).
+    # OCI IMDSv2 (canonical per docs.oracle.com/.../gettingmetadata.htm):
+    # base http://169.254.169.254/opc/v2/instance/ + "Authorization: Bearer Oracle".
+    # /region returns abbreviated codes (phx, iad) for some regions and full
+    # codes (eu-frankfurt-1) for others — /canonicalRegionName always returns
+    # the FULL identifier (us-phoenix-1, us-ashburn-1, eu-frankfurt-1), which
+    # is what our egress catalog keys are.
     try:
         req = urllib.request.Request(
-            "http://169.254.169.254/opc/v2/instance/region",
+            "http://169.254.169.254/opc/v2/instance/canonicalRegionName",
             headers={"Authorization": "Bearer Oracle"},
         )
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
