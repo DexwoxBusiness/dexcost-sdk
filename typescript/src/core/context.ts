@@ -95,3 +95,33 @@ export function getContext(): DexcostContext | undefined {
 export function clearContext(): void {
   contextStore.enterWith({});
 }
+
+// ---------------------------------------------------------------------------
+// Per-call network-event suppression flag (v1 §5.3 invariant)
+// ---------------------------------------------------------------------------
+//
+// When set, the HTTP adapter still records bytes into the NetworkAccountant
+// but does NOT emit a standalone `network` event. LLM instruments wrap
+// their outbound fetch call inside suppressNetworkEvent(...) so each call
+// produces at most one of {llm_call, external_cost, network} — the v1
+// §5.3 "≤ 1 event per HTTP call" invariant.
+
+const suppressStore = new AsyncLocalStorage<boolean>();
+
+/**
+ * Returns `true` when the current async scope has suppressed `network`
+ * event emission. Bytes are still counted into the accountant; only the
+ * standalone event is withheld.
+ */
+export function isNetworkEventSuppressed(): boolean {
+  return suppressStore.getStore() === true;
+}
+
+/**
+ * Run `fn` (sync or async) inside a scope where `network`-event emission
+ * is suppressed. Used by LLM instruments around their fetch call so the
+ * call doesn't double-emit (llm_call + network).
+ */
+export function suppressNetworkEvent<T>(fn: () => T): T {
+  return suppressStore.run(true, fn);
+}
