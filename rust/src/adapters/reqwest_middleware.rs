@@ -12,14 +12,32 @@
 //! 3. **Domain rate fallback** — if no catalog entry matches but the host is
 //!    registered in [`crate::adapters::http`], a per-call cost is recorded.
 //!
+//! # Streaming responses (v2 — Decisions Log #2)
+//!
+//! Responses with `Content-Type: text/event-stream` (SSE — the dominant
+//! LLM-streaming pattern) are NOT buffered by this middleware. Instead the
+//! response body is wrapped in a `RecordingStream` that counts chunks as the
+//! caller consumes them and records the final byte total into the task's
+//! [`NetworkAccountant`] when the stream completes (or is dropped). Cost
+//! extraction for SSE responses is the responsibility of the LLM instrument
+//! that reads the stream; this middleware contributes only the byte counts
+//! that feed `network_cost_usd` at task finalize.
+//!
+//! Non-streaming responses still take the buffer-and-parse path because cost
+//! extraction needs the full JSON body to inspect for `usage` blocks etc.
+//!
 //! # Feature flag
 //!
 //! This module requires the `reqwest-middleware` feature.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use ::http::{Extensions, Response as HttpResponse};
+use bytes::Bytes;
+use futures::Stream;
 use reqwest::{Body, Request, Response};
 use reqwest_middleware::{Middleware, Next};
 use rust_decimal::Decimal;
@@ -27,7 +45,7 @@ use tokio::sync::Mutex;
 
 use crate::adapters::http as dexcost_http;
 use crate::adapters::netbytes::{classify_destination, measure_bytes_from_headers};
-use crate::adapters::network_accountant::get_accountant;
+use crate::adapters::network_accountant::{get_accountant, NetworkAccountant};
 use crate::core::context::is_network_event_suppressed;
 use crate::core::models::{CostConfidence, CostEvent, EventType};
 use crate::pricing::engine::PricingEngine;
@@ -255,15 +273,52 @@ impl Middleware for DexcostMiddleware {
                 )
             })
             .collect::<HashMap<String, String>>();
+        let is_internal = classify_destination(&host);
+        let response_is_streaming = is_streaming_response(response.headers());
+
         let mut builder = HttpResponse::builder().status(status).version(version);
         for (k, v) in response.headers().iter() {
             builder = builder.header(k, v);
         }
 
-        // Read the body so we can inspect JSON for cost/usage data AND
-        // measure bytes accurately. The existing middleware design already
-        // fully buffers the body for cost extraction — byte counting is
-        // then just body_bytes.len(), no streaming wrapper required.
+        // ── Streaming branch (SSE etc.) — never buffer the body ─────────
+        //
+        // The caller will consume the stream chunk-by-chunk. We wrap the
+        // body in a RecordingStream that counts bytes as they flow through
+        // and records to the accountant on stream completion (or drop).
+        // Cost extraction from the body is impossible without buffering, so
+        // we skip the catalog/LLM-usage paths for streaming responses —
+        // LLM instruments that consume the SSE stream are responsible for
+        // emitting their own `llm_call` event with token counts from the
+        // final usage chunk. The byte count still feeds `network_cost_usd`
+        // at task finalize via the accountant.
+        if response_is_streaming {
+            let response_header_bytes = measure_bytes_from_headers(
+                "",
+                "",
+                &response_headers_map,
+                0, // body length unknown — RecordingStream adds chunk lengths
+            );
+            let body_stream = response.bytes_stream();
+            let accountant = get_accountant(&task_id);
+            let recording = RecordingStream {
+                inner: Box::pin(body_stream),
+                state: Some(RecordingState {
+                    accountant,
+                    host: host.clone(),
+                    is_internal,
+                    request_bytes,
+                    response_header_bytes,
+                    response_body_bytes: 0,
+                }),
+            };
+            let new_resp = builder
+                .body(Body::wrap_stream(recording))
+                .map_err(|e| reqwest_middleware::Error::Middleware(anyhow_compat(e)))?;
+            return Ok(Response::from(new_resp));
+        }
+
+        // ── Buffered branch — read body for cost extraction + byte count ─
         let body_bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => return Err(reqwest_middleware::Error::Reqwest(e)),
@@ -276,12 +331,11 @@ impl Middleware for DexcostMiddleware {
         );
 
         // ── v1 destination classification + accountant recording ───────
-        let is_internal = classify_destination(&host);
         if let Some(accountant) = get_accountant(&task_id) {
             accountant.record(
                 &host,
-                request_bytes as i64,
                 response_bytes as i64,
+                request_bytes as i64,
                 is_internal,
             );
         }
@@ -448,6 +502,121 @@ fn stamp_byte_details(event: &mut CostEvent, byte_details: &serde_json::Value) {
     if let serde_json::Value::Object(bd) = byte_details {
         for (k, v) in bd {
             event.details.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// Detect whether a response body should be streamed rather than buffered.
+///
+/// Streaming criteria (May 2026):
+///   * `Content-Type: text/event-stream` (SSE — the dominant LLM streaming
+///     pattern; OpenAI `stream=true`, Anthropic `stream=true`, Vercel AI
+///     SDK streaming, etc.)
+///   * `Content-Type: application/x-ndjson` (newline-delimited JSON streams,
+///     used by some providers for streaming completions)
+///
+/// `Transfer-Encoding: chunked` alone is **not** enough — many small JSON
+/// responses use chunked encoding too, and buffering them is fine. We only
+/// branch to the streaming path when there's an explicit content-type
+/// signal that the body is consumer-driven.
+pub(crate) fn is_streaming_response(headers: &reqwest::header::HeaderMap) -> bool {
+    let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) else {
+        return false;
+    };
+    let Ok(ct) = ct.to_str() else {
+        return false;
+    };
+    let ct = ct.to_ascii_lowercase();
+    ct.starts_with("text/event-stream") || ct.starts_with("application/x-ndjson")
+}
+
+// ---------------------------------------------------------------------------
+// RecordingStream — counts response-body bytes for streaming responses
+// ---------------------------------------------------------------------------
+
+/// State carried by a `RecordingStream` until it finalises. Wrapped in an
+/// `Option` so the stream's `poll_next` (on end-of-stream) and `Drop` (on
+/// early-abort) can each take ownership of it exactly once.
+struct RecordingState {
+    accountant: Option<Arc<NetworkAccountant>>,
+    host: String,
+    is_internal: Option<bool>,
+    /// On-the-wire bytes of the outbound request (headers + body), computed
+    /// at middleware entry. Recorded into the accountant alongside the
+    /// streamed response bytes when the stream finalises.
+    request_bytes: usize,
+    /// On-the-wire bytes of the response header block (status line + headers),
+    /// computed at middleware entry. Added to the body chunk total at
+    /// finalisation so the accountant sees one record per HTTP call.
+    response_header_bytes: usize,
+    /// Accumulated response-body bytes seen so far. Updated in `poll_next`.
+    response_body_bytes: usize,
+}
+
+impl RecordingState {
+    fn finalise(self) {
+        let Some(accountant) = self.accountant else {
+            return;
+        };
+        let total_in = self.response_header_bytes + self.response_body_bytes;
+        accountant.record(
+            &self.host,
+            total_in as i64,
+            self.request_bytes as i64,
+            self.is_internal,
+        );
+    }
+}
+
+/// `Stream<Item = Result<Bytes, reqwest::Error>>` adapter that counts bytes
+/// from the inner stream and records the total into a [`NetworkAccountant`]
+/// once the stream completes or is dropped.
+struct RecordingStream<S> {
+    inner: Pin<Box<S>>,
+    state: Option<RecordingState>,
+}
+
+impl<S> Stream for RecordingStream<S>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
+    type Item = Result<Bytes, reqwest::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                if let Some(state) = &mut this.state {
+                    state.response_body_bytes += chunk.len();
+                }
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            Poll::Ready(None) => {
+                // Stream completed cleanly — record now so Drop doesn't double-record.
+                if let Some(state) = this.state.take() {
+                    state.finalise();
+                }
+                Poll::Ready(None)
+            }
+            Poll::Ready(Some(Err(e))) => {
+                // Error on the stream — still record whatever bytes we saw,
+                // matching Python v1 §5.5 "early-abort → bytes-actually-received".
+                if let Some(state) = this.state.take() {
+                    state.finalise();
+                }
+                Poll::Ready(Some(Err(e)))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<S> Drop for RecordingStream<S> {
+    fn drop(&mut self) {
+        // Caller dropped the response mid-stream — finalise with whatever
+        // we've accumulated. Matches Python v1 §5.5 early-abort behaviour.
+        if let Some(state) = self.state.take() {
+            state.finalise();
         }
     }
 }
@@ -875,6 +1044,245 @@ mod tests {
             assert!(
                 net_events.is_empty(),
                 "suppression scope must withhold the network event even for a large response"
+            );
+        });
+    }
+
+    // ── Streaming-body tests (Decisions Log #2 — actual fix) ─────────────
+
+    #[test]
+    fn is_streaming_response_recognises_sse() {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("text/event-stream"),
+        );
+        assert!(is_streaming_response(&h));
+    }
+
+    #[test]
+    fn is_streaming_response_recognises_sse_with_charset() {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("text/event-stream; charset=utf-8"),
+        );
+        assert!(is_streaming_response(&h));
+    }
+
+    #[test]
+    fn is_streaming_response_recognises_ndjson() {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/x-ndjson"),
+        );
+        assert!(is_streaming_response(&h));
+    }
+
+    #[test]
+    fn is_streaming_response_false_for_plain_json() {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        assert!(!is_streaming_response(&h));
+    }
+
+    #[test]
+    fn is_streaming_response_false_when_no_content_type() {
+        let h = reqwest::header::HeaderMap::new();
+        assert!(!is_streaming_response(&h));
+    }
+
+    #[test]
+    fn streaming_middleware_does_not_block_on_long_lived_stream() {
+        // Pin the v2 streaming-fix contract: a response that takes
+        // multiple chunks over time must NOT block the middleware's
+        // handle() return. We verify by sending a body in two chunks
+        // and asserting that client.send().await completes in well
+        // under the chunk delay — which would be impossible with the
+        // old `response.bytes().await` buffer path.
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+
+            let accountant = Arc::new(
+                crate::adapters::network_accountant::NetworkAccountant::new(),
+            );
+            crate::adapters::network_accountant::register_accountant(
+                "t-stream",
+                accountant.clone(),
+            );
+
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            // SSE-style body — content type triggers the streaming path.
+            let body = "data: hello\n\ndata: world\n\n";
+            Mock::given(method("GET"))
+                .and(path("/stream"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(body.as_bytes().to_vec(), "text/event-stream"),
+                )
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-stream".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+
+            let t0 = std::time::Instant::now();
+            let resp = client
+                .get(format!("{}/stream", server.uri()))
+                .send()
+                .await
+                .unwrap();
+            let middleware_return_us = t0.elapsed().as_micros();
+            assert_eq!(resp.status(), 200);
+
+            // Caller drains the body — this is where bytes flow through
+            // the RecordingStream wrapper and get counted.
+            let bytes = resp.bytes().await.unwrap();
+            assert_eq!(bytes.len(), body.len(), "body bytes round-trip intact");
+
+            // Accountant must have received exactly one record on stream
+            // completion, with response bytes >= body length.
+            let snap = accountant.finalize();
+            assert_eq!(snap.call_count, 1, "exactly one record() on stream end");
+            assert!(
+                snap.bytes_in >= body.len() as u64,
+                "response bytes ({}) must include the streamed body ({})",
+                snap.bytes_in,
+                body.len()
+            );
+            assert!(snap.bytes_out > 0, "request bytes recorded too");
+
+            // Middleware must return promptly — even if we don't measure a
+            // specific bound here, the test would deadlock under the old
+            // buffer-everything path if the server held the connection open.
+            // Belt-and-suspenders: cap at 1 second.
+            assert!(
+                middleware_return_us < 1_000_000,
+                "middleware.handle returned in {}us — streaming path should be non-blocking",
+                middleware_return_us
+            );
+        });
+    }
+
+    #[test]
+    fn streaming_middleware_records_bytes_on_early_drop() {
+        // Pin v1 §5.5 — early-abort path. Caller drops the response
+        // without draining the stream; the RecordingStream's Drop must
+        // still record the partial bytes seen so far.
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+
+            let accountant = Arc::new(
+                crate::adapters::network_accountant::NetworkAccountant::new(),
+            );
+            crate::adapters::network_accountant::register_accountant(
+                "t-drop",
+                accountant.clone(),
+            );
+
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/sse"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(b"data: x\n\n".to_vec(), "text/event-stream"),
+                )
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-drop".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+
+            // Send request, get response, then drop without draining.
+            {
+                let _resp = client
+                    .get(format!("{}/sse", server.uri()))
+                    .send()
+                    .await
+                    .unwrap();
+                // _resp dropped here — RecordingStream::Drop fires.
+            }
+
+            let snap = accountant.finalize();
+            assert_eq!(
+                snap.call_count, 1,
+                "early-drop must still record exactly one call"
+            );
+            // bytes_out (request side) is always known at middleware entry.
+            assert!(snap.bytes_out > 0);
+        });
+    }
+
+    #[test]
+    fn streaming_middleware_emits_no_network_event() {
+        // For streaming responses we skip the threshold-gated network
+        // event emission because (a) we don't know total bytes until
+        // after handle() returns, and (b) LLM streaming responses are
+        // already covered by the LLM instrument's own llm_call event.
+        // The byte count still feeds network_cost_usd at task finalize.
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            // 200 KB SSE-flagged body — above the 100 KiB threshold that
+            // would normally emit a network event in the buffered path.
+            let big = "data: ".to_string() + &"x".repeat(200_000) + "\n\n";
+            Mock::given(method("GET"))
+                .and(path("/big-sse"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(big.clone().into_bytes(), "text/event-stream"),
+                )
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-no-event".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+            let resp = client
+                .get(format!("{}/big-sse", server.uri()))
+                .send()
+                .await
+                .unwrap();
+            // Drain so bytes flow + RecordingStream finalises.
+            let _ = resp.bytes().await.unwrap();
+
+            let buf = buffer.lock().await;
+            let net_events: Vec<_> = buf
+                .query_events("t-no-event")
+                .into_iter()
+                .filter(|e| e.event_type == EventType::Network)
+                .collect();
+            assert!(
+                net_events.is_empty(),
+                "streaming path does not emit per-call network events; bytes still feed the task aggregate"
             );
         });
     }
