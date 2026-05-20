@@ -104,6 +104,16 @@ function _setResult(env: CloudEnv): void {
   _result = env;
 }
 
+/**
+ * Test-only — force the resolved CloudEnv to a known value. Used by
+ * downstream finalize tests (Phase D Task 10) that need a deterministic
+ * egress rate without actually probing IMDS or reading DMI. The
+ * `_for_tests` suffix marks this as not-public-API.
+ */
+export function _setResultForTests(env: CloudEnv): void {
+  _setResult(env);
+}
+
 // Test-only — reset module state.
 export function _resetCloudDetectForTests(): void {
   _result = { provider: null, region: null, source: "none" };

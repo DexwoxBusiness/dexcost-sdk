@@ -52,6 +52,12 @@ export interface Task {
   llmCostUsd: number;
   externalCostUsd: number;
   computeCostUsd: number;
+  /**
+   * v2 cloud-egress cost in USD, computed at task finalize from the
+   * accountant's canonical external_bytes_out scalar. Distinct from
+   * externalCostUsd (vendor API charges) — see Decision #7.
+   */
+  networkCostUsd: number;
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -110,6 +116,7 @@ export function createTask(overrides: Partial<Task> & { taskId: string }): Task 
     llmCostUsd: 0,
     externalCostUsd: 0,
     computeCostUsd: 0,
+    networkCostUsd: 0,
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -162,6 +169,7 @@ export function taskToDict(task: Task): Record<string, unknown> {
     llm_cost_usd: String(task.llmCostUsd),
     external_cost_usd: String(task.externalCostUsd),
     compute_cost_usd: String(task.computeCostUsd),
+    network_cost_usd: String(task.networkCostUsd),
     total_cost_usd: String(task.totalCostUsd),
     total_input_tokens: task.totalInputTokens,
     total_output_tokens: task.totalOutputTokens,
@@ -258,6 +266,7 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     llmCostUsd: _toNumber(data["llm_cost_usd"]),
     externalCostUsd: _toNumber(data["external_cost_usd"]),
     computeCostUsd: _toNumber(data["compute_cost_usd"]),
+    networkCostUsd: _toNumber(data["network_cost_usd"]),
     totalCostUsd: _toNumber(data["total_cost_usd"]),
     totalInputTokens: _toNumber(data["total_input_tokens"]),
     totalOutputTokens: _toNumber(data["total_output_tokens"]),

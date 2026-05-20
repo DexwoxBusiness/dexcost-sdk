@@ -88,6 +88,7 @@ function rowToEvent(row: EventRow): CostEvent {
     latencyMs: row.latency_ms ?? undefined,
     costConfidence: row.cost_confidence as CostEvent["costConfidence"],
     pricingSource: row.pricing_source as CostEvent["pricingSource"] ?? undefined,
+    pricingVersion: row.pricing_version ?? undefined,
     isRetry: Boolean(row.is_retry),
     retryReason: row.retry_reason ?? undefined,
     retryOf: row.retry_of ?? undefined,
@@ -144,6 +145,7 @@ function rowToTask(row: TaskRow): Task {
     networkBytesOut: 0,
     networkCallCount: 0,
     networkByHost: { hosts: [] },
+    networkCostUsd: 0,
     schemaVersion: "1",
   };
 }

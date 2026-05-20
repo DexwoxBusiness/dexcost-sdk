@@ -10,6 +10,13 @@ import type { Task, CostEvent, EventType, CostConfidence, PricingSource } from "
 import { createTask, createCostEvent } from "./models.js";
 import { getCurrentTask, runWithTask } from "./context.js";
 import { EventBuffer } from "../transport/buffer.js";
+import {
+  NetworkAccountant,
+  registerAccountant,
+  unregisterAccountant,
+} from "../adapters/network-accountant.js";
+import { EgressPricingEngine } from "../pricing/egress-pricing.js";
+import { getCloudEnv } from "../cloud-detect.js";
 import { EventPusher } from "../transport/pusher.js";
 import { PricingEngine } from "../pricing/engine.js";
 import { RateRegistry } from "../pricing/rates.js";
@@ -143,6 +150,11 @@ export class TrackedTask {
     this._task = task;
     this._buffer = buffer;
     this._tracker = tracker;
+    // Register a NetworkAccountant for this task so the patched
+    // globalThis.fetch (which sees only the task_id via AsyncLocalStorage)
+    // can record byte usage via core.getAccountant(taskId).
+    // Unregistered in end().
+    registerAccountant(task.taskId, new NetworkAccountant());
   }
 
   /** The underlying Task data. */
@@ -395,8 +407,120 @@ export class TrackedTask {
     if (status === "failed") {
       this._task.failureCount += 1;
     }
+
+    // ── Network finalize — v1 byte aggregates + v2 egress pricing ────
+    // Mirrors python tracker.py:_aggregate_costs + rust TrackedTask::
+    // finalize_network + go finalizeNetwork. Tier-5 fail-silent: any
+    // throw in the egress block is logged and swallowed so a pricing
+    // bug never breaks task finalization (the task still ships with
+    // v1 + LLM/external/compute costs intact).
+    try {
+      this._finalizeNetwork();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[dexcost] egress cost computation failed for task ${this._task.taskId}:`,
+        err,
+      );
+      this._task.networkCostUsd = 0;
+    }
+
     this._buffer.upsertTask(this._task);
     logTaskComplete(this._task);
+  }
+
+  /**
+   * Snapshot the NetworkAccountant onto the task's v1 fields and (if
+   * a CloudEnv has been resolved) compute v2 egress dollars + back-fill
+   * the cost_pending network events for this task.
+   *
+   * Caller (end) wraps this in a Tier-5 fail-silent shell.
+   */
+  private _finalizeNetwork(): void {
+    // v1 — drain the accountant into task fields. Lookup-then-unregister:
+    // late HTTP calls attributed to this task_id won't find an accountant
+    // (no orphan rows; matches Python frozen-then-snapshot).
+    const accountant = unregisterAccountant(this._task.taskId);
+    if (!accountant) {
+      // No accountant was registered (ad-hoc task creation outside
+      // CostTracker); v1 fields stay at zero.
+      return;
+    }
+    const snapshot = accountant.finalize();
+    this._task.networkBytesIn = snapshot.bytesIn;
+    this._task.networkBytesOut = snapshot.bytesOut;
+    this._task.networkCallCount = snapshot.callCount;
+    this._task.networkByHost = snapshot.byHost as Record<string, unknown>;
+
+    // v2 — egress pricing.
+    const env = getCloudEnv();
+    const engine = new EgressPricingEngine();
+    const rate = engine.resolveRate(env.provider, env.region);
+    const pricingVersion = `egress:${engine.catalogVersion}`;
+
+    // Convert external_bytes_out (number) to GB. Per spec §6.3 — 1 GB
+    // = 10^9 bytes, NOT 2^30. We use plain `number` here because the TS
+    // SDK uses number throughout for cost fields (a pre-existing design
+    // choice); the catalog stores rates as strings (preserved exactness
+    // at rest) and we parseFloat only at the boundary.
+    const ratePerGb = parseFloat(rate.ratePerGb);
+    const networkCostUsd =
+      (snapshot.externalBytesOut / 1_000_000_000) * ratePerGb;
+    this._task.networkCostUsd = networkCostUsd;
+
+    // Stamp per-host egress_cost_usd into network_by_host[].hosts. The
+    // per-host external_bytes_out survives the LIVE_CAP overflow + top-N
+    // cap; sum(per-host egress_cost_usd) == network_cost_usd by
+    // construction (v2 §10.3 property invariant 2).
+    const byHost = this._task.networkByHost as {
+      hosts?: Array<Record<string, unknown>>;
+    };
+    if (Array.isArray(byHost.hosts)) {
+      for (const host of byHost.hosts) {
+        const hostExternal = (host["external_bytes_out"] as number) ?? 0;
+        const hostCost = (hostExternal / 1_000_000_000) * ratePerGb;
+        host["egress_cost_usd"] = String(hostCost);
+      }
+    }
+
+    // v2 §6.4 — back-fill each network event for this task. Walk the
+    // buffer's stored events, find any with details.cost_pending ===
+    // true, compute their cost, strip the marker, and updateEvent to
+    // re-sync.
+    const stored = this._buffer.queryEvents(this._task.taskId);
+    for (const ev of stored) {
+      if (ev.eventType !== "network") continue;
+      if (ev.details?.cost_pending !== true) continue;
+      const respBytes = (ev.details?.response_bytes as number) ?? 0;
+      const reqBytes = (ev.details?.request_bytes as number) ?? 0;
+      const isInternal = ev.details?.is_internal_traffic === true;
+      const billable = isInternal ? 0 : respBytes + reqBytes;
+      const evCost = (billable / 1_000_000_000) * ratePerGb;
+
+      ev.costUsd = evCost;
+      ev.costConfidence = isInternal
+        ? "exact"
+        : (rate.costConfidence as CostConfidence);
+      ev.pricingVersion = pricingVersion;
+      // Strip cost_pending marker so the back-filled event is no longer
+      // "deferred-cost".
+      delete (ev.details as Record<string, unknown>).cost_pending;
+      // Stamp egress_pricing_source so the wire payload carries the v2
+      // source detail (egress_catalog:aws:us-east-1).
+      (ev.details as Record<string, unknown>).egress_pricing_source =
+        isInternal ? "egress_catalog:internal" : rate.pricingSource;
+
+      this._buffer.updateEvent(ev);
+
+      // First-pass total_cost_usd summed this event at 0 (cost_pending);
+      // add the back-filled cost.
+      this._task.totalCostUsd += evCost;
+    }
+
+    // Add network_cost_usd to total — captures every external byte
+    // (cataloged + below-threshold un-cataloged calls included via the
+    // accountant scalar even when they emitted no per-event row).
+    this._task.totalCostUsd += this._task.networkCostUsd;
   }
 
   /**
