@@ -87,6 +87,13 @@ pub struct Task {
     pub network_call_count: i64,
     #[serde(default = "default_network_by_host")]
     pub network_by_host: serde_json::Value,
+    /// In-memory accumulator for HTTP byte usage. Not serialised — each
+    /// deserialised Task gets a fresh accountant. Cloning the Task shares
+    /// the accountant by Arc-refcount, which is the right behaviour during
+    /// storage I/O (no records happen against stored clones) and matches
+    /// Python's `_network` field semantically.
+    #[serde(skip, default)]
+    pub network_accountant: std::sync::Arc<crate::adapters::network_accountant::NetworkAccountant>,
     pub schema_version: String,
 }
 
@@ -123,6 +130,7 @@ impl Task {
             network_bytes_out: 0,
             network_call_count: 0,
             network_by_host: default_network_by_host(),
+            network_accountant: std::sync::Arc::default(),
             schema_version: "1".to_string(),
         }
     }
