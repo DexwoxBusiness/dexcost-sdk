@@ -1,5 +1,6 @@
 pub mod auto_task;
 pub mod cgroup_reader;
+pub mod compute_runtime;
 pub mod context;
 pub mod heuristics;
 pub mod models;
