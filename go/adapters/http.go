@@ -177,9 +177,9 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	// Resolve task + accountant. resolveTaskID never returns the accountant
 	// directly because it's a core helper; we look it up from the registry.
 	taskID, autoTask, ok := resolveTaskID(req)
-	var accountant *NetworkAccountant
+	var accountant *core.NetworkAccountant
 	if ok {
-		accountant = GetAccountant(taskID.String())
+		accountant = core.GetAccountant(taskID.String())
 	}
 
 	// Response header bytes are always knowable (status line + headers).
@@ -646,7 +646,7 @@ func readAndReplaceBodyCounted(resp *http.Response) (map[string]interface{}, io.
 // task accountant, and (for un-cataloged calls) the metadata needed to
 // emit a `network` event at completion.
 type bodyRecorder struct {
-	accountant          *NetworkAccountant
+	accountant          *core.NetworkAccountant
 	host                string
 	requestBytes        int64
 	responseHeaderBytes int64

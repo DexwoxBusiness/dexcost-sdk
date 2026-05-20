@@ -1,10 +1,16 @@
-// Package adapters — NetworkAccountant ports python/src/dexcost/network_
-// accountant.py to Go. One instance lives on each Task as an unserialized
-// field. The HTTP RoundTripper calls Record per call; Finalize is called
-// once at task end. After finalize the accountant is frozen — later
-// Record calls are no-ops, so late-arriving bytes never mutate already-
-// shipped task aggregates.
-package adapters
+// Package core — NetworkAccountant ports python/src/dexcost/network_
+// accountant.py to Go. One instance lives per task as an unserialized
+// in-process accumulator. The HTTP RoundTripper (in adapters/) calls
+// Record per call via the registry below; Finalize is called once at
+// task end by the tracker. After finalize the accountant is frozen —
+// later Record calls are no-ops, so late-arriving bytes never mutate
+// already-shipped task aggregates.
+//
+// Lives in core rather than adapters because the tracker (also in
+// core) needs to reference it on task start/end, and core cannot
+// import adapters (that'd be a circular import — adapters imports
+// core). Mirrors Python's top-level placement of this file.
+package core
 
 import (
 	"sort"
@@ -231,9 +237,10 @@ func UnregisterAccountant(taskID string) *NetworkAccountant {
 	return a
 }
 
-// resetAccountantRegistryForTests clears the entire registry. Internal use
-// only — keeps cross-test isolation without exposing the cleanup surface.
-func resetAccountantRegistryForTests() {
+// ResetAccountantRegistryForTests clears the entire registry. Exported
+// (with the explicit `ForTests` suffix) so cross-package tests in the
+// adapters and integration suites can isolate themselves.
+func ResetAccountantRegistryForTests() {
 	accountantRegistryMu.Lock()
 	defer accountantRegistryMu.Unlock()
 	accountantRegistry = map[string]*NetworkAccountant{}

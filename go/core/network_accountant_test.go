@@ -1,11 +1,14 @@
-package adapters
+package core
 
 import (
 	"fmt"
 	"testing"
 )
 
-// boolPtr lives in netbytes_test.go (Phase A) — re-used here.
+// boolPtr is a tiny test helper for nullable bool literals (Go has no
+// nullable-bool syntax). Mirrors the adapters/netbytes_test.go helper —
+// duplicated here because this file lives in the `core` package.
+func boolPtr(b bool) *bool { return &b }
 
 // --- Basic record + finalize -----------------------------------------------
 
@@ -273,7 +276,7 @@ func TestNetworkAccountant_DefaultIsInternalRoutesBytesAsExternal(t *testing.T) 
 // --- Registry --------------------------------------------------------------
 
 func TestAccountantRegistry_RegisterAndGet(t *testing.T) {
-	resetAccountantRegistryForTests()
+	ResetAccountantRegistryForTests()
 	a := NewNetworkAccountant()
 	RegisterAccountant("t-1", a)
 	got := GetAccountant("t-1")
@@ -283,14 +286,14 @@ func TestAccountantRegistry_RegisterAndGet(t *testing.T) {
 }
 
 func TestAccountantRegistry_GetMissingReturnsNil(t *testing.T) {
-	resetAccountantRegistryForTests()
+	ResetAccountantRegistryForTests()
 	if got := GetAccountant("does-not-exist"); got != nil {
 		t.Fatalf("expected nil for missing task, got %p", got)
 	}
 }
 
 func TestAccountantRegistry_UnregisterReturnsThenRemoves(t *testing.T) {
-	resetAccountantRegistryForTests()
+	ResetAccountantRegistryForTests()
 	a := NewNetworkAccountant()
 	RegisterAccountant("t-1", a)
 	got := UnregisterAccountant("t-1")

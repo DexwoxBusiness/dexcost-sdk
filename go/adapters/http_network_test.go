@@ -33,7 +33,7 @@ func newTaskContext(taskID uuid.UUID) context.Context {
 func TestHTTPAdapter_RecordsBytesIntoRegisteredAccountant(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -42,8 +42,8 @@ func TestHTTPAdapter_RecordsBytesIntoRegisteredAccountant(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	accountant := NewNetworkAccountant()
-	RegisterAccountant(taskID.String(), accountant)
+	accountant := core.NewNetworkAccountant()
+	core.RegisterAccountant(taskID.String(), accountant)
 
 	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/x", nil)
 	resp, err := newClientWithTracking().Do(req)
@@ -71,7 +71,7 @@ func TestHTTPAdapter_RecordsBytesIntoRegisteredAccountant(t *testing.T) {
 func TestHTTPAdapter_UncatalogedAboveThresholdEmitsNetworkEvent(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	// 200 KB body — pushes combined bytes well past the 100 KiB threshold.
 	bigBody := strings.Repeat("x", 200_000)
@@ -82,7 +82,7 @@ func TestHTTPAdapter_UncatalogedAboveThresholdEmitsNetworkEvent(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	RegisterAccountant(taskID.String(), NewNetworkAccountant())
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
 	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/big", nil)
 	resp, err := newClientWithTracking().Do(req)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestHTTPAdapter_UncatalogedAboveThresholdEmitsNetworkEvent(t *testing.T) {
 func TestHTTPAdapter_UncatalogedBelowThresholdNoNetworkEvent(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -128,7 +128,7 @@ func TestHTTPAdapter_UncatalogedBelowThresholdNoNetworkEvent(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	RegisterAccountant(taskID.String(), NewNetworkAccountant())
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
 	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/small", nil)
 	resp, _ := newClientWithTracking().Do(req)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -144,7 +144,7 @@ func TestHTTPAdapter_UncatalogedBelowThresholdNoNetworkEvent(t *testing.T) {
 func TestHTTPAdapter_UncatalogedStatus500EmitsNetworkEvent(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(503)
@@ -153,7 +153,7 @@ func TestHTTPAdapter_UncatalogedStatus500EmitsNetworkEvent(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	RegisterAccountant(taskID.String(), NewNetworkAccountant())
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
 	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/err", nil)
 	resp, _ := newClientWithTracking().Do(req)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -176,7 +176,7 @@ func TestHTTPAdapter_UncatalogedStatus500EmitsNetworkEvent(t *testing.T) {
 func TestHTTPAdapter_SuppressionScopeNoNetworkEvent(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	bigBody := strings.Repeat("x", 200_000)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -186,8 +186,8 @@ func TestHTTPAdapter_SuppressionScopeNoNetworkEvent(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	accountant := NewNetworkAccountant()
-	RegisterAccountant(taskID.String(), accountant)
+	accountant := core.NewNetworkAccountant()
+	core.RegisterAccountant(taskID.String(), accountant)
 
 	// LLM-instrument-style: wrap the request context with the suppression flag.
 	ctx := core.WithSuppressNetworkEvent(newTaskContext(taskID))
@@ -214,7 +214,7 @@ func TestHTTPAdapter_SuppressionScopeNoNetworkEvent(t *testing.T) {
 func TestHTTPAdapter_CatalogPathStampsByteDetails(t *testing.T) {
 	ClearDomainRates()
 	ClearRecordedEvents()
-	resetAccountantRegistryForTests()
+	core.ResetAccountantRegistryForTests()
 
 	// Register a domain rate so we hit Path 1 (deterministic vs catalog).
 	RegisterDomainRate("api.example.com", decimal.RequireFromString("0.01"), "request")
@@ -228,7 +228,7 @@ func TestHTTPAdapter_CatalogPathStampsByteDetails(t *testing.T) {
 	defer server.Close()
 
 	taskID := uuid.New()
-	RegisterAccountant(taskID.String(), NewNetworkAccountant())
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
 	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/x", nil)
 	req.Host = "api.example.com"
 	req.URL.Host = "api.example.com" // domain-rate lookup uses URL.Host
