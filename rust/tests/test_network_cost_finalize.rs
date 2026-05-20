@@ -5,6 +5,7 @@
 //! test_network_cost_invariants.py.
 
 use std::sync::Arc;
+use std::sync::{LazyLock, Mutex as StdMutex};
 
 use rust_decimal::Decimal;
 use tokio::sync::Mutex;
@@ -15,6 +16,19 @@ use dexcost::core::models::{CostEvent, EventType, Task, TaskStatus};
 use dexcost::core::tracker::TrackedTask;
 use dexcost::pricing::engine::PricingEngine;
 use dexcost::transport::buffer::EventBuffer;
+
+// Serialize tests that mutate cloud_detect global state. Without this lock,
+// concurrent `pin_cloud_env` / `pin_no_cloud_env` calls race and produce
+// intermittent failures (the test that expected "aws:us-east-1" sees the
+// "none" pin set by a sibling test).
+static TEST_LOCK: LazyLock<StdMutex<()>> = LazyLock::new(|| StdMutex::new(()));
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    match TEST_LOCK.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
 
 // Helper: fresh buffer + tracked task with a known task_id.
 async fn make_tt() -> (TrackedTask, Arc<Mutex<EventBuffer>>) {
@@ -32,6 +46,7 @@ fn pin_cloud_env(provider: &str, region: &str) {
         provider: Some(provider.to_string()),
         region: Some(region.to_string()),
         source: "env",
+        instance_type: None,
     });
 }
 
@@ -40,11 +55,13 @@ fn pin_no_cloud_env() {
         provider: None,
         region: None,
         source: "none",
+        instance_type: None,
     });
 }
 
 #[tokio::test]
 async fn finalize_computes_network_cost_from_canonical_scalar() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, _buf) = make_tt().await;
 
@@ -63,6 +80,7 @@ async fn finalize_computes_network_cost_from_canonical_scalar() {
 
 #[tokio::test]
 async fn finalize_per_host_egress_cost_in_by_host() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, _buf) = make_tt().await;
 
@@ -82,6 +100,7 @@ async fn finalize_per_host_egress_cost_in_by_host() {
 
 #[tokio::test]
 async fn finalize_internal_host_has_zero_egress_cost() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, _buf) = make_tt().await;
 
@@ -97,6 +116,7 @@ async fn finalize_internal_host_has_zero_egress_cost() {
 
 #[tokio::test]
 async fn finalize_backfills_network_event_cost() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, buf) = make_tt().await;
     let task_id = tt.task().task_id.clone();
@@ -143,6 +163,7 @@ async fn finalize_backfills_network_event_cost() {
 
 #[tokio::test]
 async fn finalize_no_cloud_falls_to_meta_default_rate() {
+    let _g = lock();
     // Tier 3 — no provider detected → universal default $0.09/GB.
     pin_no_cloud_env();
     let (mut tt, _buf) = make_tt().await;
@@ -157,6 +178,7 @@ async fn finalize_no_cloud_falls_to_meta_default_rate() {
 
 #[tokio::test]
 async fn finalize_zero_bytes_yields_zero_cost() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, _buf) = make_tt().await;
     tt.end(TaskStatus::Success).await.unwrap();
@@ -177,6 +199,7 @@ async fn finalize_zero_bytes_yields_zero_cost() {
 /// invariants and silently strips egress, this test catches it.
 #[tokio::test]
 async fn decision_7_dual_invoice_attribution() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     let (mut tt, buf) = make_tt().await;
     let task_id = tt.task().task_id.clone();
@@ -251,6 +274,7 @@ async fn decision_7_dual_invoice_attribution() {
 ///   sum(network_by_host[].egress_cost_usd) == network_cost_usd
 #[tokio::test]
 async fn property_invariants_hold_across_shapes() {
+    let _g = lock();
     pin_cloud_env("aws", "us-east-1");
     for n_hosts in &[1_usize, 5, 20, 100, 1000] {
         for &internal in &[Some(true), Some(false), None] {

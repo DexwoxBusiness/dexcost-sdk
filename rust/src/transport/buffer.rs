@@ -770,6 +770,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> SqlResult<Task> {
         network_by_host: serde_json::json!({"hosts": []}),
         network_cost_usd: rust_decimal::Decimal::ZERO,
         network_accountant: std::sync::Arc::default(),
+        compute: None,
         schema_version: "1".to_string(),
     })
 }

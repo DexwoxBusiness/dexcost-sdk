@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
@@ -34,6 +35,13 @@ pub struct Config {
     /// Optional explicit path for the on-disk SQLite event buffer.
     /// When `None`, the default `~/.dexcost/buffer.db` location is used.
     pub buffer_path: Option<PathBuf>,
+    /// Per-billing-model compute rate overrides keyed by rate name
+    /// (e.g. `{"lambda_request_usd": "0.5"}`). Mirrors the Python
+    /// `compute_billing_overrides` init knob.
+    pub compute_billing_overrides: HashMap<String, String>,
+    /// Opt-in K8s node-aware compute billing (Decision #11). When `false`
+    /// (default), k8s pods bill at the per-vCPU-hour default rate.
+    pub k8s_node_aware: bool,
 }
 
 impl Default for Config {
@@ -49,6 +57,8 @@ impl Default for Config {
             track_http: true,
             service_catalog_url: None,
             buffer_path: None,
+            compute_billing_overrides: HashMap::new(),
+            k8s_node_aware: false,
         }
     }
 }

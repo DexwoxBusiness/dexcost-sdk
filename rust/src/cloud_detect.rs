@@ -58,12 +58,18 @@ const DMI_RULES: &[(&str, &str, &str, &str)] = &[
 pub(crate) const FANOUT_PROBES: &[&str] = &["aws", "gcp", "azure"];
 
 /// Detected cloud environment.
+///
+/// `instance_type` is the IaaS SKU when known (e.g. `"c7g.xlarge"`,
+/// `"n2-standard-2"`, `"Standard_D2s_v3"`); compute pricing reads it at task
+/// finalize for EC2 / GCE / Azure VM SKU rate resolution (Decision #3 — extracted
+/// in the same Phase 2 background probe as the region).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudEnv {
     pub provider: Option<String>,
     pub region: Option<String>,
     /// Audit trail: one of `"env"`, `"dmi"`, `"imds"`, `"none"`.
     pub source: &'static str,
+    pub instance_type: Option<String>,
 }
 
 impl CloudEnv {
@@ -72,6 +78,7 @@ impl CloudEnv {
             provider: None,
             region: None,
             source: "none",
+            instance_type: None,
         }
     }
 }
@@ -139,6 +146,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("modal".into()),
             region: env_nonempty("MODAL_REGION"),
             source: "env",
+            instance_type: None,
         });
     }
     // RunPod
@@ -147,6 +155,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("runpod".into()),
             region: env_nonempty("RUNPOD_DC_ID"),
             source: "env",
+            instance_type: None,
         });
     }
     // Render
@@ -155,6 +164,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("render".into()),
             region: None,
             source: "env",
+            instance_type: None,
         });
     }
     // Railway
@@ -165,6 +175,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("railway".into()),
             region: env_nonempty("RAILWAY_REPLICA_REGION"),
             source: "env",
+            instance_type: None,
         });
     }
     // Heroku
@@ -173,6 +184,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("heroku".into()),
             region: None,
             source: "env",
+            instance_type: None,
         });
     }
     // Koyeb
@@ -181,6 +193,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("koyeb".into()),
             region: env_nonempty("KOYEB_REGION"),
             source: "env",
+            instance_type: None,
         });
     }
     // Fly
@@ -189,6 +202,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("fly".into()),
             region: env_nonempty("FLY_REGION"),
             source: "env",
+            instance_type: None,
         });
     }
     // Vercel
@@ -197,6 +211,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("vercel".into()),
             region: env_nonempty("VERCEL_REGION"),
             source: "env",
+            instance_type: None,
         });
     }
     // AWS
@@ -212,6 +227,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("aws".into()),
             region,
             source: "env",
+            instance_type: None,
         });
     }
     // Azure
@@ -224,6 +240,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("azure".into()),
             region,
             source: "env",
+            instance_type: None,
         });
     }
     // GCP
@@ -237,6 +254,7 @@ fn detect_env() -> Option<CloudEnv> {
             provider: Some("gcp".into()),
             region: None,
             source: "env",
+            instance_type: None,
         });
     }
     None
@@ -280,6 +298,7 @@ fn detect_dmi() -> Option<CloudEnv> {
                 provider: Some(provider.to_string()),
                 region: None,
                 source: "dmi",
+                instance_type: None,
             });
         }
     }
@@ -329,22 +348,36 @@ fn probe_aws() -> Option<CloudEnv> {
         .ok()?;
     let region = client
         .get("http://169.254.169.254/latest/meta-data/placement/region")
-        .header("X-aws-ec2-metadata-token", token)
+        .header("X-aws-ec2-metadata-token", token.clone())
         .send()
         .ok()?
         .text()
         .ok()?
         .trim()
         .to_string();
+
+    // Decision #3: extract instance-type with the same IMDSv2 token. Wrap
+    // separately so a failure here doesn't lose the resolved region.
+    let instance_type = client
+        .get("http://169.254.169.254/latest/meta-data/instance-type")
+        .header("X-aws-ec2-metadata-token", token)
+        .send()
+        .ok()
+        .and_then(|r| r.text().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     Some(CloudEnv {
         provider: Some("aws".into()),
         region: if region.is_empty() { None } else { Some(region) },
         source: "imds",
+        instance_type,
     })
 }
 
 fn probe_gcp() -> Option<CloudEnv> {
     let client = http_client()?;
+    let mut region: Option<String> = None;
     // /region first (Cloud Run / Cloud Functions Gen2)
     if let Ok(resp) = client
         .get("http://metadata.google.internal/computeMetadata/v1/instance/region")
@@ -352,27 +385,44 @@ fn probe_gcp() -> Option<CloudEnv> {
         .send()
     {
         if let Ok(body) = resp.text() {
-            if let Some(region) = gcp_path_to_region(body.trim(), false) {
-                return Some(CloudEnv {
-                    provider: Some("gcp".into()),
-                    region: Some(region),
-                    source: "imds",
-                });
-            }
+            region = gcp_path_to_region(body.trim(), false);
         }
     }
-    // Fallback /zone (older GCE)
-    let body = client
-        .get("http://metadata.google.internal/computeMetadata/v1/instance/zone")
+    if region.is_none() {
+        // Fallback /zone (older GCE)
+        let body = client
+            .get("http://metadata.google.internal/computeMetadata/v1/instance/zone")
+            .header("Metadata-Flavor", "Google")
+            .send()
+            .ok()?
+            .text()
+            .ok()?;
+        region = gcp_path_to_region(body.trim(), true);
+    }
+
+    // Decision #3: machine-type at /instance/machine-type — strip the
+    // projects/.../machineTypes/<name> prefix. Fail-silent.
+    let instance_type = client
+        .get("http://metadata.google.internal/computeMetadata/v1/instance/machine-type")
         .header("Metadata-Flavor", "Google")
         .send()
-        .ok()?
-        .text()
-        .ok()?;
+        .ok()
+        .and_then(|r| r.text().ok())
+        .and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.rsplit('/').next().map(|x| x.to_string())
+            }
+        })
+        .filter(|s| !s.is_empty());
+
     Some(CloudEnv {
         provider: Some("gcp".into()),
-        region: gcp_path_to_region(body.trim(), true),
+        region,
         source: "imds",
+        instance_type,
     })
 }
 
@@ -386,16 +436,23 @@ fn probe_azure() -> Option<CloudEnv> {
         .text()
         .ok()?;
     let payload: Value = serde_json::from_str(&body).ok()?;
-    let region = payload
-        .get("compute")
+    let compute = payload.get("compute");
+    let region = compute
         .and_then(|c| c.get("location"))
         .and_then(|l| l.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    // Decision #3: vmSize is already in the same payload — zero extra HTTP.
+    let instance_type = compute
+        .and_then(|c| c.get("vmSize"))
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty());
     Some(CloudEnv {
         provider: Some("azure".into()),
         region,
         source: "imds",
+        instance_type,
     })
 }
 
@@ -414,6 +471,7 @@ fn probe_oci() -> Option<CloudEnv> {
         provider: Some("oci".into()),
         region: if region.is_empty() { None } else { Some(region) },
         source: "imds",
+        instance_type: None,
     })
 }
 
@@ -431,6 +489,7 @@ fn probe_digitalocean() -> Option<CloudEnv> {
         provider: Some("digitalocean".into()),
         region: if region.is_empty() { None } else { Some(region) },
         source: "imds",
+        instance_type: None,
     })
 }
 
@@ -448,6 +507,7 @@ fn probe_alibaba() -> Option<CloudEnv> {
         provider: Some("alibaba".into()),
         region: if region.is_empty() { None } else { Some(region) },
         source: "imds",
+        instance_type: None,
     })
 }
 
@@ -480,6 +540,7 @@ pub(crate) fn run_probe(provider_hint: Option<&str>) -> CloudEnv {
                 provider: Some(hint.to_string()),
                 region: None,
                 source: "imds",
+                instance_type: None,
             };
         }
     }
@@ -549,19 +610,30 @@ pub fn start_background_detection(track_network: bool) {
 
     let hint = initial.provider.clone();
     let initial_region = initial.region.clone();
+    let initial_instance_type = initial.instance_type.clone();
     let handle = thread::Builder::new()
         .name("dexcost-cloud-detect".to_string())
         .spawn(move || {
             let env = run_probe(hint.as_deref());
             if env.provider.is_some() {
-                let final_env = if initial_region.is_some() && env.region.is_none() {
-                    CloudEnv {
-                        provider: env.provider,
-                        region: initial_region,
-                        source: env.source,
-                    }
+                // Preserve region from env when IMDS only got the provider,
+                // and preserve instance_type from whichever source has it
+                // (mirrors Python _background).
+                let region = if env.region.is_some() {
+                    env.region
                 } else {
-                    env
+                    initial_region
+                };
+                let instance_type = if env.instance_type.is_some() {
+                    env.instance_type
+                } else {
+                    initial_instance_type
+                };
+                let final_env = CloudEnv {
+                    provider: env.provider,
+                    region,
+                    source: env.source,
+                    instance_type,
                 };
                 set_result(final_env);
             }
@@ -1196,6 +1268,7 @@ mod tests {
                 provider: Some("oci".into()),
                 region: Some("us-ashburn-1".into()),
                 source: "imds",
+                instance_type: None,
             })
         });
         let aws_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1223,5 +1296,120 @@ mod tests {
         let env = detect_now();
         // Modal $0 egress beats AWS $0.09/GB attribution.
         assert_eq!(env.provider.as_deref(), Some("modal"));
+    }
+
+    // ---------------------------------------------------------------- Decision #3: instance_type
+
+    #[test]
+    fn test_cloud_env_struct_carries_instance_type() {
+        // The struct exposes instance_type so compute pricing can resolve EC2/GCE/Azure VM SKU rates.
+        let e = CloudEnv {
+            provider: Some("aws".into()),
+            region: Some("us-east-1".into()),
+            source: "imds",
+            instance_type: Some("c7g.xlarge".into()),
+        };
+        assert_eq!(e.instance_type.as_deref(), Some("c7g.xlarge"));
+    }
+
+    #[test]
+    fn test_cloud_env_none_has_no_instance_type() {
+        let e = CloudEnv::none();
+        assert!(e.instance_type.is_none());
+    }
+
+    #[test]
+    fn test_aws_probe_override_can_return_instance_type() {
+        let _g = lock();
+        full_reset();
+        set_probe_override_for_tests("aws", || {
+            Some(CloudEnv {
+                provider: Some("aws".into()),
+                region: Some("us-east-1".into()),
+                source: "imds",
+                instance_type: Some("c7g.xlarge".into()),
+            })
+        });
+        let env = run_probe(Some("aws"));
+        assert_eq!(env.provider.as_deref(), Some("aws"));
+        assert_eq!(env.instance_type.as_deref(), Some("c7g.xlarge"));
+    }
+
+    #[test]
+    fn test_gcp_probe_override_can_return_machine_type() {
+        let _g = lock();
+        full_reset();
+        set_probe_override_for_tests("gcp", || {
+            Some(CloudEnv {
+                provider: Some("gcp".into()),
+                region: Some("us-central1".into()),
+                source: "imds",
+                instance_type: Some("n2-standard-2".into()),
+            })
+        });
+        let env = run_probe(Some("gcp"));
+        assert_eq!(env.instance_type.as_deref(), Some("n2-standard-2"));
+    }
+
+    #[test]
+    fn test_azure_probe_override_can_return_vm_size() {
+        let _g = lock();
+        full_reset();
+        set_probe_override_for_tests("azure", || {
+            Some(CloudEnv {
+                provider: Some("azure".into()),
+                region: Some("eastus".into()),
+                source: "imds",
+                instance_type: Some("Standard_D2s_v3".into()),
+            })
+        });
+        let env = run_probe(Some("azure"));
+        assert_eq!(env.instance_type.as_deref(), Some("Standard_D2s_v3"));
+    }
+
+    #[test]
+    fn test_aws_probe_failure_in_instance_type_keeps_region() {
+        // probe returns region-only — instance_type extraction is optional.
+        let _g = lock();
+        full_reset();
+        set_probe_override_for_tests("aws", || {
+            Some(CloudEnv {
+                provider: Some("aws".into()),
+                region: Some("us-east-1".into()),
+                source: "imds",
+                instance_type: None,
+            })
+        });
+        let env = run_probe(Some("aws"));
+        assert_eq!(env.region.as_deref(), Some("us-east-1"));
+        assert!(env.instance_type.is_none());
+    }
+
+    #[test]
+    fn test_azure_probe_missing_vm_size_keeps_region() {
+        let _g = lock();
+        full_reset();
+        set_probe_override_for_tests("azure", || {
+            Some(CloudEnv {
+                provider: Some("azure".into()),
+                region: Some("eastus".into()),
+                source: "imds",
+                instance_type: None,
+            })
+        });
+        let env = run_probe(Some("azure"));
+        assert_eq!(env.region.as_deref(), Some("eastus"));
+        assert!(env.instance_type.is_none());
+    }
+
+    #[test]
+    fn test_env_phase_preserves_no_instance_type() {
+        // Env-var detection never resolves instance_type (only IMDS does).
+        let _g = lock();
+        full_reset();
+        set_env("AWS_LAMBDA_FUNCTION_NAME", "my-fn");
+        set_env("AWS_REGION", "us-east-1");
+        let env = detect_now();
+        assert!(env.instance_type.is_none());
     }
 }
