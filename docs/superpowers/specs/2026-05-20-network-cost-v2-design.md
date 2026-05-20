@@ -79,6 +79,28 @@ future maintainer sees *why* without reconstructing the reasoning.
    This produces conservative *over*-attribution, never a hidden undercount
    (see §4).
 
+7. **Cataloged vendor calls contribute to both `external_cost_usd` and
+   `network_cost_usd` — by design, not double-counting.** A single HTTP call to
+   a cataloged vendor (Pinecone, Firecrawl, an LLM provider, etc.) generates
+   **two distinct real-world invoices** that the customer actually pays:
+
+   - The **vendor's** per-request / per-token / per-unit charge — captured on
+     the `external_cost` (or `llm_call`) event's `cost_usd` and aggregated into
+     `external_cost_usd` (or `llm_cost_usd`).
+   - The **cloud's** egress charge for the bytes that traversed the customer's
+     VPC boundary to reach that vendor — aggregated into `network_cost_usd`.
+
+   Pinecone's bill and AWS's egress bill do not refund each other; a 50 MB
+   Firecrawl scrape generates both a Firecrawl per-request charge *and* an AWS
+   egress charge on the response bytes. Surfacing both is the whole point —
+   *not* surfacing the egress half would silently hide the #2 industry-research
+   cost driver on exactly the traffic the SDK already sees most clearly. The
+   dual attribution is therefore the **structurally correct** outcome, and
+   `total_cost_usd = llm + external + compute + network` adds the two invoices
+   the customer truly pays. See §3.3 for the per-call event-vs-cost invariants
+   that make this work without record duplication, and §10.2 for the test that
+   pins this contract.
+
 ---
 
 ## 3. Architecture & Data Model
@@ -116,6 +138,30 @@ future maintainer sees *why* without reconstructing the reasoning.
 The only event-level dollar amount for egress is on the `network` event — and a
 `network` event *is* purely an egress record, so its `cost_usd` is
 unambiguous. `llm_call` / `external_cost` events never carry egress dollars.
+
+**Two invariants — distinguish them carefully.** It is easy to read the
+"one event per call" rule and slide into a stricter, *wrong* sibling rule.
+Only the first is a design invariant; the second is explicitly rejected:
+
+- ✅ **One event per call (correct invariant).** A single HTTP call produces
+  **at most one** of `{llm_call, external_cost, network}` (the v1 §5.3
+  structural invariant, enforced by the context-scoped suppression flag).
+  This prevents record duplication — the call appears as exactly one row in
+  the event stream, so downstream `COUNT(*)`/dedup queries are honest.
+
+- ❌ **One cost category per call (rejected — would silently undercount).**
+  A single HTTP call may legitimately contribute to **multiple** task-level
+  cost aggregates. A cataloged-vendor call produces one `external_cost` event
+  (the vendor's per-request charge → `external_cost_usd`) *and* feeds its
+  bytes into `external_bytes_out` → `network_cost_usd` (the cloud's egress
+  charge — Decision #7). An LLM call does the same with `llm_cost_usd` +
+  `network_cost_usd`. Forcing "one cost category per call" would erase the
+  cloud-egress half of every vendor-call invoice — exactly the silent
+  undercount this work exists to fix.
+
+Put another way: the suppression flag dedups **records**, never **dollars**.
+Records describe what happened; dollars describe what the customer owes, and
+one HTTP call to a vendor really does cost money on two separate bills.
 
 ### 3.4 Consequence: LLM instruments need no changes
 
@@ -565,6 +611,32 @@ v2 adds **no new config fields**. It interacts with the existing
   uncataloged_bytes_out) / Decimal("1000000000") * resolved_rate` (all three
   external), and `task.total_cost_usd == llm_cost + external_cost +
   compute_cost + network_cost_usd`.
+- **Dual-invoice attribution for cataloged vendor calls (Decision #7)** —
+  pins the §3.3 "one event per call, multiple cost categories per call"
+  contract. Make one HTTP call to a cataloged vendor host (e.g. a registered
+  domain rate of `$0.01/request` with a 50 KB response). After task
+  finalize, assert all of:
+  1. **Exactly one** event exists for that call, with
+     `event_type == "external_cost"` (zero `network` events for it — the
+     "one event per call" invariant holds).
+  2. `task.external_cost_usd == Decimal("0.01")` — the vendor's per-request
+     invoice is captured intact.
+  3. `task.network_cost_usd > 0` and equals
+     `vendor_call_bytes_out / Decimal("1000000000") * resolved_rate` — the
+     cloud's egress invoice on those same bytes is captured *in addition*,
+     not instead.
+  4. `task.total_cost_usd == task.external_cost_usd + task.network_cost_usd`
+     (plus zero for the unused categories) — the customer's true
+     two-invoice total.
+  5. The vendor's `external_cost` event's own `cost_usd` is unchanged from
+     v1 (still `Decimal("0.01")`, no egress dollars stamped on it) — the
+     §3.3 "events carry measurement, task carries derived attribution"
+     separation holds.
+
+  This test is the executable spec for Decision #7: it fails fast if a future
+  refactor ever conflates the two invariants and silently strips the egress
+  half of vendor-call cost. The same shape repeats once with an `llm_call`
+  event in place of `external_cost` to lock the LLM equivalent.
 
 ### 10.3 Property invariants
 
