@@ -16,6 +16,13 @@ from typing import Any
 __version__ = "0.1.0"
 
 from dexcost.clients import TrackedAnthropic, TrackedOpenAI
+from dexcost.compute_wrap import (
+    wrap_azure_functions_handler,
+    wrap_cloud_functions_handler,
+    wrap_cloud_run_handler,
+    wrap_lambda_handler,
+    wrap_vercel_handler,
+)
 from dexcost.config import DexcostConfig, InvalidAPIKeyError, validate_api_key
 from dexcost.context import (
     DexcostContext,
@@ -124,6 +131,8 @@ def init(
     network_event_threshold_bytes: int = 102_400,
     network_event_on_error: bool = True,
     network_event_latency_ms: int = 0,
+    compute_billing_overrides: dict[str, str] | None = None,
+    k8s_node_aware: bool = False,
 ) -> DexcostConfig:
     """Initialize dexcost SDK configuration (US-017).
 
@@ -189,6 +198,8 @@ def init(
         enable_retry_heuristics=enable_retry_heuristics,
         retry_heuristic_window=retry_heuristic_window,
         retry_heuristic_threshold=retry_heuristic_threshold,
+        compute_billing_overrides=compute_billing_overrides,
+        k8s_node_aware=k8s_node_aware,
     )
 
     # Wire the browser adapter to the tracker's storage so track_browser()

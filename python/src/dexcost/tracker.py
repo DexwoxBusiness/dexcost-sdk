@@ -623,6 +623,8 @@ class CostTracker:
         enable_retry_heuristics: bool = False,
         retry_heuristic_window: float | None = None,
         retry_heuristic_threshold: float | None = None,
+        compute_billing_overrides: dict[str, str] | None = None,
+        k8s_node_aware: bool = False,
     ) -> None:
         if storage is None:
             from dexcost.storage.sqlite import SQLiteStorage
@@ -672,12 +674,14 @@ class CostTracker:
         self._egress_pricing = EgressPricingEngine()
 
         # Compute pricing engine (Phase 1 — bundled compute_prices.json).
-        # `_compute_billing_overrides` is populated by dexcost.init() per
-        # Decision #1 sharpening — general override channel from day one.
+        # `_compute_billing_overrides` is the Decision #1 sharpening —
+        # general override channel from day one (cloud_run, future cases).
         from dexcost.compute_pricing import ComputePricingEngine
         self._compute_pricing = ComputePricingEngine()
-        self._compute_billing_overrides: dict[str, str] = {}
-        self._k8s_node_aware: bool = False
+        self._compute_billing_overrides: dict[str, str] = (
+            compute_billing_overrides or {}
+        )
+        self._k8s_node_aware: bool = k8s_node_aware
 
         # Configurable auto-instrumentation (US-015)
         self._instrumented: set[str] = set()
