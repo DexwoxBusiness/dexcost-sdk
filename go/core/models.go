@@ -27,6 +27,7 @@ const (
 	EventTypeExternalCost EventType = "external_cost"
 	EventTypeComputeCost  EventType = "compute_cost"
 	EventTypeRetryMarker  EventType = "retry_marker"
+	EventTypeNetwork      EventType = "network"
 )
 
 // CostConfidence indicates how trustworthy the reported cost is.

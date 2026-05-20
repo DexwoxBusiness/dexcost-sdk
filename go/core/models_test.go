@@ -248,6 +248,12 @@ func TestEvent_FromDict_Minimal(t *testing.T) {
 	}
 }
 
+func TestEventTypeNetwork_Value(t *testing.T) {
+	if string(EventTypeNetwork) != "network" {
+		t.Errorf("expected EventTypeNetwork == \"network\", got %q", string(EventTypeNetwork))
+	}
+}
+
 func ptr[T any](v T) *T {
 	return &v
 }
