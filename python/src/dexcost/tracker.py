@@ -671,6 +671,14 @@ class CostTracker:
         from dexcost.egress_pricing import EgressPricingEngine
         self._egress_pricing = EgressPricingEngine()
 
+        # Compute pricing engine (Phase 1 — bundled compute_prices.json).
+        # `_compute_billing_overrides` is populated by dexcost.init() per
+        # Decision #1 sharpening — general override channel from day one.
+        from dexcost.compute_pricing import ComputePricingEngine
+        self._compute_pricing = ComputePricingEngine()
+        self._compute_billing_overrides: dict[str, str] = {}
+        self._k8s_node_aware: bool = False
+
         # Configurable auto-instrumentation (US-015)
         self._instrumented: set[str] = set()
         if auto_instrument is None:
@@ -1169,3 +1177,106 @@ class CostTracker:
             )
             task.network_cost_usd = Decimal("0")
             task.network_by_host = net["by_host"]
+
+        # ── Compute capture (v1 + v2 cost) ───────────────────────────────
+        # Long-running runtimes emit their compute_cost event at task finalize
+        # from the cgroup diff; serverless runtimes have already emitted from
+        # the handler wrap with cost_pending=true. Either way, the v2 pricing
+        # engine back-fills cost_usd here via the deferred-cost pattern.
+        try:
+            self._finalize_compute(task)
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+            _log.warning(
+                "compute cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+
+    def _finalize_compute(self, task: Task) -> None:
+        """Emit the long-running compute_cost event (if any) and back-fill
+        cost_usd on every compute_cost event with cost_pending=true.
+
+        Called from ``_aggregate_costs``; wrapped in Tier-5 try/except by
+        the caller so a pricing bug cannot break task finalize.
+        """
+        from dexcost import cloud_detect
+        from dexcost.compute_pricing import ComputePricingEngine
+        from dexcost.compute_runtime import RuntimeKind
+        from dexcost.models.event import Event
+
+        accountant = getattr(task, "_compute", None)
+        cloud_env = cloud_detect.get_cloud_env()
+        overrides = getattr(self, "_compute_billing_overrides", None) or {}
+
+        duration_ms = 0
+        window_s = Decimal("0")
+        if task.ended_at and task.started_at:
+            duration_ms = int(
+                (task.ended_at - task.started_at).total_seconds() * 1000,
+            )
+            window_s = Decimal(
+                str((task.ended_at - task.started_at).total_seconds()),
+            )
+
+        # 1. Long-running runtimes: build + persist the cgroup-diff event.
+        #    Newly-inserted events are NOT yet reflected in
+        #    task.compute_cost_usd / task.total_cost_usd; both get delta
+        #    bumps below.
+        long_running = {
+            RuntimeKind.FARGATE, RuntimeKind.EC2, RuntimeKind.GCE,
+            RuntimeKind.AZURE_VM, RuntimeKind.K8S_POD,
+        }
+        new_event_ids: set = set()
+        if (
+            accountant is not None
+            and accountant.runtime in long_running
+        ):
+            details = accountant.snapshot_end_and_build(duration_ms=duration_ms)
+            if details is not None:
+                ev = Event(
+                    task_id=task.task_id,
+                    event_type="compute_cost",
+                    cost_usd=Decimal("0"),
+                    details=details,
+                )
+                self._storage.insert_event(ev)
+                new_event_ids.add(ev.event_id)
+
+        # 2. Back-fill cost on every compute_cost event with cost_pending=true.
+        #    Track the per-event delta so we can adjust totals without
+        #    blowing away the running totals computed by the main loop
+        #    (which already includes retry_marker costs etc).
+        engine = self._compute_pricing
+        events = self._storage.query_events(task_id=str(task.task_id))
+        cost_delta = Decimal("0")
+        for ev in events:
+            if ev.event_type != "compute_cost":
+                continue
+            details = ev.details or {}
+            if not details.get("cost_pending"):
+                continue
+            old_cost = ev.cost_usd  # always Decimal("0") at emission time
+            priced = engine.resolve_compute_cost(
+                details, cloud_env, overrides, window_s=window_s,
+            )
+            ev.cost_usd = priced.cost_usd
+            ev.pricing_source = priced.pricing_source
+            ev.cost_confidence = priced.cost_confidence
+            ev.pricing_version = f"compute:{engine.catalog_version}"
+            ev.details = {
+                k: v for k, v in details.items() if k != "cost_pending"
+            }
+            self._storage.update_event(ev)
+
+            # Delta = new - old. For newly-inserted long-running events the
+            # main loop never saw them, so we count the FULL new cost; for
+            # serverless events the main loop saw $0 (cost_pending=true) so
+            # delta = new - 0 = new. Either way, (priced - old) is right.
+            delta = priced.cost_usd - old_cost
+            cost_delta += delta
+            # For brand-new long-running events the main loop also never saw
+            # the original $0, so we need to add it on top of the delta.
+            if ev.event_id in new_event_ids:
+                cost_delta += old_cost  # always $0 here, but explicit
+
+        task.compute_cost_usd += cost_delta
+        task.total_cost_usd += cost_delta

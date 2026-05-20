@@ -73,6 +73,13 @@ class Task:
         init=False, default_factory=NetworkAccountant, compare=False, repr=False
     )
 
+    # In-memory only — the per-task compute accountant. Set lazily by the
+    # tracker / handler wrap when it knows the runtime + config; remains
+    # ``None`` for tasks that never opt in (e.g. unknown runtime).
+    _compute: Any = field(
+        init=False, default=None, compare=False, repr=False
+    )
+
     # Schema contract
     schema_version: str = "1"
 
