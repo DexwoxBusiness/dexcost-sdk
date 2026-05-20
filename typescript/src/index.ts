@@ -130,6 +130,15 @@ export type {
   LambdaCostDetails,
 } from "./adapters/index.js";
 
+// Compute handler wraps — serverless capture (Phase 1 compute foundation).
+export {
+  wrapLambdaHandler,
+  wrapCloudRunHandler,
+  wrapCloudFunctionsHandler,
+  wrapAzureFunctionsHandler,
+  wrapVercelHandler,
+} from "./adapters/compute-wrap.js";
+
 // Integrations
 export { DexcostCallbackHandler } from "./integrations/langchain.js";
 
