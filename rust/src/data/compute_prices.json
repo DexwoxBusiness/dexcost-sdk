@@ -91,24 +91,24 @@
     }
   },
   "gcp": {
-    "_last_verified": "2026-05-21",
+    "_last_verified": "2026-05-20",
     "cloud_run": {
       "default": {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
       "regions": {
         "us-central1":   {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
         "us-east1":      {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
         "us-west1":      {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
-        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.0000264","gib_second_usd": "0.00000275"},
-        "europe-west4":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.0000264","gib_second_usd": "0.00000275"},
-        "asia-east1":    {"request_usd": "0.0000004", "vcpu_second_usd": "0.0000300","gib_second_usd": "0.00000313"},
-        "asia-northeast1":{"request_usd":"0.0000004", "vcpu_second_usd": "0.0000300","gib_second_usd": "0.00000313"}
+        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "europe-west4":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "asia-east1":    {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "asia-northeast1":{"request_usd":"0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"}
       }
     },
     "cloud_functions": {
       "default": {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
       "regions": {
         "us-central1":   {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
-        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.0000264","gib_second_usd": "0.00000275"}
+        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"}
       }
     },
     "gce": {
@@ -116,13 +116,13 @@
       "regions": {
         "us-central1": {
           "instance_types": {
-            "e2-small":        {"hourly_usd": "0.0167", "vcpu_count": "2"},
+            "e2-small":        {"hourly_usd": "0.0168", "vcpu_count": "2"},
             "e2-medium":       {"hourly_usd": "0.0335", "vcpu_count": "2"},
             "e2-standard-2":   {"hourly_usd": "0.0670", "vcpu_count": "2"},
             "e2-standard-4":   {"hourly_usd": "0.1340", "vcpu_count": "4"},
             "n2-standard-2":   {"hourly_usd": "0.0971", "vcpu_count": "2"},
             "n2-standard-4":   {"hourly_usd": "0.1942", "vcpu_count": "4"},
-            "c3-standard-4":   {"hourly_usd": "0.2096", "vcpu_count": "4"}
+            "c3-standard-4":   {"hourly_usd": "0.2016", "vcpu_count": "4"}
           }
         },
         "europe-west1": {
