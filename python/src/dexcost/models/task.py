@@ -48,6 +48,7 @@ class Task:
     llm_cost_usd: Decimal = Decimal("0")
     external_cost_usd: Decimal = Decimal("0")
     compute_cost_usd: Decimal = Decimal("0")
+    network_cost_usd: Decimal = Decimal("0")
     total_cost_usd: Decimal = Decimal("0")
 
     # Token totals
@@ -96,6 +97,7 @@ class Task:
             "llm_cost_usd": str(self.llm_cost_usd),
             "external_cost_usd": str(self.external_cost_usd),
             "compute_cost_usd": str(self.compute_cost_usd),
+            "network_cost_usd": str(self.network_cost_usd),
             "total_cost_usd": str(self.total_cost_usd),
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
@@ -135,6 +137,7 @@ class Task:
                 llm_cost_usd=Decimal(data["llm_cost_usd"]),
                 external_cost_usd=Decimal(data["external_cost_usd"]),
                 compute_cost_usd=Decimal(data["compute_cost_usd"]),
+                network_cost_usd=Decimal(data.get("network_cost_usd", "0")),
                 total_cost_usd=Decimal(data["total_cost_usd"]),
                 total_input_tokens=data["total_input_tokens"],
                 total_output_tokens=data["total_output_tokens"],
