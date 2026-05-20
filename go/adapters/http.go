@@ -31,6 +31,11 @@ type DomainRate struct {
 // (`adapters/http.py:_MAX_BODY_SIZE`).
 const maxResponseBodySize = 1_000_000
 
+// networkEventThresholdBytes — combined request + response bytes above which
+// an un-cataloged call emits a `network` event. Mirrors Python config
+// `network_event_threshold_bytes = 102_400` (100 KiB).
+const networkEventThresholdBytes = 102_400
+
 // maxRecordedEvents bounds the in-memory event recording buffer. Long-lived
 // processes that never call ClearRecordedEvents would otherwise leak. When
 // the cap is exceeded the oldest entries are evicted FIFO so tests and
@@ -151,48 +156,117 @@ type trackingTransport struct {
 }
 
 func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// ── v1 byte measurement — request side (known before RoundTrip) ─────
+	host := req.URL.Hostname()
+	if host == "" {
+		host = req.URL.Host
+	}
+	protocol := req.URL.Scheme
+	if protocol == "" {
+		protocol = "https"
+	}
+	requestBytes := measureRequestBytes(req)
+	isInternal := ClassifyDestination(host)
+	suppress := core.IsNetworkEventSuppressed(req.Context())
+
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		return resp, err
 	}
 
-	// First check: user-registered domain rates take precedence.
+	// Resolve task + accountant. resolveTaskID never returns the accountant
+	// directly because it's a core helper; we look it up from the registry.
+	taskID, autoTask, ok := resolveTaskID(req)
+	var accountant *NetworkAccountant
+	if ok {
+		accountant = GetAccountant(taskID.String())
+	}
+
+	// Response header bytes are always knowable (status line + headers).
+	responseHeaderBytes := measureResponseHeaderBytes(resp)
+
 	hostKey := req.URL.Host
 	domainRatesMu.RLock()
 	rate, hasRate := domainRates[hostKey]
 	domainRatesMu.RUnlock()
 
-	if hasRate {
-		t.recordDomainRate(req, resp, hostKey, rate)
-		return resp, nil
-	}
-
-	// Second check: service catalog match.
 	cat := GetServiceCatalog()
-	if cat == nil {
-		return resp, nil
-	}
-	entry := cat.Lookup(req.URL.String())
-	if entry == nil {
+
+	// ── Path 1: user-registered domain rate ─────────────────────────────
+	if hasRate {
+		// Cost event known immediately; bytes are completed on body close.
+		byteDetails := map[string]interface{}{
+			"protocol":            protocol,
+			"request_bytes":       requestBytes,
+			"is_internal_traffic": isInternalToValue(isInternal),
+		}
+		t.recordDomainRate(req, resp, hostKey, rate, byteDetails)
+		resp.Body = wrapBodyForRecording(resp.Body, &bodyRecorder{
+			accountant:          accountant,
+			host:                host,
+			requestBytes:        requestBytes,
+			responseHeaderBytes: responseHeaderBytes,
+			isInternal:          isInternal,
+		})
 		return resp, nil
 	}
 
-	headers := flattenHeaders(resp.Header)
-	body, replaced := readAndReplaceBody(resp)
-	if replaced != nil {
-		resp.Body = replaced
+	// ── Path 2: service catalog match ──────────────────────────────────
+	if cat != nil {
+		if entry := cat.Lookup(req.URL.String()); entry != nil {
+			headers := flattenHeaders(resp.Header)
+			body, replaced, bodyByteCount := readAndReplaceBodyCounted(resp)
+			if replaced != nil {
+				resp.Body = replaced
+			}
+			responseBytes := responseHeaderBytes + bodyByteCount
+			if accountant != nil {
+				accountant.Record(host, responseBytes, requestBytes, isInternal)
+			}
+			byteDetails := map[string]interface{}{
+				"protocol":            protocol,
+				"request_bytes":       requestBytes,
+				"response_bytes":      responseBytes,
+				"is_internal_traffic": isInternalToValue(isInternal),
+			}
+			t.recordCatalogEntry(req, cat, entry, headers, body, byteDetails)
+			return resp, nil
+		}
 	}
 
-	t.recordCatalogEntry(req, cat, entry, headers, body)
+	// ── Path 3: un-cataloged call ──────────────────────────────────────
+	// Wrap the body in a recorder that records bytes into the accountant
+	// at close AND, if not suppressed and the call is notable, emits a
+	// `network` event with cost_pending=true (v2 §6.4 — back-filled at
+	// task finalize).
+	statusCode := resp.StatusCode
+	emit := !suppress && ok
+	resp.Body = wrapBodyForRecording(resp.Body, &bodyRecorder{
+		accountant:          accountant,
+		host:                host,
+		requestBytes:        requestBytes,
+		responseHeaderBytes: responseHeaderBytes,
+		isInternal:          isInternal,
+		emitNetworkEvent:    emit,
+		taskID:              taskID,
+		autoTask:            autoTask,
+		protocol:            protocol,
+		method:              req.Method,
+		statusCode:          statusCode,
+		url:                 req.URL.String(),
+	})
 	return resp, nil
 }
 
 // recordDomainRate records an external_cost event from a user-registered rate.
+// byteDetails stamps the v1 §4.3 byte fields into details (uniform across
+// every event type).
 func (t *trackingTransport) recordDomainRate(
 	req *http.Request,
 	_ *http.Response,
 	domain string,
 	rate DomainRate,
+	byteDetails map[string]interface{},
 ) {
 	taskID, autoTask, ok := resolveTaskID(req)
 	if !ok {
@@ -205,17 +279,23 @@ func (t *trackingTransport) recordDomainRate(
 	event.PricingSource = core.PricingSourceRateRegistry
 	event.Details["url"] = req.URL.String()
 	event.Details["per"] = rate.Per
+	for k, v := range byteDetails {
+		event.Details[k] = v
+	}
 
 	persistEvent(event, autoTask)
 }
 
 // recordCatalogEntry records an external_cost event from a service catalog match.
+// byteDetails stamps the v1 §4.3 byte fields (protocol, request_bytes,
+// response_bytes, is_internal_traffic) into details.
 func (t *trackingTransport) recordCatalogEntry(
 	req *http.Request,
 	cat *pricing.ServiceCatalog,
 	entry *pricing.ServiceEntry,
 	headers map[string]string,
 	body map[string]interface{},
+	byteDetails map[string]interface{},
 ) {
 	taskID, autoTask, ok := resolveTaskID(req)
 	if !ok {
@@ -226,6 +306,9 @@ func (t *trackingTransport) recordCatalogEntry(
 
 	event := core.NewEvent(taskID, core.EventTypeExternalCost)
 	event.Details["url"] = req.URL.String()
+	for k, v := range byteDetails {
+		event.Details[k] = v
+	}
 	if result != nil {
 		event.ServiceName = result.ServiceName
 		event.CostUSD = result.Amount
@@ -481,4 +564,175 @@ func DisableGlobalHTTPTracking() {
 	http.DefaultTransport = originalDefaultRT
 	originalDefaultRT = nil
 	globalTrackingEnabled = false
+}
+
+// ---------------------------------------------------------------------------
+// v1 network-capture helpers (byte measurement + body recording)
+// ---------------------------------------------------------------------------
+
+// measureRequestBytes approximates the on-the-wire size of an outbound
+// request: request line + header block + body length (if known).
+// Mirrors python `_netbytes.measure_bytes_from_headers`.
+func measureRequestBytes(req *http.Request) int64 {
+	headers := flattenHeaders(req.Header)
+	bodyLen := 0
+	if req.ContentLength > 0 {
+		bodyLen = int(req.ContentLength)
+	}
+	method := req.Method
+	if method == "" {
+		method = "GET"
+	}
+	urlStr := req.URL.RequestURI()
+	if urlStr == "" {
+		urlStr = req.URL.String()
+	}
+	return int64(MeasureBytesFromHeaders(method, urlStr, headers, bodyLen))
+}
+
+// measureResponseHeaderBytes approximates the on-the-wire size of the
+// inbound response headers (no body). Body bytes are added separately via
+// the buffered-body path (Path 2) or the bodyRecorder.Read counter (Paths
+// 1 and 3).
+func measureResponseHeaderBytes(resp *http.Response) int64 {
+	headers := flattenHeaders(resp.Header)
+	// Pass empty method/url so the request-line formula contributes only
+	// the constant 12-byte " HTTP/1.1\r\n" overhead (mirrors Python).
+	return int64(MeasureBytesFromHeaders("", "", headers, 0))
+}
+
+// isInternalToValue returns a JSON-friendly value for the
+// is_internal_traffic field (nil → nil, *bool → bool).
+func isInternalToValue(p *bool) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// readAndReplaceBodyCounted is readAndReplaceBody plus the buffered body
+// byte count. Returns 0 when the body wasn't read.
+func readAndReplaceBodyCounted(resp *http.Response) (map[string]interface{}, io.ReadCloser, int64) {
+	if resp.Body == nil {
+		return nil, nil, 0
+	}
+	if !isJSONContentType(resp.Header.Get("Content-Type")) {
+		return nil, nil, 0
+	}
+	if cl := resp.ContentLength; cl > maxResponseBodySize {
+		return nil, nil, 0
+	}
+	limited := io.LimitReader(resp.Body, maxResponseBodySize+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+	}
+	if len(raw) > maxResponseBodySize {
+		return nil, &spliceCloser{
+			Reader: io.MultiReader(bytes.NewReader(raw), resp.Body),
+			closer: resp.Body,
+		}, int64(len(raw))
+	}
+	_ = resp.Body.Close()
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+	}
+	return parsed, io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+}
+
+// bodyRecorder holds the state needed at body close: byte counts, the
+// task accountant, and (for un-cataloged calls) the metadata needed to
+// emit a `network` event at completion.
+type bodyRecorder struct {
+	accountant          *NetworkAccountant
+	host                string
+	requestBytes        int64
+	responseHeaderBytes int64
+	isInternal          *bool
+
+	// Path 3 only — emit a `network` event on close with cost_pending=true.
+	emitNetworkEvent bool
+	taskID           uuid.UUID
+	autoTask         *core.Task
+	protocol         string
+	method           string
+	statusCode       int
+	url              string
+}
+
+// recordingReadCloser wraps a response body to count read bytes and, on
+// close (or EOF), record the totals into the task accountant and
+// optionally emit a `network` event. Idempotent — finalize fires once.
+type recordingReadCloser struct {
+	inner      io.ReadCloser
+	state      *bodyRecorder
+	bytesRead  int64
+	finalized  bool
+	finalizeMu sync.Mutex
+}
+
+func wrapBodyForRecording(body io.ReadCloser, state *bodyRecorder) io.ReadCloser {
+	if body == nil {
+		// Nothing to read; finalise immediately so the accountant still
+		// sees the request side.
+		state.finalize(0)
+		return body
+	}
+	return &recordingReadCloser{inner: body, state: state}
+}
+
+func (r *recordingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	r.bytesRead += int64(n)
+	if err == io.EOF {
+		r.maybeFinalize()
+	}
+	return n, err
+}
+
+func (r *recordingReadCloser) Close() error {
+	r.maybeFinalize()
+	return r.inner.Close()
+}
+
+func (r *recordingReadCloser) maybeFinalize() {
+	r.finalizeMu.Lock()
+	defer r.finalizeMu.Unlock()
+	if r.finalized {
+		return
+	}
+	r.finalized = true
+	r.state.finalize(r.bytesRead)
+}
+
+// finalize records the call's bytes into the accountant and, for the
+// un-cataloged path, emits a `network` event when notable.
+func (s *bodyRecorder) finalize(responseBodyBytes int64) {
+	responseBytes := s.responseHeaderBytes + responseBodyBytes
+	if s.accountant != nil {
+		s.accountant.Record(s.host, responseBytes, s.requestBytes, s.isInternal)
+	}
+	if !s.emitNetworkEvent {
+		return
+	}
+	combined := s.requestBytes + responseBytes
+	if combined <= networkEventThresholdBytes && s.statusCode < 400 {
+		return // not notable — counters-only
+	}
+	event := core.NewEvent(s.taskID, core.EventTypeNetwork)
+	event.ServiceName = s.host
+	event.CostUSD = decimal.Zero
+	event.CostConfidence = core.CostConfidenceUnknown
+	event.PricingSource = ""
+	event.Details["url"] = s.url
+	event.Details["method"] = s.method
+	event.Details["status_code"] = s.statusCode
+	event.Details["cost_pending"] = true
+	event.Details["protocol"] = s.protocol
+	event.Details["request_bytes"] = s.requestBytes
+	event.Details["response_bytes"] = responseBytes
+	event.Details["is_internal_traffic"] = isInternalToValue(s.isInternal)
+	persistEvent(event, s.autoTask)
 }
