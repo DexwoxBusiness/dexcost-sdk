@@ -31,6 +31,13 @@ export interface CloudEnv {
   provider: string | null;
   region: string | null;
   source: "env" | "dmi" | "imds" | "none";
+  /**
+   * IaaS instance type when known — e.g. "c7g.xlarge", "n2-standard-2",
+   * "Standard_D2s_v3". Compute pricing reads this at task finalize for
+   * EC2 / GCE / Azure VM SKU rate resolution (Decision #3 — extracted in
+   * the same Phase 2 background thread as the region probe).
+   */
+  instanceType?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +329,32 @@ async function _probeAws(): Promise<CloudEnv | null> {
     );
     if (!regResp.ok) return null;
     const region = (await regResp.text()).trim();
-    return { provider: "aws", region: region || null, source: "imds" };
+
+    // Decision #3: extract instance-type in the same probe. Wrap separately
+    // so a failure here doesn't lose the region we already resolved.
+    let instanceType: string | null = null;
+    try {
+      const itResp = await _fetchImpl(
+        "http://169.254.169.254/latest/meta-data/instance-type",
+        {
+          headers: { "X-aws-ec2-metadata-token": token },
+          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        },
+      );
+      if (itResp.ok) {
+        const body = (await itResp.text()).trim();
+        instanceType = body || null;
+      }
+    } catch {
+      // Fail-silent — keep region even if instance-type errors.
+    }
+
+    return {
+      provider: "aws",
+      region: region || null,
+      source: "imds",
+      instanceType,
+    };
   } catch {
     return null;
   }
@@ -330,6 +362,7 @@ async function _probeAws(): Promise<CloudEnv | null> {
 
 async function _probeGcp(): Promise<CloudEnv | null> {
   const headers = { "Metadata-Flavor": "Google" };
+  let region: string | null = null;
   // Try /region first (works on Cloud Run / Cloud Functions Gen2 and GCE).
   try {
     const resp = await _fetchImpl(
@@ -338,28 +371,49 @@ async function _probeGcp(): Promise<CloudEnv | null> {
     );
     if (resp.ok) {
       const body = (await resp.text()).trim();
-      const region = _gcpPathToRegion(body, false);
-      if (region) return { provider: "gcp", region, source: "imds" };
+      region = _gcpPathToRegion(body, false);
     }
   } catch {
-    // Fall through to /zone.
+    region = null;
   }
 
+  if (region === null) {
+    try {
+      const resp = await _fetchImpl(
+        "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+        { headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) },
+      );
+      if (!resp.ok) return null;
+      const body = (await resp.text()).trim();
+      region = _gcpPathToRegion(body, true);
+    } catch {
+      return null;
+    }
+  }
+
+  // Decision #3: machine-type lives under /instance/machine-type and shares
+  // the projects/.../machineTypes/<name> path shape — strip the prefix to
+  // get e.g. "n2-standard-2". Fail-silent so a missing endpoint does not
+  // discard the region we already resolved.
+  let instanceType: string | null = null;
   try {
     const resp = await _fetchImpl(
-      "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+      "http://metadata.google.internal/computeMetadata/v1/instance/machine-type",
       { headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) },
     );
-    if (!resp.ok) return null;
-    const body = (await resp.text()).trim();
-    return {
-      provider: "gcp",
-      region: _gcpPathToRegion(body, true),
-      source: "imds",
-    };
+    if (resp.ok) {
+      const body = (await resp.text()).trim();
+      if (body) {
+        const parts = body.split("/");
+        const last = parts[parts.length - 1] || "";
+        instanceType = last || null;
+      }
+    }
   } catch {
-    return null;
+    // fail-silent
   }
+
+  return { provider: "gcp", region, source: "imds", instanceType };
 }
 
 async function _probeAzure(): Promise<CloudEnv | null> {
@@ -372,9 +426,14 @@ async function _probeAzure(): Promise<CloudEnv | null> {
       },
     );
     if (!resp.ok) return null;
-    const payload = (await resp.json()) as { compute?: { location?: string } };
+    const payload = (await resp.json()) as {
+      compute?: { location?: string; vmSize?: string };
+    };
     const region = payload.compute?.location || null;
-    return { provider: "azure", region, source: "imds" };
+    // Decision #3: vmSize is already in the same IMDS payload — zero extra
+    // HTTP cost. Returns null when absent (some non-VM Azure runtimes).
+    const instanceType = payload.compute?.vmSize || null;
+    return { provider: "azure", region, source: "imds", instanceType };
   } catch {
     return null;
   }
@@ -537,13 +596,17 @@ export function startBackgroundDetection(trackNetwork: boolean = true): void {
     try {
       const env = await _runProbe(initial.provider);
       if (env.provider !== null) {
-        let final = env;
-        // Preserve a region we already had from env-vars if the probe didn't
-        // return one (matches Python behaviour).
-        if (initial.region && !env.region) {
-          final = { provider: env.provider, region: initial.region, source: env.source };
-        }
-        _setResult(final);
+        // Preserve region from env when IMDS only got the provider, and
+        // preserve instanceType from whichever source has it.
+        const region = env.region ? env.region : initial.region;
+        const instanceType =
+          env.instanceType != null ? env.instanceType : initial.instanceType ?? null;
+        _setResult({
+          provider: env.provider,
+          region,
+          source: env.source,
+          instanceType,
+        });
       }
     } catch {
       // Fail silent — Phase 2 is best-effort.
