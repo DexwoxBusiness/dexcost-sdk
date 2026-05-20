@@ -13,7 +13,8 @@ export type EventType =
   | "llm_call"
   | "external_cost"
   | "compute_cost"
-  | "retry_marker";
+  | "retry_marker"
+  | "network";
 
 /** How trustworthy the reported costUsd value is. */
 export type CostConfidence = "exact" | "computed" | "estimated" | "unknown";
