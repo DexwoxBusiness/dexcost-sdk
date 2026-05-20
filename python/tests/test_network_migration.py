@@ -87,7 +87,8 @@ def test_v3_db_migrates_to_v4(tmp_path):
     st = SQLiteStorage(db_path=str(db))  # opening runs migrations
     cols = {r[1] for r in st._conn.execute("PRAGMA table_info(tasks)").fetchall()}
     assert "network_by_host" in cols
-    assert st.get_schema_version() == 4
+    # v3→v4 (network capture) AND v4→v5 (network_cost_usd) both run.
+    assert st.get_schema_version() == 5
 
     # Verify that the pre-existing row received the column DEFAULTs.
     row = st.get_task(pre_existing_id)
