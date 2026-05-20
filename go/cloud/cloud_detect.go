@@ -119,6 +119,13 @@ func ResetForTests() {
 	result = noneEnv
 }
 
+// SetResultForTests forces the resolved CloudEnv to a known value. Used by
+// downstream finalize tests (e.g. tracker.aggregateCosts) that need a
+// deterministic egress rate without actually probing IMDS or reading DMI.
+func SetResultForTests(env CloudEnv) {
+	setResult(env)
+}
+
 // readDMIFunc reads the DMI field map. Overridable in tests.
 var readDMIFunc = readDMI
 

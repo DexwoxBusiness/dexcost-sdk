@@ -71,7 +71,11 @@ type Task struct {
 	LLMCostUSD      decimal.Decimal `json:"llm_cost_usd"`
 	ExternalCostUSD decimal.Decimal `json:"external_cost_usd"`
 	ComputeCostUSD  decimal.Decimal `json:"compute_cost_usd"`
-	TotalCostUSD    decimal.Decimal `json:"total_cost_usd"`
+	// v2 cloud-egress cost, computed at task finalize from the
+	// accountant's canonical external_bytes_out scalar. Distinct from
+	// ExternalCostUSD (vendor API charges) — see Decision #7.
+	NetworkCostUSD decimal.Decimal `json:"network_cost_usd"`
+	TotalCostUSD   decimal.Decimal `json:"total_cost_usd"`
 
 	// Token totals
 	TotalInputTokens  int `json:"total_input_tokens"`
@@ -104,6 +108,7 @@ func NewTask(taskType string) Task {
 		LLMCostUSD:      decimal.Zero,
 		ExternalCostUSD: decimal.Zero,
 		ComputeCostUSD:  decimal.Zero,
+		NetworkCostUSD:  decimal.Zero,
 		TotalCostUSD:    decimal.Zero,
 		RetryCostUSD:    decimal.Zero,
 		NetworkByHost:   map[string]interface{}{"hosts": []interface{}{}},
@@ -129,6 +134,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"llm_cost_usd":        t.LLMCostUSD.String(),
 		"external_cost_usd":   t.ExternalCostUSD.String(),
 		"compute_cost_usd":    t.ComputeCostUSD.String(),
+		"network_cost_usd":    t.NetworkCostUSD.String(),
 		"total_cost_usd":      t.TotalCostUSD.String(),
 		"total_input_tokens":  t.TotalInputTokens,
 		"total_output_tokens": t.TotalOutputTokens,
@@ -296,6 +302,9 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 	}
 	if v, ok := d["compute_cost_usd"].(string); ok {
 		t.ComputeCostUSD = decimal.RequireFromString(v)
+	}
+	if v, ok := d["network_cost_usd"].(string); ok {
+		t.NetworkCostUSD = decimal.RequireFromString(v)
 	}
 	if v, ok := d["total_cost_usd"].(string); ok {
 		t.TotalCostUSD = decimal.RequireFromString(v)
