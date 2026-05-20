@@ -134,3 +134,95 @@ def test_start_with_full_env_does_not_launch_thread(monkeypatch):
     assert env.provider == "aws"
     assert env.region == "eu-west-1"
     assert cloud_detect._thread is None
+
+
+# ── Additions from May-2026 deep-research pass ───────────────────────────
+
+
+def test_ecs_fargate_metadata_uri_resolves_aws_with_region(monkeypatch):
+    """ECS Fargate sets ECS_CONTAINER_METADATA_URI_V4 + AWS_REGION."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv(
+        "ECS_CONTAINER_METADATA_URI_V4",
+        "http://169.254.170.2/v4/metadata-id",
+    )
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+    env = detect_now()
+    assert env.provider == "aws"
+    assert env.region == "ap-south-1"
+    assert env.source == "env"
+
+
+def test_ecs_v3_metadata_uri_also_resolves_aws(monkeypatch):
+    """Older ECS platform versions set V3 (not V4) metadata URI."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ECS_CONTAINER_METADATA_URI", "http://169.254.170.2/v3/x")
+    env = detect_now()
+    assert env.provider == "aws"
+
+
+def test_azure_container_apps_hostname_yields_region(monkeypatch):
+    """Container Apps embeds region in CONTAINER_APP_HOSTNAME — no IMDS needed."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("CONTAINER_APP_NAME", "my-app")
+    monkeypatch.setenv(
+        "CONTAINER_APP_HOSTNAME",
+        "my-app--abc.proudground-12345.eastus.azurecontainerapps.io",
+    )
+    env = detect_now()
+    assert env.provider == "azure"
+    assert env.region == "eastus"
+    assert env.source == "env"
+
+
+def test_azure_container_apps_dns_suffix_yields_region(monkeypatch):
+    """Region also parseable out of CONTAINER_APP_ENV_DNS_SUFFIX alone."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("CONTAINER_APP_NAME", "my-app")
+    monkeypatch.setenv(
+        "CONTAINER_APP_ENV_DNS_SUFFIX",
+        "proudground-12345.westeurope.azurecontainerapps.io",
+    )
+    env = detect_now()
+    assert env.region == "westeurope"
+
+
+def test_azure_region_name_wins_when_both_present(monkeypatch):
+    """When REGION_NAME and CONTAINER_APP_HOSTNAME both exist, REGION_NAME wins."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("CONTAINER_APP_NAME", "x")
+    monkeypatch.setenv("REGION_NAME", "northeurope")
+    monkeypatch.setenv(
+        "CONTAINER_APP_HOSTNAME",
+        "x.y.eastus.azurecontainerapps.io",
+    )
+    env = detect_now()
+    assert env.region == "northeurope"
+
+
+def test_gcp_k_configuration_alone_signals_gcp(monkeypatch):
+    """K_CONFIGURATION is set on Cloud Run regardless of K_SERVICE."""
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("K_CONFIGURATION", "my-config")
+    env = detect_now()
+    assert env.provider == "gcp"
+
+
+def test_bare_aws_region_alone_is_not_enough(monkeypatch):
+    """A developer laptop with AWS_REGION exported should NOT be classified aws.
+
+    AWS_REGION is meaningful only alongside a Lambda/ECS/ExecutionEnv signal.
+    """
+    _reset_module()
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    with patch("dexcost.cloud_detect._DMI_PATHS", ()):
+        env = detect_now()
+    assert env.provider is None
+    assert env.source == "none"

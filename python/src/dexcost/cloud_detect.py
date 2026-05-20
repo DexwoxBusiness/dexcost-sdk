@@ -6,6 +6,26 @@ Phase 2  — background metadata probe (daemon thread, ~250 ms budget,
            never blocks ``dexcost.init()``).
 
 See spec §5 for the resolution rules per provider.
+
+Notes — research May 2026:
+
+- AWS Lambda / Fargate / App Runner set ``AWS_REGION`` automatically; ECS
+  (Fargate and on-EC2) also sets ``ECS_CONTAINER_METADATA_URI_V4``. The Lambda
+  / Execution-Env / ECS signals are treated as definitive "this is AWS"
+  markers; bare ``AWS_REGION`` is only used to fill in the region when one of
+  those markers is also present (a developer laptop may set ``AWS_REGION`` for
+  the AWS CLI without actually running on AWS).
+- Azure Container Apps embeds the region in ``CONTAINER_APP_HOSTNAME`` and
+  ``CONTAINER_APP_ENV_DNS_SUFFIX`` as ``<host>.<REGION>.azurecontainerapps.io``;
+  the env-var phase parses it out for free, no IMDS round-trip needed.
+- GCP Cloud Run / Cloud Functions Gen2 / App Engine do NOT expose a region
+  env var; region must come from the metadata server (Phase 2). ``K_SERVICE``
+  / ``K_REVISION`` / ``K_CONFIGURATION`` are reserved auto-set markers.
+- AWS IMDSv2 has a default HTTP hop-limit of 1, which prevents Docker/Pod
+  containers (other than EKS managed node groups, which default to hop-limit=2)
+  from reaching the metadata service. ``_probe_aws`` fails-silent in that
+  case and detection falls through to Tier 3 of the pricing degradation
+  ladder. The SDK cannot raise the hop-limit from inside the container.
 """
 
 from __future__ import annotations
@@ -13,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -61,15 +82,58 @@ def _set_result(env: CloudEnv) -> None:
 # ---------------------------------------------------------------------------
 
 
+_AZ_CA_REGION_RE = re.compile(
+    r"\.([a-z0-9-]+)\.azurecontainerapps\.io$", re.IGNORECASE,
+)
+
+
+def _azure_container_apps_region() -> str | None:
+    """Parse the Azure region out of a Container Apps hostname/DNS suffix.
+
+    Both CONTAINER_APP_HOSTNAME and CONTAINER_APP_ENV_DNS_SUFFIX are formatted
+    as ``<...>.<REGION>.azurecontainerapps.io`` (verified May 2026).
+    """
+    for var in ("CONTAINER_APP_HOSTNAME", "CONTAINER_APP_ENV_DNS_SUFFIX"):
+        value = os.environ.get(var, "")
+        match = _AZ_CA_REGION_RE.search(value)
+        if match:
+            return match.group(1).lower()
+    return None
+
+
 def _detect_env() -> CloudEnv | None:
-    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"):
+    # ── AWS ─────────────────────────────────────────────────────────────
+    # Lambda / managed runtimes set AWS_EXECUTION_ENV; ECS (Fargate or
+    # on-EC2) sets ECS_CONTAINER_METADATA_URI_V4 (V4 always, V3 on older
+    # platform versions).  Either is a definitive "this is AWS" marker.
+    is_aws = bool(
+        os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+        or os.environ.get("AWS_EXECUTION_ENV")
+        or os.environ.get("ECS_CONTAINER_METADATA_URI_V4")
+        or os.environ.get("ECS_CONTAINER_METADATA_URI")
+    )
+    if is_aws:
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         return CloudEnv("aws", region, "env")
+
+    # ── Azure ───────────────────────────────────────────────────────────
     if any(os.environ.get(k) for k in
            ("WEBSITE_SITE_NAME", "FUNCTIONS_WORKER_RUNTIME", "CONTAINER_APP_NAME")):
-        region = os.environ.get("REGION_NAME") or None
+        # Container Apps embeds region in CONTAINER_APP_HOSTNAME / DNS suffix;
+        # App Service may set REGION_NAME (best-effort, not guaranteed).
+        region = (
+            os.environ.get("REGION_NAME")
+            or _azure_container_apps_region()
+            or None
+        )
         return CloudEnv("azure", region, "env")
-    if any(os.environ.get(k) for k in ("K_SERVICE", "GAE_ENV", "FUNCTION_TARGET")):
+
+    # ── GCP ─────────────────────────────────────────────────────────────
+    # K_SERVICE / K_REVISION / K_CONFIGURATION are reserved by Cloud Run +
+    # Cloud Functions Gen2 (built on Cloud Run).  No region env var exists;
+    # Phase 2 metadata probe resolves it.
+    if any(os.environ.get(k) for k in
+           ("K_SERVICE", "K_CONFIGURATION", "GAE_ENV", "FUNCTION_TARGET")):
         return CloudEnv("gcp", None, "env")
     return None
 
