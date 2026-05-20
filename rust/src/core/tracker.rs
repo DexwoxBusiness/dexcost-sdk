@@ -10,6 +10,7 @@ use crate::cloud_detect::get_cloud_env;
 use crate::core::heuristics::RetryHeuristicEngine;
 use crate::core::models::{CostConfidence, CostEvent, EventType, PricingSource, Task, TaskStatus};
 use crate::error::DexcostError;
+use crate::pricing::compute_pricing::ComputePricingEngine;
 use crate::pricing::egress_pricing::EgressPricingEngine;
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::rates::RateRegistry;
@@ -91,6 +92,14 @@ pub struct TrackedTask {
     pricing: Option<Arc<Mutex<PricingEngine>>>,
     rate_registry: Option<Arc<Mutex<RateRegistry>>>,
     heuristics: Option<Arc<std::sync::Mutex<RetryHeuristicEngine>>>,
+    /// Compute pricing engine for Phase 1 deferred-cost back-fill at task
+    /// finalize. Defaults to a fresh `ComputePricingEngine::new()` per task.
+    compute_pricing: ComputePricingEngine,
+    /// Per-billing-model rate overrides (e.g. `{"lambda_request_usd": "0.5"}`).
+    /// Threaded through from `init()` config; empty by default.
+    compute_billing_overrides: HashMap<String, String>,
+    /// Opt-in K8s node-aware billing mode (Decision #11). False by default.
+    k8s_node_aware: bool,
 }
 
 impl TrackedTask {
@@ -121,6 +130,9 @@ impl TrackedTask {
             pricing,
             rate_registry,
             heuristics: None,
+            compute_pricing: ComputePricingEngine::new(),
+            compute_billing_overrides: HashMap::new(),
+            k8s_node_aware: false,
         }
     }
 
@@ -141,7 +153,32 @@ impl TrackedTask {
             pricing,
             rate_registry,
             heuristics: Some(heuristics),
+            compute_pricing: ComputePricingEngine::new(),
+            compute_billing_overrides: HashMap::new(),
+            k8s_node_aware: false,
         }
+    }
+
+    /// Configure compute billing knobs for this task. Used by handler wraps
+    /// and init() config plumbing.
+    pub fn with_compute_config(
+        mut self,
+        overrides: HashMap<String, String>,
+        k8s_node_aware: bool,
+    ) -> Self {
+        self.compute_billing_overrides = overrides;
+        self.k8s_node_aware = k8s_node_aware;
+        self
+    }
+
+    /// Test-only: attach a ComputeAccountant to this task. Used by the
+    /// Phase 1 compute integration tests.
+    #[doc(hidden)]
+    pub fn attach_compute_for_tests(
+        &mut self,
+        accountant: std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>,
+    ) {
+        self.task.compute = Some(accountant);
     }
 
     /// Records an LLM call event on this task.
@@ -588,6 +625,16 @@ impl TrackedTask {
             self.task.network_cost_usd = Decimal::ZERO;
         }
 
+        // ── Compute finalize — auto-emit long-running event + back-fill ──
+        // Wrapped in a fail-silent shell (Tier 5 of the §7.1 ladder).
+        let compute_result = self.finalize_compute().await;
+        if let Err(e) = compute_result {
+            eprintln!(
+                "[dexcost] WARNING: compute cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+        }
+
         // Remove the accountant from the registry; subsequent HTTP calls
         // attributed to this task_id won't find one (matches Python's
         // frozen-then-snapshot semantics — late bytes are dropped, not
@@ -741,6 +788,108 @@ impl TrackedTask {
         // and below-threshold un-cataloged calls that never emitted a
         // network event).
         self.task.total_cost_usd += self.task.network_cost_usd;
+
+        Ok(())
+    }
+
+    /// Compute finalize: auto-emit the long-running compute event (if
+    /// applicable) and back-fill `cost_pending=true` compute_cost events
+    /// for this task. Tracks DELTAs (new - old) and adds to
+    /// `task.compute_cost_usd` / `task.total_cost_usd` to preserve any
+    /// `retry_marker` costs already summed by the main aggregation.
+    ///
+    /// Mirrors python/src/dexcost/tracker.py `_finalize_compute`.
+    async fn finalize_compute(&mut self) -> Result<(), DexcostError> {
+        use crate::core::compute_runtime::RuntimeKind;
+        let cloud_env = get_cloud_env();
+        let pricing_version = format!("compute:{}", self.compute_pricing.catalog_version());
+
+        // Stage 1 — long-running runtimes auto-emit a single compute_cost
+        // event with cost_pending: true. The compute accountant decides
+        // whether to emit (via snapshot_end_and_build returning Some).
+        if let Some(acc) = self.task.compute.clone() {
+            let is_long_running = matches!(
+                acc.runtime,
+                RuntimeKind::Ec2
+                    | RuntimeKind::Gce
+                    | RuntimeKind::AzureVm
+                    | RuntimeKind::K8sPod
+                    | RuntimeKind::Fargate
+            );
+            if is_long_running {
+                let duration_ms = match (self.task.ended_at, Some(self.task.started_at)) {
+                    (Some(end), Some(start)) => {
+                        (end - start).num_milliseconds().max(0)
+                    }
+                    _ => 0,
+                };
+                if let Some(details_value) = acc.snapshot_end_and_build(duration_ms) {
+                    let mut event = CostEvent::new(&self.task.task_id, EventType::ComputeCost);
+                    event.cost_usd = Decimal::ZERO;
+                    event.cost_confidence = CostConfidence::Estimated;
+                    event.pricing_source = Some(PricingSource::ServiceCatalog);
+                    event.pricing_version = Some(pricing_version.clone());
+                    if let serde_json::Value::Object(map) = details_value {
+                        for (k, v) in map {
+                            event.details.insert(k, v);
+                        }
+                    }
+                    let mut buf = self.buffer.lock().await;
+                    buf.add_event(event);
+                    drop(buf);
+                }
+            }
+        }
+
+        // Stage 2 — back-fill cost_pending compute_cost events.
+        let mut buf = self.buffer.lock().await;
+        let pending: Vec<CostEvent> = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::ComputeCost
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect();
+
+        for mut ev in pending {
+            let old_cost = ev.cost_usd;
+            // Reconstruct a details Value for the engine.
+            let details_value = serde_json::Value::Object(
+                ev.details.clone().into_iter().collect(),
+            );
+            let result = self.compute_pricing.resolve_compute_cost(
+                &details_value,
+                &cloud_env,
+                &self.compute_billing_overrides,
+                None,
+            );
+            ev.cost_usd = result.cost_usd;
+            ev.cost_confidence = match result.cost_confidence.as_str() {
+                "computed" => CostConfidence::Computed,
+                "estimated" => CostConfidence::Estimated,
+                "exact" => CostConfidence::Exact,
+                _ => CostConfidence::Unknown,
+            };
+            ev.pricing_source = Some(PricingSource::ServiceCatalog);
+            ev.pricing_version = Some(pricing_version.clone());
+            ev.details.insert(
+                "compute_pricing_source".to_string(),
+                serde_json::Value::String(result.pricing_source),
+            );
+            ev.details.remove("cost_pending");
+            buf.update_event(&ev);
+
+            // Track DELTA (new - old). Do NOT recompute total_cost_usd from
+            // scratch — preserves retry_marker costs already summed by the
+            // main aggregation loop.
+            let delta = result.cost_usd - old_cost;
+            self.task.compute_cost_usd += delta;
+            self.task.total_cost_usd += delta;
+        }
 
         Ok(())
     }

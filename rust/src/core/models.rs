@@ -100,6 +100,10 @@ pub struct Task {
     /// Python's `_network` field semantically.
     #[serde(skip, default)]
     pub network_accountant: std::sync::Arc<crate::adapters::network_accountant::NetworkAccountant>,
+    /// Optional in-memory compute accountant. Not serialised — set by the
+    /// handler wraps / auto-task path. Mirrors Python's `_compute` field.
+    #[serde(skip, default)]
+    pub compute: Option<std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>>,
     pub schema_version: String,
 }
 
@@ -138,6 +142,7 @@ impl Task {
             network_by_host: default_network_by_host(),
             network_cost_usd: Decimal::ZERO,
             network_accountant: std::sync::Arc::default(),
+            compute: None,
             schema_version: "1".to_string(),
         }
     }
