@@ -59,6 +59,15 @@ export interface Task {
   retryCount: number;
   retryCostUsd: number;
   failureCount: number;
+  // Network capture aggregates (v1 — bytes only).
+  networkBytesIn: number;
+  networkBytesOut: number;
+  networkCallCount: number;
+  /**
+   * Per-host network breakdown, shape `{ hosts: Array<...> }`. Capped at 20
+   * entries plus an `_other` overflow bucket during finalize.
+   */
+  networkByHost: Record<string, unknown>;
   schemaVersion: string;
 }
 
@@ -108,6 +117,10 @@ export function createTask(overrides: Partial<Task> & { taskId: string }): Task 
     retryCount: 0,
     retryCostUsd: 0,
     failureCount: 0,
+    networkBytesIn: 0,
+    networkBytesOut: 0,
+    networkCallCount: 0,
+    networkByHost: { hosts: [] },
     schemaVersion: "1",
     ...overrides,
   };
@@ -156,6 +169,10 @@ export function taskToDict(task: Task): Record<string, unknown> {
     retry_count: task.retryCount,
     retry_cost_usd: String(task.retryCostUsd),
     failure_count: task.failureCount,
+    network_bytes_in: task.networkBytesIn,
+    network_bytes_out: task.networkBytesOut,
+    network_call_count: task.networkCallCount,
+    network_by_host: task.networkByHost,
     schema_version: task.schemaVersion,
   };
 }
@@ -248,6 +265,13 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     retryCount: _toNumber(data["retry_count"]),
     retryCostUsd: _toNumber(data["retry_cost_usd"]),
     failureCount: _toNumber(data["failure_count"]),
+    networkBytesIn: _toNumber(data["network_bytes_in"]),
+    networkBytesOut: _toNumber(data["network_bytes_out"]),
+    networkCallCount: _toNumber(data["network_call_count"]),
+    networkByHost:
+      data["network_by_host"] && typeof data["network_by_host"] === "object"
+        ? (data["network_by_host"] as Record<string, unknown>)
+        : { hosts: [] },
     schemaVersion: _optString(data["schema_version"]) ?? "1",
   };
 }

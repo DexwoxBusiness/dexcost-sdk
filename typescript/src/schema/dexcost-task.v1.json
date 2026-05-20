@@ -122,6 +122,25 @@
       "minimum": 0,
       "description": "Number of failed events in this task."
     },
+    "network_bytes_in": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total bytes received across all HTTP responses for this task."
+    },
+    "network_bytes_out": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total bytes sent across all HTTP requests for this task."
+    },
+    "network_call_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of outbound HTTP calls recorded for this task."
+    },
+    "network_by_host": {
+      "type": "object",
+      "description": "Per-host breakdown of network usage, shape {\"hosts\": [...]} capped at 20 entries plus an _other overflow bucket."
+    },
     "schema_version": {
       "type": "string",
       "const": "1",
