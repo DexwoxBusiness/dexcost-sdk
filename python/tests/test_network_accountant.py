@@ -20,7 +20,11 @@ def test_finalize_groups_by_host():
     acc.record("a.com", 100, 10)
     acc.record("b.com", 200, 20)
     hosts = {h["host"]: h for h in acc.finalize()["by_host"]["hosts"]}
-    assert hosts["a.com"] == {"host": "a.com", "calls": 1, "bytes_in": 100, "bytes_out": 10}
+    # is_internal defaults to None → bytes_out attributes as external (v2 §6.1).
+    assert hosts["a.com"] == {
+        "host": "a.com", "calls": 1, "bytes_in": 100, "bytes_out": 10,
+        "external_bytes_out": 10,
+    }
     assert hosts["b.com"]["bytes_in"] == 200
 
 
