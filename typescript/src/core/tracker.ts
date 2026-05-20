@@ -16,7 +16,11 @@ import {
   unregisterAccountant,
 } from "../adapters/network-accountant.js";
 import { EgressPricingEngine } from "../pricing/egress-pricing.js";
+import { ComputePricingEngine } from "../pricing/compute-pricing.js";
+import { ComputeAccountant } from "./compute-accountant.js";
+import { RuntimeKind } from "./compute-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
+import Decimal from "decimal.js";
 import { EventPusher } from "../transport/pusher.js";
 import { PricingEngine } from "../pricing/engine.js";
 import { RateRegistry } from "../pricing/rates.js";
@@ -131,6 +135,20 @@ export interface TrackerOptions {
    * Optional URL to refresh the HTTP service catalog from on init.
    */
   serviceCatalogUrl?: string;
+  /**
+   * Per-billing-model dispatch overrides for the compute pricing engine.
+   * Currently used to switch Cloud Run from request-based to instance-
+   * based billing: `{ cloud_run: "instance" }`. Mirrors the Python
+   * `compute_billing_overrides` option.
+   */
+  computeBillingOverrides?: Record<string, string>;
+  /**
+   * Enable K8s node-aware pricing. Reserved for follow-up — currently
+   * threaded through but unused; the default k8s_pod billing model uses
+   * pod-limits × duration × hourly default. Mirrors the Python
+   * `k8s_node_aware` option.
+   */
+  k8sNodeAware?: boolean;
 }
 
 /**
@@ -425,8 +443,124 @@ export class TrackedTask {
       this._task.networkCostUsd = 0;
     }
 
+    // ── Compute capture (v1 + v2 cost) ───────────────────────────────────
+    // Long-running runtimes emit their compute_cost event at task finalize
+    // from the cgroup diff; serverless runtimes have already emitted from
+    // the handler wrap with cost_pending=true. Either way, the v2 pricing
+    // engine back-fills cost_usd here via the deferred-cost pattern.
+    // Wrapped in Tier-5 fail-silent so a pricing throw never breaks
+    // finalize (mirrors python tracker.py:_aggregate_costs +
+    // _finalize_compute).
+    try {
+      this._finalizeCompute();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[dexcost] compute cost computation failed for task ${this._task.taskId}:`,
+        err,
+      );
+    }
+
     this._buffer.upsertTask(this._task);
     logTaskComplete(this._task);
+  }
+
+  /**
+   * Compute auto-emission + back-fill at task finalize.
+   *
+   * Mirrors python tracker.py:_finalize_compute.
+   *
+   * Step 1: long-running runtime → call snapshotEndAndBuild and insert a
+   *         compute_cost event with details.cost_pending=true.
+   * Step 2: walk all compute_cost events with cost_pending=true, resolve
+   *         their cost via the pricing engine, then updateEvent to strip
+   *         the marker + stamp pricing source/confidence/version.
+   * Step 3: apply DELTA-based total adjustment — never recompute total_
+   *         cost_usd from scratch, which would blow away retry_marker
+   *         and other costs accumulated by the main loop.
+   */
+  private _finalizeCompute(): void {
+    const task = this._task;
+    const accountant = task._compute as ComputeAccountant | undefined;
+    const cloudEnv = getCloudEnv();
+    const overrides = this._tracker.computeBillingOverrides;
+
+    let durationMs = 0;
+    let windowS = new Decimal(0);
+    if (task.endedAt && task.startedAt) {
+      const ms = task.endedAt.getTime() - task.startedAt.getTime();
+      durationMs = Math.trunc(ms);
+      windowS = new Decimal(ms).dividedBy(1000);
+    }
+
+    // 1. Long-running runtimes: build + persist the cgroup-diff event.
+    const longRunning = new Set<RuntimeKind>([
+      RuntimeKind.Fargate,
+      RuntimeKind.Ec2,
+      RuntimeKind.Gce,
+      RuntimeKind.AzureVm,
+      RuntimeKind.K8sPod,
+    ]);
+    const newEventIds = new Set<string>();
+    if (accountant && longRunning.has(accountant.runtime)) {
+      const details = accountant.snapshotEndAndBuild(durationMs);
+      if (details !== null) {
+        const ev = createCostEvent({
+          eventId: randomUUID(),
+          taskId: task.taskId,
+          eventType: "compute_cost",
+          costUsd: 0,
+          costConfidence: "unknown",
+          isRetry: false,
+          details,
+        });
+        this._buffer.addEvent(ev);
+        this._events.push(ev);
+        newEventIds.add(ev.eventId);
+      }
+    }
+
+    // 2. Back-fill cost on every compute_cost event with cost_pending=true.
+    //    Track per-event delta so we adjust totals without blowing away the
+    //    running totals already accumulated by the main loop.
+    const engine = this._tracker.computePricing;
+    const events = this._buffer.queryEvents(task.taskId);
+    let costDelta = new Decimal(0);
+    for (const ev of events) {
+      if (ev.eventType !== "compute_cost") continue;
+      const details = ev.details || {};
+      if ((details as Record<string, unknown>).cost_pending !== true) continue;
+      const oldCost = new Decimal(ev.costUsd);
+      const priced = engine.resolveComputeCost(
+        details as Record<string, any>,
+        cloudEnv,
+        overrides,
+        windowS,
+      );
+      ev.costUsd = priced.costUsd.toNumber();
+      ev.pricingSource = priced.pricingSource as PricingSource;
+      ev.costConfidence = priced.costConfidence;
+      ev.pricingVersion = `compute:${engine.catalogVersion}`;
+      const newDetails: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(details)) {
+        if (k !== "cost_pending") newDetails[k] = v;
+      }
+      ev.details = newDetails;
+      this._buffer.updateEvent(ev);
+
+      // Delta = new - old. For newly-inserted long-running events the
+      // main loop never saw them at all, so we add the original $0 too
+      // (always 0 here, but explicit per python parity).
+      const delta = priced.costUsd.minus(oldCost);
+      costDelta = costDelta.plus(delta);
+      if (newEventIds.has(ev.eventId)) {
+        costDelta = costDelta.plus(oldCost);
+      }
+    }
+
+    const deltaNum = costDelta.toNumber();
+    task.computeCostUsd += deltaNum;
+    task.totalCostUsd += deltaNum;
   }
 
   /**
@@ -594,6 +728,9 @@ export class CostTracker {
   private _pusher: EventPusher | null = null;
   private _options: TrackerOptions;
   private _pricing: PricingEngine;
+  private _computePricing: ComputePricingEngine;
+  private _computeBillingOverrides: Record<string, string>;
+  private _k8sNodeAware: boolean;
   private _rateRegistry: RateRegistry;
   private _heuristicEngine: RetryHeuristicEngine | null;
   private _instrumented: Set<string> = new Set();
@@ -631,6 +768,9 @@ export class CostTracker {
     }
 
     this._pricing = new PricingEngine();
+    this._computePricing = new ComputePricingEngine();
+    this._computeBillingOverrides = { ...(options.computeBillingOverrides ?? {}) };
+    this._k8sNodeAware = options.k8sNodeAware ?? false;
 
     // Start background pricing refresh in cloud mode
     if (cloudMode && this._config.apiKey) {
@@ -695,6 +835,21 @@ export class CostTracker {
   /** The pricing engine used for cost calculations. */
   get pricing(): PricingEngine {
     return this._pricing;
+  }
+
+  /** The compute pricing engine — wires through to TrackedTask.end finalize. */
+  get computePricing(): ComputePricingEngine {
+    return this._computePricing;
+  }
+
+  /** Compute billing-model dispatch overrides (e.g. cloud_run=instance). */
+  get computeBillingOverrides(): Record<string, string> {
+    return this._computeBillingOverrides;
+  }
+
+  /** Whether K8s node-aware pricing is enabled (reserved for follow-up). */
+  get k8sNodeAware(): boolean {
+    return this._k8sNodeAware;
   }
 
   /** The rate registry for service-based cost calculations. */

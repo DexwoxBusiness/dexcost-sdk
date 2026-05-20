@@ -23,6 +23,7 @@
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "better-sqlite3": "^12.8.0",
+    "decimal.js": "^10.6.0",
     "js-yaml": "^4.1.1"
   },
   "peerDependencies": {

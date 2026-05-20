@@ -75,6 +75,17 @@ export interface Task {
    */
   networkByHost: Record<string, unknown>;
   schemaVersion: string;
+  /**
+   * In-memory only. The per-task ComputeAccountant (cgroup start/end
+   * snapshots + runtime context). Never serialized — the buffer's
+   * upsertTask() writes named columns only, so this field cannot leak to
+   * SQLite or the wire payload. Compatible with the Python SDK's
+   * Task._compute pattern.
+   *
+   * Typed as unknown to avoid a circular import from core/compute-
+   * accountant.ts (which imports from cgroup-reader / compute-runtime).
+   */
+  _compute?: unknown;
 }
 
 /**
