@@ -68,8 +68,52 @@ func readInt(name string) (int64, bool) {
 	return v, true
 }
 
+// Indirection layer — tests swap these to inject deterministic values.
+// The exported entry points dispatch through these function vars so the
+// accountant can be tested without seeding tmp cgroup files.
+var (
+	readCPUStatFn       = readCPUStatImpl
+	readCPUMaxFn        = readCPUMaxImpl
+	readMemoryPeakFn    = readMemoryPeakImpl
+	readMemoryMaxFn     = readMemoryMaxImpl
+	readMemoryCurrentFn = readMemoryCurrentImpl
+)
+
+// SetCgroupReadersForTests replaces the cgroup readers for the duration of
+// a test. Pass nil for a reader to leave it unchanged. Returns a cleanup
+// function that restores the originals.
+func SetCgroupReadersForTests(
+	stat func() (CPUStat, bool),
+	maxFn func() (CPUMax, bool),
+	peak func() (int64, bool),
+	max func() (int64, bool),
+	cur func() (int64, bool),
+) func() {
+	oldStat, oldMax, oldPeak, oldMaxF, oldCur := readCPUStatFn, readCPUMaxFn, readMemoryPeakFn, readMemoryMaxFn, readMemoryCurrentFn
+	if stat != nil {
+		readCPUStatFn = stat
+	}
+	if maxFn != nil {
+		readCPUMaxFn = maxFn
+	}
+	if peak != nil {
+		readMemoryPeakFn = peak
+	}
+	if max != nil {
+		readMemoryMaxFn = max
+	}
+	if cur != nil {
+		readMemoryCurrentFn = cur
+	}
+	return func() {
+		readCPUStatFn, readCPUMaxFn, readMemoryPeakFn, readMemoryMaxFn, readMemoryCurrentFn = oldStat, oldMax, oldPeak, oldMaxF, oldCur
+	}
+}
+
 // ReadCPUStat parses cpu.stat looking for "usage_usec <N>".
-func ReadCPUStat() (CPUStat, bool) {
+func ReadCPUStat() (CPUStat, bool) { return readCPUStatFn() }
+
+func readCPUStatImpl() (CPUStat, bool) {
 	raw, err := os.ReadFile(filepath.Join(cgroupRoot, "cpu.stat"))
 	if err != nil {
 		return CPUStat{}, false
@@ -93,7 +137,9 @@ func ReadCPUStat() (CPUStat, bool) {
 // ReadCPUMax parses cpu.max — "<quota|max> <period>" in microseconds.
 // When the quota is the literal "max", QuotaUS is 0 and VCPUCount falls
 // back to runtime.NumCPU().
-func ReadCPUMax() (CPUMax, bool) {
+func ReadCPUMax() (CPUMax, bool) { return readCPUMaxFn() }
+
+func readCPUMaxImpl() (CPUMax, bool) {
 	raw, err := os.ReadFile(filepath.Join(cgroupRoot, "cpu.max"))
 	if err != nil {
 		return CPUMax{}, false
@@ -127,17 +173,17 @@ func ReadCPUMax() (CPUMax, bool) {
 
 // ReadMemoryPeak returns memory.peak — bytes; kernel >= 5.19. (0, false)
 // if file is absent.
-func ReadMemoryPeak() (int64, bool) {
-	return readInt("memory.peak")
-}
+func ReadMemoryPeak() (int64, bool) { return readMemoryPeakFn() }
+
+func readMemoryPeakImpl() (int64, bool) { return readInt("memory.peak") }
 
 // ReadMemoryMax returns memory.max — bytes. (0, false) if "max" (unlimited)
 // or absent.
-func ReadMemoryMax() (int64, bool) {
-	return readInt("memory.max")
-}
+func ReadMemoryMax() (int64, bool) { return readMemoryMaxFn() }
+
+func readMemoryMaxImpl() (int64, bool) { return readInt("memory.max") }
 
 // ReadMemoryCurrent returns memory.current — bytes at moment of read.
-func ReadMemoryCurrent() (int64, bool) {
-	return readInt("memory.current")
-}
+func ReadMemoryCurrent() (int64, bool) { return readMemoryCurrentFn() }
+
+func readMemoryCurrentImpl() (int64, bool) { return readInt("memory.current") }
