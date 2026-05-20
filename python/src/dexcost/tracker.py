@@ -667,6 +667,10 @@ class CostTracker:
                 auto_update=auto_update_pricing,
             )
 
+        # Egress pricing engine (network-cost v2) — bundled catalog.
+        from dexcost.egress_pricing import EgressPricingEngine
+        self._egress_pricing = EgressPricingEngine()
+
         # Configurable auto-instrumentation (US-015)
         self._instrumented: set[str] = set()
         if auto_instrument is None:
@@ -1105,4 +1109,63 @@ class CostTracker:
         task.network_bytes_in = net["bytes_in"]
         task.network_bytes_out = net["bytes_out"]
         task.network_call_count = net["call_count"]
-        task.network_by_host = net["by_host"]
+
+        # v2 — egress pricing.  Resolve rate once per task; compute the
+        # canonical scalar; stamp per-host egress_cost_usd and back-fill
+        # network events (deferred per spec §6.4).
+        try:
+            from dexcost import cloud_detect
+            env = cloud_detect.get_cloud_env()
+            rate = self._egress_pricing.resolve_rate(env.provider, env.region)
+            external_bytes = net["external_bytes_out"]
+            task.network_cost_usd = (
+                Decimal(external_bytes) / Decimal("1000000000") * rate.rate_per_gb
+            )
+            pricing_version = f"egress:{self._egress_pricing.catalog_version}"
+
+            # Stamp per-host egress_cost_usd into the by_host blob.
+            for host in net["by_host"]["hosts"]:
+                host_external = host.get("external_bytes_out", 0)
+                host_cost = (
+                    Decimal(host_external) / Decimal("1000000000")
+                    * rate.rate_per_gb
+                )
+                host["egress_cost_usd"] = str(host_cost)
+            task.network_by_host = net["by_host"]
+
+            # Back-fill each network event for this task.
+            for ev in events:
+                if ev.event_type != "network":
+                    continue
+                resp_bytes = int(ev.details.get("response_bytes", 0) or 0)
+                req_bytes = int(ev.details.get("request_bytes", 0) or 0)
+                is_internal = ev.details.get("is_internal_traffic")
+                billable = 0 if is_internal is True else (resp_bytes + req_bytes)
+                ev_cost = (
+                    Decimal(billable) / Decimal("1000000000") * rate.rate_per_gb
+                )
+                ev.cost_usd = ev_cost
+                ev.cost_confidence = (
+                    "exact" if is_internal is True else rate.cost_confidence
+                )
+                ev.pricing_source = (
+                    "egress_catalog:internal" if is_internal is True
+                    else rate.pricing_source
+                )
+                ev.pricing_version = pricing_version
+                ev.details = {
+                    k: v for k, v in ev.details.items() if k != "cost_pending"
+                }
+                self._storage.update_event(ev)
+                # The first-pass total summed this event as $0; add the
+                # back-filled cost so total_cost_usd reflects all dollars.
+                task.total_cost_usd += ev_cost
+
+            task.total_cost_usd += task.network_cost_usd
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent (spec §7.1)
+            _log.warning(
+                "egress cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+            task.network_cost_usd = Decimal("0")
+            task.network_by_host = net["by_host"]
