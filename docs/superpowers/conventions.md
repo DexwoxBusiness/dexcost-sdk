@@ -2,6 +2,8 @@
 
 **Status:** Live document. Patterns adopted across multiple dexcost subsystems live here. New subsystem designs inherit these conventions by default; a subsystem that proposes diverging from one of them MUST update this document explicitly with the rationale.
 
+**What belongs here, what does not.** Conventions in this doc are **cross-subsystem invariants** — patterns that constrain how multiple subsystems are designed (event-model shape, confidence enum, fail-silent discipline, source-measurement boundary). They are NOT style preferences, naming choices, or formatting decisions. A repeated pattern is a convention only if changing it in one subsystem would break a downstream consumer (dashboard, reconciliation, Cost Intelligence) or violate a positioning principle. When in doubt: if the pattern only matters inside one subsystem's code, it lives in that subsystem's spec; if it shapes how subsystems interoperate or how customers experience the product, it lives here.
+
 **Subsystem index** (master capability table reference):
 - **A** — Network / egress capture *(v1 bytes shipped; v2 pricing shipped — see specs/2026-05-19 and 2026-05-20)*
 - **B** — Compute foundation *(Phase 1 — in design; decisions locked 2026-05-20)*
@@ -131,7 +133,9 @@ Established in v2 §7.1, applied to every cost-attributing subsystem:
 
 **Rule:** Every subsystem's pricing engine implements this ladder. Tiers 1–4 live in the rate resolver; Tier 5 is the `try/except` shell around the per-event back-fill step in the task-finalize path.
 
-The warn-once-per-failure-mode discipline (one log per distinct failure mode per process, resettable for tests) was also established in v2 §7.3 and inherited here.
+**Scope note on Tier 5:** Tier 5 applies to subsystems where dollar attribution happens at **task finalize** (network egress, compute, future GPU/storage). Subsystems that compute cost at **event-emission time** (LLM — token counts known at the response moment) handle computation failure differently: the event itself ships with `cost_usd=0` + `cost_confidence="unknown"` + a logged warning, with no finalize-time back-fill step to wrap. The five-tier ladder is the right shape for derived-at-finalize subsystems; event-emission subsystems implement Tiers 1–4 plus their own "computation failed at emission" handler. See each subsystem spec for its specific behaviour.
+
+The warn-once-per-failure-mode discipline is captured separately as convention §11.
 
 ---
 
@@ -173,6 +177,22 @@ From the master plan's boundary-enforcement section, restated here because it sh
 - Reconciliation (future, server-side feature) is where bill ↔ dexcost-total gaps get explained as line items
 
 **Rule:** A new subsystem that proposes reading the cloud bill, ingesting an invoice, or fabricating a "missing" cost line to make totals match the bill is rejected by default. The source-measurement boundary is what defines dexcost's category — diverging from it changes what the product is.
+
+---
+
+## 11. Log-once per failure mode per process
+
+Established in v2 §7.3 (egress pricing engine warnings). Promoted here because the discipline has three parts that are easy to get wrong, and "log once" without the per-mode nuance is the default an implementer will reach for unless the convention spells it out.
+
+**The three parts:**
+
+1. **Per distinct failure *mode*, not once globally.** A transition from one failure mode to another produces a second log. Example: a missing catalog file (mode `catalog_missing`) and later a malformed catalog file (mode `catalog_malformed`) each produce their own one-time log. Logging once globally would hide the mode change after the first warning fires.
+2. **A module-level set tracks which modes have already fired.** Each subsystem owns its own tracking set keyed by mode-token strings (e.g. `catalog_missing`, `meta_default_missing`, `region_rate_malformed:<provider>:<region>`). Check-then-insert under a mutex.
+3. **The set is resettable in tests.** Each subsystem exports a `_reset_warning_state_for_tests()` (Python) / `reset_warning_state_for_tests()` (Rust) / `ResetWarningStateForTests()` (Go) / `_resetWarningStateForTests()` (TS) helper. Tests for the warning behaviour reset the set between cases so they can deterministically verify "first call logs, second call does not."
+
+**Counter-pattern (rejected):** Logging globally on first warning of any kind. After the first `catalog_missing` log, a subsequent `catalog_malformed` failure would silently swallow — and the customer never learns that their catalog file went from "absent" to "present but broken."
+
+**Rule:** Every subsystem that emits warning-class logs from a recoverable failure path implements the three-part discipline. The tracking set is per-subsystem, not shared, so a network warning doesn't suppress a compute warning.
 
 ---
 

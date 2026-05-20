@@ -379,9 +379,12 @@ Honest list of remaining follow-ups, separated by whether they gate the spec or 
 
 ### 6b. Bounded post-spec follow-ups (don't gate architecture)
 
-- **GCP Cloud Functions Gen1 env vars** — Gen1 is deprecated to new deployments since 2024 with full sunset by Sep 2026. §1.5 reframes this as a "support if trivial via the Gen2/Cloud Run code path; skip Gen1-specific detection" recommendation. If a customer surfaces Gen1 demand, verify the env vars at that point.
-- **Azure Functions duration measurement** — assumed the handler-wrap approach works the same as Lambda. Confirm via the Azure Functions runtime docs for each language binding (Python, Node, Go) before the Python implementation; trivial to course-correct if wrong.
-- **Cloud Run Admin API response shape** — only matters if Decision #1 lands on option (c). The §5 recommendation is (a) + (b), which doesn't depend on the Admin API.
+Ordered by load-bearing-ness — items higher up should be resolved earlier in the spec phase:
+
+1. **Pricing re-verification against live provider docs** — highest silent-error risk if skipped. Every rate cited inline in §1 and §3 of this doc is point-in-time as of 2026-05-20; AWS/GCP/Azure/Vercel adjust rates more often than this doc is dated. Re-check each one before any code lands so `compute_prices.json` ships with current values.
+2. **Azure Functions duration measurement per language binding** — load-bearing for Phase 1 design. The research assumed handler-wrap works the same as Lambda. Confirm via the Azure Functions runtime docs for each language (Python, Node, Go) before writing the Python implementation; trivial to course-correct if wrong but cheaper to verify than to refactor.
+3. **GCP Cloud Functions Gen1 env vars** — confirms the "support if trivial via the Gen2/Cloud Run code path; skip Gen1-specific detection" framing in §1.5. Gen1 is deprecated to new deployments since 2024 with full sunset by Sep 2026. Lower priority because Gen1 is shrinking.
+4. ~~**Cloud Run Admin API response shape**~~ — **MOOT** per Decision #1 staying at option (a). Skipped; no follow-up needed.
 
 ### 6c. New verification gap surfaced in this revision
 

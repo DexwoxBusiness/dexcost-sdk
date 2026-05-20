@@ -61,6 +61,8 @@ This still keeps "zero config" — the default works without RBAC. The strengthe
 
 **Confidence labeling:** `computed`. The over-attribution surfaces in reconciliation as "you're paying for capacity you're not using" — useful signal, not a bug.
 
+**Failure mode when `k8s_node_aware: true` is set but RBAC is missing:** **Fail-silent with log-once warning, then fall through to path (c) limit-based billing.** Do NOT fail-loud on init. Matches the fail-silent discipline (convention §9) and the log-once-per-failure-mode discipline (convention §11) used everywhere else in the SDK. A customer who opted into node-awareness without granting the ServiceAccount `get nodes` permission sees one log entry on first probe, then dexcost works at `computed` confidence with limit-based billing — they're not blocked from running. The log surfaces the misconfiguration; the SDK keeps working.
+
 ---
 
 ### Decision 5 — Lambda provisioned-concurrency
@@ -186,10 +188,15 @@ Subsystems C (GPU), D (storage), E (catalog updates) inherit these. New subsyste
 
 ## What happens next
 
-1. **§6b research follow-ups (in parallel with this lock):** GCP Cloud Functions Gen1 deprecation status confirm; Azure Functions duration approach per language binding; Cloud Run Admin API field path (only if Decision #1 changes from option (a), which it has not).
-2. **Pricing re-verification:** Every rate cited in the research doc gets re-checked against the live provider page before the spec is locked.
-3. **Spec writing:** `docs/superpowers/specs/2026-05-XX-compute-capture-design.md` (capture design) + `docs/superpowers/specs/2026-05-XX-compute-cost-attribution-design.md` (cost math + catalog).
-4. **Plan + implementation:** Python first (mirrors the network capture rollout), then cross-SDK port.
+§6b research follow-ups are ordered by load-bearing-ness; pricing re-verification is the one item that **must** complete before any code lands.
+
+1. **Pricing re-verification against live provider docs** — highest silent-error risk if skipped. Re-check every rate cited in the research doc against the live provider page; update the values that will land in `compute_prices.json` before the spec is locked.
+2. **Azure Functions duration measurement per language binding** — confirm via Azure Functions runtime docs for each language (Python, Node, Go) before the Python implementation. Can happen during spec writing; cheaper to verify than to refactor.
+3. **GCP Cloud Functions Gen1 env vars** — confirms the "support if trivial via Gen2/Cloud Run code path" framing. Lower priority because Gen1 is shrinking (full sunset Sep 2026).
+4. **Spec writing:** `docs/superpowers/specs/2026-05-XX-compute-capture-design.md` (capture design) + `docs/superpowers/specs/2026-05-XX-compute-cost-attribution-design.md` (cost math + catalog).
+5. **Plan + implementation:** Python first (mirrors the network capture rollout), then cross-SDK port.
+
+Cloud Run Admin API field path is moot per Decision #1 staying at option (a) — no follow-up needed.
 
 ---
 
