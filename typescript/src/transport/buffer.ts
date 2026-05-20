@@ -136,6 +136,14 @@ function rowToTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id ?? undefined,
     experimentId: row.experiment_id ?? undefined,
     variant: row.variant ?? undefined,
+    // Network capture fields default to zero / empty for rows that
+    // pre-date the v1 migration. Phase D wires the SQLite columns +
+    // serialisation/deserialisation; for now legacy rows read back as
+    // fresh, matching Python's from_dict defaults.
+    networkBytesIn: 0,
+    networkBytesOut: 0,
+    networkCallCount: 0,
+    networkByHost: { hosts: [] },
     schemaVersion: "1",
   };
 }
