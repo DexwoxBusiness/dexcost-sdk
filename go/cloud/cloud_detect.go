@@ -84,10 +84,15 @@ var dmiRules = []dmiRule{
 //
 // Source is the audit trail: "env" | "dmi" | "imds" | "none".
 // Empty strings (not nil) represent unresolved provider/region.
+//
+// InstanceType is the IaaS SKU (e.g. "c7g.xlarge", "n2-standard-2",
+// "Standard_D2s_v3") when known. Zero-value "" means unresolved. Populated
+// by Phase 2 IMDS probes per Decision #3 — one probe, two values extracted.
 type CloudEnv struct {
-	Provider string
-	Region   string
-	Source   string
+	Provider     string
+	Region       string
+	Source       string
+	InstanceType string
 }
 
 // noneEnv is the canonical "undetected" CloudEnv.
@@ -357,9 +362,16 @@ func (e *probeError) Error() string { return e.msg }
 type probeFunc func() *CloudEnv
 
 func probeAWS() *CloudEnv {
+	return probeAWSAgainst("http://169.254.169.254")
+}
+
+// probeAWSAgainst is the URL-parameterised variant exposed for tests.
+// Mirrors python _probe_aws — region first, then a separately-wrapped
+// instance-type fetch so a 404 on /instance-type doesn't lose the region.
+func probeAWSAgainst(base string) *CloudEnv {
 	tokenBytes, err := httpGetWithCtx(
 		http.MethodPut,
-		"http://169.254.169.254/latest/api/token",
+		base+"/latest/api/token",
 		map[string]string{"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
 	)
 	if err != nil {
@@ -368,48 +380,83 @@ func probeAWS() *CloudEnv {
 	token := strings.TrimSpace(string(tokenBytes))
 	regionBytes, err := httpGetWithCtx(
 		http.MethodGet,
-		"http://169.254.169.254/latest/meta-data/placement/region",
+		base+"/latest/meta-data/placement/region",
 		map[string]string{"X-aws-ec2-metadata-token": token},
 	)
 	if err != nil {
 		return nil
 	}
-	return &CloudEnv{Provider: "aws", Region: strings.TrimSpace(string(regionBytes)), Source: "imds"}
+	env := &CloudEnv{Provider: "aws", Region: strings.TrimSpace(string(regionBytes)), Source: "imds"}
+
+	// Decision #3: extract instance-type using the same token. Wrapped
+	// separately so a failure here doesn't discard the region.
+	if itBytes, err := httpGetWithCtx(
+		http.MethodGet,
+		base+"/latest/meta-data/instance-type",
+		map[string]string{"X-aws-ec2-metadata-token": token},
+	); err == nil {
+		env.InstanceType = strings.TrimSpace(string(itBytes))
+	}
+	return env
 }
 
 func probeGCP() *CloudEnv {
-	// Prefer /region (Cloud Run / Cloud Functions Gen2 return placeholder on /zone).
+	return probeGCPAgainstWithMachineType("http://metadata.google.internal")
+}
+
+// probeGCPAgainstWithMachineType is the URL-parameterised variant exposed
+// for tests. Mirrors python _probe_gcp — /region preferred, /zone fallback,
+// then a separately-wrapped /machine-type fetch (Decision #3).
+func probeGCPAgainstWithMachineType(base string) *CloudEnv {
 	headers := map[string]string{"Metadata-Flavor": "Google"}
+	var region string
 	if body, err := httpGetWithCtx(
 		http.MethodGet,
-		"http://metadata.google.internal/computeMetadata/v1/instance/region",
+		base+"/computeMetadata/v1/instance/region",
 		headers,
 	); err == nil {
-		region := gcpPathToRegion(strings.TrimSpace(string(body)), false)
-		if region != "" {
-			return &CloudEnv{Provider: "gcp", Region: region, Source: "imds"}
+		region = gcpPathToRegion(strings.TrimSpace(string(body)), false)
+	}
+	if region == "" {
+		body, err := httpGetWithCtx(
+			http.MethodGet,
+			base+"/computeMetadata/v1/instance/zone",
+			headers,
+		)
+		if err != nil {
+			return nil
 		}
+		region = gcpPathToRegion(strings.TrimSpace(string(body)), true)
 	}
-	// Fall back to /zone for older GCE images.
-	body, err := httpGetWithCtx(
+
+	env := &CloudEnv{Provider: "gcp", Region: region, Source: "imds"}
+
+	// Decision #3: /instance/machine-type returns
+	// projects/<num>/machineTypes/<name>. Strip the prefix; fail-silent.
+	if body, err := httpGetWithCtx(
 		http.MethodGet,
-		"http://metadata.google.internal/computeMetadata/v1/instance/zone",
+		base+"/computeMetadata/v1/instance/machine-type",
 		headers,
-	)
-	if err != nil {
-		return nil
+	); err == nil {
+		mt := strings.TrimSpace(string(body))
+		if idx := strings.LastIndex(mt, "/"); idx >= 0 {
+			mt = mt[idx+1:]
+		}
+		env.InstanceType = mt
 	}
-	return &CloudEnv{
-		Provider: "gcp",
-		Region:   gcpPathToRegion(strings.TrimSpace(string(body)), true),
-		Source:   "imds",
-	}
+	return env
 }
 
 func probeAzure() *CloudEnv {
+	return probeAzureAgainst("http://169.254.169.254")
+}
+
+// probeAzureAgainst is the URL-parameterised variant exposed for tests.
+// vmSize lives in the same IMDS payload as location — zero extra HTTP cost.
+func probeAzureAgainst(base string) *CloudEnv {
 	body, err := httpGetWithCtx(
 		http.MethodGet,
-		"http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+		base+"/metadata/instance?api-version=2021-02-01",
 		map[string]string{"Metadata": "true"},
 	)
 	if err != nil {
@@ -418,12 +465,18 @@ func probeAzure() *CloudEnv {
 	var payload struct {
 		Compute struct {
 			Location string `json:"location"`
+			VMSize   string `json:"vmSize"`
 		} `json:"compute"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil
 	}
-	return &CloudEnv{Provider: "azure", Region: payload.Compute.Location, Source: "imds"}
+	return &CloudEnv{
+		Provider:     "azure",
+		Region:       payload.Compute.Location,
+		Source:       "imds",
+		InstanceType: payload.Compute.VMSize,
+	}
 }
 
 func probeOCI() *CloudEnv {
@@ -629,6 +682,11 @@ func StartBackgroundDetection(trackNetwork bool) {
 			// Preserve the env-derived region when the probe didn't supply one.
 			if initial.Region != "" && env.Region == "" {
 				env.Region = initial.Region
+			}
+			// Preserve InstanceType from whichever source has it (mirror
+			// Python _background stitching).
+			if env.InstanceType == "" && initial.InstanceType != "" {
+				env.InstanceType = initial.InstanceType
 			}
 			setResult(env)
 		}

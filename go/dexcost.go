@@ -99,6 +99,8 @@ func doInit(cfg *Config) error {
 		EnableRetryHeuristics:   cfg.EnableRetryHeuristics,
 		RetryHeuristicWindow:    cfg.RetryHeuristicWindow,
 		RetryHeuristicThreshold: cfg.RetryHeuristicThreshold,
+		ComputeBillingOverrides: cfg.ComputeBillingOverrides,
+		K8sNodeAware:            cfg.K8sNodeAware,
 	})
 	if err != nil {
 		buf.Close()
@@ -109,6 +111,9 @@ func doInit(cfg *Config) error {
 	// Wire the HTTP adapter to durable storage so auto-captured external_cost
 	// events reach SQLite and the sync pusher (not just the in-memory buffer).
 	adapters.SetEventBuffer(buf)
+	// Compute wraps emit per-invocation compute_cost events; share the same
+	// durable buffer so tracker.aggregateCosts finds them at task finalize.
+	adapters.SetComputeEventBuffer(buf)
 
 	// Start pusher if in cloud mode and not in dev mode.
 	if cfg.StorageMode() == "cloud" && !IsDevMode() {
@@ -336,6 +341,37 @@ func WrapCohere(inner interface{}) *clients.TrackedCohere {
 func WrapGroq(inner interface{}) *clients.TrackedGroq {
 	tr := mustTracker()
 	return clients.NewTrackedGroq(inner, tr, tr.Pricing())
+}
+
+// ─── Compute capture handler wraps (Task 9) ──────────────────────────────
+//
+// Each wrap times the handler, snapshots cgroup memory.peak on exit, and
+// emits one compute_cost event with cost_pending:true per invocation. The
+// pricing engine back-fills cost_usd at task finalize.
+
+// WrapLambdaHandler instruments an AWS Lambda handler for compute capture.
+func WrapLambdaHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapLambdaHandler(fn)
+}
+
+// WrapCloudRunHandler instruments a GCP Cloud Run handler for compute capture.
+func WrapCloudRunHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapCloudRunHandler(fn)
+}
+
+// WrapCloudFunctionsHandler instruments a GCP Cloud Functions Gen2 handler.
+func WrapCloudFunctionsHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapCloudFunctionsHandler(fn)
+}
+
+// WrapAzureFunctionsHandler instruments an Azure Functions handler.
+func WrapAzureFunctionsHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapAzureFunctionsHandler(fn)
+}
+
+// WrapVercelHandler instruments a Vercel Fluid handler.
+func WrapVercelHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapVercelHandler(fn)
 }
 
 func init() {

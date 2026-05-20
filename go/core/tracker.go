@@ -25,6 +25,14 @@ type TrackerOptions struct {
 	EnableRetryHeuristics   bool
 	RetryHeuristicWindow    float64
 	RetryHeuristicThreshold float64
+
+	// Compute v2 (Task 8/9 wiring) — optional. When ComputePricingEngine is
+	// nil the tracker auto-creates one at first finalize. Overrides are
+	// per-billing-model knobs (e.g. {"cloud_run": "instance"}). K8sNodeAware
+	// is wired through for the future opt-in node probe (Task 9 stub).
+	ComputePricingEngine    *pricing.ComputePricingEngine
+	ComputeBillingOverrides map[string]string
+	K8sNodeAware            bool
 }
 
 // Tracker manages task lifecycles, cost recording, and aggregation.
@@ -33,6 +41,11 @@ type Tracker struct {
 	pricing    *pricing.Engine
 	rates      *pricing.RateRegistry
 	heuristics *RetryHeuristicEngine
+
+	// Compute v2.
+	computePricingEngine    *pricing.ComputePricingEngine
+	computeBillingOverrides map[string]string
+	k8sNodeAware            bool
 }
 
 // NewTracker creates a Tracker using the provided Buffer and pricing engine.
@@ -51,9 +64,12 @@ func NewTracker(opts TrackerOptions) (*Tracker, error) {
 		rates = pricing.NewRateRegistry()
 	}
 	tracker := &Tracker{
-		buffer:  opts.Buffer,
-		pricing: pricingEngine,
-		rates:   rates,
+		buffer:                  opts.Buffer,
+		pricing:                 pricingEngine,
+		rates:                   rates,
+		computePricingEngine:    opts.ComputePricingEngine,
+		computeBillingOverrides: opts.ComputeBillingOverrides,
+		k8sNodeAware:            opts.K8sNodeAware,
 	}
 	if opts.EnableRetryHeuristics {
 		window := opts.RetryHeuristicWindow
@@ -559,6 +575,96 @@ func (tt *TrackedTask) aggregateCosts(events []Event) {
 		}
 	}()
 	tt.finalizeNetwork(events)
+
+	// ── Compute finalize — v2 compute pricing + per-event back-fill ───
+	// Mirrors python tracker._finalize_compute. Tier-5 fail-silent in its
+	// own recover() so a compute-pricing bug never breaks task finalize.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[dexcost] WARNING: compute cost computation panicked for task %s: %v", tt.Task.TaskID, r)
+			}
+		}()
+		tt.finalizeCompute(events)
+	}()
+}
+
+// finalizeCompute does three things (mirror python _finalize_compute):
+//
+//  1. If the task's compute accountant is a long-running runtime
+//     (Fargate / EC2 / GCE / Azure VM / K8s pod), call SnapshotEndAndBuild
+//     and persist a compute_cost event with CostUSD = 0 and
+//     cost_pending: true.
+//  2. Walk events for the task; for each compute_cost event with
+//     details["cost_pending"] == true, call engine.ResolveComputeCost
+//     and update the event (set CostUSD, PricingSource, CostConfidence,
+//     PricingVersion = "compute:<catalog_version>", strip cost_pending).
+//  3. Adjust task.ComputeCostUSD and task.TotalCostUSD by the DELTA per
+//     back-filled event (NOT a full recompute — preserves retry_marker
+//     costs already summed by aggregateCosts).
+func (tt *TrackedTask) finalizeCompute(events []Event) {
+	accountant := UnregisterComputeAccountant(tt.Task.TaskID.String())
+
+	// Step 1 — long-running snapshot: emit the deferred event now.
+	if accountant != nil && IsLongRunningRuntime(accountant.Runtime) {
+		durationMS := int64(0)
+		if tt.Task.EndedAt != nil {
+			durationMS = tt.Task.EndedAt.Sub(tt.Task.StartedAt).Milliseconds()
+		}
+		details := accountant.SnapshotEndAndBuild(durationMS)
+		if details != nil {
+			ev := NewEvent(tt.Task.TaskID, EventTypeComputeCost)
+			ev.CostUSD = decimal.Zero
+			ev.CostConfidence = CostConfidenceUnknown
+			ev.Details = details
+			if err := tt.tracker.buffer.InsertEvent(ev); err != nil {
+				log.Printf("[dexcost] WARNING: failed to record compute_cost event: %v", err)
+			} else {
+				// Include in the local back-fill walk below.
+				events = append(events, ev)
+			}
+		}
+	}
+
+	// Lazy-init the engine if the tracker was constructed without one.
+	if tt.tracker.computePricingEngine == nil {
+		tt.tracker.computePricingEngine = pricing.NewComputePricingEngine()
+	}
+	engine := tt.tracker.computePricingEngine
+	overrides := tt.tracker.computeBillingOverrides
+	pricingVersion := "compute:" + engine.CatalogVersion()
+	env := cloud.GetCloudEnv()
+
+	// Step 2/3 — back-fill walk over compute_cost events with cost_pending.
+	for _, ev := range events {
+		if ev.EventType != EventTypeComputeCost {
+			continue
+		}
+		pending, _ := ev.Details["cost_pending"].(bool)
+		if !pending {
+			continue
+		}
+		// Decimal window_s := 0 (engine derives from duration_ms when zero).
+		cost := engine.ResolveComputeCost(ev.Details, env, overrides, decimal.Zero)
+
+		prev := ev.CostUSD
+		ev.CostUSD = cost.CostUSD
+		ev.CostConfidence = CostConfidence(cost.CostConfidence)
+		ev.PricingSource = PricingSource(cost.PricingSource)
+		ev.PricingVersion = pricingVersion
+		delete(ev.Details, "cost_pending")
+
+		if err := tt.tracker.buffer.UpdateEvent(ev); err != nil {
+			log.Printf("[dexcost] WARNING: failed to back-fill compute event %s: %v", ev.EventID, err)
+			continue
+		}
+
+		// Delta-based total adjustment — NOT a full recompute. Preserves
+		// retry_marker costs already aggregated above; mirrors python.
+		delta := cost.CostUSD.Sub(prev)
+		tt.Task.ComputeCostUSD = tt.Task.ComputeCostUSD.Add(delta)
+		tt.Task.TotalCostUSD = tt.Task.TotalCostUSD.Add(delta)
+	}
 }
 
 // finalizeNetwork snapshots the NetworkAccountant onto the task's v1
