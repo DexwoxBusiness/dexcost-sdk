@@ -266,3 +266,54 @@ func vcpuCountFromCgroup() float64 {
 	}
 	return float64(n)
 }
+
+// ─── Registry ────────────────────────────────────────────────────────────
+//
+// Same pattern as the NetworkAccountant registry — the Task struct is value-
+// typed and serialised; the accountant lives outside, indexed by task_id.
+// Tracker registers on task start, unregisters at finalize.
+
+var (
+	computeRegistryMu sync.RWMutex
+	computeRegistry   = map[string]*ComputeAccountant{}
+)
+
+// RegisterComputeAccountant registers a task's compute accountant.
+func RegisterComputeAccountant(taskID string, a *ComputeAccountant) {
+	computeRegistryMu.Lock()
+	defer computeRegistryMu.Unlock()
+	computeRegistry[taskID] = a
+}
+
+// GetComputeAccountant resolves a task's accountant; nil if none.
+func GetComputeAccountant(taskID string) *ComputeAccountant {
+	computeRegistryMu.RLock()
+	defer computeRegistryMu.RUnlock()
+	return computeRegistry[taskID]
+}
+
+// UnregisterComputeAccountant removes and returns the accountant.
+func UnregisterComputeAccountant(taskID string) *ComputeAccountant {
+	computeRegistryMu.Lock()
+	defer computeRegistryMu.Unlock()
+	a := computeRegistry[taskID]
+	delete(computeRegistry, taskID)
+	return a
+}
+
+// ResetComputeRegistryForTests clears the registry.
+func ResetComputeRegistryForTests() {
+	computeRegistryMu.Lock()
+	defer computeRegistryMu.Unlock()
+	computeRegistry = map[string]*ComputeAccountant{}
+}
+
+// IsLongRunningRuntime returns true for runtimes whose accountant uses the
+// start/end snapshot path (vs serverless per-invocation events).
+func IsLongRunningRuntime(r RuntimeKind) bool {
+	switch r {
+	case RuntimeFargate, RuntimeEC2, RuntimeGCE, RuntimeAzureVM, RuntimeK8sPod:
+		return true
+	}
+	return false
+}
