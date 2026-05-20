@@ -25,6 +25,22 @@
 
 ---
 
+## 0a. Decisions Log (locked 2026-05-20)
+
+The seven open items from the planning conversation. Each is now fixed; if a decision needs to change, file a separate change request — don't mutate this section mid-implementation.
+
+| # | Decision | Final answer | Rationale |
+|---|---|---|---|
+| 1 | New providers — strict-mirror or per-SDK freedom? | **Strict mirror.** New providers (env-vars, DMI rules, IMDS endpoints, catalog entries) land in Python first and propagate to Go/Rust/TS via PR. | Cross-SDK parity testability. Customer attribution stays consistent regardless of SDK choice. |
+| 2 | Rust streaming-body byte counting (SSE / chunked responses without `Content-Length`) | **Spike-then-decide.** During Rust Task 7, spend ≤ 1 hour reading reqwest 0.12 `Response`/`Body` API. If a stream-interception pattern is clean (`Body::wrap_stream` + reconstructed `Response`, or `tokio_util::InspectReader` via `StreamReader`), implement it. If the API doesn't support it cleanly, ship Rust v2 with the Content-Length-only gap **documented loudly** in the Rust adapter's module docstring and a follow-up issue opened. Do not block the rest of the Rust port on this. | Streaming LLM responses are the dominant AI workload; undercounting them is a real correctness issue. But there's a real chance reqwest 0.12 can't support clean response-body interception in middleware. Time-boxed spike is the honest path. |
+| 3 | Runtime target for the TypeScript SDK | **Node 20+ on Linux/macOS/Windows is the target.** Bun runtime works via Node compat (no special code paths). Deno is not supported (the existing `node:` imports already preclude it). Package managers (npm / pnpm / yarn / `bun install`) are orthogonal. | The TS SDK already uses `node:async_hooks` / `node:crypto` — Node is the established target. Bun's Node compat handles `node:fs` for DMI reads. DMI is Linux-only on all platforms; macOS/Windows hosts no-op silently and fall through to Phase 2 IMDS. |
+| 4 | Decision #7 dual-invoice test — mandatory? | **Mandatory per SDK.** Each of Go/Rust/TS must include the explicit pinning test from `test_network_cost_dual_invoice.py` (cataloged vendor call with 0.5 GB response → exactly one `external_cost` event + `task.external_cost_usd == $0.01` + `task.network_cost_usd == $0.045` + event `cost_usd` unchanged). No opt-out. | Executable spec of the most subtle architectural call (v2 §3.3 + Decision #7). Silently dropping the egress half of vendor-call cost is the failure mode this test prevents. |
+| 5 | Phase B leader — which SDK ports the accountant + adapter first? | **Rust.** | Surfaces the streaming-body decision (item 2) earliest. If reqwest 0.12's API can't support clean stream interception, we know before Go and TS effort compounds. |
+| 6 | Execution model | **Parallel subagents for Phase A only** (Tasks 1, 2, 4 — types, schema, pure helpers — trivial ports per SDK). Then the primary agent sequences Phase B (Rust → Go → TS) since adapter wiring interacts with each SDK's HTTP layer differently. | Phase A is mechanical work with clean SDK boundaries; parallelization is safe. Phase B has cross-cutting decisions (suppression-flag wiring into each LLM instrument, body counting wrappers) that benefit from one agent's continuity. |
+| 7 | Catalog distribution — how do the 4 SDKs stay in sync when each is installed separately? | **Canonical file in Python; sync script copies to the other three; CI check enforces parity; each SDK bundles its own local copy in its published artifact.** Canonical: `python/src/dexcost/data/egress_prices.json`. Sync script: `scripts/sync_egress_catalog.sh` (writes by default, `--check` mode for CI). Bundling: Python wheel via `hatch.build.targets.wheel`, Rust `include_str!`, TS `package.json files`, Go `//go:embed`. | `pip install dexcost` / `cargo add dexcost` / `npm install dexcost` / `go get` each only ship the SDK's own tarball — a shared file at the repo root would be invisible to installed packages. Four local copies + a sync script + CI guard is the standard monorepo pattern. Each SDK works offline at runtime; no network call, no shared path. |
+
+---
+
 ## 0. Pre-flight — Verify shared contracts
 
 These items are non-negotiable invariants from the design specs. If any SDK already violates one, fix it before the v1 work.
@@ -41,19 +57,47 @@ These items are non-negotiable invariants from the design specs. If any SDK alre
 
 ## 1. Shared egress catalog — `egress_prices.json` distribution
 
-The catalog is a **single shared file across all four SDKs** (spec §10.4). The Python SDK ships it at `python/src/dexcost/data/egress_prices.json`. Each other SDK MUST consume the **same bytes** so a v1.0.0 catalog version means the same rates everywhere.
+Per Decision #7 in the log above: **canonical file is in Python; a sync script copies it to the other three SDKs; CI enforces parity; each SDK bundles its own local copy in its published artifact** (so `pip install` / `cargo add` / `npm install` / `go get` each work standalone — no shared paths at runtime, no network calls).
 
-**Decision per SDK:**
-- **Go:** copy to `go/pricing/data/egress_prices.json` at SDK release time; `go:embed` the file at compile time.
-- **Rust:** copy to `rust/src/data/egress_prices.json`; embed with `include_str!`.
-- **TypeScript:** copy to `typescript/src/data/egress_prices.json`; bundle via the existing `package.json` `files` array (already includes `src/`).
+### Implementation order
 
-**Catalog parity test (all three SDKs):** include a test that SHA-256-hashes the bundled catalog and asserts it equals the SHA-256 of the Python file. Catches drift before it ships.
+- [ ] **Step 1:** Create `scripts/sync_egress_catalog.sh` at repo root:
 
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+CANONICAL="python/src/dexcost/data/egress_prices.json"
+TARGETS=(
+  "rust/src/data/egress_prices.json"
+  "typescript/src/data/egress_prices.json"
+  "go/pricing/data/egress_prices.json"
+)
+MODE="${1:---write}"   # --check (CI) or --write (default, local)
+for target in "${TARGETS[@]}"; do
+  if [[ "$MODE" == "--check" ]]; then
+    if ! cmp -s "$CANONICAL" "$target"; then
+      echo "::error::$target is out of sync with $CANONICAL"
+      echo "Run: bash scripts/sync_egress_catalog.sh"
+      exit 1
+    fi
+  else
+    mkdir -p "$(dirname "$target")"
+    cp "$CANONICAL" "$target"
+    echo "synced → $target"
+  fi
+done
 ```
-- [ ] Each SDK has a `tests/test_egress_catalog_parity.*` that fails if the
-      bundled catalog bytes don't match python/src/dexcost/data/egress_prices.json.
-```
+
+- [ ] **Step 2:** Run `bash scripts/sync_egress_catalog.sh` once to populate the three target files.
+
+- [ ] **Step 3:** Add a CI step that runs `bash scripts/sync_egress_catalog.sh --check` on every PR. Wire into the existing GitHub Actions workflow (find it under `.github/workflows/`).
+
+- [ ] **Step 4:** Bundle the file in each SDK's published artifact:
+  - **Rust** — already works via `include_str!("../data/egress_prices.json")` because `src/data/` is inside the crate src tree.
+  - **TypeScript** — verify the `package.json` `files` array includes `src/data/**/*.json` (or the equivalent path); add a build step that copies `src/data/` into `dist/data/` so `import` from the published package resolves correctly.
+  - **Go** — already works via `//go:embed data/egress_prices.json` because `go/pricing/data/` is inside the package.
+
+- [ ] **Step 5:** Each SDK still ships its own integrity test (mirroring Python's `test_egress_catalog_integrity.py`) — JSON parseability, Decimal-string rate validation, `_last_verified` freshness check. The SHA-equality parity test is **not needed at runtime** because the sync script + CI guard already enforce it; the per-SDK integrity test guards against partial bundling failures.
 
 ---
 
@@ -563,9 +607,9 @@ Recommended execution order:
 | v2 §10.4 cross-language matrix | §4 (catalog SHA, schema SHA, invariant parity) |
 
 **Known follow-ups (out of scope for this plan):**
-- Rust streaming-body byte counting (Task 7) ships v1 with Content-Length only; chunk-counting wrapper deferred.
+- Rust streaming-body byte counting (Task 7) — see Decisions Log #2. The 1-hour spike inside the Rust port determines whether it ships in v2 or v2.1.
 - IBM Cloud / Lambda Labs / Vast.ai / CoreWeave / Cloudflare / Replicate / Netlify env-var detection — these are in the catalog at $0 (or $0.05 for CoreWeave) but lack canonical env-var signals. Detection paths land if/when the provider documents them.
-- The TS SDK's existing fetch patch must remain compatible with Bun and Deno runtimes. The TransformStream pattern works on all three (verified via WinterCG); the DMI file read is a Node-only path that no-ops on Bun/Deno (no `/sys/class/dmi/id` access in their sandboxes by default).
+- DMI file reads are Linux-only across every SDK and every supported runtime. macOS/Windows hosts no-op silently and fall through to Phase 2 IMDS. No special-casing per runtime needed (per Decisions Log #3).
 
 ---
 
