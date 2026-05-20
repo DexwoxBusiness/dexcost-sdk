@@ -164,6 +164,12 @@ def init(
         network_event_latency_ms=network_event_latency_ms,
     )
 
+    # v2 network-cost — kick off non-blocking cloud detection.  No-op when
+    # track_network is off.  Phase 1a/1b run synchronously here (sub-ms);
+    # Phase 2 runs on a daemon thread that never blocks init().
+    from dexcost.cloud_detect import start_background_detection as _start_detect
+    _start_detect(track_network=_global_config.track_network)
+
     # Dev mode — console output, no cloud push
     if _global_config.is_dev:
         from dexcost.dev_console import enable_dev_mode
