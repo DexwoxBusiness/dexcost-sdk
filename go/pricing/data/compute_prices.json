@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "version": "1.0.0",
-    "last_updated": "2026-05-21",
+    "version": "1.0.1",
+    "last_updated": "2026-05-20",
     "currency": "USD",
     "default_lambda_request_usd": "0.0000002",
     "default_lambda_gb_second_usd": "0.0000166667",
-    "default_fargate_vcpu_second_usd": "0.0000111111",
-    "default_fargate_gib_second_usd": "0.0000012222",
+    "default_fargate_vcpu_second_usd": "0.0000112444",
+    "default_fargate_gib_second_usd": "0.0000012347",
     "default_cloud_run_request_usd": "0.0000004",
     "default_cloud_run_vcpu_second_usd": "0.000024",
     "default_cloud_run_gib_second_usd": "0.0000025",
@@ -20,38 +20,38 @@
     "notes": "Rates are standard on-demand pricing, FIRST tier only. Sustained-use discounts (GCE), Savings Plans (AWS), and Reserved Instances are not modelled. Lambda/Azure Functions/Vercel rates are DECIMAL GB (10^9 bytes); Fargate/Cloud Run rates are BINARY GiB (2^30 bytes) — see spec §6.2. The default_* keys at this _meta level are the universal fallbacks used when neither a region match nor a provider default is available. EC2/GCE/Azure-VM blocks carry per-region instance_types maps keyed by the SKU returned by IMDS (e.g. c7g.xlarge, n2-standard-2, Standard_D2s_v3) — extend as new SKUs ship by transcribing from each provider's public pricing page."
   },
   "aws": {
-    "_last_verified": "2026-05-21",
+    "_last_verified": "2026-05-20",
     "lambda": {
       "default": {
         "x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"},
         "arm64":  {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}
       },
       "regions": {
-        "us-east-1":      {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000133334"}},
-        "us-east-2":      {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000133334"}},
-        "us-west-1":      {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000133334"}},
-        "us-west-2":      {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000133334"}},
-        "eu-west-1":      {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000133334"}},
-        "eu-central-1":   {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000172222"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000137778"}},
-        "ap-south-1":     {"x86_64": {"request_usd": "0.00000022", "gb_second_usd": "0.0000183334"}, "arm64": {"request_usd": "0.00000022", "gb_second_usd": "0.0000146667"}},
-        "ap-southeast-1": {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000187500"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000150000"}},
-        "ap-northeast-1": {"x86_64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000200000"}, "arm64": {"request_usd": "0.0000002",  "gb_second_usd": "0.0000160000"}}
+        "us-east-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-east-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-west-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "eu-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "eu-central-1":   {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-south-1":     {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-southeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-northeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}}
       }
     },
     "fargate": {
       "default": {
-        "x86_64": {"vcpu_second_usd": "0.0000111111",  "gib_second_usd": "0.0000012222"},
-        "arm64":  {"vcpu_second_usd": "0.00000888888", "gib_second_usd": "0.00000097777"}
+        "x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"},
+        "arm64":  {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}
       },
       "regions": {
-        "us-east-1":      {"x86_64": {"vcpu_second_usd": "0.0000111111",  "gib_second_usd": "0.0000012222"},  "arm64": {"vcpu_second_usd": "0.00000888888", "gib_second_usd": "0.00000097777"}},
-        "us-east-2":      {"x86_64": {"vcpu_second_usd": "0.0000111111",  "gib_second_usd": "0.0000012222"},  "arm64": {"vcpu_second_usd": "0.00000888888", "gib_second_usd": "0.00000097777"}},
-        "us-west-2":      {"x86_64": {"vcpu_second_usd": "0.0000111111",  "gib_second_usd": "0.0000012222"},  "arm64": {"vcpu_second_usd": "0.00000888888", "gib_second_usd": "0.00000097777"}},
-        "eu-west-1":      {"x86_64": {"vcpu_second_usd": "0.0000123611",  "gib_second_usd": "0.0000013611"},  "arm64": {"vcpu_second_usd": "0.00000988888", "gib_second_usd": "0.00000108888"}},
-        "eu-central-1":   {"x86_64": {"vcpu_second_usd": "0.0000128611",  "gib_second_usd": "0.0000014139"},  "arm64": {"vcpu_second_usd": "0.00001028888", "gib_second_usd": "0.00000113111"}},
-        "ap-south-1":     {"x86_64": {"vcpu_second_usd": "0.0000113056",  "gib_second_usd": "0.0000012417"},  "arm64": {"vcpu_second_usd": "0.00000904444", "gib_second_usd": "0.00000099333"}},
-        "ap-southeast-1": {"x86_64": {"vcpu_second_usd": "0.0000123056",  "gib_second_usd": "0.0000013528"},  "arm64": {"vcpu_second_usd": "0.00000984444", "gib_second_usd": "0.00000108222"}},
-        "ap-northeast-1": {"x86_64": {"vcpu_second_usd": "0.0000132833",  "gib_second_usd": "0.0000014611"},  "arm64": {"vcpu_second_usd": "0.00001062666", "gib_second_usd": "0.00000116888"}}
+        "us-east-1":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "us-east-2":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "us-west-2":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "eu-west-1":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "eu-central-1":   {"x86_64": {"vcpu_second_usd": "0.0000129333", "gib_second_usd": "0.0000014194"}, "arm64": {"vcpu_second_usd": "0.0000103472", "gib_second_usd": "0.0000011361"}},
+        "ap-south-1":     {"x86_64": {"vcpu_second_usd": "0.0000118222", "gib_second_usd": "0.0000012931"}, "arm64": {"vcpu_second_usd": "0.0000066194", "gib_second_usd": "0.0000007250"}},
+        "ap-southeast-1": {"x86_64": {"vcpu_second_usd": "0.0000140444", "gib_second_usd": "0.0000015361"}, "arm64": {"vcpu_second_usd": "0.0000112361", "gib_second_usd": "0.0000012278"}},
+        "ap-northeast-1": {"x86_64": {"vcpu_second_usd": "0.0000140444", "gib_second_usd": "0.0000015361"}, "arm64": {"vcpu_second_usd": "0.0000112361", "gib_second_usd": "0.0000012278"}}
       }
     },
     "ec2": {
@@ -83,8 +83,8 @@
         "eu-west-1": {
           "instance_types": {
             "t3.medium":   {"hourly_usd": "0.0456", "vcpu_count": "2"},
-            "m7i.large":   {"hourly_usd": "0.1116", "vcpu_count": "2"},
-            "c7g.xlarge":  {"hourly_usd": "0.1602", "vcpu_count": "4"}
+            "m7i.large":   {"hourly_usd": "0.11235", "vcpu_count": "2"},
+            "c7g.xlarge":  {"hourly_usd": "0.1550", "vcpu_count": "4"}
           }
         }
       }
@@ -135,7 +135,7 @@
     }
   },
   "azure": {
-    "_last_verified": "2026-05-21",
+    "_last_verified": "2026-05-20",
     "functions_consumption": {
       "default": {"execution_usd": "0.0000002", "gb_second_usd": "0.000016"},
       "regions": {
@@ -160,15 +160,15 @@
         },
         "westeurope": {
           "instance_types": {
-            "Standard_D2s_v3":  {"hourly_usd": "0.1140", "vcpu_count": "2"},
-            "Standard_B2ms":    {"hourly_usd": "0.0936", "vcpu_count": "2"}
+            "Standard_D2s_v3":  {"hourly_usd": "0.1200", "vcpu_count": "2"},
+            "Standard_B2ms":    {"hourly_usd": "0.0960", "vcpu_count": "2"}
           }
         }
       }
     }
   },
   "vercel": {
-    "_last_verified": "2026-05-21",
+    "_last_verified": "2026-05-20",
     "fluid": {
       "default": {
         "active_cpu_hour_usd": "0.128",

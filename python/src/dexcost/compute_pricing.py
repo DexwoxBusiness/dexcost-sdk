@@ -59,8 +59,8 @@ _MS_PER_S = Decimal("1000")
 _HARDCODED = {
     "lambda":             {"request_usd": Decimal("0.0000002"),
                            "gb_second_usd": Decimal("0.0000166667")},
-    "fargate":            {"vcpu_second_usd": Decimal("0.0000111111"),
-                           "gib_second_usd": Decimal("0.0000012222")},
+    "fargate":            {"vcpu_second_usd": Decimal("0.0000112444"),
+                           "gib_second_usd": Decimal("0.0000012347")},
     "cloud_run_request":  {"request_usd": Decimal("0.0000004"),
                            "vcpu_second_usd": Decimal("0.000024"),
                            "gib_second_usd": Decimal("0.0000025")},

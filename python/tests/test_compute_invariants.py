@@ -125,6 +125,6 @@ def test_invariant_3_linearity_in_memory_fargate(engine, memory_gib):
         base, _env(), {}, window_s=Decimal("1"),
     )
     # Compute by hand: vcpu_term + gib_term*memory_gib
-    vcpu_term = Decimal("1") * Decimal("1") * Decimal("0.0000111111")
-    gib_term = Decimal(memory_gib) * Decimal("1") * Decimal("0.0000012222")
+    vcpu_term = Decimal("1") * Decimal("1") * Decimal("0.0000112444")
+    gib_term = Decimal(memory_gib) * Decimal("1") * Decimal("0.0000012347")
     assert cost.cost_usd == vcpu_term + gib_term

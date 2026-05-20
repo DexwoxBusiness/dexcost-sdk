@@ -91,8 +91,8 @@ def test_fargate_uses_binary_gib_divisor(engine):
     cost = engine.resolve_compute_cost(
         details, _env(), {}, window_s=Decimal("60"),
     )
-    vcpu_term = Decimal("0.5") * Decimal("60") * Decimal("0.0000111111")
-    gib_term = Decimal("1") * Decimal("60") * Decimal("0.0000012222")
+    vcpu_term = Decimal("0.5") * Decimal("60") * Decimal("0.0000112444")
+    gib_term = Decimal("1") * Decimal("60") * Decimal("0.0000012347")
     assert cost.cost_usd == vcpu_term + gib_term
 
 
