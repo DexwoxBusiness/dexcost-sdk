@@ -171,14 +171,20 @@ impl TrackedTask {
         self
     }
 
-    /// Test-only: attach a ComputeAccountant to this task. Used by the
-    /// Phase 1 compute integration tests.
-    #[doc(hidden)]
+    /// Attach a ComputeAccountant to this task. Used by the handler wraps
+    /// (adapters::compute_wrap::wrap_lambda_handler etc.) — the SDK public
+    /// API for compute capture goes through these wraps.
     pub fn attach_compute_for_tests(
         &mut self,
         accountant: std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>,
     ) {
         self.task.compute = Some(accountant);
+    }
+
+    /// Access the buffer handle. Used by handler wraps to insert compute
+    /// events under the cost_pending deferred-cost pattern.
+    pub fn buffer_handle_for_tests(&self) -> Arc<Mutex<EventBuffer>> {
+        self.buffer.clone()
     }
 
     /// Records an LLM call event on this task.

@@ -1,3 +1,4 @@
+pub mod compute_wrap;
 pub mod http;
 pub mod lambda;
 pub mod netbytes;
