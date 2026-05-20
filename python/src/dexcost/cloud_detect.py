@@ -102,17 +102,87 @@ def _azure_container_apps_region() -> str | None:
 
 
 def _detect_env() -> CloudEnv | None:
+    # ── GPU / ML clouds (zero egress) ──────────────────────────────────
+    # Detection prevents the universal $0.09/GB default from over-attributing
+    # on platforms whose marketing point is $0 egress.
+    #
+    # All env-var names below are confirmed against each provider's official
+    # 2026-05 docs — not pattern-matched or guessed.
+
+    # Modal (modal.com/docs/guide/environment_variables): MODAL_TASK_ID is
+    # set in every container; MODAL_REGION carries the underlying cloud's
+    # region code (us-east-1 / us-central1 / us-ashburn-1).
+    if os.environ.get("MODAL_TASK_ID") or os.environ.get("MODAL_IMAGE_ID"):
+        return CloudEnv("modal", os.environ.get("MODAL_REGION") or None, "env")
+
+    # RunPod (docs.runpod.io/pods/templates/environment-variables): pod-id,
+    # hostname, and data-centre id are all auto-injected.
+    if os.environ.get("RUNPOD_POD_ID") or os.environ.get("RUNPOD_POD_HOSTNAME"):
+        return CloudEnv("runpod", os.environ.get("RUNPOD_DC_ID") or None, "env")
+
+    # ── PaaS app platforms ──────────────────────────────────────────────
+    # Render (render.com/docs/environment-variables): RENDER=true and a
+    # collection of RENDER_* IDs. No region env var is documented.
+    if os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"):
+        return CloudEnv("render", None, "env")
+
+    # Railway (docs.railway.com/reference/variables): RAILWAY_PROJECT_ID +
+    # RAILWAY_REPLICA_REGION (e.g. "us-west2"). Note: NOT "RAILWAY_REGION".
+    if (
+        os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_ENVIRONMENT_ID")
+    ):
+        return CloudEnv(
+            "railway",
+            os.environ.get("RAILWAY_REPLICA_REGION") or None,
+            "env",
+        )
+
+    # Heroku: DYNO ("web.1" / "worker.1" / "scheduler.x") is the long-standing
+    # de-facto detection signal — present on every dyno.
+    if os.environ.get("DYNO"):
+        return CloudEnv("heroku", None, "env")
+
+    # Koyeb (koyeb.com/docs/build-and-deploy/environment-variables):
+    # KOYEB_APP_NAME / KOYEB_SERVICE_NAME (build+runtime) plus KOYEB_REGION
+    # (runtime only).
+    if os.environ.get("KOYEB_SERVICE_NAME") or os.environ.get("KOYEB_APP_NAME"):
+        return CloudEnv("koyeb", os.environ.get("KOYEB_REGION") or None, "env")
+
+    # ── Fly.io (fly.io/docs/machines/runtime-environment) ───────────────
+    # FLY_REGION (3-letter: ams, iad, lhr, …), FLY_APP_NAME, FLY_MACHINE_ID.
+    if os.environ.get("FLY_REGION") or os.environ.get("FLY_APP_NAME"):
+        return CloudEnv("fly", os.environ.get("FLY_REGION") or None, "env")
+
+    # ── Vercel (vercel.com/docs/projects/environment-variables) ────────
+    # VERCEL=1, VERCEL_ENV, VERCEL_REGION (e.g. "iad1", "sfo1"). Vercel ALSO
+    # exports AWS_REGION mapped to the underlying AWS region (sfo1 →
+    # us-west-1); detecting vercel first surfaces vercel-tier attribution.
+    if os.environ.get("VERCEL") or os.environ.get("VERCEL_REGION"):
+        return CloudEnv("vercel", os.environ.get("VERCEL_REGION") or None, "env")
+
+    # Note: Replicate, Netlify Functions, and Cloudflare Workers were
+    # researched but excluded from env-var detection — Replicate has no
+    # documented runtime detection var, Netlify's NETLIFY=true is build-time
+    # only (functions run on AWS Lambda and surface as AWS), and Cloudflare
+    # Workers pass env via the request `env` parameter rather than the
+    # process environment by default. They remain in the egress catalog
+    # ($0 rate) for future detection paths.
+
     # ── AWS ─────────────────────────────────────────────────────────────
-    # Lambda / managed runtimes set AWS_EXECUTION_ENV; ECS (Fargate or
-    # on-EC2) sets ECS_CONTAINER_METADATA_URI_V4 (V4 always, V3 on older
-    # platform versions).  Either is a definitive "this is AWS" marker.
-    is_aws = bool(
+    # Lambda / Execution-Env / ECS signals are definitive.  AWS_REGION alone
+    # is also a strong signal — set on Lambda, ECS (Fargate / on-EC2), App
+    # Runner, Beanstalk, and most managed runtimes.  A bare-laptop dev with
+    # AWS CLI configured is the only false-positive surface, and it's their
+    # responsibility — a deployed SDK should attribute.
+    if (
         os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
         or os.environ.get("AWS_EXECUTION_ENV")
         or os.environ.get("ECS_CONTAINER_METADATA_URI_V4")
         or os.environ.get("ECS_CONTAINER_METADATA_URI")
-    )
-    if is_aws:
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    ):
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         return CloudEnv("aws", region, "env")
 
@@ -130,10 +200,14 @@ def _detect_env() -> CloudEnv | None:
 
     # ── GCP ─────────────────────────────────────────────────────────────
     # K_SERVICE / K_REVISION / K_CONFIGURATION are reserved by Cloud Run +
-    # Cloud Functions Gen2 (built on Cloud Run).  No region env var exists;
-    # Phase 2 metadata probe resolves it.
+    # Cloud Functions Gen2.  No region env var exists; Phase 2 metadata
+    # probe resolves it.  GOOGLE_CLOUD_PROJECT is set by App Engine / Cloud
+    # Functions Gen1 / many CI runners — treat as a positive provider
+    # signal only when paired with a Cloud-Run-style marker, otherwise too
+    # noisy (gcloud CLI exports it on a dev laptop).
     if any(os.environ.get(k) for k in
-           ("K_SERVICE", "K_CONFIGURATION", "GAE_ENV", "FUNCTION_TARGET")):
+           ("K_SERVICE", "K_CONFIGURATION", "GAE_ENV", "FUNCTION_TARGET",
+            "FUNCTION_NAME")):
         return CloudEnv("gcp", None, "env")
     return None
 
@@ -143,6 +217,24 @@ def _detect_env() -> CloudEnv | None:
 # ---------------------------------------------------------------------------
 
 
+# DMI vendor strings — matched against /sys/class/dmi/id/{board,sys}_vendor
+# in lowercase substring form. Sources: dmidecode output samples,
+# upstream cloud-detect library, and provider documentation.
+_DMI_VENDORS: tuple[tuple[str, str], ...] = (
+    ("amazon", "aws"),
+    ("ec2", "aws"),
+    ("google", "gcp"),
+    ("microsoft", "azure"),
+    ("oraclecloud", "oci"),
+    ("digitalocean", "digitalocean"),
+    ("hetzner", "hetzner"),
+    ("vultr", "vultr"),
+    ("alibaba", "alibaba"),
+    ("scaleway", "scaleway"),
+    ("ovh", "ovh"),
+)
+
+
 def _detect_dmi() -> CloudEnv | None:
     for path in _DMI_PATHS:
         try:
@@ -150,12 +242,9 @@ def _detect_dmi() -> CloudEnv | None:
                 value = f.read().strip().lower()
         except OSError:
             continue
-        if "amazon" in value:
-            return CloudEnv("aws", None, "dmi")
-        if "google" in value:
-            return CloudEnv("gcp", None, "dmi")
-        if "microsoft" in value:
-            return CloudEnv("azure", None, "dmi")
+        for needle, provider in _DMI_VENDORS:
+            if needle in value:
+                return CloudEnv(provider, None, "dmi")
     return None
 
 
@@ -220,7 +309,62 @@ def _probe_azure() -> CloudEnv | None:
         return None
 
 
-_PROBES = {"aws": _probe_aws, "gcp": _probe_gcp, "azure": _probe_azure}
+def _probe_oci() -> CloudEnv | None:
+    # OCI exposes instance metadata at 169.254.169.254/opc/v2/instance/
+    # (v2 requires a bearer token "Authorization: Bearer Oracle"; v1 is open).
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/opc/v2/instance/region",
+            headers={"Authorization": "Bearer Oracle"},
+        )
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+            region = resp.read().decode("ascii").strip().lower()
+        return CloudEnv("oci", region or None, "imds")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _probe_digitalocean() -> CloudEnv | None:
+    try:
+        req = urllib.request.Request(
+            "http://169.254.169.254/metadata/v1/region",
+        )
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+            region = resp.read().decode("ascii").strip().lower()
+        return CloudEnv("digitalocean", region or None, "imds")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _probe_alibaba() -> CloudEnv | None:
+    # Alibaba ECS metadata at 100.100.100.200 — different IP.  IMDSv2 PUT
+    # token flow exists; v1 still works on most images.
+    try:
+        req = urllib.request.Request(
+            "http://100.100.100.200/latest/meta-data/region-id",
+        )
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+            region = resp.read().decode("ascii").strip().lower()
+        return CloudEnv("alibaba", region or None, "imds")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+# Provider hint → metadata probe.  When provider is already known via DMI
+# we go straight to its probe; otherwise we fan out the major three
+# (aws/gcp/azure) in parallel — adding OCI/DO/Alibaba to the parallel set
+# would lengthen the worst-case wait and hit the wrong metadata server
+# on AWS (DO uses the same 169.254.169.254 IP), so they only run when DMI
+# pre-classifies the host.
+_PROBES = {
+    "aws": _probe_aws,
+    "gcp": _probe_gcp,
+    "azure": _probe_azure,
+    "oci": _probe_oci,
+    "digitalocean": _probe_digitalocean,
+    "alibaba": _probe_alibaba,
+}
+_FANOUT_PROBES = ("aws", "gcp", "azure")
 
 
 def _run_probe(provider_hint: str | None) -> CloudEnv:
@@ -242,8 +386,8 @@ def _run_probe(provider_hint: str | None) -> CloudEnv:
                     done.set()
 
     threads = [
-        threading.Thread(target=_runner, args=(fn,), daemon=True)
-        for fn in _PROBES.values()
+        threading.Thread(target=_runner, args=(_PROBES[name],), daemon=True)
+        for name in _FANOUT_PROBES
     ]
     for t in threads:
         t.start()
