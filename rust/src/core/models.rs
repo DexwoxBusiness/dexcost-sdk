@@ -87,6 +87,12 @@ pub struct Task {
     pub network_call_count: i64,
     #[serde(default = "default_network_by_host")]
     pub network_by_host: serde_json::Value,
+    /// v2 — cloud-egress cost in USD, computed at task finalize from the
+    /// accountant's canonical external_bytes_out scalar. Distinct from
+    /// `external_cost_usd` (vendor API charges) — see Decision #7. Defaults
+    /// to zero for legacy payloads.
+    #[serde(default)]
+    pub network_cost_usd: Decimal,
     /// In-memory accumulator for HTTP byte usage. Not serialised — each
     /// deserialised Task gets a fresh accountant. Cloning the Task shares
     /// the accountant by Arc-refcount, which is the right behaviour during
@@ -130,6 +136,7 @@ impl Task {
             network_bytes_out: 0,
             network_call_count: 0,
             network_by_host: default_network_by_host(),
+            network_cost_usd: Decimal::ZERO,
             network_accountant: std::sync::Arc::default(),
             schema_version: "1".to_string(),
         }
@@ -164,6 +171,7 @@ impl Task {
             "network_bytes_out": self.network_bytes_out,
             "network_call_count": self.network_call_count,
             "network_by_host": self.network_by_host,
+            "network_cost_usd": self.network_cost_usd.to_string(),
             "schema_version": self.schema_version,
         })
     }

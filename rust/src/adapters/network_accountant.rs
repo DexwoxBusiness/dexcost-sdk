@@ -236,7 +236,11 @@ pub fn unregister_accountant(task_id: &str) -> Option<Arc<NetworkAccountant>> {
 
 /// Test-only: clear the entire registry. Use between tests that exercise the
 /// registry to avoid cross-test contamination.
-#[cfg(test)]
+///
+/// Not gated behind `cfg(test)` because integration tests in `tests/`
+/// compile as a separate crate and can't see `cfg(test)`-gated items.
+/// The `_for_tests` suffix + `#[doc(hidden)]` mark it as not-public-API.
+#[doc(hidden)]
 pub fn _reset_registry_for_tests() {
     REGISTRY
         .write()

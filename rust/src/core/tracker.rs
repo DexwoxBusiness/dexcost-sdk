@@ -5,9 +5,12 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 
+use crate::adapters::network_accountant::{register_accountant, unregister_accountant};
+use crate::cloud_detect::get_cloud_env;
 use crate::core::heuristics::RetryHeuristicEngine;
 use crate::core::models::{CostConfidence, CostEvent, EventType, PricingSource, Task, TaskStatus};
 use crate::error::DexcostError;
+use crate::pricing::egress_pricing::EgressPricingEngine;
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::rates::RateRegistry;
 use crate::transport::buffer::EventBuffer;
@@ -107,6 +110,9 @@ impl TrackedTask {
         pricing: Option<Arc<Mutex<PricingEngine>>>,
         rate_registry: Option<Arc<Mutex<RateRegistry>>>,
     ) -> Self {
+        // Register the task's NetworkAccountant so the HTTP middleware can
+        // find it via task_id lookup (mirrors Python's _resolveTask path).
+        register_accountant(&task.task_id, task.network_accountant.clone());
         Self {
             task,
             buffer,
@@ -126,6 +132,7 @@ impl TrackedTask {
         rate_registry: Option<Arc<Mutex<RateRegistry>>>,
         heuristics: Arc<std::sync::Mutex<RetryHeuristicEngine>>,
     ) -> Self {
+        register_accountant(&task.task_id, task.network_accountant.clone());
         Self {
             task,
             buffer,
@@ -556,6 +563,37 @@ impl TrackedTask {
             self.task.failure_count = 1;
         }
 
+        // ── Network finalize — v1 byte aggregates + v2 egress pricing ──
+        //
+        // Mirrors python/src/dexcost/tracker.py:_aggregate_costs. The
+        // accountant snapshot drives both:
+        //   - v1 task fields (network_bytes_in/out/call_count/network_by_host)
+        //   - v2 task.network_cost_usd from the canonical external_bytes_out
+        //     scalar (Decimal(bytes) / 10^9 * resolved_rate)
+        //   - v2 per-host egress_cost_usd stamped into network_by_host
+        //   - v2 per-event back-fill: every cost_pending network event for
+        //     this task gets its cost_usd / pricing_source / pricing_version
+        //     stamped and the cost_pending marker removed
+        //
+        // Wrapped in `let result = (...)` so a Tier-5 failure (spec §7.1)
+        // never breaks task finalization — the task still ships with
+        // llm/external/compute costs intact.
+        let finalize_result = self.finalize_network().await;
+        if let Err(e) = finalize_result {
+            eprintln!(
+                "[dexcost] WARNING: egress cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+            // Tier 5: zero out the v2 fields but preserve the v1 aggregates.
+            self.task.network_cost_usd = Decimal::ZERO;
+        }
+
+        // Remove the accountant from the registry; subsequent HTTP calls
+        // attributed to this task_id won't find one (matches Python's
+        // frozen-then-snapshot semantics — late bytes are dropped, not
+        // recorded against the wrong task).
+        unregister_accountant(&self.task.task_id);
+
         let mut buf = self.buffer.lock().await;
         buf.upsert_task(self.task.clone());
         drop(buf);
@@ -566,9 +604,158 @@ impl TrackedTask {
         Ok(())
     }
 
+    /// Snapshots the NetworkAccountant onto the task's v1 fields and
+    /// (if a CloudEnv has been resolved) computes v2 egress dollars +
+    /// back-fills the cost_pending network events for this task.
+    ///
+    /// Returns Err only on truly exceptional conditions; the caller wraps
+    /// this in a fail-silent shell (Tier 5 of the §7.1 ladder).
+    async fn finalize_network(&mut self) -> Result<(), DexcostError> {
+        // v1 — drain the accountant into task fields.
+        let snapshot = self.task.network_accountant.finalize();
+        self.task.network_bytes_in = snapshot.bytes_in as i64;
+        self.task.network_bytes_out = snapshot.bytes_out as i64;
+        self.task.network_call_count = snapshot.call_count as i64;
+        self.task.network_by_host = snapshot.by_host;
+
+        // v2 — egress pricing.
+        let env = get_cloud_env();
+        let engine = EgressPricingEngine::new();
+        let rate = engine.resolve_rate(env.provider.as_deref(), env.region.as_deref());
+        let pricing_version = format!("egress:{}", engine.catalog_version());
+
+        // Convert external_bytes_out scalar to GB (decimal — never float
+        // — per spec §6.3). 1 GB = 10^9 bytes, NOT 2^30.
+        let divisor = Decimal::from(1_000_000_000_u64);
+        let external_gb = Decimal::from(snapshot.external_bytes_out) / divisor;
+        self.task.network_cost_usd = external_gb * rate.rate_per_gb;
+
+        // Stamp per-host egress_cost_usd into network_by_host. Per-host
+        // external_bytes_out survives the LIVE_CAP overflow + top-N cap;
+        // sum(per-host egress_cost_usd) == network_cost_usd by construction
+        // (the v2 §10.3 property invariant).
+        if let Some(hosts) = self
+            .task
+            .network_by_host
+            .get_mut("hosts")
+            .and_then(|v| v.as_array_mut())
+        {
+            for host in hosts.iter_mut() {
+                let host_external = host
+                    .get("external_bytes_out")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let host_gb = Decimal::from(host_external) / divisor;
+                let host_cost = host_gb * rate.rate_per_gb;
+                if let Some(obj) = host.as_object_mut() {
+                    obj.insert(
+                        "egress_cost_usd".to_string(),
+                        serde_json::Value::String(host_cost.to_string()),
+                    );
+                }
+            }
+        }
+
+        // v2 §6.4 — back-fill each network event for this task. Walk the
+        // buffer's stored events for this task_id, find any with
+        // details.cost_pending == true, compute their cost, and
+        // update_event to re-sync.
+        let mut buf = self.buffer.lock().await;
+        let pending = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::Network
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect::<Vec<_>>();
+
+        for mut ev in pending {
+            let resp_bytes = ev
+                .details
+                .get("response_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let req_bytes = ev
+                .details
+                .get("request_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let is_internal_val = ev.details.get("is_internal_traffic");
+            let is_internal = matches!(is_internal_val, Some(v) if v.as_bool() == Some(true));
+
+            let billable_bytes = if is_internal {
+                0_u64
+            } else {
+                resp_bytes.saturating_add(req_bytes)
+            };
+            let ev_gb = Decimal::from(billable_bytes) / divisor;
+            let ev_cost = ev_gb * rate.rate_per_gb;
+
+            ev.cost_usd = ev_cost;
+            ev.cost_confidence = if is_internal {
+                CostConfidence::Exact
+            } else {
+                match rate.cost_confidence.as_str() {
+                    "computed" => CostConfidence::Computed,
+                    "estimated" => CostConfidence::Estimated,
+                    "exact" => CostConfidence::Exact,
+                    _ => CostConfidence::Unknown,
+                }
+            };
+            ev.pricing_source = Some(if is_internal {
+                PricingSource::ServiceCatalog
+            } else {
+                // No dedicated enum variant for egress catalog yet — reuse
+                // ServiceCatalog. The pricing_source string on the wire
+                // carries the full detail via details/pricing_version.
+                PricingSource::ServiceCatalog
+            });
+            ev.pricing_version = Some(pricing_version.clone());
+            // Strip cost_pending marker so the back-filled event is no
+            // longer "deferred-cost".
+            ev.details.remove("cost_pending");
+            // Stamp egress_pricing_source string so the wire payload
+            // carries the v2 source detail (egress_catalog:aws:us-east-1).
+            ev.details.insert(
+                "egress_pricing_source".to_string(),
+                serde_json::Value::String(if is_internal {
+                    "egress_catalog:internal".to_string()
+                } else {
+                    rate.pricing_source.clone()
+                }),
+            );
+
+            buf.update_event(&ev);
+
+            // The first-pass total_cost_usd summed this event as 0 (per
+            // v2 §6.4 cost_pending); add the back-filled cost.
+            self.task.total_cost_usd += ev_cost;
+        }
+
+        // Add network_cost_usd to total — the canonical scalar that
+        // captures every external byte (including those from cataloged
+        // and below-threshold un-cataloged calls that never emitted a
+        // network event).
+        self.task.total_cost_usd += self.task.network_cost_usd;
+
+        Ok(())
+    }
+
     /// Returns a reference to the underlying Task.
     pub fn task(&self) -> &Task {
         &self.task
+    }
+
+    /// Test-only: mutable access to the underlying Task. Used by Phase D
+    /// finalize tests to seed cost aggregates before driving end().
+    /// `_for_tests` + `#[doc(hidden)]` mark this as not-public-API.
+    #[doc(hidden)]
+    pub fn task_mut_for_tests(&mut self) -> &mut Task {
+        &mut self.task
     }
 
     /// Returns the events recorded on this task.

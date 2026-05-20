@@ -83,14 +83,14 @@ static BG_THREAD: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mut
 // Test hooks — overrides used by the test suite to mock DMI and HTTP probes.
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+// Test-only overrides. Statics are NOT `cfg(test)`-gated because
+// integration tests in `tests/` compile as a separate crate; they need
+// to see the `_for_tests` helpers below. Production code never sets
+// these (the override lookup short-circuits on empty Mutex contents).
 type DmiOverride = Box<dyn Fn() -> HashMap<String, String> + Send + Sync>;
-#[cfg(test)]
 static DMI_OVERRIDE: LazyLock<Mutex<Option<DmiOverride>>> = LazyLock::new(|| Mutex::new(None));
 
-#[cfg(test)]
 type ProbeFn = Box<dyn Fn() -> Option<CloudEnv> + Send + Sync>;
-#[cfg(test)]
 static PROBE_OVERRIDES: LazyLock<Mutex<HashMap<String, ProbeFn>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -256,16 +256,10 @@ fn read_dmi_real() -> HashMap<String, String> {
     result
 }
 
-#[cfg(test)]
 fn read_dmi() -> HashMap<String, String> {
     if let Some(f) = DMI_OVERRIDE.lock().unwrap().as_ref() {
         return f();
     }
-    read_dmi_real()
-}
-
-#[cfg(not(test))]
-fn read_dmi() -> HashMap<String, String> {
     read_dmi_real()
 }
 
@@ -458,11 +452,8 @@ fn probe_alibaba() -> Option<CloudEnv> {
 }
 
 fn dispatch_probe(name: &str) -> Option<CloudEnv> {
-    #[cfg(test)]
-    {
-        if let Some(f) = PROBE_OVERRIDES.lock().unwrap().get(name) {
-            return f();
-        }
+    if let Some(f) = PROBE_OVERRIDES.lock().unwrap().get(name) {
+        return f();
     }
     match name {
         "aws" => probe_aws(),
@@ -585,14 +576,17 @@ pub fn start_background_detection(track_network: bool) {
 // Test-only helpers
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+// `#[doc(hidden)]` is sufficient to mark these as not-public-API; the
+// `_for_tests` suffix in the name reinforces it. They're NOT `#[cfg(test)]`
+// because integration tests in `tests/` compile as a separate crate and
+// can't see `cfg(test)`-gated items.
+
 #[doc(hidden)]
 pub fn reset_module_for_tests() {
     set_result(CloudEnv::none());
     *BG_THREAD.lock().unwrap() = None;
 }
 
-#[cfg(test)]
 #[doc(hidden)]
 pub fn set_dmi_override_for_tests<F>(f: F)
 where
@@ -601,13 +595,11 @@ where
     *DMI_OVERRIDE.lock().unwrap() = Some(Box::new(f));
 }
 
-#[cfg(test)]
 #[doc(hidden)]
 pub fn clear_dmi_override_for_tests() {
     *DMI_OVERRIDE.lock().unwrap() = None;
 }
 
-#[cfg(test)]
 #[doc(hidden)]
 pub fn set_probe_override_for_tests<F>(name: &str, f: F)
 where
@@ -619,10 +611,16 @@ where
         .insert(name.to_string(), Box::new(f));
 }
 
-#[cfg(test)]
 #[doc(hidden)]
 pub fn clear_probe_overrides_for_tests() {
     PROBE_OVERRIDES.lock().unwrap().clear();
+}
+
+/// Force the resolved CloudEnv to a known value — used by Phase D
+/// finalize tests to pin the egress rate deterministically.
+#[doc(hidden)]
+pub fn set_result_for_tests(env: CloudEnv) {
+    set_result(env);
 }
 
 #[cfg(test)]
