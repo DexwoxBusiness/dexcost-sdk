@@ -83,6 +83,12 @@ type Task struct {
 	RetryCostUSD decimal.Decimal `json:"retry_cost_usd"`
 	FailureCount int             `json:"failure_count"`
 
+	// Network capture (v1)
+	NetworkBytesIn   int64                  `json:"network_bytes_in"`
+	NetworkBytesOut  int64                  `json:"network_bytes_out"`
+	NetworkCallCount int64                  `json:"network_call_count"`
+	NetworkByHost    map[string]interface{} `json:"network_by_host"`
+
 	// Schema contract
 	SchemaVersion string `json:"schema_version"`
 }
@@ -100,6 +106,7 @@ func NewTask(taskType string) Task {
 		ComputeCostUSD:  decimal.Zero,
 		TotalCostUSD:    decimal.Zero,
 		RetryCostUSD:    decimal.Zero,
+		NetworkByHost:   map[string]interface{}{"hosts": []interface{}{}},
 		SchemaVersion:   "1",
 	}
 }
@@ -129,6 +136,10 @@ func (t Task) ToDict() map[string]interface{} {
 		"retry_count":         t.RetryCount,
 		"retry_cost_usd":      t.RetryCostUSD.String(),
 		"failure_count":       t.FailureCount,
+		"network_bytes_in":    t.NetworkBytesIn,
+		"network_bytes_out":   t.NetworkBytesOut,
+		"network_call_count":  t.NetworkCallCount,
+		"network_by_host":     t.networkByHostForDict(),
 		"schema_version":      t.SchemaVersion,
 	}
 	if t.EndedAt != nil {
@@ -307,11 +318,36 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 	if v := dictInt(d, "failure_count"); v != nil {
 		t.FailureCount = *v
 	}
+	if v := dictInt64(d, "network_bytes_in"); v != nil {
+		t.NetworkBytesIn = *v
+	}
+	if v := dictInt64(d, "network_bytes_out"); v != nil {
+		t.NetworkBytesOut = *v
+	}
+	if v := dictInt64(d, "network_call_count"); v != nil {
+		t.NetworkCallCount = *v
+	}
+	if v, ok := d["network_by_host"].(map[string]interface{}); ok && v != nil {
+		t.NetworkByHost = v
+	}
+	if t.NetworkByHost == nil {
+		t.NetworkByHost = map[string]interface{}{"hosts": []interface{}{}}
+	}
 	if v, ok := d["schema_version"].(string); ok {
 		t.SchemaVersion = v
 	}
 
 	return t, nil
+}
+
+// networkByHostForDict returns the NetworkByHost map, defaulting to
+// {"hosts": []} if the field is nil. Mirrors Python's
+// `network_by_host=field(default_factory=lambda: {"hosts": []})`.
+func (t Task) networkByHostForDict() map[string]interface{} {
+	if t.NetworkByHost == nil {
+		return map[string]interface{}{"hosts": []interface{}{}}
+	}
+	return t.NetworkByHost
 }
 
 // EventFromDict deserializes an Event from a map matching the Standard Event Schema v1 wire format.
@@ -424,6 +460,30 @@ func dictInt(d map[string]interface{}, key string) *int {
 		v := int(n)
 		return &v
 	case *int:
+		return n
+	default:
+		return nil
+	}
+}
+
+// dictInt64 extracts an int64 (or other numeric) value from a map and returns
+// a pointer to the int64. Handles native int/int64 values (from ToDict) and
+// float64 values (from json.Unmarshal).
+func dictInt64(d map[string]interface{}, key string) *int64 {
+	v, ok := d[key]
+	if !ok {
+		return nil
+	}
+	switch n := v.(type) {
+	case int64:
+		return &n
+	case int:
+		v := int64(n)
+		return &v
+	case float64:
+		v := int64(n)
+		return &v
+	case *int64:
 		return n
 	default:
 		return nil

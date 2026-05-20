@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -245,6 +246,137 @@ func TestEvent_FromDict_Minimal(t *testing.T) {
 	}
 	if event.EventType != EventTypeExternalCost {
 		t.Errorf("expected external_cost, got %s", event.EventType)
+	}
+}
+
+func TestTask_NetworkFieldDefaults(t *testing.T) {
+	task := NewTask("x")
+	if task.NetworkBytesIn != 0 {
+		t.Errorf("NetworkBytesIn default = %d, want 0", task.NetworkBytesIn)
+	}
+	if task.NetworkBytesOut != 0 {
+		t.Errorf("NetworkBytesOut default = %d, want 0", task.NetworkBytesOut)
+	}
+	if task.NetworkCallCount != 0 {
+		t.Errorf("NetworkCallCount default = %d, want 0", task.NetworkCallCount)
+	}
+	if task.NetworkByHost == nil {
+		t.Fatalf("NetworkByHost default is nil, want {\"hosts\": []}")
+	}
+	hosts, ok := task.NetworkByHost["hosts"].([]interface{})
+	if !ok {
+		t.Fatalf("NetworkByHost[\"hosts\"] is %T, want []interface{}", task.NetworkByHost["hosts"])
+	}
+	if len(hosts) != 0 {
+		t.Errorf("NetworkByHost[\"hosts\"] len = %d, want 0", len(hosts))
+	}
+}
+
+func TestTask_NetworkFields_RoundTrip(t *testing.T) {
+	task := NewTask("x")
+	task.NetworkBytesIn = 4096
+	task.NetworkBytesOut = 512
+	task.NetworkCallCount = 3
+	task.NetworkByHost = map[string]interface{}{
+		"hosts": []interface{}{
+			map[string]interface{}{
+				"host":      "a.com",
+				"calls":     int64(3),
+				"bytes_in":  int64(4096),
+				"bytes_out": int64(512),
+			},
+		},
+	}
+
+	d := task.ToDict()
+	if d["network_bytes_in"] != int64(4096) {
+		t.Errorf("ToDict network_bytes_in = %v, want 4096", d["network_bytes_in"])
+	}
+	if d["network_bytes_out"] != int64(512) {
+		t.Errorf("ToDict network_bytes_out = %v, want 512", d["network_bytes_out"])
+	}
+	if d["network_call_count"] != int64(3) {
+		t.Errorf("ToDict network_call_count = %v, want 3", d["network_call_count"])
+	}
+
+	restored, err := TaskFromDict(d)
+	if err != nil {
+		t.Fatalf("TaskFromDict: %v", err)
+	}
+	if restored.NetworkBytesIn != 4096 {
+		t.Errorf("restored NetworkBytesIn = %d, want 4096", restored.NetworkBytesIn)
+	}
+	if restored.NetworkBytesOut != 512 {
+		t.Errorf("restored NetworkBytesOut = %d, want 512", restored.NetworkBytesOut)
+	}
+	if restored.NetworkCallCount != 3 {
+		t.Errorf("restored NetworkCallCount = %d, want 3", restored.NetworkCallCount)
+	}
+	hosts, ok := restored.NetworkByHost["hosts"].([]interface{})
+	if !ok || len(hosts) != 1 {
+		t.Fatalf("restored NetworkByHost hosts = %v", restored.NetworkByHost)
+	}
+	first, ok := hosts[0].(map[string]interface{})
+	if !ok || first["host"] != "a.com" {
+		t.Errorf("restored host[0] = %v", hosts[0])
+	}
+}
+
+func TestTask_NetworkFields_LegacyDictDefaults(t *testing.T) {
+	// A task dict produced before this feature has no network_* keys.
+	d := NewTask("x").ToDict()
+	delete(d, "network_bytes_in")
+	delete(d, "network_bytes_out")
+	delete(d, "network_call_count")
+	delete(d, "network_by_host")
+
+	restored, err := TaskFromDict(d)
+	if err != nil {
+		t.Fatalf("TaskFromDict: %v", err)
+	}
+	if restored.NetworkBytesIn != 0 || restored.NetworkBytesOut != 0 || restored.NetworkCallCount != 0 {
+		t.Errorf("legacy dict produced non-zero counters: in=%d out=%d count=%d",
+			restored.NetworkBytesIn, restored.NetworkBytesOut, restored.NetworkCallCount)
+	}
+	if restored.NetworkByHost == nil {
+		t.Fatalf("legacy NetworkByHost is nil, want {\"hosts\": []}")
+	}
+	hosts, ok := restored.NetworkByHost["hosts"].([]interface{})
+	if !ok || len(hosts) != 0 {
+		t.Errorf("legacy NetworkByHost = %v", restored.NetworkByHost)
+	}
+}
+
+func TestTask_NetworkFields_JSONRoundTrip(t *testing.T) {
+	task := NewTask("x")
+	task.NetworkBytesIn = 100
+	task.NetworkBytesOut = 200
+	task.NetworkCallCount = 5
+	task.NetworkByHost = map[string]interface{}{
+		"hosts": []interface{}{
+			map[string]interface{}{"host": "b.io"},
+		},
+	}
+
+	raw, err := TaskToDictJSON(task)
+	if err != nil {
+		t.Fatalf("TaskToDictJSON: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	// JSON numbers come back as float64; verify via TaskFromDict's coercion.
+	restored, err := TaskFromDict(parsed)
+	if err != nil {
+		t.Fatalf("TaskFromDict: %v", err)
+	}
+	if restored.NetworkBytesIn != 100 || restored.NetworkBytesOut != 200 || restored.NetworkCallCount != 5 {
+		t.Errorf("JSON round trip lost counters: %+v", restored)
+	}
+	hosts, ok := restored.NetworkByHost["hosts"].([]interface{})
+	if !ok || len(hosts) != 1 {
+		t.Fatalf("JSON round-trip lost NetworkByHost: %v", restored.NetworkByHost)
 	}
 }
 
