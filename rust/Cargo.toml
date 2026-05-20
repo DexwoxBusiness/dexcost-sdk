@@ -8,7 +8,7 @@ repository = "https://github.com/DexwoxBusiness/dexcost"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "blocking"] }
 reqwest-middleware = { version = "0.4", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
