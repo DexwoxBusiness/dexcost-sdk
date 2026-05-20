@@ -14,7 +14,7 @@
 //! See plan §2 (Rust note).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use serde_json::json;
 
@@ -190,6 +190,58 @@ impl NetworkAccountant {
             by_host: json!({ "hosts": hosts }),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Registry — task_id → Arc<NetworkAccountant>
+// ---------------------------------------------------------------------------
+//
+// The HTTP middleware sees a task_id (string) per call but doesn't carry a
+// reference to the Task struct. This registry maps task_id to the task's
+// accountant Arc so the middleware can record bytes via lookup. The tracker
+// is responsible for registering on task start and unregistering on finalize
+// (Phase D).
+
+static REGISTRY: LazyLock<RwLock<HashMap<String, Arc<NetworkAccountant>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Register a task's accountant so the HTTP middleware can find it by task_id.
+/// Replaces any prior registration for the same id.
+pub fn register_accountant(task_id: &str, accountant: Arc<NetworkAccountant>) {
+    REGISTRY
+        .write()
+        .expect("network accountant registry poisoned")
+        .insert(task_id.to_string(), accountant);
+}
+
+/// Resolve a task's accountant by task_id. Returns `None` when no task with
+/// that id has been registered (e.g. middleware running outside any task).
+pub fn get_accountant(task_id: &str) -> Option<Arc<NetworkAccountant>> {
+    REGISTRY
+        .read()
+        .expect("network accountant registry poisoned")
+        .get(task_id)
+        .cloned()
+}
+
+/// Remove and return a task's accountant. Called by the tracker at task end
+/// after `finalize()` has snapshotted the bytes onto the task. Idempotent —
+/// returns `None` if already removed.
+pub fn unregister_accountant(task_id: &str) -> Option<Arc<NetworkAccountant>> {
+    REGISTRY
+        .write()
+        .expect("network accountant registry poisoned")
+        .remove(task_id)
+}
+
+/// Test-only: clear the entire registry. Use between tests that exercise the
+/// registry to avoid cross-test contamination.
+#[cfg(test)]
+pub fn _reset_registry_for_tests() {
+    REGISTRY
+        .write()
+        .expect("network accountant registry poisoned")
+        .clear();
 }
 
 /// Snapshot returned by [`NetworkAccountant::finalize`].

@@ -16,18 +16,28 @@
 //!
 //! This module requires the `reqwest-middleware` feature.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ::http::{Extensions, Response as HttpResponse};
 use reqwest::{Body, Request, Response};
 use reqwest_middleware::{Middleware, Next};
+use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 
 use crate::adapters::http as dexcost_http;
-use crate::core::models::{CostEvent, EventType};
+use crate::adapters::netbytes::{classify_destination, measure_bytes_from_headers};
+use crate::adapters::network_accountant::get_accountant;
+use crate::core::context::is_network_event_suppressed;
+use crate::core::models::{CostConfidence, CostEvent, EventType};
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::service_catalog::{CostExtractionResult, ServiceCatalog};
 use crate::transport::buffer::EventBuffer;
+
+/// Default `network` event emission threshold — combined request + response
+/// bytes. Mirrors python config `network_event_threshold_bytes = 102_400`
+/// (100 KiB).
+const NETWORK_EVENT_THRESHOLD_BYTES: usize = 102_400;
 
 /// Reqwest middleware that automatically records cost events for HTTP calls.
 ///
@@ -83,6 +93,7 @@ impl DexcostMiddleware {
         task_id: &str,
         host: &str,
         extraction: &CostExtractionResult,
+        byte_details: &serde_json::Value,
         events: &mut EventBuffer,
     ) {
         let mut event = CostEvent::new(task_id, EventType::ExternalCost);
@@ -102,6 +113,7 @@ impl DexcostMiddleware {
         if event.service_name.is_none() {
             event.service_name = Some(host.to_string());
         }
+        stamp_byte_details(&mut event, byte_details);
         events.add_event(event);
     }
 
@@ -112,6 +124,7 @@ impl DexcostMiddleware {
         host: &str,
         task_id: &str,
         body: &serde_json::Value,
+        byte_details: &serde_json::Value,
         events: &mut EventBuffer,
     ) -> bool {
         if host.contains("openai.com") {
@@ -141,6 +154,7 @@ impl DexcostMiddleware {
                 ev.cost_usd = cost.cost_usd;
                 ev.cost_confidence = cost.cost_confidence;
                 ev.pricing_source = Some(cost.pricing_source);
+                stamp_byte_details(&mut ev, byte_details);
                 events.add_event(ev);
                 return true;
             }
@@ -178,6 +192,7 @@ impl DexcostMiddleware {
                 ev.cost_usd = cost.cost_usd;
                 ev.cost_confidence = cost.cost_confidence;
                 ev.pricing_source = Some(cost.pricing_source);
+                stamp_byte_details(&mut ev, byte_details);
                 events.add_event(ev);
                 return true;
             }
@@ -196,23 +211,88 @@ impl Middleware for DexcostMiddleware {
     ) -> reqwest_middleware::Result<Response> {
         let url = req.url().clone();
         let host = Self::host_of(&req).unwrap_or_default();
+        let protocol = url.scheme().to_string();
+        let method = req.method().to_string();
         let task_id = self.effective_task_id(&req);
+
+        // ── v1 byte measurement — request side ──────────────────────────
+        // Compute request bytes BEFORE next.run consumes the Request.
+        let request_headers_map = req
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    v.to_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect::<HashMap<String, String>>();
+        let request_body_len = req
+            .body()
+            .and_then(|b| b.as_bytes())
+            .map(|b| b.len())
+            .unwrap_or(0);
+        let request_bytes = measure_bytes_from_headers(
+            &method,
+            url.as_str(),
+            &request_headers_map,
+            request_body_len,
+        );
 
         let response = next.run(req, extensions).await?;
 
         // Capture status + headers for reconstruction below.
         let status = response.status();
+        let status_code = status.as_u16();
         let version = response.version();
+        let response_headers_map = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    v.to_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect::<HashMap<String, String>>();
         let mut builder = HttpResponse::builder().status(status).version(version);
         for (k, v) in response.headers().iter() {
             builder = builder.header(k, v);
         }
 
-        // Read the body so we can inspect JSON for cost/usage data.
+        // Read the body so we can inspect JSON for cost/usage data AND
+        // measure bytes accurately. The existing middleware design already
+        // fully buffers the body for cost extraction — byte counting is
+        // then just body_bytes.len(), no streaming wrapper required.
         let body_bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => return Err(reqwest_middleware::Error::Reqwest(e)),
         };
+        let response_bytes = measure_bytes_from_headers(
+            "",
+            "",
+            &response_headers_map,
+            body_bytes.len(),
+        );
+
+        // ── v1 destination classification + accountant recording ───────
+        let is_internal = classify_destination(&host);
+        if let Some(accountant) = get_accountant(&task_id) {
+            accountant.record(
+                &host,
+                request_bytes as i64,
+                response_bytes as i64,
+                is_internal,
+            );
+        }
+
+        // ── v1 byte details — stamped into every event below ───────────
+        let byte_details = serde_json::json!({
+            "protocol": protocol,
+            "request_bytes": request_bytes,
+            "response_bytes": response_bytes,
+            "is_internal_traffic": is_internal,
+        });
 
         // Try to extract usage / cost.
         if let Ok(body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
@@ -224,36 +304,85 @@ impl Middleware for DexcostMiddleware {
                     self.catalog
                         .extract_cost(entry, &Default::default(), Some(&body_json))
                 {
-                    self.record_extraction(&task_id, &host, &extraction, &mut buf);
+                    self.record_extraction(
+                        &task_id,
+                        &host,
+                        &extraction,
+                        &byte_details,
+                        &mut buf,
+                    );
                     recorded = true;
                 }
             }
 
             if !recorded {
-                recorded = self.try_record_llm(&host, &task_id, &body_json, &mut buf);
+                recorded = self.try_record_llm(
+                    &host,
+                    &task_id,
+                    &body_json,
+                    &byte_details,
+                    &mut buf,
+                );
             }
 
             if !recorded {
                 // Domain-rate / catalog fallback — persist to the durable
                 // EventBuffer (so the pusher ships it) instead of the in-memory
                 // record_http_cost log. buf is still held here.
-                if let Some(event) = dexcost_http::resolve_http_cost_event(
+                if let Some(mut event) = dexcost_http::resolve_http_cost_event(
                     url.as_str(),
                     &task_id,
                     Some(&self.catalog),
                 ) {
+                    stamp_byte_details(&mut event, &byte_details);
                     buf.add_event(event);
+                    recorded = true;
+                }
+            }
+
+            // ── Un-cataloged: emit a `network` event if notable + not
+            // suppressed by an outer LLM call. Mirrors python `_handle_
+            // uncataloged` (v1 §5.4 step 5 + v2 §6.4 cost_pending marker).
+            if !recorded && !is_network_event_suppressed() {
+                if let Some(ev) = build_network_event(
+                    &task_id,
+                    &host,
+                    url.as_str(),
+                    &method,
+                    status_code,
+                    request_bytes,
+                    response_bytes,
+                    &byte_details,
+                ) {
+                    buf.add_event(ev);
                 }
             }
         } else {
             // Not JSON — catalog body extraction is impossible, but a domain
             // rate or fixed-cost catalog entry can still resolve. Persist it to
             // the EventBuffer so it syncs.
-            if let Some(event) =
+            let mut buf = self.buffer.lock().await;
+            let mut recorded = false;
+            if let Some(mut event) =
                 dexcost_http::resolve_http_cost_event(url.as_str(), &task_id, Some(&self.catalog))
             {
-                let mut buf = self.buffer.lock().await;
+                stamp_byte_details(&mut event, &byte_details);
                 buf.add_event(event);
+                recorded = true;
+            }
+            if !recorded && !is_network_event_suppressed() {
+                if let Some(ev) = build_network_event(
+                    &task_id,
+                    &host,
+                    url.as_str(),
+                    &method,
+                    status_code,
+                    request_bytes,
+                    response_bytes,
+                    &byte_details,
+                ) {
+                    buf.add_event(ev);
+                }
             }
         }
 
@@ -263,6 +392,63 @@ impl Middleware for DexcostMiddleware {
             .body(Body::from(body_bytes))
             .map_err(|e| reqwest_middleware::Error::Middleware(anyhow_compat(e)))?;
         Ok(Response::from(new_resp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Free-standing helpers (network event construction, byte-detail stamping)
+// ---------------------------------------------------------------------------
+
+/// Build a `network` event for an un-cataloged HTTP call when notable
+/// (combined bytes above threshold OR status >= 400). Returns `None` when
+/// the call is below the threshold and not an error — counters-only path.
+#[allow(clippy::too_many_arguments)] // 8 args mirror the Python dispatcher signature
+fn build_network_event(
+    task_id: &str,
+    host: &str,
+    url: &str,
+    method: &str,
+    status_code: u16,
+    request_bytes: usize,
+    response_bytes: usize,
+    byte_details: &serde_json::Value,
+) -> Option<CostEvent> {
+    let total = request_bytes.saturating_add(response_bytes);
+    let notable = total > NETWORK_EVENT_THRESHOLD_BYTES || status_code >= 400;
+    if !notable {
+        return None;
+    }
+    let mut ev = CostEvent::new(task_id, EventType::Network);
+    ev.cost_usd = Decimal::ZERO;
+    ev.cost_confidence = CostConfidence::Unknown;
+    ev.pricing_source = None;
+    ev.service_name = Some(host.to_string());
+    // Compose details with the byte fields PLUS cost_pending marker
+    // (v2 §6.4 — back-filled by _aggregate_costs at task finalize).
+    ev.details
+        .insert("url".to_string(), serde_json::Value::String(url.to_string()));
+    ev.details.insert(
+        "method".to_string(),
+        serde_json::Value::String(method.to_string()),
+    );
+    ev.details.insert(
+        "status_code".to_string(),
+        serde_json::Value::from(status_code),
+    );
+    ev.details
+        .insert("cost_pending".to_string(), serde_json::Value::Bool(true));
+    stamp_byte_details(&mut ev, byte_details);
+    Some(ev)
+}
+
+/// Stamp byte_details fields (protocol/request_bytes/response_bytes/
+/// is_internal_traffic) into a `CostEvent`'s details, matching the v1 §4.3
+/// "byte placement is uniform across event types" invariant.
+fn stamp_byte_details(event: &mut CostEvent, byte_details: &serde_json::Value) {
+    if let serde_json::Value::Object(bd) = byte_details {
+        for (k, v) in bd {
+            event.details.insert(k.clone(), v.clone());
+        }
     }
 }
 
@@ -417,5 +603,279 @@ mod tests {
             count, 1,
             "domain-rate fallback must persist the event to the durable buffer"
         );
+    }
+
+    // ── v1/v2 network capture helpers ────────────────────────────────────
+
+    #[test]
+    fn build_network_event_below_threshold_no_error_returns_none() {
+        let details = serde_json::json!({
+            "protocol": "https",
+            "request_bytes": 100,
+            "response_bytes": 500,
+            "is_internal_traffic": false,
+        });
+        let ev = build_network_event(
+            "t1", "api.example.com", "https://api.example.com/x",
+            "GET", 200, 100, 500, &details,
+        );
+        assert!(ev.is_none(), "below-threshold success must emit no event");
+    }
+
+    #[test]
+    fn build_network_event_above_threshold_emits_with_cost_pending() {
+        let details = serde_json::json!({
+            "protocol": "https",
+            "request_bytes": 50,
+            "response_bytes": 200_000,
+            "is_internal_traffic": false,
+        });
+        let ev = build_network_event(
+            "t1", "api.example.com", "https://api.example.com/x",
+            "POST", 200, 50, 200_000, &details,
+        )
+        .expect("must emit");
+        assert_eq!(ev.event_type, EventType::Network);
+        assert_eq!(ev.cost_usd, Decimal::ZERO);
+        assert_eq!(ev.cost_confidence, CostConfidence::Unknown);
+        assert!(ev.pricing_source.is_none());
+        assert_eq!(ev.service_name.as_deref(), Some("api.example.com"));
+        // v2 §6.4 cost_pending marker so _aggregate_costs back-fills.
+        assert_eq!(
+            ev.details.get("cost_pending"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        // v1 §4.3 byte uniformity — every event carries the byte fields.
+        assert_eq!(
+            ev.details.get("request_bytes"),
+            Some(&serde_json::Value::from(50))
+        );
+        assert_eq!(
+            ev.details.get("response_bytes"),
+            Some(&serde_json::Value::from(200_000))
+        );
+        assert_eq!(
+            ev.details.get("is_internal_traffic"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert_eq!(
+            ev.details.get("method"),
+            Some(&serde_json::Value::String("POST".to_string()))
+        );
+        assert_eq!(
+            ev.details.get("status_code"),
+            Some(&serde_json::Value::from(200))
+        );
+    }
+
+    #[test]
+    fn build_network_event_status_400_emits_below_threshold() {
+        // status >= 400 always emits, regardless of byte count.
+        let details = serde_json::json!({
+            "protocol": "https",
+            "request_bytes": 10,
+            "response_bytes": 100,
+            "is_internal_traffic": false,
+        });
+        let ev = build_network_event(
+            "t1", "api.example.com", "https://api.example.com/x",
+            "GET", 503, 10, 100, &details,
+        );
+        assert!(
+            ev.is_some(),
+            "5xx error must emit a network event even below threshold"
+        );
+    }
+
+    #[test]
+    fn middleware_uncataloged_above_threshold_emits_network_event() {
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            // Body large enough to push combined bytes over 100 KiB.
+            let big_body = "x".repeat(200_000);
+            Mock::given(method("GET"))
+                .and(path("/big"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(big_body))
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-net-emit".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+            let resp = client
+                .get(format!("{}/big", server.uri()))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+
+            let buf = buffer.lock().await;
+            let net_events: Vec<_> = buf
+                .query_events("t-net-emit")
+                .into_iter()
+                .filter(|e| e.event_type == EventType::Network)
+                .collect();
+            assert_eq!(net_events.len(), 1, "exactly one network event for an un-cataloged above-threshold call");
+            let ev = &net_events[0];
+            assert_eq!(ev.cost_usd, Decimal::ZERO);
+            assert_eq!(
+                ev.details.get("cost_pending"),
+                Some(&serde_json::Value::Bool(true))
+            );
+        });
+    }
+
+    #[test]
+    fn middleware_uncataloged_below_threshold_no_event() {
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/small"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("small"))
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-net-small".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+            client
+                .get(format!("{}/small", server.uri()))
+                .send()
+                .await
+                .unwrap();
+
+            let buf = buffer.lock().await;
+            let net_events: Vec<_> = buf
+                .query_events("t-net-small")
+                .into_iter()
+                .filter(|e| e.event_type == EventType::Network)
+                .collect();
+            assert!(
+                net_events.is_empty(),
+                "small un-cataloged call must not emit a network event"
+            );
+        });
+    }
+
+    #[test]
+    fn middleware_records_bytes_into_registered_accountant() {
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+
+            // Register an accountant under the task_id the middleware will use.
+            let accountant = Arc::new(
+                crate::adapters::network_accountant::NetworkAccountant::new(),
+            );
+            crate::adapters::network_accountant::register_accountant(
+                "t-acct",
+                accountant.clone(),
+            );
+
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/x"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("hi"))
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-acct".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+            client
+                .get(format!("{}/x", server.uri()))
+                .send()
+                .await
+                .unwrap();
+
+            let snap = accountant.finalize();
+            assert_eq!(snap.call_count, 1, "accountant must record the call");
+            assert!(snap.bytes_in > 0);
+            assert!(snap.bytes_out > 0);
+        });
+    }
+
+    #[test]
+    fn middleware_suppressed_call_records_bytes_but_no_network_event() {
+        let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+            crate::adapters::http::clear_domain_rates();
+            crate::adapters::network_accountant::_reset_registry_for_tests();
+
+            let accountant = Arc::new(
+                crate::adapters::network_accountant::NetworkAccountant::new(),
+            );
+            crate::adapters::network_accountant::register_accountant(
+                "t-suppressed",
+                accountant.clone(),
+            );
+
+            let (catalog, pricing, buffer) = fixtures();
+            let server = MockServer::start().await;
+            let big_body = "x".repeat(200_000);
+            Mock::given(method("GET"))
+                .and(path("/big"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(big_body))
+                .mount(&server)
+                .await;
+
+            let mw = DexcostMiddleware::new(
+                catalog,
+                pricing,
+                buffer.clone(),
+                Some("t-suppressed".into()),
+            );
+            let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+
+            // Caller runs the HTTP call inside the suppression scope —
+            // simulating an LLM instrument wrapping its outbound call.
+            crate::core::context::suppress_network_event(async {
+                client
+                    .get(format!("{}/big", server.uri()))
+                    .send()
+                    .await
+                    .unwrap();
+            })
+            .await;
+
+            // Bytes still recorded into the accountant.
+            let snap = accountant.finalize();
+            assert_eq!(snap.call_count, 1);
+            assert!(snap.bytes_in > 0);
+
+            // But no standalone network event emitted.
+            let buf = buffer.lock().await;
+            let net_events: Vec<_> = buf
+                .query_events("t-suppressed")
+                .into_iter()
+                .filter(|e| e.event_type == EventType::Network)
+                .collect();
+            assert!(
+                net_events.is_empty(),
+                "suppression scope must withhold the network event even for a large response"
+            );
+        });
     }
 }
