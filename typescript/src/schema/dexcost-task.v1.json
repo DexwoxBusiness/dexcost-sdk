@@ -92,6 +92,11 @@
       "pattern": "^-?\\d+(\\.\\d+)?$",
       "description": "Aggregated cloud-egress cost in USD (Decimal as string). Distinct from external_cost_usd, which captures vendor API fees — see spec Decision #7."
     },
+    "gpu_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated GPU cost in USD (Decimal as string). Computed at task finalize from per-PID NVML SM-time × catalog rate. Distinct from compute_cost_usd (CPU/memory billing dimension)."
+    },
     "total_cost_usd": {
       "type": "string",
       "pattern": "^-?\\d+(\\.\\d+)?$",
