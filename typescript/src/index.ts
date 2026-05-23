@@ -139,6 +139,13 @@ export {
   wrapVercelHandler,
 } from "./adapters/compute-wrap.js";
 
+// GPU handler wraps — serverless GPU capture (Phase 2 GPU foundation).
+export {
+  wrapModalHandler,
+  wrapRunpodHandler,
+  wrapReplicateHandler,
+} from "./adapters/gpu-wrap.js";
+
 // Integrations
 export { DexcostCallbackHandler } from "./integrations/langchain.js";
 

@@ -14,7 +14,9 @@ export type EventType =
   | "external_cost"
   | "compute_cost"
   | "retry_marker"
-  | "network";
+  | "network"
+  | "gpu_cost"
+  | "gpu_utilization_signal";
 
 /** How trustworthy the reported costUsd value is. */
 export type CostConfidence = "exact" | "computed" | "estimated" | "unknown";
@@ -58,6 +60,13 @@ export interface Task {
    * externalCostUsd (vendor API charges) — see Decision #7.
    */
   networkCostUsd: number;
+  /**
+   * v2 GPU cost in USD, computed at task finalize from the GpuAccountant's
+   * NVML diff (per-PID SM-time) + cgroup-walk PID filter. Distinct from
+   * computeCostUsd (CPU/memory rollup) — GPU billing is a separate dimension.
+   * Mirrors the Python SDK's Task.gpu_cost_usd field.
+   */
+  gpuCostUsd: number;
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -86,6 +95,12 @@ export interface Task {
    * accountant.ts (which imports from cgroup-reader / compute-runtime).
    */
   _compute?: unknown;
+  /**
+   * In-memory only. The per-task GpuAccountant (NVML start snapshot +
+   * cgroup PID scope + per-device handles). Never serialized — same
+   * contract as _compute. Mirrors Python's Task._gpu.
+   */
+  _gpu?: unknown;
 }
 
 /**
@@ -128,6 +143,7 @@ export function createTask(overrides: Partial<Task> & { taskId: string }): Task 
     externalCostUsd: 0,
     computeCostUsd: 0,
     networkCostUsd: 0,
+    gpuCostUsd: 0,
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -181,6 +197,7 @@ export function taskToDict(task: Task): Record<string, unknown> {
     external_cost_usd: String(task.externalCostUsd),
     compute_cost_usd: String(task.computeCostUsd),
     network_cost_usd: String(task.networkCostUsd),
+    gpu_cost_usd: String(task.gpuCostUsd),
     total_cost_usd: String(task.totalCostUsd),
     total_input_tokens: task.totalInputTokens,
     total_output_tokens: task.totalOutputTokens,
@@ -278,6 +295,7 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     externalCostUsd: _toNumber(data["external_cost_usd"]),
     computeCostUsd: _toNumber(data["compute_cost_usd"]),
     networkCostUsd: _toNumber(data["network_cost_usd"]),
+    gpuCostUsd: _toNumber(data["gpu_cost_usd"]),
     totalCostUsd: _toNumber(data["total_cost_usd"]),
     totalInputTokens: _toNumber(data["total_input_tokens"]),
     totalOutputTokens: _toNumber(data["total_output_tokens"]),
