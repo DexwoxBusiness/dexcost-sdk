@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     llm_cost_usd        TEXT,
     external_cost_usd   TEXT,
     compute_cost_usd    TEXT,
+    network_cost_usd    TEXT NOT NULL DEFAULT '0',
+    gpu_cost_usd        TEXT NOT NULL DEFAULT '0',
     total_cost_usd      TEXT,
     total_input_tokens  INTEGER,
     total_output_tokens INTEGER,
@@ -105,6 +107,9 @@ fn event_type_to_str(et: &EventType) -> &'static str {
         EventType::ExternalCost => "external_cost",
         EventType::ComputeCost => "compute_cost",
         EventType::RetryMarker => "retry_marker",
+        EventType::Network => "network",
+        EventType::GpuCost => "gpu_cost",
+        EventType::GpuUtilizationSignal => "gpu_utilization_signal",
     }
 }
 
@@ -113,6 +118,9 @@ fn event_type_from_str(s: &str) -> EventType {
         "external_cost" => EventType::ExternalCost,
         "compute_cost" => EventType::ComputeCost,
         "retry_marker" => EventType::RetryMarker,
+        "network" => EventType::Network,
+        "gpu_cost" => EventType::GpuCost,
+        "gpu_utilization_signal" => EventType::GpuUtilizationSignal,
         _ => EventType::LlmCall,
     }
 }
@@ -256,6 +264,31 @@ impl EventBuffer {
         // the column already exists; we ignore that specific case.
         if let Err(e) = self.conn.execute(
             "ALTER TABLE tasks ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'pending'",
+            [],
+        ) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e);
+            }
+        }
+
+        // Migration v5: tasks.network_cost_usd. Idempotent ALTER for legacy DBs.
+        if let Err(e) = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN network_cost_usd TEXT NOT NULL DEFAULT '0'",
+            [],
+        ) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e);
+            }
+        }
+
+        // Migration v6 (Phase 2 GPU foundation): tasks.gpu_cost_usd.
+        // Idempotent ALTER for legacy DBs. Mirrors Python v5 → v6 migration
+        // (commit 2785158). Total cost becomes
+        // llm + external + compute + network + gpu.
+        if let Err(e) = self.conn.execute(
+            "ALTER TABLE tasks ADD COLUMN gpu_cost_usd TEXT NOT NULL DEFAULT '0'",
             [],
         ) {
             let msg = e.to_string();
@@ -761,6 +794,16 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> SqlResult<Task> {
         parent_task_id: row.get(18)?,
         experiment_id: row.get(19)?,
         variant: row.get(20)?,
+        // Network capture v1 — not yet persisted to SQLite; defaults reapplied on load.
+        network_bytes_in: 0,
+        network_bytes_out: 0,
+        network_call_count: 0,
+        network_by_host: serde_json::json!({"hosts": []}),
+        network_cost_usd: rust_decimal::Decimal::ZERO,
+        gpu_cost_usd: rust_decimal::Decimal::ZERO,
+        network_accountant: std::sync::Arc::default(),
+        compute: None,
+        gpu: None,
         schema_version: "1".to_string(),
     })
 }

@@ -34,6 +34,7 @@
 
 pub mod adapters;
 pub mod clients;
+pub mod cloud_detect;
 pub mod config;
 pub mod core;
 pub mod dev_console;

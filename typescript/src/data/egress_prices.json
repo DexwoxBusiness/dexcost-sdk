@@ -1,0 +1,418 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_updated": "2026-05-20",
+    "currency": "USD",
+    "default_rate_usd_per_gb": "0.09",
+    "description": "Dexcost egress catalog — per-GB internet data-transfer-out rates by cloud provider/region. Community-maintained; submit PRs to add or refresh rates. See docs/superpowers/specs/2026-05-20-network-cost-v2-design.md.",
+    "notes": "Rates are standard internet data-transfer-out, FIRST pricing tier only. Cloud egress is billed in descending monthly-volume tiers; the SDK has no monthly cumulative view, so it uses the first (highest) tier. Effect: customers exceeding ~10 TB/month of egress on a single cloud may see attributed cost up to ~45% above their actual invoice for their highest-volume tier; customers under the first tier (the majority) see no over-attribution. The universal default_rate_usd_per_gb is AWS us-east-1 first-tier ($0.09/GB) — the modal egress rate across hyperscalers; a deliberate conservative choice so undetected environments over-attribute slightly rather than undercount. Intra-region/internal traffic is free and never priced from this file. Pricing data was assembled in 2026-05 from each provider's public pricing pages (sources listed below) plus the AWS region inventory from pricing.us-east-1.amazonaws.com. AWS rates use the published per-region tiers; Azure rates follow the published Zone-based table (Zone 1 NA+EU = $0.087, Zone 2 APAC = $0.12, Zone 3 SA/India/Africa/ME = $0.181); GCP Premium-tier internet egress is uniform $0.12/GB at the first 1-TB tier across all source regions, with the documented $0.19/GB exception for Australia and Africa source regions. Verify against the live provider pages for production use — rates change.",
+    "sources": {
+      "aws": "https://aws.amazon.com/ec2/pricing/on-demand/#Data_Transfer_within_the_same_AWS_Region",
+      "aws_region_inventory": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/region_index.json",
+      "gcp": "https://cloud.google.com/vpc/network-pricing#general",
+      "azure": "https://azure.microsoft.com/en-us/pricing/details/bandwidth/"
+    }
+  },
+  "aws": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.09",
+    "regions": {
+      "us-east-1": "0.09",
+      "us-east-2": "0.09",
+      "us-west-1": "0.09",
+      "us-west-2": "0.09",
+      "ca-central-1": "0.09",
+      "ca-west-1": "0.09",
+      "mx-central-1": "0.11",
+      "eu-west-1": "0.09",
+      "eu-west-2": "0.09",
+      "eu-west-3": "0.09",
+      "eu-central-1": "0.09",
+      "eu-central-2": "0.09",
+      "eu-north-1": "0.09",
+      "eu-south-1": "0.09",
+      "eu-south-2": "0.09",
+      "ap-south-1": "0.1093",
+      "ap-south-2": "0.1093",
+      "ap-northeast-1": "0.114",
+      "ap-northeast-2": "0.126",
+      "ap-northeast-3": "0.114",
+      "ap-southeast-1": "0.12",
+      "ap-southeast-2": "0.114",
+      "ap-southeast-3": "0.132",
+      "ap-southeast-4": "0.114",
+      "ap-southeast-5": "0.132",
+      "ap-southeast-6": "0.114",
+      "ap-southeast-7": "0.132",
+      "ap-east-1": "0.12",
+      "ap-east-2": "0.114",
+      "sa-east-1": "0.15",
+      "me-south-1": "0.117",
+      "me-central-1": "0.11",
+      "af-south-1": "0.154",
+      "il-central-1": "0.11"
+    }
+  },
+  "gcp": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.12",
+    "regions": {
+      "us-central1": "0.12",
+      "us-east1": "0.12",
+      "us-east4": "0.12",
+      "us-east5": "0.12",
+      "us-west1": "0.12",
+      "us-west2": "0.12",
+      "us-west3": "0.12",
+      "us-west4": "0.12",
+      "us-south1": "0.12",
+      "northamerica-northeast1": "0.12",
+      "northamerica-northeast2": "0.12",
+      "northamerica-south1": "0.12",
+      "southamerica-east1": "0.12",
+      "southamerica-west1": "0.12",
+      "europe-central2": "0.12",
+      "europe-north1": "0.12",
+      "europe-north2": "0.12",
+      "europe-southwest1": "0.12",
+      "europe-west1": "0.12",
+      "europe-west2": "0.12",
+      "europe-west3": "0.12",
+      "europe-west4": "0.12",
+      "europe-west6": "0.12",
+      "europe-west8": "0.12",
+      "europe-west9": "0.12",
+      "europe-west10": "0.12",
+      "europe-west12": "0.12",
+      "asia-east1": "0.12",
+      "asia-east2": "0.12",
+      "asia-northeast1": "0.12",
+      "asia-northeast2": "0.12",
+      "asia-northeast3": "0.12",
+      "asia-south1": "0.12",
+      "asia-south2": "0.12",
+      "asia-southeast1": "0.12",
+      "asia-southeast2": "0.12",
+      "australia-southeast1": "0.19",
+      "australia-southeast2": "0.19",
+      "me-central1": "0.12",
+      "me-central2": "0.12",
+      "me-west1": "0.12",
+      "africa-south1": "0.19"
+    }
+  },
+  "oci": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.0085",
+    "regions": {
+      "us-ashburn-1": "0.0085",
+      "us-phoenix-1": "0.0085",
+      "us-sanjose-1": "0.0085",
+      "us-chicago-1": "0.0085",
+      "ca-toronto-1": "0.0085",
+      "ca-montreal-1": "0.0085",
+      "sa-saopaulo-1": "0.0085",
+      "sa-santiago-1": "0.0085",
+      "sa-vinhedo-1": "0.0085",
+      "sa-bogota-1": "0.0085",
+      "uk-london-1": "0.0085",
+      "uk-cardiff-1": "0.0085",
+      "eu-frankfurt-1": "0.0085",
+      "eu-amsterdam-1": "0.0085",
+      "eu-zurich-1": "0.0085",
+      "eu-paris-1": "0.0085",
+      "eu-marseille-1": "0.0085",
+      "eu-milan-1": "0.0085",
+      "eu-madrid-1": "0.0085",
+      "eu-stockholm-1": "0.0085",
+      "il-jerusalem-1": "0.0085",
+      "me-jeddah-1": "0.0085",
+      "me-dubai-1": "0.0085",
+      "me-abudhabi-1": "0.0085",
+      "ap-mumbai-1": "0.0085",
+      "ap-hyderabad-1": "0.0085",
+      "ap-tokyo-1": "0.0085",
+      "ap-osaka-1": "0.0085",
+      "ap-seoul-1": "0.0085",
+      "ap-chuncheon-1": "0.0085",
+      "ap-singapore-1": "0.0085",
+      "ap-melbourne-1": "0.0085",
+      "ap-sydney-1": "0.0085",
+      "af-johannesburg-1": "0.0085"
+    }
+  },
+  "digitalocean": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.01",
+    "regions": {
+      "nyc1": "0.01", "nyc2": "0.01", "nyc3": "0.01",
+      "sfo1": "0.01", "sfo2": "0.01", "sfo3": "0.01",
+      "ams2": "0.01", "ams3": "0.01",
+      "sgp1": "0.01",
+      "lon1": "0.01",
+      "fra1": "0.01",
+      "tor1": "0.01",
+      "blr1": "0.01",
+      "syd1": "0.01"
+    }
+  },
+  "linode": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.005",
+    "regions": {
+      "us-east": "0.005", "us-central": "0.005", "us-west": "0.005",
+      "us-southeast": "0.005", "us-iad": "0.005", "us-lax": "0.005",
+      "us-mia": "0.005", "us-ord": "0.005", "us-sea": "0.005",
+      "ca-central": "0.005",
+      "br-gru": "0.005",
+      "eu-west": "0.005", "eu-central": "0.005",
+      "fr-par": "0.005", "nl-ams": "0.005", "es-mad": "0.005",
+      "it-mil": "0.005", "se-sto": "0.005", "de-fra-2": "0.005",
+      "gb-lon": "0.005",
+      "ap-northeast": "0.005", "ap-south": "0.005", "ap-southeast": "0.005",
+      "ap-west": "0.005", "in-bom-2": "0.005", "in-maa": "0.005",
+      "jp-osa": "0.005", "jp-tyo-3": "0.005", "sg-sin-2": "0.005",
+      "id-cgk": "0.005",
+      "au-mel": "0.005"
+    }
+  },
+  "vultr": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.01",
+    "regions": {
+      "ewr": "0.01", "ord": "0.01", "dfw": "0.01", "sea": "0.01",
+      "lax": "0.01", "atl": "0.01", "mia": "0.01", "sjc": "0.01",
+      "yto": "0.01",
+      "mex": "0.01",
+      "sao": "0.01", "scl": "0.01",
+      "ams": "0.01", "lhr": "0.01", "fra": "0.01", "cdg": "0.01",
+      "waw": "0.01", "sto": "0.01", "mad": "0.01",
+      "nrt": "0.01", "icn": "0.01", "sgp": "0.01", "syd": "0.01",
+      "bom": "0.01", "del": "0.01", "blr": "0.01",
+      "tlv": "0.01", "jnb": "0.01"
+    }
+  },
+  "hetzner": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.0013",
+    "regions": {
+      "fsn1": "0.0013",
+      "nbg1": "0.0013",
+      "hel1": "0.0013",
+      "ash": "0.0013",
+      "hil": "0.0013",
+      "sin": "0.0013"
+    }
+  },
+  "alibaba": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.123",
+    "regions": {
+      "cn-hangzhou": "0.123",
+      "cn-shanghai": "0.123",
+      "cn-beijing": "0.123",
+      "cn-zhangjiakou": "0.123",
+      "cn-huhehaote": "0.123",
+      "cn-wulanchabu": "0.123",
+      "cn-shenzhen": "0.123",
+      "cn-heyuan": "0.123",
+      "cn-guangzhou": "0.123",
+      "cn-chengdu": "0.123",
+      "cn-hongkong": "0.123",
+      "ap-northeast-1": "0.123",
+      "ap-northeast-2": "0.123",
+      "ap-southeast-1": "0.123",
+      "ap-southeast-2": "0.123",
+      "ap-southeast-3": "0.123",
+      "ap-southeast-5": "0.123",
+      "ap-southeast-6": "0.123",
+      "ap-southeast-7": "0.123",
+      "ap-south-1": "0.123",
+      "us-east-1": "0.123",
+      "us-west-1": "0.123",
+      "eu-west-1": "0.123",
+      "eu-central-1": "0.123",
+      "me-east-1": "0.123",
+      "me-central-1": "0.123"
+    }
+  },
+  "runpod": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {
+      "US-CA-2": "0", "US-DE-1": "0", "US-GA-1": "0", "US-GA-2": "0",
+      "US-IL-1": "0", "US-KS-2": "0", "US-NC-1": "0", "US-OR-1": "0",
+      "US-TX-1": "0", "US-TX-3": "0", "US-TX-4": "0",
+      "CA-MTL-1": "0", "CA-MTL-2": "0",
+      "EU-CZ-1": "0", "EU-NL-1": "0", "EU-RO-1": "0", "EU-SE-1": "0",
+      "EUR-IS-1": "0", "EUR-IS-2": "0", "EUR-NO-1": "0",
+      "AP-JP-1": "0", "OC-AU-1": "0"
+    }
+  },
+  "modal": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {
+      "us-east-1": "0", "us-east-2": "0", "us-west-2": "0",
+      "us-ashburn-1": "0", "us-central1": "0", "eu-west-1": "0",
+      "eu-central-1": "0", "ap-northeast-1": "0", "ap-southeast-1": "0"
+    }
+  },
+  "replicate": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {}
+  },
+  "lambda_labs": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {}
+  },
+  "vast_ai": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {}
+  },
+  "coreweave": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.05",
+    "regions": {
+      "us-east-04a": "0.05", "us-east-04b": "0.05",
+      "us-west-01a": "0.05", "us-west-02a": "0.05",
+      "us-central-01a": "0.05",
+      "eu-west-01a": "0.05"
+    }
+  },
+  "render": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.10",
+    "regions": {
+      "oregon": "0.10", "ohio": "0.10", "virginia": "0.10",
+      "frankfurt": "0.10", "singapore": "0.10"
+    }
+  },
+  "railway": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.05",
+    "regions": {
+      "us-west2": "0.05", "us-east4": "0.05", "europe-west4": "0.05",
+      "asia-southeast1": "0.05"
+    }
+  },
+  "heroku": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {
+      "us": "0", "eu": "0"
+    }
+  },
+  "koyeb": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {
+      "fra": "0", "was": "0", "sin": "0", "par": "0", "sfo": "0",
+      "tyo": "0"
+    }
+  },
+  "netlify": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.55",
+    "regions": {}
+  },
+  "cloudflare": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0",
+    "regions": {}
+  },
+  "fly": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.02",
+    "regions": {
+      "ams": "0.02", "arn": "0.02", "atl": "0.02", "bog": "0.02",
+      "bom": "0.02", "bos": "0.02", "cdg": "0.02", "den": "0.02",
+      "dfw": "0.02", "ewr": "0.02", "eze": "0.02", "fra": "0.02",
+      "gdl": "0.02", "gig": "0.02", "gru": "0.02", "hkg": "0.02",
+      "iad": "0.02", "jnb": "0.02", "lax": "0.02", "lhr": "0.02",
+      "mad": "0.02", "mia": "0.02", "nrt": "0.02", "ord": "0.02",
+      "otp": "0.02", "phx": "0.02", "qro": "0.02", "scl": "0.02",
+      "sea": "0.02", "sin": "0.02", "sjc": "0.02", "syd": "0.02",
+      "waw": "0.02", "yul": "0.02", "yyz": "0.02"
+    }
+  },
+  "vercel": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.09",
+    "regions": {
+      "arn1": "0.09", "bom1": "0.1093", "cdg1": "0.09", "cle1": "0.09",
+      "cpt1": "0.154", "dub1": "0.09", "dxb1": "0.11", "fra1": "0.09",
+      "gru1": "0.15", "hkg1": "0.12", "hnd1": "0.114", "iad1": "0.09",
+      "icn1": "0.126", "kix1": "0.114", "lhr1": "0.09", "pdx1": "0.09",
+      "sfo1": "0.09", "sin1": "0.12", "syd1": "0.114", "yul1": "0.09"
+    }
+  },
+  "azure": {
+    "_last_verified": "2026-05-20",
+    "default_usd_per_gb": "0.087",
+    "regions": {
+      "eastus": "0.087",
+      "eastus2": "0.087",
+      "eastus3": "0.087",
+      "westus": "0.087",
+      "westus2": "0.087",
+      "westus3": "0.087",
+      "centralus": "0.087",
+      "northcentralus": "0.087",
+      "southcentralus": "0.087",
+      "westcentralus": "0.087",
+      "canadacentral": "0.087",
+      "canadaeast": "0.087",
+      "mexicocentral": "0.087",
+      "northeurope": "0.087",
+      "westeurope": "0.087",
+      "uksouth": "0.087",
+      "ukwest": "0.087",
+      "francecentral": "0.087",
+      "francesouth": "0.087",
+      "germanywestcentral": "0.087",
+      "germanynorth": "0.087",
+      "switzerlandnorth": "0.087",
+      "switzerlandwest": "0.087",
+      "norwayeast": "0.087",
+      "norwaywest": "0.087",
+      "swedencentral": "0.087",
+      "swedensouth": "0.087",
+      "polandcentral": "0.087",
+      "italynorth": "0.087",
+      "spaincentral": "0.087",
+      "eastasia": "0.12",
+      "southeastasia": "0.12",
+      "japaneast": "0.12",
+      "japanwest": "0.12",
+      "koreacentral": "0.12",
+      "koreasouth": "0.12",
+      "australiaeast": "0.12",
+      "australiasoutheast": "0.12",
+      "australiacentral": "0.12",
+      "australiacentral2": "0.12",
+      "centralindia": "0.12",
+      "southindia": "0.12",
+      "westindia": "0.12",
+      "jioindiacentral": "0.12",
+      "jioindiawest": "0.12",
+      "qatarcentral": "0.12",
+      "indonesiacentral": "0.12",
+      "malaysiawest": "0.12",
+      "newzealandnorth": "0.12",
+      "taiwannorth": "0.12",
+      "taiwannorthwest": "0.12",
+      "chilecentral": "0.181",
+      "brazilsouth": "0.181",
+      "brazilsoutheast": "0.181",
+      "southafricanorth": "0.181",
+      "southafricawest": "0.181",
+      "uaecentral": "0.181",
+      "uaenorth": "0.181",
+      "israelcentral": "0.181"
+    }
+  }
+}

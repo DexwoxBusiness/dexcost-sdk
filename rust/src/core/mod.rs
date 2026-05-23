@@ -1,6 +1,14 @@
 pub mod auto_task;
+pub mod cgroup_reader;
+pub mod cgroup_walker;
+pub mod compute_accountant;
+pub mod compute_runtime;
 pub mod context;
+pub mod fargate_metadata;
+pub mod gpu_accountant;
+pub mod gpu_runtime;
 pub mod heuristics;
 pub mod models;
+pub mod nvml_reader;
 pub mod session;
 pub mod tracker;

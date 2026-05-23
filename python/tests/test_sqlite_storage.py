@@ -356,6 +356,34 @@ class TestSyncLifecycle:
         ).fetchall()
         assert len(rows) == 1
 
+    def test_update_event_remarks_sync_status_pending(
+        self, storage: SQLiteStorage
+    ) -> None:
+        """update_event on a synced row resets sync_status back to 'pending'.
+
+        Mirrors update_task. Without this, finalize-time mutations to an
+        event (e.g. v2 network-cost stamping) silently fail to re-sync.
+        """
+        event = Event(event_type="network", cost_usd=Decimal("0"))
+        storage.insert_event(event)
+        storage.mark_synced([str(event.event_id)])
+
+        before = storage._conn.execute(
+            "SELECT sync_status FROM events WHERE event_id=?",
+            (str(event.event_id),),
+        ).fetchone()
+        assert before["sync_status"] == "synced"
+
+        event.cost_usd = Decimal("0.0042")
+        storage.update_event(event)
+
+        after = storage._conn.execute(
+            "SELECT sync_status, cost_usd FROM events WHERE event_id=?",
+            (str(event.event_id),),
+        ).fetchone()
+        assert after["sync_status"] == "pending"
+        assert Decimal(after["cost_usd"]) == Decimal("0.0042")
+
 
 # ── Default DB path tests (US-004) ───────────────────────────────────
 

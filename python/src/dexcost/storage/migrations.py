@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 4
+TARGET_SCHEMA_VERSION = 6
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -241,4 +241,40 @@ def _sqlite_v3_to_v4(conn: sqlite3.Connection) -> None:
     if "network_by_host" not in existing:
         conn.execute(
             """ALTER TABLE tasks ADD COLUMN network_by_host TEXT NOT NULL DEFAULT '{"hosts": []}'"""
+        )
+
+
+@register_sqlite_migration(4, 5)
+def _sqlite_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """Add network_cost_usd column to tasks table (idempotent).
+
+    Stores the per-task cloud-egress cost as Decimal-in-TEXT, consistent
+    with the other *_cost_usd columns. Existing rows default to '0' so
+    no data backfill is required.
+    """
+    existing = {
+        row[1]
+        for row in conn.execute(_TASKS_TABLE_INFO).fetchall()
+    }
+    if "network_cost_usd" not in existing:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN network_cost_usd TEXT NOT NULL DEFAULT '0'"
+        )
+
+
+@register_sqlite_migration(5, 6)
+def _sqlite_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """Add gpu_cost_usd column to tasks table (idempotent).
+
+    Stores the per-task GPU cost as Decimal-in-TEXT, consistent with the
+    other *_cost_usd columns. Existing rows default to '0' so no backfill
+    is required. Total cost becomes llm + external + compute + network + gpu.
+    """
+    existing = {
+        row[1]
+        for row in conn.execute(_TASKS_TABLE_INFO).fetchall()
+    }
+    if "gpu_cost_usd" not in existing:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN gpu_cost_usd TEXT NOT NULL DEFAULT '0'"
         )

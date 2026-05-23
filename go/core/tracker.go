@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/DexwoxBusiness/dexcost-go/cloud"
 	"github.com/DexwoxBusiness/dexcost-go/pricing"
 )
 
@@ -24,6 +25,14 @@ type TrackerOptions struct {
 	EnableRetryHeuristics   bool
 	RetryHeuristicWindow    float64
 	RetryHeuristicThreshold float64
+
+	// Compute v2 (Task 8/9 wiring) — optional. When ComputePricingEngine is
+	// nil the tracker auto-creates one at first finalize. Overrides are
+	// per-billing-model knobs (e.g. {"cloud_run": "instance"}). K8sNodeAware
+	// is wired through for the future opt-in node probe (Task 9 stub).
+	ComputePricingEngine    *pricing.ComputePricingEngine
+	ComputeBillingOverrides map[string]string
+	K8sNodeAware            bool
 }
 
 // Tracker manages task lifecycles, cost recording, and aggregation.
@@ -32,6 +41,14 @@ type Tracker struct {
 	pricing    *pricing.Engine
 	rates      *pricing.RateRegistry
 	heuristics *RetryHeuristicEngine
+
+	// Compute v2.
+	computePricingEngine    *pricing.ComputePricingEngine
+	computeBillingOverrides map[string]string
+	k8sNodeAware            bool
+
+	// GPU v2 (Phase 2). Optional — lazy-init at first finalize.
+	gpuPricingEngine *pricing.GpuPricingEngine
 }
 
 // NewTracker creates a Tracker using the provided Buffer and pricing engine.
@@ -50,9 +67,12 @@ func NewTracker(opts TrackerOptions) (*Tracker, error) {
 		rates = pricing.NewRateRegistry()
 	}
 	tracker := &Tracker{
-		buffer:  opts.Buffer,
-		pricing: pricingEngine,
-		rates:   rates,
+		buffer:                  opts.Buffer,
+		pricing:                 pricingEngine,
+		rates:                   rates,
+		computePricingEngine:    opts.ComputePricingEngine,
+		computeBillingOverrides: opts.ComputeBillingOverrides,
+		k8sNodeAware:            opts.K8sNodeAware,
 	}
 	if opts.EnableRetryHeuristics {
 		window := opts.RetryHeuristicWindow
@@ -163,6 +183,11 @@ func (tr *Tracker) StartTask(ctx context.Context, taskType string, opts ...TaskO
 	if err := tr.buffer.InsertTask(task); err != nil {
 		log.Printf("[dexcost] failed to persist task: %v", err)
 	}
+
+	// Register a NetworkAccountant for this task so the HTTP adapter
+	// (which sees only the task_id via context) can record byte usage
+	// via core.GetAccountant(taskID). Unregistered at EndTask.
+	RegisterAccountant(task.TaskID.String(), NewNetworkAccountant())
 
 	tt := &TrackedTask{
 		Task:    task,
@@ -540,6 +565,236 @@ func (tt *TrackedTask) aggregateCosts(events []Event) {
 	tt.Task.RetryCount = retryCnt
 	tt.Task.RetryCostUSD = retryCost
 	tt.Task.FailureCount = failCnt
+
+	// ── Network finalize — v1 byte aggregates + v2 egress pricing ─────
+	// Mirrors python tracker.py:_aggregate_costs + rust TrackedTask::
+	// finalize_network. Tier-5 fail-silent: wrap in a closure so a
+	// pricing bug never breaks task finalization. On panic or error,
+	// task still ships with v1 + LLM/external/compute costs intact.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[dexcost] WARNING: egress cost computation panicked for task %s: %v", tt.Task.TaskID, r)
+			tt.Task.NetworkCostUSD = decimal.Zero
+		}
+	}()
+	tt.finalizeNetwork(events)
+
+	// ── Compute finalize — v2 compute pricing + per-event back-fill ───
+	// Mirrors python tracker._finalize_compute. Tier-5 fail-silent in its
+	// own recover() so a compute-pricing bug never breaks task finalize.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[dexcost] WARNING: compute cost computation panicked for task %s: %v", tt.Task.TaskID, r)
+			}
+		}()
+		tt.finalizeCompute(events)
+	}()
+
+	// ── GPU finalize — v2 GPU pricing + per-event back-fill (Phase 2) ───
+	// Mirrors python tracker._finalize_gpu. Tier-5 fail-silent in its own
+	// recover(); a GPU pricing bug never breaks task finalize. Signal
+	// events stay at cost=0 and never aggregate into totals (convention §1).
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[dexcost] WARNING: gpu cost computation panicked for task %s: %v", tt.Task.TaskID, r)
+			}
+		}()
+		tt.finalizeGPU(events)
+	}()
+}
+
+// finalizeCompute does three things (mirror python _finalize_compute):
+//
+//  1. If the task's compute accountant is a long-running runtime
+//     (Fargate / EC2 / GCE / Azure VM / K8s pod), call SnapshotEndAndBuild
+//     and persist a compute_cost event with CostUSD = 0 and
+//     cost_pending: true.
+//  2. Walk events for the task; for each compute_cost event with
+//     details["cost_pending"] == true, call engine.ResolveComputeCost
+//     and update the event (set CostUSD, PricingSource, CostConfidence,
+//     PricingVersion = "compute:<catalog_version>", strip cost_pending).
+//  3. Adjust task.ComputeCostUSD and task.TotalCostUSD by the DELTA per
+//     back-filled event (NOT a full recompute — preserves retry_marker
+//     costs already summed by aggregateCosts).
+func (tt *TrackedTask) finalizeCompute(events []Event) {
+	accountant := UnregisterComputeAccountant(tt.Task.TaskID.String())
+
+	// Step 1 — long-running snapshot: emit the deferred event now.
+	if accountant != nil && IsLongRunningRuntime(accountant.Runtime) {
+		durationMS := int64(0)
+		if tt.Task.EndedAt != nil {
+			durationMS = tt.Task.EndedAt.Sub(tt.Task.StartedAt).Milliseconds()
+		}
+		details := accountant.SnapshotEndAndBuild(durationMS)
+		if details != nil {
+			ev := NewEvent(tt.Task.TaskID, EventTypeComputeCost)
+			ev.CostUSD = decimal.Zero
+			ev.CostConfidence = CostConfidenceUnknown
+			ev.Details = details
+			if err := tt.tracker.buffer.InsertEvent(ev); err != nil {
+				log.Printf("[dexcost] WARNING: failed to record compute_cost event: %v", err)
+			} else {
+				// Include in the local back-fill walk below.
+				events = append(events, ev)
+			}
+		}
+	}
+
+	// Lazy-init the engine if the tracker was constructed without one.
+	if tt.tracker.computePricingEngine == nil {
+		tt.tracker.computePricingEngine = pricing.NewComputePricingEngine()
+	}
+	engine := tt.tracker.computePricingEngine
+	overrides := tt.tracker.computeBillingOverrides
+	pricingVersion := "compute:" + engine.CatalogVersion()
+	env := cloud.GetCloudEnv()
+
+	// Step 2/3 — back-fill walk over compute_cost events with cost_pending.
+	for _, ev := range events {
+		if ev.EventType != EventTypeComputeCost {
+			continue
+		}
+		pending, _ := ev.Details["cost_pending"].(bool)
+		if !pending {
+			continue
+		}
+		// Decimal window_s := 0 (engine derives from duration_ms when zero).
+		cost := engine.ResolveComputeCost(ev.Details, env, overrides, decimal.Zero)
+
+		prev := ev.CostUSD
+		ev.CostUSD = cost.CostUSD
+		ev.CostConfidence = CostConfidence(cost.CostConfidence)
+		ev.PricingSource = PricingSource(cost.PricingSource)
+		ev.PricingVersion = pricingVersion
+		delete(ev.Details, "cost_pending")
+
+		if err := tt.tracker.buffer.UpdateEvent(ev); err != nil {
+			log.Printf("[dexcost] WARNING: failed to back-fill compute event %s: %v", ev.EventID, err)
+			continue
+		}
+
+		// Delta-based total adjustment — NOT a full recompute. Preserves
+		// retry_marker costs already aggregated above; mirrors python.
+		delta := cost.CostUSD.Sub(prev)
+		tt.Task.ComputeCostUSD = tt.Task.ComputeCostUSD.Add(delta)
+		tt.Task.TotalCostUSD = tt.Task.TotalCostUSD.Add(delta)
+	}
+}
+
+// finalizeNetwork snapshots the NetworkAccountant onto the task's v1
+// fields and (if a CloudEnv has been resolved) computes v2 egress dollars
+// + back-fills the cost_pending network events for this task.
+//
+// Caller (aggregateCosts) wraps this in a Tier-5 fail-silent shell so a
+// pricing bug never breaks task finalization.
+func (tt *TrackedTask) finalizeNetwork(events []Event) {
+	// v1 — drain the accountant into task fields. Lookup-then-unregister
+	// because the task is ending; further HTTP calls attributed to this
+	// task_id will get nil (no orphan rows, matches Python's frozen-then-
+	// snapshot rule).
+	accountant := UnregisterAccountant(tt.Task.TaskID.String())
+	if accountant == nil {
+		// No accountant was registered (e.g. ad-hoc task creation outside
+		// StartTask). Nothing to do; v1 fields stay at zero.
+		return
+	}
+	snapshot := accountant.Finalize()
+	tt.Task.NetworkBytesIn = snapshot.BytesIn
+	tt.Task.NetworkBytesOut = snapshot.BytesOut
+	tt.Task.NetworkCallCount = snapshot.CallCount
+	tt.Task.NetworkByHost = snapshot.ByHost
+
+	// v2 — egress pricing.
+	env := cloud.GetCloudEnv()
+	engine := pricing.NewEgressPricingEngine()
+	rate := engine.ResolveRate(env.Provider, env.Region)
+	pricingVersion := "egress:" + engine.CatalogVersion()
+
+	// Convert external_bytes_out scalar to GB (decimal, never float —
+	// spec §6.3). 1 GB = 10^9 bytes, NOT 2^30.
+	divisor := decimal.NewFromInt(1_000_000_000)
+	externalGB := decimal.NewFromInt(snapshot.ExternalBytesOut).Div(divisor)
+	tt.Task.NetworkCostUSD = externalGB.Mul(rate.RatePerGB)
+
+	// Stamp per-host egress_cost_usd into network_by_host[].hosts. The
+	// per-host external_bytes_out survives the LIVE_CAP overflow + top-N
+	// cap; sum(per-host egress_cost_usd) == NetworkCostUSD by construction
+	// (v2 §10.3 property invariant 2).
+	if hostsRaw, ok := tt.Task.NetworkByHost["hosts"].([]map[string]interface{}); ok {
+		for _, host := range hostsRaw {
+			var hostExternal int64
+			if v, ok := host["external_bytes_out"].(int64); ok {
+				hostExternal = v
+			}
+			hostGB := decimal.NewFromInt(hostExternal).Div(divisor)
+			host["egress_cost_usd"] = hostGB.Mul(rate.RatePerGB).String()
+		}
+	}
+
+	// v2 §6.4 — back-fill each network event for this task. Walk the
+	// query result for any cost_pending events, compute their cost,
+	// strip the marker, and UpdateEvent to re-sync.
+	for _, ev := range events {
+		if ev.EventType != EventTypeNetwork {
+			continue
+		}
+		pending, _ := ev.Details["cost_pending"].(bool)
+		if !pending {
+			continue
+		}
+		respBytes := int64(0)
+		if v, ok := ev.Details["response_bytes"].(int64); ok {
+			respBytes = v
+		}
+		reqBytes := int64(0)
+		if v, ok := ev.Details["request_bytes"].(int64); ok {
+			reqBytes = v
+		}
+		isInternal, _ := ev.Details["is_internal_traffic"].(bool)
+
+		var billableBytes int64
+		if isInternal {
+			billableBytes = 0
+		} else {
+			billableBytes = respBytes + reqBytes
+		}
+		evGB := decimal.NewFromInt(billableBytes).Div(divisor)
+		evCost := evGB.Mul(rate.RatePerGB)
+
+		ev.CostUSD = evCost
+		if isInternal {
+			ev.CostConfidence = CostConfidenceExact
+		} else {
+			ev.CostConfidence = CostConfidence(rate.CostConfidence)
+		}
+		ev.PricingVersion = pricingVersion
+		// Strip the cost_pending marker so the back-filled event is no
+		// longer "deferred-cost".
+		delete(ev.Details, "cost_pending")
+		// Stamp egress_pricing_source string so the wire payload carries
+		// the v2 source detail (egress_catalog:aws:us-east-1).
+		if isInternal {
+			ev.Details["egress_pricing_source"] = "egress_catalog:internal"
+		} else {
+			ev.Details["egress_pricing_source"] = rate.PricingSource
+		}
+
+		if err := tt.tracker.buffer.UpdateEvent(ev); err != nil {
+			log.Printf("[dexcost] WARNING: failed to back-fill network event %s: %v", ev.EventID, err)
+			continue
+		}
+
+		// First-pass total_cost_usd summed this event at $0 (cost_pending);
+		// add the back-filled cost.
+		tt.Task.TotalCostUSD = tt.Task.TotalCostUSD.Add(evCost)
+	}
+
+	// Add network_cost_usd to total — captures every external byte
+	// (cataloged + below-threshold un-cataloged calls included via the
+	// accountant scalar even when they emitted no per-event row).
+	tt.Task.TotalCostUSD = tt.Task.TotalCostUSD.Add(tt.Task.NetworkCostUSD)
 }
 
 // EventOption configures a non-LLM cost event. Implementations apply their

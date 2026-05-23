@@ -84,3 +84,32 @@ func TestLinkParent_AlreadySet(t *testing.T) {
 		t.Errorf("should not overwrite existing parent_task_id")
 	}
 }
+
+// --- Suppression flag (v1 §5.3) -------------------------------------------
+
+func TestSuppressNetworkEvent_FalseOutsideScope(t *testing.T) {
+	if IsNetworkEventSuppressed(context.Background()) {
+		t.Fatal("suppressed should be false on a bare context")
+	}
+}
+
+func TestSuppressNetworkEvent_TrueInsideScope(t *testing.T) {
+	ctx := WithSuppressNetworkEvent(context.Background())
+	if !IsNetworkEventSuppressed(ctx) {
+		t.Fatal("suppressed should be true after WithSuppressNetworkEvent")
+	}
+}
+
+func TestSuppressNetworkEvent_DoesNotPropagateToSiblingContext(t *testing.T) {
+	// A wrapped child ctx inherits suppression; a sibling derived from the
+	// original bare context does not.
+	ctx := WithSuppressNetworkEvent(context.Background())
+	if !IsNetworkEventSuppressed(context.WithValue(ctx, "other", 1)) {
+		t.Fatal("suppression should inherit into a child context")
+	}
+	// Sibling: derive from the original parent (not from ctx).
+	sibling := context.WithValue(context.Background(), "other", 1)
+	if IsNetworkEventSuppressed(sibling) {
+		t.Fatal("a sibling context (not derived from ctx) must NOT be suppressed")
+	}
+}

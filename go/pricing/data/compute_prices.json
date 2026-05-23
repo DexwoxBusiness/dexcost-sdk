@@ -1,0 +1,180 @@
+{
+  "_meta": {
+    "version": "1.0.1",
+    "last_updated": "2026-05-20",
+    "currency": "USD",
+    "default_lambda_request_usd": "0.0000002",
+    "default_lambda_gb_second_usd": "0.0000166667",
+    "default_fargate_vcpu_second_usd": "0.0000112444",
+    "default_fargate_gib_second_usd": "0.0000012347",
+    "default_cloud_run_request_usd": "0.0000004",
+    "default_cloud_run_vcpu_second_usd": "0.000024",
+    "default_cloud_run_gib_second_usd": "0.0000025",
+    "default_azure_functions_execution_usd": "0.0000002",
+    "default_azure_functions_gb_second_usd": "0.000016",
+    "default_vercel_cpu_hour_usd": "0.128",
+    "default_vercel_memory_gb_hour_usd": "0.0106",
+    "default_ec2_vcpu_hour_usd": "0.0464",
+    "default_k8s_pod_vcpu_hour_usd": "0.0464",
+    "description": "Dexcost compute catalog — per-billing-model rates by cloud provider/region. Community-maintained; submit PRs to add or refresh rates.",
+    "notes": "Rates are standard on-demand pricing, FIRST tier only. Sustained-use discounts (GCE), Savings Plans (AWS), and Reserved Instances are not modelled. Lambda/Azure Functions/Vercel rates are DECIMAL GB (10^9 bytes); Fargate/Cloud Run rates are BINARY GiB (2^30 bytes) — see spec §6.2. The default_* keys at this _meta level are the universal fallbacks used when neither a region match nor a provider default is available. EC2/GCE/Azure-VM blocks carry per-region instance_types maps keyed by the SKU returned by IMDS (e.g. c7g.xlarge, n2-standard-2, Standard_D2s_v3) — extend as new SKUs ship by transcribing from each provider's public pricing page."
+  },
+  "aws": {
+    "_last_verified": "2026-05-20",
+    "lambda": {
+      "default": {
+        "x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"},
+        "arm64":  {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}
+      },
+      "regions": {
+        "us-east-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-east-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "us-west-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "eu-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "eu-central-1":   {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-south-1":     {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-southeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-northeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}}
+      }
+    },
+    "fargate": {
+      "default": {
+        "x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"},
+        "arm64":  {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}
+      },
+      "regions": {
+        "us-east-1":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "us-east-2":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "us-west-2":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "eu-west-1":      {"x86_64": {"vcpu_second_usd": "0.0000112444", "gib_second_usd": "0.0000012347"}, "arm64": {"vcpu_second_usd": "0.0000089944", "gib_second_usd": "0.0000009889"}},
+        "eu-central-1":   {"x86_64": {"vcpu_second_usd": "0.0000129333", "gib_second_usd": "0.0000014194"}, "arm64": {"vcpu_second_usd": "0.0000103472", "gib_second_usd": "0.0000011361"}},
+        "ap-south-1":     {"x86_64": {"vcpu_second_usd": "0.0000118222", "gib_second_usd": "0.0000012931"}, "arm64": {"vcpu_second_usd": "0.0000066194", "gib_second_usd": "0.0000007250"}},
+        "ap-southeast-1": {"x86_64": {"vcpu_second_usd": "0.0000140444", "gib_second_usd": "0.0000015361"}, "arm64": {"vcpu_second_usd": "0.0000112361", "gib_second_usd": "0.0000012278"}},
+        "ap-northeast-1": {"x86_64": {"vcpu_second_usd": "0.0000140444", "gib_second_usd": "0.0000015361"}, "arm64": {"vcpu_second_usd": "0.0000112361", "gib_second_usd": "0.0000012278"}}
+      }
+    },
+    "ec2": {
+      "default_vcpu_hour_usd": "0.0464",
+      "regions": {
+        "us-east-1": {
+          "instance_types": {
+            "t3.micro":       {"hourly_usd": "0.0104", "vcpu_count": "2"},
+            "t3.small":       {"hourly_usd": "0.0208", "vcpu_count": "2"},
+            "t3.medium":      {"hourly_usd": "0.0416", "vcpu_count": "2"},
+            "t3.large":       {"hourly_usd": "0.0832", "vcpu_count": "2"},
+            "m7i.large":      {"hourly_usd": "0.1008", "vcpu_count": "2"},
+            "m7i.xlarge":     {"hourly_usd": "0.2016", "vcpu_count": "4"},
+            "m7i.2xlarge":    {"hourly_usd": "0.4032", "vcpu_count": "8"},
+            "c7g.large":      {"hourly_usd": "0.0725", "vcpu_count": "2"},
+            "c7g.xlarge":     {"hourly_usd": "0.1450", "vcpu_count": "4"},
+            "c7g.2xlarge":    {"hourly_usd": "0.2900", "vcpu_count": "8"},
+            "r7i.large":      {"hourly_usd": "0.1323", "vcpu_count": "2"},
+            "r7i.xlarge":     {"hourly_usd": "0.2646", "vcpu_count": "4"}
+          }
+        },
+        "us-west-2": {
+          "instance_types": {
+            "t3.medium":   {"hourly_usd": "0.0416", "vcpu_count": "2"},
+            "m7i.large":   {"hourly_usd": "0.1008", "vcpu_count": "2"},
+            "c7g.xlarge":  {"hourly_usd": "0.1450", "vcpu_count": "4"}
+          }
+        },
+        "eu-west-1": {
+          "instance_types": {
+            "t3.medium":   {"hourly_usd": "0.0456", "vcpu_count": "2"},
+            "m7i.large":   {"hourly_usd": "0.11235", "vcpu_count": "2"},
+            "c7g.xlarge":  {"hourly_usd": "0.1550", "vcpu_count": "4"}
+          }
+        }
+      }
+    }
+  },
+  "gcp": {
+    "_last_verified": "2026-05-20",
+    "cloud_run": {
+      "default": {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+      "regions": {
+        "us-central1":   {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "us-east1":      {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "us-west1":      {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "europe-west4":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "asia-east1":    {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "asia-northeast1":{"request_usd":"0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"}
+      }
+    },
+    "cloud_functions": {
+      "default": {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+      "regions": {
+        "us-central1":   {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"},
+        "europe-west1":  {"request_usd": "0.0000004", "vcpu_second_usd": "0.000024", "gib_second_usd": "0.0000025"}
+      }
+    },
+    "gce": {
+      "default_vcpu_hour_usd": "0.0475",
+      "regions": {
+        "us-central1": {
+          "instance_types": {
+            "e2-small":        {"hourly_usd": "0.0168", "vcpu_count": "2"},
+            "e2-medium":       {"hourly_usd": "0.0335", "vcpu_count": "2"},
+            "e2-standard-2":   {"hourly_usd": "0.0670", "vcpu_count": "2"},
+            "e2-standard-4":   {"hourly_usd": "0.1340", "vcpu_count": "4"},
+            "n2-standard-2":   {"hourly_usd": "0.0971", "vcpu_count": "2"},
+            "n2-standard-4":   {"hourly_usd": "0.1942", "vcpu_count": "4"},
+            "c3-standard-4":   {"hourly_usd": "0.2016", "vcpu_count": "4"}
+          }
+        },
+        "europe-west1": {
+          "instance_types": {
+            "e2-standard-2":   {"hourly_usd": "0.0737", "vcpu_count": "2"},
+            "n2-standard-2":   {"hourly_usd": "0.1068", "vcpu_count": "2"}
+          }
+        }
+      }
+    }
+  },
+  "azure": {
+    "_last_verified": "2026-05-20",
+    "functions_consumption": {
+      "default": {"execution_usd": "0.0000002", "gb_second_usd": "0.000016"},
+      "regions": {
+        "eastus":          {"execution_usd": "0.0000002", "gb_second_usd": "0.000016"},
+        "westeurope":      {"execution_usd": "0.0000002", "gb_second_usd": "0.000016"},
+        "southeastasia":   {"execution_usd": "0.0000002", "gb_second_usd": "0.000016"}
+      }
+    },
+    "vm": {
+      "default_vcpu_hour_usd": "0.046",
+      "regions": {
+        "eastus": {
+          "instance_types": {
+            "Standard_B2s":     {"hourly_usd": "0.0416", "vcpu_count": "2"},
+            "Standard_B2ms":    {"hourly_usd": "0.0832", "vcpu_count": "2"},
+            "Standard_D2s_v3":  {"hourly_usd": "0.0960", "vcpu_count": "2"},
+            "Standard_D4s_v3":  {"hourly_usd": "0.1920", "vcpu_count": "4"},
+            "Standard_D2s_v5":  {"hourly_usd": "0.0960", "vcpu_count": "2"},
+            "Standard_E2s_v3":  {"hourly_usd": "0.1260", "vcpu_count": "2"},
+            "Standard_F2s_v2":  {"hourly_usd": "0.0846", "vcpu_count": "2"}
+          }
+        },
+        "westeurope": {
+          "instance_types": {
+            "Standard_D2s_v3":  {"hourly_usd": "0.1200", "vcpu_count": "2"},
+            "Standard_B2ms":    {"hourly_usd": "0.0960", "vcpu_count": "2"}
+          }
+        }
+      }
+    }
+  },
+  "vercel": {
+    "_last_verified": "2026-05-20",
+    "fluid": {
+      "default": {
+        "active_cpu_hour_usd": "0.128",
+        "memory_gb_hour_usd": "0.0106",
+        "invocation_usd": "0.000000600"
+      }
+    }
+  }
+}

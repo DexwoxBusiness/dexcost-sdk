@@ -15,6 +15,13 @@ pub enum TaskStatus {
 }
 
 /// EventType discriminates cost-generating events.
+///
+/// Phase 2 adds GPU-specific event types:
+/// - `GpuCost`: per-task aggregated GPU cost event (one per task)
+/// - `GpuUtilizationSignal`: per-device observability event with no
+///   cost_usd / pricing_source / pricing_version. The Control Layer
+///   MUST NOT aggregate signal events into any dollar field
+///   (convention §1 carve-out, Decision #3).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
@@ -22,6 +29,9 @@ pub enum EventType {
     ExternalCost,
     ComputeCost,
     RetryMarker,
+    Network,
+    GpuCost,
+    GpuUtilizationSignal,
 }
 
 /// CostConfidence indicates how trustworthy the reported cost is.
@@ -75,7 +85,52 @@ pub struct Task {
     pub retry_count: i32,
     pub retry_cost_usd: Decimal,
     pub failure_count: i32,
+    // Network capture v1 — bytes-only counters + per-host breakdown.
+    // `network_by_host` is a free-form JSON blob (matches existing pattern)
+    // and defaults to `{"hosts": []}` so legacy payloads round-trip cleanly.
+    #[serde(default)]
+    pub network_bytes_in: i64,
+    #[serde(default)]
+    pub network_bytes_out: i64,
+    #[serde(default)]
+    pub network_call_count: i64,
+    #[serde(default = "default_network_by_host")]
+    pub network_by_host: serde_json::Value,
+    /// v2 — cloud-egress cost in USD, computed at task finalize from the
+    /// accountant's canonical external_bytes_out scalar. Distinct from
+    /// `external_cost_usd` (vendor API charges) — see Decision #7. Defaults
+    /// to zero for legacy payloads.
+    #[serde(default)]
+    pub network_cost_usd: Decimal,
+    /// Phase 2 GPU — aggregated GPU cost in USD, computed at task finalize
+    /// by `_finalize_gpu`. Distinct from `compute_cost_usd` (CPU/memory) and
+    /// `external_cost_usd` (vendor API charges). `total_cost_usd` =
+    /// `llm + external + compute + network + gpu`. Defaults to zero for
+    /// legacy payloads.
+    #[serde(default)]
+    pub gpu_cost_usd: Decimal,
+    /// In-memory accumulator for HTTP byte usage. Not serialised — each
+    /// deserialised Task gets a fresh accountant. Cloning the Task shares
+    /// the accountant by Arc-refcount, which is the right behaviour during
+    /// storage I/O (no records happen against stored clones) and matches
+    /// Python's `_network` field semantically.
+    #[serde(skip, default)]
+    pub network_accountant: std::sync::Arc<crate::adapters::network_accountant::NetworkAccountant>,
+    /// Optional in-memory compute accountant. Not serialised — set by the
+    /// handler wraps / auto-task path. Mirrors Python's `_compute` field.
+    #[serde(skip, default)]
+    pub compute: Option<std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>>,
+    /// Optional in-memory GPU accountant. Not serialised — set by the
+    /// GPU handler wraps / auto-task path. Mirrors Python's `_gpu` field.
+    /// Set lazily by Modal / RunPod / Replicate wraps OR by the tracker
+    /// when a long-running GPU runtime is detected.
+    #[serde(skip, default)]
+    pub gpu: Option<std::sync::Arc<crate::core::gpu_accountant::GpuAccountant>>,
     pub schema_version: String,
+}
+
+fn default_network_by_host() -> serde_json::Value {
+    serde_json::json!({"hosts": []})
 }
 
 impl Task {
@@ -103,6 +158,15 @@ impl Task {
             retry_count: 0,
             retry_cost_usd: Decimal::ZERO,
             failure_count: 0,
+            network_bytes_in: 0,
+            network_bytes_out: 0,
+            network_call_count: 0,
+            network_by_host: default_network_by_host(),
+            network_cost_usd: Decimal::ZERO,
+            gpu_cost_usd: Decimal::ZERO,
+            network_accountant: std::sync::Arc::default(),
+            compute: None,
+            gpu: None,
             schema_version: "1".to_string(),
         }
     }
@@ -132,6 +196,12 @@ impl Task {
             "retry_count": self.retry_count,
             "retry_cost_usd": self.retry_cost_usd.to_string(),
             "failure_count": self.failure_count,
+            "network_bytes_in": self.network_bytes_in,
+            "network_bytes_out": self.network_bytes_out,
+            "network_call_count": self.network_call_count,
+            "network_by_host": self.network_by_host,
+            "network_cost_usd": self.network_cost_usd.to_string(),
+            "gpu_cost_usd": self.gpu_cost_usd.to_string(),
             "schema_version": self.schema_version,
         })
     }
@@ -279,5 +349,128 @@ mod tests {
         assert_eq!(val, "\"llm_call\"");
         let val = serde_json::to_string(&EventType::RetryMarker).unwrap();
         assert_eq!(val, "\"retry_marker\"");
+    }
+
+    #[test]
+    fn test_event_type_network_serializes_to_network() {
+        let val = serde_json::to_string(&EventType::Network).unwrap();
+        assert_eq!(val, "\"network\"");
+    }
+
+    #[test]
+    fn test_event_type_network_round_trip() {
+        let parsed: EventType = serde_json::from_str("\"network\"").unwrap();
+        assert_eq!(parsed, EventType::Network);
+    }
+
+    #[test]
+    fn test_task_network_field_defaults() {
+        let task = Task::new("x");
+        assert_eq!(task.network_bytes_in, 0);
+        assert_eq!(task.network_bytes_out, 0);
+        assert_eq!(task.network_call_count, 0);
+        assert_eq!(task.network_by_host, serde_json::json!({"hosts": []}));
+    }
+
+    #[test]
+    fn test_task_network_fields_in_to_dict() {
+        let task = Task::new("x");
+        let dict = task.to_dict();
+        assert_eq!(dict["network_bytes_in"], serde_json::json!(0));
+        assert_eq!(dict["network_bytes_out"], serde_json::json!(0));
+        assert_eq!(dict["network_call_count"], serde_json::json!(0));
+        assert_eq!(dict["network_by_host"], serde_json::json!({"hosts": []}));
+    }
+
+    #[test]
+    fn test_task_network_fields_round_trip() {
+        let mut task = Task::new("x");
+        task.network_bytes_in = 4096;
+        task.network_bytes_out = 512;
+        task.network_call_count = 3;
+        task.network_by_host = serde_json::json!({
+            "hosts": [{"host": "a.com", "calls": 3, "bytes_in": 4096, "bytes_out": 512}]
+        });
+        let value = serde_json::to_value(&task).unwrap();
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.network_bytes_in, 4096);
+        assert_eq!(restored.network_bytes_out, 512);
+        assert_eq!(restored.network_call_count, 3);
+        assert_eq!(
+            restored.network_by_host,
+            serde_json::json!({
+                "hosts": [{"host": "a.com", "calls": 3, "bytes_in": 4096, "bytes_out": 512}]
+            })
+        );
+    }
+
+    // ── Phase 2 GPU foundation: gpu_cost_usd + new EventType variants ──
+
+    #[test]
+    fn test_event_type_gpu_cost_serializes() {
+        let val = serde_json::to_string(&EventType::GpuCost).unwrap();
+        assert_eq!(val, "\"gpu_cost\"");
+    }
+
+    #[test]
+    fn test_event_type_gpu_utilization_signal_serializes() {
+        let val = serde_json::to_string(&EventType::GpuUtilizationSignal).unwrap();
+        assert_eq!(val, "\"gpu_utilization_signal\"");
+    }
+
+    #[test]
+    fn test_event_type_gpu_round_trip() {
+        let parsed: EventType = serde_json::from_str("\"gpu_cost\"").unwrap();
+        assert_eq!(parsed, EventType::GpuCost);
+        let parsed: EventType = serde_json::from_str("\"gpu_utilization_signal\"").unwrap();
+        assert_eq!(parsed, EventType::GpuUtilizationSignal);
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_defaults_to_zero() {
+        let task = Task::new("x");
+        assert_eq!(task.gpu_cost_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_in_to_dict() {
+        let task = Task::new("x");
+        let dict = task.to_dict();
+        assert_eq!(dict["gpu_cost_usd"], serde_json::json!("0"));
+        assert!(dict["gpu_cost_usd"].is_string());
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_round_trip() {
+        let mut task = Task::new("x");
+        task.gpu_cost_usd = Decimal::new(12345, 4); // 1.2345
+        let value = serde_json::to_value(&task).unwrap();
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.gpu_cost_usd, Decimal::new(12345, 4));
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_absent_in_payload_defaults_to_zero() {
+        // Legacy payloads without gpu_cost_usd round-trip with zero default.
+        let mut value = serde_json::to_value(Task::new("x")).unwrap();
+        value.as_object_mut().unwrap().remove("gpu_cost_usd");
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.gpu_cost_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_task_network_fields_absent_in_payload_default() {
+        // Legacy payloads without the four network_* keys round-trip with defaults.
+        let mut value = serde_json::to_value(Task::new("x")).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        obj.remove("network_bytes_in");
+        obj.remove("network_bytes_out");
+        obj.remove("network_call_count");
+        obj.remove("network_by_host");
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.network_bytes_in, 0);
+        assert_eq!(restored.network_bytes_out, 0);
+        assert_eq!(restored.network_call_count, 0);
+        assert_eq!(restored.network_by_host, serde_json::json!({"hosts": []}));
     }
 }

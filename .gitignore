@@ -59,3 +59,10 @@ Thumbs.db
 
 # ── Logs ─────────────────────────────────────────────
 *.log
+
+# ── Claude Code local workspace ──────────────────────
+# Agent worktrees are ephemeral local checkouts created by the
+# Agent tool with isolation="worktree". Each agent's commits live
+# on its own auto-generated branch and get merged back from the
+# main repo — the worktree dirs themselves are never tracked.
+.claude/worktrees/

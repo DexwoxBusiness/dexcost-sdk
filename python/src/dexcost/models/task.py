@@ -48,6 +48,8 @@ class Task:
     llm_cost_usd: Decimal = Decimal("0")
     external_cost_usd: Decimal = Decimal("0")
     compute_cost_usd: Decimal = Decimal("0")
+    network_cost_usd: Decimal = Decimal("0")
+    gpu_cost_usd: Decimal = Decimal("0")
     total_cost_usd: Decimal = Decimal("0")
 
     # Token totals
@@ -70,6 +72,20 @@ class Task:
     # to_dict()/from_dict() do not touch it; a fresh task gets a fresh one.
     _network: NetworkAccountant = field(
         init=False, default_factory=NetworkAccountant, compare=False, repr=False
+    )
+
+    # In-memory only — the per-task compute accountant. Set lazily by the
+    # tracker / handler wrap when it knows the runtime + config; remains
+    # ``None`` for tasks that never opt in (e.g. unknown runtime).
+    _compute: Any = field(
+        init=False, default=None, compare=False, repr=False
+    )
+
+    # In-memory only — the per-task GPU accountant. Set lazily by the GPU
+    # handler wrap or the tracker on long-running GPU runtimes. ``None``
+    # for tasks that never touch a GPU.
+    _gpu: Any = field(
+        init=False, default=None, compare=False, repr=False
     )
 
     # Schema contract
@@ -96,6 +112,8 @@ class Task:
             "llm_cost_usd": str(self.llm_cost_usd),
             "external_cost_usd": str(self.external_cost_usd),
             "compute_cost_usd": str(self.compute_cost_usd),
+            "network_cost_usd": str(self.network_cost_usd),
+            "gpu_cost_usd": str(self.gpu_cost_usd),
             "total_cost_usd": str(self.total_cost_usd),
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
@@ -135,6 +153,8 @@ class Task:
                 llm_cost_usd=Decimal(data["llm_cost_usd"]),
                 external_cost_usd=Decimal(data["external_cost_usd"]),
                 compute_cost_usd=Decimal(data["compute_cost_usd"]),
+                network_cost_usd=Decimal(data.get("network_cost_usd", "0")),
+                gpu_cost_usd=Decimal(data.get("gpu_cost_usd", "0")),
                 total_cost_usd=Decimal(data["total_cost_usd"]),
                 total_input_tokens=data["total_input_tokens"],
                 total_output_tokens=data["total_output_tokens"],

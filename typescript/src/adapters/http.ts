@@ -13,7 +13,15 @@
 
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, isNetworkEventSuppressed } from "../core/context.js";
+import {
+  classifyDestination,
+  measureBytesFromHeaders,
+} from "./_netbytes.js";
+import {
+  getAccountant,
+  type NetworkAccountant,
+} from "./network-accountant.js";
 import {
   createCostEvent,
   type CostEvent,
@@ -34,6 +42,13 @@ const _domainRates = new Map<string, { costUsd: number; per: string }>();
 
 /** Events recorded by the adapter. */
 const _recordedEvents: CostEvent[] = [];
+
+/**
+ * Combined request + response bytes above which an un-cataloged call
+ * emits a `network` event. Mirrors python config
+ * `network_event_threshold_bytes = 102_400` (100 KiB).
+ */
+const NETWORK_EVENT_THRESHOLD_BYTES = 102_400;
 
 /** Original fetch reference before patching. */
 let _originalFetch: typeof globalThis.fetch | null = null;
@@ -139,25 +154,73 @@ export function trackHttp(buffer?: EventBuffer): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).fetch = async function wrappedFetch(
     input: string | URL | Request,
-    init?: RequestInit
+    init?: RequestInit,
   ): Promise<Response> {
-    // Call original first, preserve response
+    // ── v1 byte measurement — request side (known before fetch) ─────────
+    const urlStr = _resolveUrlStr(input);
+    const method = _resolveMethod(input, init);
+    const requestHeaders = _resolveRequestHeaders(input, init);
+    const requestBodyLen = _resolveRequestBodyLen(input, init);
+    const requestBytes = measureBytesFromHeaders(
+      method,
+      urlStr,
+      requestHeaders,
+      requestBodyLen,
+    );
+
     const response = await _originalFetch!(input, init);
 
-    // Determine URL string from either string, URL, or Request
-    let urlStr: string;
-    if (typeof input === "string") {
-      urlStr = input;
-    } else if (input instanceof URL) {
-      urlStr = input.toString();
-    } else {
-      // Request object
-      urlStr = (input as Request).url;
+    // ── v1 destination classification + byte details ─────────────────────
+    let hostname = "";
+    let protocol = "https";
+    try {
+      const parsed = new URL(urlStr);
+      hostname = parsed.hostname;
+      protocol = (parsed.protocol || "https:").replace(":", "") || "https";
+    } catch {
+      // Unparseable URL — fall through with empty host; classifyDestination
+      // returns null for empty input.
     }
+    const isInternal = classifyDestination(hostname);
+    const suppressed = isNetworkEventSuppressed();
 
-    await _maybeRecordCost(urlStr, response);
+    // Resolve accountant from registry via the active task. The task's id
+    // is looked up via the existing context — see _resolveHttpTask below.
+    // Direct reference here would create a cycle; lookup is done inside
+    // the byte-recording callback when the task_id is known.
+    const callContext: _HttpCallContext = {
+      urlStr,
+      method,
+      hostname,
+      protocol,
+      requestBytes,
+      isInternal,
+      suppressed,
+      responseHeaderBytes: _measureResponseHeaderBytes(response),
+    };
 
-    return response;
+    // Wrap the response body in a TransformStream that counts bytes as
+    // they flow through to the caller, then records into the accountant
+    // + (for un-cataloged calls) emits a `network` event at stream end.
+    // For zero-body responses (HEAD, 204) we fall back to immediate
+    // finalisation.
+    const wrappedResponse = _wrapResponseForByteCounting(
+      response,
+      callContext,
+    );
+
+    // The cost-extraction path (catalog / domain-rate / un-cataloged
+    // external_cost-zero) still runs immediately — it works off the
+    // RESPONSE HEADERS for catalog lookup and may consume a JSON body
+    // independently. v1 §4.3 byte_details are stamped on every event
+    // (request side is known; response side is added later via the
+    // recording stream — for v1, only request-side byte_details land on
+    // catalog/domain-rate events. Response-side flows into the task
+    // aggregate via the accountant. v2 finalize back-fills network event
+    // costs after the snapshot.)
+    await _maybeRecordCost(urlStr, wrappedResponse, callContext);
+
+    return wrappedResponse;
   };
 
   // Also patch Node's low-level http/https transports — many SDKs
@@ -409,9 +472,235 @@ async function _extractFromResponse(
  * Session auto-grouping: if no active task and session manager is available,
  * a session task is created automatically.
  */
+// ---------------------------------------------------------------------------
+// v1 network-capture helpers
+// ---------------------------------------------------------------------------
+
+/** Shared per-call state — built in wrappedFetch, threaded into helpers. */
+interface _HttpCallContext {
+  urlStr: string;
+  method: string;
+  hostname: string;
+  protocol: string;
+  requestBytes: number;
+  /** Response status line + headers; body bytes added by the TransformStream. */
+  responseHeaderBytes: number;
+  isInternal: boolean | null;
+  suppressed: boolean;
+}
+
+function _resolveUrlStr(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return (input as Request).url;
+}
+
+function _resolveMethod(
+  input: string | URL | Request,
+  init?: RequestInit,
+): string {
+  if (init?.method) return init.method.toUpperCase();
+  if (input instanceof Request) return input.method.toUpperCase();
+  return "GET";
+}
+
+function _resolveRequestHeaders(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const src = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+  if (!src) return headers;
+  if (src instanceof Headers) {
+    src.forEach((value, key) => {
+      headers[key] = value;
+    });
+  } else if (Array.isArray(src)) {
+    for (const [k, v] of src) headers[k] = v;
+  } else {
+    for (const [k, v] of Object.entries(src)) headers[k] = String(v);
+  }
+  return headers;
+}
+
+function _resolveRequestBodyLen(
+  input: string | URL | Request,
+  init?: RequestInit,
+): number {
+  const body = init?.body ?? (input instanceof Request ? null : undefined);
+  if (!body) return 0;
+  if (typeof body === "string") return Buffer.byteLength(body, "utf-8");
+  if (body instanceof URLSearchParams) return Buffer.byteLength(body.toString(), "utf-8");
+  if (body instanceof ArrayBuffer) return body.byteLength;
+  if (ArrayBuffer.isView(body)) return body.byteLength;
+  if (body instanceof Blob) return body.size;
+  // FormData / ReadableStream — size unknown without consuming.
+  return 0;
+}
+
+function _measureResponseHeaderBytes(response: Response): number {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  // Pass empty method/url so the request-line formula contributes only the
+  // constant 12-byte " HTTP/1.1\r\n" overhead (mirrors Python).
+  return measureBytesFromHeaders("", "", headers, 0);
+}
+
+function _isInternalToValue(p: boolean | null): boolean | null {
+  return p;
+}
+
+/**
+ * Wrap a Response in a new Response whose body is piped through a
+ * counting TransformStream. The counter is held in the closure; when the
+ * stream's flush fires (source ended) — or when the caller drops the
+ * response (Drop/cancel) — the byte total is recorded into the active
+ * task's accountant and, for un-cataloged calls that aren't suppressed,
+ * a `network` event is emitted with `cost_pending=true`.
+ *
+ * Zero-body responses (status 204, HEAD requests, no `body` stream)
+ * finalise immediately so the accountant still sees the call.
+ */
+function _wrapResponseForByteCounting(
+  response: Response,
+  ctx: _HttpCallContext,
+): Response {
+  let bytesRead = 0;
+  let finalised = false;
+  const finalise = () => {
+    if (finalised) return;
+    finalised = true;
+    _finaliseHttpCall(ctx, bytesRead);
+  };
+
+  if (!response.body) {
+    finalise();
+    return response;
+  }
+
+  // TransformStream's Transformer interface has transform + flush; cancel
+  // isn't a member. To catch early-abort (caller cancels the stream), we
+  // wrap the readable side in a separate ReadableStream that listens for
+  // .cancel() and calls finalise. The TransformStream's flush() handles
+  // the natural end-of-stream case.
+  const counting = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytesRead += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    flush() {
+      finalise();
+    },
+  });
+
+  const piped = response.body.pipeThrough(counting);
+  // Add an early-abort hook by wrapping `piped` in a ReadableStream that
+  // forwards reads from `piped`'s reader and triggers finalise on cancel.
+  const reader = piped.getReader();
+  const earlyAbortWrapper = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (err) {
+        controller.error(err);
+        finalise();
+      }
+    },
+    cancel(reason) {
+      finalise(); // v1 §5.5 early-abort: bytes-actually-received.
+      return reader.cancel(reason);
+    },
+  });
+
+  return new Response(earlyAbortWrapper, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+/**
+ * Called once the response body has been fully drained, cancelled, or
+ * was empty. Records the byte totals into the task's accountant and, if
+ * the call was un-cataloged AND not suppressed AND notable
+ * (combined_bytes > threshold OR status >= 400), emits a `network`
+ * event with `cost_pending=true`.
+ */
+function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): void {
+  const responseBytes = ctx.responseHeaderBytes + responseBodyBytes;
+  const task = _resolveHttpTask();
+  const accountant: NetworkAccountant | undefined = getAccountant(task.taskId);
+  if (accountant) {
+    accountant.record(ctx.hostname, responseBytes, ctx.requestBytes, ctx.isInternal);
+  }
+
+  // Network-event emission is the un-cataloged path's responsibility.
+  // _maybeRecordCost decides which path was taken — for catalog /
+  // domain-rate calls it sets a "matched" flag we check here. Stored on
+  // the ctx so a single-call closure threads it.
+  if (ctx._matchedCatalog || ctx.suppressed) return;
+
+  const combined = ctx.requestBytes + responseBytes;
+  // Find the most recent un-cataloged external_cost-zero event for this
+  // URL — that's the one we want to REPLACE with a network event (the
+  // current behaviour records an external_cost-zero; v1 §4.4 wants a
+  // network event instead). Match by url to avoid race with concurrent
+  // calls.
+  for (let i = _recordedEvents.length - 1; i >= 0; i--) {
+    const ev = _recordedEvents[i];
+    if (
+      ev.eventType === "external_cost" &&
+      ev.costUsd === 0 &&
+      ev.costConfidence === "unknown" &&
+      ev.details?.url === ctx.urlStr &&
+      !ev.details?._reTyped
+    ) {
+      // Mark and re-type or drop based on threshold.
+      if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
+        ev.eventType = "network";
+        ev.serviceName = ctx.hostname;
+        ev.details = {
+          ...ev.details,
+          method: ctx.method,
+          cost_pending: true,
+          protocol: ctx.protocol,
+          request_bytes: ctx.requestBytes,
+          response_bytes: responseBytes,
+          is_internal_traffic: _isInternalToValue(ctx.isInternal),
+          _reTyped: true,
+        };
+      } else {
+        // Below threshold and no error → counters-only. Drop the
+        // placeholder external_cost-zero event from the in-memory list.
+        // The durable EventBuffer doesn't expose removeEvent today, so a
+        // placeholder may still be persisted there; this matches Python's
+        // behaviour where the placeholder pattern was removed by re-typing
+        // un-cataloged calls instead of by deletion. For tests reading
+        // _recordedEvents directly this is the visible behaviour.
+        _recordedEvents.splice(i, 1);
+      }
+      break;
+    }
+  }
+}
+
+// _HttpCallContext is augmented inside _maybeRecordCost with _matchedCatalog
+// once a domain-rate or catalog match fires.
+interface _HttpCallContext {
+  _matchedCatalog?: boolean;
+}
+
 async function _maybeRecordCost(
   urlStr: string,
   response?: Response,
+  ctx?: _HttpCallContext,
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -429,6 +718,17 @@ async function _maybeRecordCost(
   // the Python adapter's session auto-creation).
   const task = _resolveHttpTask();
 
+  // v1 §4.3 byte_details — stamped into every event below. Response_bytes
+  // are deferred to the TransformStream finalisation; for now only the
+  // request side is known on catalog/domain-rate events.
+  const byteDetailsRequestOnly: Record<string, unknown> = ctx
+    ? {
+        protocol: ctx.protocol,
+        request_bytes: ctx.requestBytes,
+        is_internal_traffic: _isInternalToValue(ctx.isInternal),
+      }
+    : {};
+
   // 1. Check user-registered domain rate first (highest precedence)
   const rate = _domainRates.get(domain);
   if (rate !== undefined) {
@@ -440,13 +740,14 @@ async function _maybeRecordCost(
       costConfidence: "exact",
       pricingSource: "rate_registry",
       serviceName: domain,
-      details: { url: urlStr, per: rate.per },
+      details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
     });
 
     _recordedEvents.push(event);
     if (_buffer) {
       _buffer.addEvent(event);
     }
+    if (ctx) ctx._matchedCatalog = true;
     return;
   }
 
@@ -482,6 +783,7 @@ async function _maybeRecordCost(
             url: urlStr,
             pricingSource: extractionResult.pricingSource,
             catalogService: entry.display_name,
+            ...byteDetailsRequestOnly,
           },
         });
 
@@ -489,12 +791,22 @@ async function _maybeRecordCost(
         if (_buffer) {
           _buffer.addEvent(event);
         }
+        if (ctx) ctx._matchedCatalog = true;
         return;
       }
     }
   }
 
-  // 3. Unknown domain — record with confidence="unknown", cost=0
+  // 3. Un-cataloged — emit a placeholder external_cost-zero event that
+  // _finaliseHttpCall will RE-TYPE to a `network` event with
+  // cost_pending=true once the response body has been fully drained
+  // (and byte counts are known). If combined bytes stay below
+  // threshold and there's no error, the placeholder is dropped instead
+  // — counters-only path (v1 §4.4). If suppressed (LLM-host call),
+  // no event is emitted at all.
+  if (ctx?.suppressed) {
+    return; // bytes still flow into the accountant via finalise
+  }
   const event = createCostEvent({
     eventId: randomUUID(),
     taskId: task.taskId,
@@ -502,7 +814,7 @@ async function _maybeRecordCost(
     costUsd: 0,
     costConfidence: "unknown",
     serviceName: domain,
-    details: { url: urlStr },
+    details: { url: urlStr, ...byteDetailsRequestOnly },
   });
 
   _recordedEvents.push(event);

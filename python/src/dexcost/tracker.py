@@ -623,6 +623,8 @@ class CostTracker:
         enable_retry_heuristics: bool = False,
         retry_heuristic_window: float | None = None,
         retry_heuristic_threshold: float | None = None,
+        compute_billing_overrides: dict[str, str] | None = None,
+        k8s_node_aware: bool = False,
     ) -> None:
         if storage is None:
             from dexcost.storage.sqlite import SQLiteStorage
@@ -666,6 +668,24 @@ class CostTracker:
                 data_path=pricing_data_path,
                 auto_update=auto_update_pricing,
             )
+
+        # Egress pricing engine (network-cost v2) — bundled catalog.
+        from dexcost.egress_pricing import EgressPricingEngine
+        self._egress_pricing = EgressPricingEngine()
+
+        # Compute pricing engine (Phase 1 — bundled compute_prices.json).
+        # `_compute_billing_overrides` is the Decision #1 sharpening —
+        # general override channel from day one (cloud_run, future cases).
+        from dexcost.compute_pricing import ComputePricingEngine
+        self._compute_pricing = ComputePricingEngine()
+        self._compute_billing_overrides: dict[str, str] = (
+            compute_billing_overrides or {}
+        )
+        self._k8s_node_aware: bool = k8s_node_aware
+
+        # GPU pricing engine (Phase 2 — bundled gpu_prices.json).
+        from dexcost.gpu_pricing import GpuPricingEngine
+        self._gpu_pricing = GpuPricingEngine()
 
         # Configurable auto-instrumentation (US-015)
         self._instrumented: set[str] = set()
@@ -1105,4 +1125,282 @@ class CostTracker:
         task.network_bytes_in = net["bytes_in"]
         task.network_bytes_out = net["bytes_out"]
         task.network_call_count = net["call_count"]
-        task.network_by_host = net["by_host"]
+
+        # v2 — egress pricing.  Resolve rate once per task; compute the
+        # canonical scalar; stamp per-host egress_cost_usd and back-fill
+        # network events (deferred per spec §6.4).
+        try:
+            from dexcost import cloud_detect
+            env = cloud_detect.get_cloud_env()
+            rate = self._egress_pricing.resolve_rate(env.provider, env.region)
+            external_bytes = net["external_bytes_out"]
+            task.network_cost_usd = (
+                Decimal(external_bytes) / Decimal("1000000000") * rate.rate_per_gb
+            )
+            pricing_version = f"egress:{self._egress_pricing.catalog_version}"
+
+            # Stamp per-host egress_cost_usd into the by_host blob.
+            for host in net["by_host"]["hosts"]:
+                host_external = host.get("external_bytes_out", 0)
+                host_cost = (
+                    Decimal(host_external) / Decimal("1000000000")
+                    * rate.rate_per_gb
+                )
+                host["egress_cost_usd"] = str(host_cost)
+            task.network_by_host = net["by_host"]
+
+            # Back-fill each network event for this task.
+            for ev in events:
+                if ev.event_type != "network":
+                    continue
+                resp_bytes = int(ev.details.get("response_bytes", 0) or 0)
+                req_bytes = int(ev.details.get("request_bytes", 0) or 0)
+                is_internal = ev.details.get("is_internal_traffic")
+                billable = 0 if is_internal is True else (resp_bytes + req_bytes)
+                ev_cost = (
+                    Decimal(billable) / Decimal("1000000000") * rate.rate_per_gb
+                )
+                ev.cost_usd = ev_cost
+                ev.cost_confidence = (
+                    "exact" if is_internal is True else rate.cost_confidence
+                )
+                ev.pricing_source = (
+                    "egress_catalog:internal" if is_internal is True
+                    else rate.pricing_source
+                )
+                ev.pricing_version = pricing_version
+                ev.details = {
+                    k: v for k, v in ev.details.items() if k != "cost_pending"
+                }
+                self._storage.update_event(ev)
+                # The first-pass total summed this event as $0; add the
+                # back-filled cost so total_cost_usd reflects all dollars.
+                task.total_cost_usd += ev_cost
+
+            task.total_cost_usd += task.network_cost_usd
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent (spec §7.1)
+            _log.warning(
+                "egress cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+            task.network_cost_usd = Decimal("0")
+            task.network_by_host = net["by_host"]
+
+        # ── Compute capture (v1 + v2 cost) ───────────────────────────────
+        # Long-running runtimes emit their compute_cost event at task finalize
+        # from the cgroup diff; serverless runtimes have already emitted from
+        # the handler wrap with cost_pending=true. Either way, the v2 pricing
+        # engine back-fills cost_usd here via the deferred-cost pattern.
+        try:
+            self._finalize_compute(task)
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+            _log.warning(
+                "compute cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+
+        # ── GPU capture (Phase 2 v1 + v2) ────────────────────────────────
+        # Long-running GPU runtimes emit gpu_cost + gpu_utilization_signal at
+        # finalize from the cgroup walk + NVML snapshot diff; serverless GPU
+        # runtimes have already emitted from the handler wrap. Either way,
+        # v2 GpuPricingEngine back-fills gpu_cost.cost_usd here.
+        try:
+            self._finalize_gpu(task)
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+            _log.warning(
+                "gpu cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+
+    def _finalize_gpu(self, task: Task) -> None:
+        """Emit long-running GPU events (if any) and back-fill cost_pending=true
+        gpu_cost events. Mirrors _finalize_compute's delta-not-recompute pattern.
+
+        Long-running GPU runtimes (AWS_EC2_GPU / GCP_GCE_BUNDLED /
+        GCP_GCE_N1_ATTACHED / AZURE_VM_GPU / AZURE_VM_VGPU / LAMBDA_LABS /
+        COREWEAVE) snapshot at task finalize. Serverless runtimes
+        (MODAL / RUNPOD / REPLICATE) have already emitted via the handler
+        wrap. Either way the back-fill step is the same.
+
+        gpu_utilization_signal events are NEVER priced — they have
+        cost_usd=0 by design (Decision #3 observability carve-out) and are
+        skipped by the back-fill walker.
+        """
+        from dexcost import cloud_detect
+        from dexcost.gpu_pricing import GpuPricingEngine
+        from dexcost.gpu_runtime import GpuRuntimeKind
+        from dexcost.models.event import Event
+
+        accountant = getattr(task, "_gpu", None)
+        cloud_env = cloud_detect.get_cloud_env()
+
+        duration_ms = 0
+        window_s = Decimal("0")
+        if task.ended_at and task.started_at:
+            duration_ms = int(
+                (task.ended_at - task.started_at).total_seconds() * 1000,
+            )
+            window_s = Decimal(
+                str((task.ended_at - task.started_at).total_seconds()),
+            )
+
+        # 1. Long-running GPU runtimes: snapshot + persist dual events.
+        long_running_gpu = {
+            GpuRuntimeKind.AWS_EC2_GPU,
+            GpuRuntimeKind.GCP_GCE_BUNDLED,
+            GpuRuntimeKind.GCP_GCE_N1_ATTACHED,
+            GpuRuntimeKind.AZURE_VM_GPU,
+            GpuRuntimeKind.AZURE_VM_VGPU,
+            GpuRuntimeKind.LAMBDA_LABS,
+            GpuRuntimeKind.COREWEAVE,
+        }
+        new_event_ids: set = set()
+        if (
+            accountant is not None
+            and accountant.runtime in long_running_gpu
+        ):
+            cost_details, signal_events = accountant.snapshot_end_and_build(
+                duration_ms=duration_ms,
+            )
+            if cost_details is not None:
+                ev = Event(
+                    task_id=task.task_id,
+                    event_type="gpu_cost",
+                    cost_usd=Decimal("0"),
+                    details=cost_details,
+                )
+                self._storage.insert_event(ev)
+                new_event_ids.add(ev.event_id)
+            if signal_events:
+                for sig in signal_events:
+                    sev = Event(
+                        task_id=task.task_id,
+                        event_type="gpu_utilization_signal",
+                        cost_usd=Decimal("0"),  # Decision #3 — observability only
+                        details=sig,
+                    )
+                    self._storage.insert_event(sev)
+
+        # 2. Back-fill cost on every gpu_cost event with cost_pending=true.
+        #    Per Decision #3, gpu_utilization_signal events are NEVER priced.
+        engine = self._gpu_pricing
+        events = self._storage.query_events(task_id=str(task.task_id))
+        cost_delta = Decimal("0")
+        for ev in events:
+            if ev.event_type != "gpu_cost":
+                continue
+            details = ev.details or {}
+            if not details.get("cost_pending"):
+                continue
+            old_cost = ev.cost_usd
+            priced = engine.resolve_gpu_cost(
+                details, cloud_env, window_s=window_s,
+            )
+            ev.cost_usd = priced.cost_usd
+            ev.pricing_source = priced.pricing_source
+            ev.cost_confidence = priced.cost_confidence
+            ev.pricing_version = f"gpu:{engine.catalog_version}"
+            ev.details = {
+                k: v for k, v in details.items()
+                if k not in ("cost_pending", "_cgroup_scope_fallback",
+                              "_nvml_product_name_lower")
+            }
+            self._storage.update_event(ev)
+
+            delta = priced.cost_usd - old_cost
+            cost_delta += delta
+            if ev.event_id in new_event_ids:
+                cost_delta += old_cost  # always $0 — explicit
+
+        task.gpu_cost_usd += cost_delta
+        task.total_cost_usd += cost_delta
+
+    def _finalize_compute(self, task: Task) -> None:
+        """Emit the long-running compute_cost event (if any) and back-fill
+        cost_usd on every compute_cost event with cost_pending=true.
+
+        Called from ``_aggregate_costs``; wrapped in Tier-5 try/except by
+        the caller so a pricing bug cannot break task finalize.
+        """
+        from dexcost import cloud_detect
+        from dexcost.compute_pricing import ComputePricingEngine
+        from dexcost.compute_runtime import RuntimeKind
+        from dexcost.models.event import Event
+
+        accountant = getattr(task, "_compute", None)
+        cloud_env = cloud_detect.get_cloud_env()
+        overrides = getattr(self, "_compute_billing_overrides", None) or {}
+
+        duration_ms = 0
+        window_s = Decimal("0")
+        if task.ended_at and task.started_at:
+            duration_ms = int(
+                (task.ended_at - task.started_at).total_seconds() * 1000,
+            )
+            window_s = Decimal(
+                str((task.ended_at - task.started_at).total_seconds()),
+            )
+
+        # 1. Long-running runtimes: build + persist the cgroup-diff event.
+        #    Newly-inserted events are NOT yet reflected in
+        #    task.compute_cost_usd / task.total_cost_usd; both get delta
+        #    bumps below.
+        long_running = {
+            RuntimeKind.FARGATE, RuntimeKind.EC2, RuntimeKind.GCE,
+            RuntimeKind.AZURE_VM, RuntimeKind.K8S_POD,
+        }
+        new_event_ids: set = set()
+        if (
+            accountant is not None
+            and accountant.runtime in long_running
+        ):
+            details = accountant.snapshot_end_and_build(duration_ms=duration_ms)
+            if details is not None:
+                ev = Event(
+                    task_id=task.task_id,
+                    event_type="compute_cost",
+                    cost_usd=Decimal("0"),
+                    details=details,
+                )
+                self._storage.insert_event(ev)
+                new_event_ids.add(ev.event_id)
+
+        # 2. Back-fill cost on every compute_cost event with cost_pending=true.
+        #    Track the per-event delta so we can adjust totals without
+        #    blowing away the running totals computed by the main loop
+        #    (which already includes retry_marker costs etc).
+        engine = self._compute_pricing
+        events = self._storage.query_events(task_id=str(task.task_id))
+        cost_delta = Decimal("0")
+        for ev in events:
+            if ev.event_type != "compute_cost":
+                continue
+            details = ev.details or {}
+            if not details.get("cost_pending"):
+                continue
+            old_cost = ev.cost_usd  # always Decimal("0") at emission time
+            priced = engine.resolve_compute_cost(
+                details, cloud_env, overrides, window_s=window_s,
+            )
+            ev.cost_usd = priced.cost_usd
+            ev.pricing_source = priced.pricing_source
+            ev.cost_confidence = priced.cost_confidence
+            ev.pricing_version = f"compute:{engine.catalog_version}"
+            ev.details = {
+                k: v for k, v in details.items() if k != "cost_pending"
+            }
+            self._storage.update_event(ev)
+
+            # Delta = new - old. For newly-inserted long-running events the
+            # main loop never saw them, so we count the FULL new cost; for
+            # serverless events the main loop saw $0 (cost_pending=true) so
+            # delta = new - 0 = new. Either way, (priced - old) is right.
+            delta = priced.cost_usd - old_cost
+            cost_delta += delta
+            # For brand-new long-running events the main loop also never saw
+            # the original $0, so we need to add it on top of the delta.
+            if ev.event_id in new_event_ids:
+                cost_delta += old_cost  # always $0 here, but explicit
+
+        task.compute_cost_usd += cost_delta
+        task.total_cost_usd += cost_delta

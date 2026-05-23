@@ -82,3 +82,36 @@ func LinkParent(ctx context.Context, child *Task) {
 		child.ParentTaskID = &id
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Per-call network-event suppression flag (v1 §5.3 invariant)
+// ---------------------------------------------------------------------------
+//
+// When set on a context, the HTTP adapter still records bytes into the
+// NetworkAccountant but does NOT emit a standalone `network` event. LLM
+// instruments wrap their outbound HTTP call with WithSuppressNetworkEvent
+// so each call produces at most one of {llm_call, external_cost, network}
+// — the v1 §5.3 "≤ 1 event per HTTP call" invariant.
+
+type suppressNetworkEventKeyType struct{}
+
+var suppressNetworkEventKey = suppressNetworkEventKeyType{}
+
+// WithSuppressNetworkEvent returns a context in which the HTTP adapter
+// suppresses standalone `network` event emission for outbound calls.
+// Bytes are still recorded into the per-task NetworkAccountant; only
+// the per-event row is withheld.
+//
+// LLM client wrappers (WrapOpenAI etc.) attach this to their request
+// context so a single LLM call doesn't produce both an llm_call event
+// AND a network event.
+func WithSuppressNetworkEvent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, suppressNetworkEventKey, true)
+}
+
+// IsNetworkEventSuppressed reports whether the context is inside a
+// WithSuppressNetworkEvent scope.
+func IsNetworkEventSuppressed(ctx context.Context) bool {
+	v, ok := ctx.Value(suppressNetworkEventKey).(bool)
+	return ok && v
+}

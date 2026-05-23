@@ -5,9 +5,14 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 
+use crate::adapters::network_accountant::{register_accountant, unregister_accountant};
+use crate::cloud_detect::get_cloud_env;
 use crate::core::heuristics::RetryHeuristicEngine;
 use crate::core::models::{CostConfidence, CostEvent, EventType, PricingSource, Task, TaskStatus};
 use crate::error::DexcostError;
+use crate::pricing::compute_pricing::ComputePricingEngine;
+use crate::pricing::egress_pricing::EgressPricingEngine;
+use crate::pricing::gpu_pricing::GpuPricingEngine;
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::rates::RateRegistry;
 use crate::transport::buffer::EventBuffer;
@@ -88,6 +93,20 @@ pub struct TrackedTask {
     pricing: Option<Arc<Mutex<PricingEngine>>>,
     rate_registry: Option<Arc<Mutex<RateRegistry>>>,
     heuristics: Option<Arc<std::sync::Mutex<RetryHeuristicEngine>>>,
+    /// Compute pricing engine for Phase 1 deferred-cost back-fill at task
+    /// finalize. Defaults to a fresh `ComputePricingEngine::new()` per task.
+    compute_pricing: ComputePricingEngine,
+    /// Per-billing-model rate overrides (e.g. `{"lambda_request_usd": "0.5"}`).
+    /// Threaded through from `init()` config; empty by default.
+    compute_billing_overrides: HashMap<String, String>,
+    /// Opt-in K8s node-aware billing mode (Decision #11). False by default.
+    k8s_node_aware: bool,
+    /// Phase 2 GPU pricing engine for deferred-cost back-fill of gpu_cost
+    /// events at task finalize. Defaults to a fresh
+    /// `GpuPricingEngine::new()` per task. No init() knobs — GPU billing
+    /// models are unambiguous per provider (Modal is always
+    /// per_gpu_second_active, etc.).
+    gpu_pricing: GpuPricingEngine,
 }
 
 impl TrackedTask {
@@ -107,6 +126,9 @@ impl TrackedTask {
         pricing: Option<Arc<Mutex<PricingEngine>>>,
         rate_registry: Option<Arc<Mutex<RateRegistry>>>,
     ) -> Self {
+        // Register the task's NetworkAccountant so the HTTP middleware can
+        // find it via task_id lookup (mirrors Python's _resolveTask path).
+        register_accountant(&task.task_id, task.network_accountant.clone());
         Self {
             task,
             buffer,
@@ -115,6 +137,10 @@ impl TrackedTask {
             pricing,
             rate_registry,
             heuristics: None,
+            compute_pricing: ComputePricingEngine::new(),
+            compute_billing_overrides: HashMap::new(),
+            k8s_node_aware: false,
+            gpu_pricing: GpuPricingEngine::new(),
         }
     }
 
@@ -126,6 +152,7 @@ impl TrackedTask {
         rate_registry: Option<Arc<Mutex<RateRegistry>>>,
         heuristics: Arc<std::sync::Mutex<RetryHeuristicEngine>>,
     ) -> Self {
+        register_accountant(&task.task_id, task.network_accountant.clone());
         Self {
             task,
             buffer,
@@ -134,7 +161,50 @@ impl TrackedTask {
             pricing,
             rate_registry,
             heuristics: Some(heuristics),
+            compute_pricing: ComputePricingEngine::new(),
+            compute_billing_overrides: HashMap::new(),
+            k8s_node_aware: false,
+            gpu_pricing: GpuPricingEngine::new(),
         }
+    }
+
+    /// Configure compute billing knobs for this task. Used by handler wraps
+    /// and init() config plumbing.
+    pub fn with_compute_config(
+        mut self,
+        overrides: HashMap<String, String>,
+        k8s_node_aware: bool,
+    ) -> Self {
+        self.compute_billing_overrides = overrides;
+        self.k8s_node_aware = k8s_node_aware;
+        self
+    }
+
+    /// Attach a ComputeAccountant to this task. Used by the handler wraps
+    /// (adapters::compute_wrap::wrap_lambda_handler etc.) — the SDK public
+    /// API for compute capture goes through these wraps.
+    pub fn attach_compute_for_tests(
+        &mut self,
+        accountant: std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>,
+    ) {
+        self.task.compute = Some(accountant);
+    }
+
+    /// Access the buffer handle. Used by handler wraps to insert compute
+    /// events under the cost_pending deferred-cost pattern.
+    pub fn buffer_handle_for_tests(&self) -> Arc<Mutex<EventBuffer>> {
+        self.buffer.clone()
+    }
+
+    /// Attach a [`GpuAccountant`] to the underlying task. Public — the
+    /// Rust SDK lacks a global tracker singleton, so handler wraps must
+    /// thread `&mut TrackedTask` explicitly. Used by
+    /// `adapters::gpu_wrap::wrap_modal_handler` etc.
+    pub fn attach_gpu_for_tests(
+        &mut self,
+        accountant: std::sync::Arc<crate::core::gpu_accountant::GpuAccountant>,
+    ) {
+        self.task.gpu = Some(accountant);
     }
 
     /// Records an LLM call event on this task.
@@ -556,6 +626,68 @@ impl TrackedTask {
             self.task.failure_count = 1;
         }
 
+        // ── Network finalize — v1 byte aggregates + v2 egress pricing ──
+        //
+        // Mirrors python/src/dexcost/tracker.py:_aggregate_costs. The
+        // accountant snapshot drives both:
+        //   - v1 task fields (network_bytes_in/out/call_count/network_by_host)
+        //   - v2 task.network_cost_usd from the canonical external_bytes_out
+        //     scalar (Decimal(bytes) / 10^9 * resolved_rate)
+        //   - v2 per-host egress_cost_usd stamped into network_by_host
+        //   - v2 per-event back-fill: every cost_pending network event for
+        //     this task gets its cost_usd / pricing_source / pricing_version
+        //     stamped and the cost_pending marker removed
+        //
+        // Wrapped in `let result = (...)` so a Tier-5 failure (spec §7.1)
+        // never breaks task finalization — the task still ships with
+        // llm/external/compute costs intact.
+        let finalize_result = self.finalize_network().await;
+        if let Err(e) = finalize_result {
+            eprintln!(
+                "[dexcost] WARNING: egress cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+            // Tier 5: zero out the v2 fields but preserve the v1 aggregates.
+            self.task.network_cost_usd = Decimal::ZERO;
+        }
+
+        // ── Compute finalize — auto-emit long-running event + back-fill ──
+        // Wrapped in a fail-silent shell (Tier 5 of the §7.1 ladder).
+        let compute_result = self.finalize_compute().await;
+        if let Err(e) = compute_result {
+            eprintln!(
+                "[dexcost] WARNING: compute cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+        }
+
+        // ── GPU finalize — auto-emit long-running event + back-fill cost ──
+        //
+        // Phase 2 Task 8. Third back-fill block after egress and compute.
+        // Mirrors Python tracker._finalize_gpu (commit 56d8d43). For long-
+        // running GPU runtimes (AWS_EC2_GPU / GCP_GCE_BUNDLED /
+        // GCP_GCE_N1_ATTACHED / AZURE_VM_GPU / AZURE_VM_VGPU / LAMBDA_LABS /
+        // COREWEAVE), this is where the dual events are emitted. Serverless
+        // runtimes (MODAL / RUNPOD / REPLICATE) emit via the handler wrap
+        // and this step is a no-op for them.
+        //
+        // gpu_utilization_signal events are NEVER touched by the back-fill
+        // walker — they stay at cost_usd=0 (Decision #3 / convention §1
+        // carve-out). The filter on event_type == GpuCost is load-bearing.
+        let gpu_result = self.finalize_gpu().await;
+        if let Err(e) = gpu_result {
+            eprintln!(
+                "[dexcost] WARNING: GPU cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+        }
+
+        // Remove the accountant from the registry; subsequent HTTP calls
+        // attributed to this task_id won't find one (matches Python's
+        // frozen-then-snapshot semantics — late bytes are dropped, not
+        // recorded against the wrong task).
+        unregister_accountant(&self.task.task_id);
+
         let mut buf = self.buffer.lock().await;
         buf.upsert_task(self.task.clone());
         drop(buf);
@@ -566,9 +698,386 @@ impl TrackedTask {
         Ok(())
     }
 
+    /// Snapshots the NetworkAccountant onto the task's v1 fields and
+    /// (if a CloudEnv has been resolved) computes v2 egress dollars +
+    /// back-fills the cost_pending network events for this task.
+    ///
+    /// Returns Err only on truly exceptional conditions; the caller wraps
+    /// this in a fail-silent shell (Tier 5 of the §7.1 ladder).
+    async fn finalize_network(&mut self) -> Result<(), DexcostError> {
+        // v1 — drain the accountant into task fields.
+        let snapshot = self.task.network_accountant.finalize();
+        self.task.network_bytes_in = snapshot.bytes_in as i64;
+        self.task.network_bytes_out = snapshot.bytes_out as i64;
+        self.task.network_call_count = snapshot.call_count as i64;
+        self.task.network_by_host = snapshot.by_host;
+
+        // v2 — egress pricing.
+        let env = get_cloud_env();
+        let engine = EgressPricingEngine::new();
+        let rate = engine.resolve_rate(env.provider.as_deref(), env.region.as_deref());
+        let pricing_version = format!("egress:{}", engine.catalog_version());
+
+        // Convert external_bytes_out scalar to GB (decimal — never float
+        // — per spec §6.3). 1 GB = 10^9 bytes, NOT 2^30.
+        let divisor = Decimal::from(1_000_000_000_u64);
+        let external_gb = Decimal::from(snapshot.external_bytes_out) / divisor;
+        self.task.network_cost_usd = external_gb * rate.rate_per_gb;
+
+        // Stamp per-host egress_cost_usd into network_by_host. Per-host
+        // external_bytes_out survives the LIVE_CAP overflow + top-N cap;
+        // sum(per-host egress_cost_usd) == network_cost_usd by construction
+        // (the v2 §10.3 property invariant).
+        if let Some(hosts) = self
+            .task
+            .network_by_host
+            .get_mut("hosts")
+            .and_then(|v| v.as_array_mut())
+        {
+            for host in hosts.iter_mut() {
+                let host_external = host
+                    .get("external_bytes_out")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let host_gb = Decimal::from(host_external) / divisor;
+                let host_cost = host_gb * rate.rate_per_gb;
+                if let Some(obj) = host.as_object_mut() {
+                    obj.insert(
+                        "egress_cost_usd".to_string(),
+                        serde_json::Value::String(host_cost.to_string()),
+                    );
+                }
+            }
+        }
+
+        // v2 §6.4 — back-fill each network event for this task. Walk the
+        // buffer's stored events for this task_id, find any with
+        // details.cost_pending == true, compute their cost, and
+        // update_event to re-sync.
+        let mut buf = self.buffer.lock().await;
+        let pending = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::Network
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect::<Vec<_>>();
+
+        for mut ev in pending {
+            let resp_bytes = ev
+                .details
+                .get("response_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let req_bytes = ev
+                .details
+                .get("request_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let is_internal_val = ev.details.get("is_internal_traffic");
+            let is_internal = matches!(is_internal_val, Some(v) if v.as_bool() == Some(true));
+
+            let billable_bytes = if is_internal {
+                0_u64
+            } else {
+                resp_bytes.saturating_add(req_bytes)
+            };
+            let ev_gb = Decimal::from(billable_bytes) / divisor;
+            let ev_cost = ev_gb * rate.rate_per_gb;
+
+            ev.cost_usd = ev_cost;
+            ev.cost_confidence = if is_internal {
+                CostConfidence::Exact
+            } else {
+                match rate.cost_confidence.as_str() {
+                    "computed" => CostConfidence::Computed,
+                    "estimated" => CostConfidence::Estimated,
+                    "exact" => CostConfidence::Exact,
+                    _ => CostConfidence::Unknown,
+                }
+            };
+            ev.pricing_source = Some(if is_internal {
+                PricingSource::ServiceCatalog
+            } else {
+                // No dedicated enum variant for egress catalog yet — reuse
+                // ServiceCatalog. The pricing_source string on the wire
+                // carries the full detail via details/pricing_version.
+                PricingSource::ServiceCatalog
+            });
+            ev.pricing_version = Some(pricing_version.clone());
+            // Strip cost_pending marker so the back-filled event is no
+            // longer "deferred-cost".
+            ev.details.remove("cost_pending");
+            // Stamp egress_pricing_source string so the wire payload
+            // carries the v2 source detail (egress_catalog:aws:us-east-1).
+            ev.details.insert(
+                "egress_pricing_source".to_string(),
+                serde_json::Value::String(if is_internal {
+                    "egress_catalog:internal".to_string()
+                } else {
+                    rate.pricing_source.clone()
+                }),
+            );
+
+            buf.update_event(&ev);
+
+            // The first-pass total_cost_usd summed this event as 0 (per
+            // v2 §6.4 cost_pending); add the back-filled cost.
+            self.task.total_cost_usd += ev_cost;
+        }
+
+        // Add network_cost_usd to total — the canonical scalar that
+        // captures every external byte (including those from cataloged
+        // and below-threshold un-cataloged calls that never emitted a
+        // network event).
+        self.task.total_cost_usd += self.task.network_cost_usd;
+
+        Ok(())
+    }
+
+    /// Compute finalize: auto-emit the long-running compute event (if
+    /// applicable) and back-fill `cost_pending=true` compute_cost events
+    /// for this task. Tracks DELTAs (new - old) and adds to
+    /// `task.compute_cost_usd` / `task.total_cost_usd` to preserve any
+    /// `retry_marker` costs already summed by the main aggregation.
+    ///
+    /// Mirrors python/src/dexcost/tracker.py `_finalize_compute`.
+    async fn finalize_compute(&mut self) -> Result<(), DexcostError> {
+        use crate::core::compute_runtime::RuntimeKind;
+        let cloud_env = get_cloud_env();
+        let pricing_version = format!("compute:{}", self.compute_pricing.catalog_version());
+
+        // Stage 1 — long-running runtimes auto-emit a single compute_cost
+        // event with cost_pending: true. The compute accountant decides
+        // whether to emit (via snapshot_end_and_build returning Some).
+        if let Some(acc) = self.task.compute.clone() {
+            let is_long_running = matches!(
+                acc.runtime,
+                RuntimeKind::Ec2
+                    | RuntimeKind::Gce
+                    | RuntimeKind::AzureVm
+                    | RuntimeKind::K8sPod
+                    | RuntimeKind::Fargate
+            );
+            if is_long_running {
+                let duration_ms = match (self.task.ended_at, Some(self.task.started_at)) {
+                    (Some(end), Some(start)) => {
+                        (end - start).num_milliseconds().max(0)
+                    }
+                    _ => 0,
+                };
+                if let Some(details_value) = acc.snapshot_end_and_build(duration_ms) {
+                    let mut event = CostEvent::new(&self.task.task_id, EventType::ComputeCost);
+                    event.cost_usd = Decimal::ZERO;
+                    event.cost_confidence = CostConfidence::Estimated;
+                    event.pricing_source = Some(PricingSource::ServiceCatalog);
+                    event.pricing_version = Some(pricing_version.clone());
+                    if let serde_json::Value::Object(map) = details_value {
+                        for (k, v) in map {
+                            event.details.insert(k, v);
+                        }
+                    }
+                    let mut buf = self.buffer.lock().await;
+                    buf.add_event(event);
+                    drop(buf);
+                }
+            }
+        }
+
+        // Stage 2 — back-fill cost_pending compute_cost events.
+        let mut buf = self.buffer.lock().await;
+        let pending: Vec<CostEvent> = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::ComputeCost
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect();
+
+        for mut ev in pending {
+            let old_cost = ev.cost_usd;
+            // Reconstruct a details Value for the engine.
+            let details_value = serde_json::Value::Object(
+                ev.details.clone().into_iter().collect(),
+            );
+            let result = self.compute_pricing.resolve_compute_cost(
+                &details_value,
+                &cloud_env,
+                &self.compute_billing_overrides,
+                None,
+            );
+            ev.cost_usd = result.cost_usd;
+            ev.cost_confidence = match result.cost_confidence.as_str() {
+                "computed" => CostConfidence::Computed,
+                "estimated" => CostConfidence::Estimated,
+                "exact" => CostConfidence::Exact,
+                _ => CostConfidence::Unknown,
+            };
+            ev.pricing_source = Some(PricingSource::ServiceCatalog);
+            ev.pricing_version = Some(pricing_version.clone());
+            ev.details.insert(
+                "compute_pricing_source".to_string(),
+                serde_json::Value::String(result.pricing_source),
+            );
+            ev.details.remove("cost_pending");
+            buf.update_event(&ev);
+
+            // Track DELTA (new - old). Do NOT recompute total_cost_usd from
+            // scratch — preserves retry_marker costs already summed by the
+            // main aggregation loop.
+            let delta = result.cost_usd - old_cost;
+            self.task.compute_cost_usd += delta;
+            self.task.total_cost_usd += delta;
+        }
+
+        Ok(())
+    }
+
+    /// GPU finalize: auto-emit the long-running GPU event (if applicable)
+    /// and back-fill `cost_pending=true` gpu_cost events for this task.
+    /// Tracks DELTAs (new - old) and adds to `task.gpu_cost_usd` /
+    /// `task.total_cost_usd` to preserve any retry_marker costs already
+    /// summed.
+    ///
+    /// Mirrors `python/src/dexcost/tracker.py:_finalize_gpu` (commit
+    /// 56d8d43). gpu_utilization_signal events are NEVER touched by this
+    /// back-fill — the filter on event_type == GpuCost is the load-bearing
+    /// implementation of convention §1's signal-event carve-out.
+    async fn finalize_gpu(&mut self) -> Result<(), DexcostError> {
+        use crate::core::gpu_runtime::GpuRuntimeKind;
+        let cloud_env = get_cloud_env();
+        let pricing_version = format!("gpu:{}", self.gpu_pricing.catalog_version());
+
+        // Stage 1 — long-running GPU runtimes auto-emit one gpu_cost event
+        // (with cost_pending: true) plus N gpu_utilization_signal events.
+        // Serverless runtimes (Modal / RunPod / Replicate) already emitted
+        // via the handler wrap; we no-op for them here.
+        if let Some(acc) = self.task.gpu.clone() {
+            let is_long_running = matches!(
+                acc.runtime,
+                GpuRuntimeKind::AwsEc2Gpu
+                    | GpuRuntimeKind::GcpGceBundled
+                    | GpuRuntimeKind::GcpGceN1Attached
+                    | GpuRuntimeKind::AzureVmGpu
+                    | GpuRuntimeKind::AzureVmVgpu
+                    | GpuRuntimeKind::LambdaLabs
+                    | GpuRuntimeKind::Coreweave
+            );
+            if is_long_running {
+                let duration_ms = match (self.task.ended_at, Some(self.task.started_at)) {
+                    (Some(end), Some(start)) => (end - start).num_milliseconds().max(0),
+                    _ => 0,
+                };
+                if let Some(bundle) = acc.snapshot_end_and_build(duration_ms) {
+                    let mut buf = self.buffer.lock().await;
+                    // gpu_cost event
+                    let mut event =
+                        CostEvent::new(&self.task.task_id, EventType::GpuCost);
+                    event.cost_usd = Decimal::ZERO;
+                    event.cost_confidence = CostConfidence::Estimated;
+                    event.pricing_source = Some(PricingSource::ServiceCatalog);
+                    event.pricing_version = Some(pricing_version.clone());
+                    event.occurred_at = bundle.ended_at;
+                    if let serde_json::Value::Object(map) = bundle.cost_event_details {
+                        for (k, v) in map {
+                            event.details.insert(k, v);
+                        }
+                    }
+                    buf.add_event(event);
+
+                    // gpu_utilization_signal events — observability only.
+                    // No pricing_source, no pricing_version; cost stays 0.
+                    for sig in bundle.signal_event_details {
+                        let mut sig_event = CostEvent::new(
+                            &self.task.task_id,
+                            EventType::GpuUtilizationSignal,
+                        );
+                        sig_event.cost_usd = Decimal::ZERO;
+                        sig_event.cost_confidence = CostConfidence::Exact;
+                        sig_event.pricing_source = None;
+                        sig_event.occurred_at = bundle.ended_at;
+                        if let serde_json::Value::Object(map) = sig {
+                            for (k, v) in map {
+                                sig_event.details.insert(k, v);
+                            }
+                        }
+                        buf.add_event(sig_event);
+                    }
+                    drop(buf);
+                }
+            }
+        }
+
+        // Stage 2 — back-fill cost_pending GpuCost events.
+        // FILTERS BY event_type == GpuCost — gpu_utilization_signal events
+        // are NEVER touched (Decision #3 / convention §1 carve-out).
+        let mut buf = self.buffer.lock().await;
+        let pending: Vec<CostEvent> = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::GpuCost
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect();
+
+        for mut ev in pending {
+            let old_cost = ev.cost_usd;
+            let details_value =
+                serde_json::Value::Object(ev.details.clone().into_iter().collect());
+            let result = self.gpu_pricing.resolve_gpu_cost(&details_value, &cloud_env, None);
+            ev.cost_usd = result.cost_usd;
+            ev.cost_confidence = match result.cost_confidence.as_str() {
+                "computed" => CostConfidence::Computed,
+                "estimated" => CostConfidence::Estimated,
+                "exact" => CostConfidence::Exact,
+                _ => CostConfidence::Unknown,
+            };
+            ev.pricing_source = Some(PricingSource::ServiceCatalog);
+            ev.pricing_version = Some(pricing_version.clone());
+            ev.details.insert(
+                "gpu_pricing_source".to_string(),
+                serde_json::Value::String(result.pricing_source),
+            );
+            // Strip cost_pending + internal Decision #1 / Decision #4
+            // hints — these don't leak to downstream consumers.
+            ev.details.remove("cost_pending");
+            ev.details.remove("_cgroup_scope_fallback");
+            ev.details.remove("_nvml_product_name_lower");
+            buf.update_event(&ev);
+
+            // Track DELTA — preserves retry_marker totals already aggregated.
+            let delta = result.cost_usd - old_cost;
+            self.task.gpu_cost_usd += delta;
+            self.task.total_cost_usd += delta;
+        }
+        drop(buf);
+
+        Ok(())
+    }
+
     /// Returns a reference to the underlying Task.
     pub fn task(&self) -> &Task {
         &self.task
+    }
+
+    /// Test-only: mutable access to the underlying Task. Used by Phase D
+    /// finalize tests to seed cost aggregates before driving end().
+    /// `_for_tests` + `#[doc(hidden)]` mark this as not-public-API.
+    #[doc(hidden)]
+    pub fn task_mut_for_tests(&mut self) -> &mut Task {
+        &mut self.task
     }
 
     /// Returns the events recorded on this task.

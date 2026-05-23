@@ -23,10 +23,13 @@ const (
 type EventType string
 
 const (
-	EventTypeLLMCall      EventType = "llm_call"
-	EventTypeExternalCost EventType = "external_cost"
-	EventTypeComputeCost  EventType = "compute_cost"
-	EventTypeRetryMarker  EventType = "retry_marker"
+	EventTypeLLMCall               EventType = "llm_call"
+	EventTypeExternalCost          EventType = "external_cost"
+	EventTypeComputeCost           EventType = "compute_cost"
+	EventTypeRetryMarker           EventType = "retry_marker"
+	EventTypeNetwork               EventType = "network"
+	EventTypeGPUCost               EventType = "gpu_cost"
+	EventTypeGPUUtilizationSignal  EventType = "gpu_utilization_signal"
 )
 
 // CostConfidence indicates how trustworthy the reported cost is.
@@ -70,7 +73,15 @@ type Task struct {
 	LLMCostUSD      decimal.Decimal `json:"llm_cost_usd"`
 	ExternalCostUSD decimal.Decimal `json:"external_cost_usd"`
 	ComputeCostUSD  decimal.Decimal `json:"compute_cost_usd"`
-	TotalCostUSD    decimal.Decimal `json:"total_cost_usd"`
+	// v2 cloud-egress cost, computed at task finalize from the
+	// accountant's canonical external_bytes_out scalar. Distinct from
+	// ExternalCostUSD (vendor API charges) — see Decision #7.
+	NetworkCostUSD decimal.Decimal `json:"network_cost_usd"`
+	// v2 GPU cost (Phase 2 — Decision #1/#3 capture). Computed at task
+	// finalize from the per-task GpuAccountant's gpu_cost event back-fill.
+	// Distinct from ComputeCostUSD (CPU/RAM) and ExternalCostUSD (vendor APIs).
+	GpuCostUSD   decimal.Decimal `json:"gpu_cost_usd"`
+	TotalCostUSD decimal.Decimal `json:"total_cost_usd"`
 
 	// Token totals
 	TotalInputTokens  int `json:"total_input_tokens"`
@@ -81,6 +92,12 @@ type Task struct {
 	RetryCount   int             `json:"retry_count"`
 	RetryCostUSD decimal.Decimal `json:"retry_cost_usd"`
 	FailureCount int             `json:"failure_count"`
+
+	// Network capture (v1)
+	NetworkBytesIn   int64                  `json:"network_bytes_in"`
+	NetworkBytesOut  int64                  `json:"network_bytes_out"`
+	NetworkCallCount int64                  `json:"network_call_count"`
+	NetworkByHost    map[string]interface{} `json:"network_by_host"`
 
 	// Schema contract
 	SchemaVersion string `json:"schema_version"`
@@ -97,8 +114,11 @@ func NewTask(taskType string) Task {
 		LLMCostUSD:      decimal.Zero,
 		ExternalCostUSD: decimal.Zero,
 		ComputeCostUSD:  decimal.Zero,
+		NetworkCostUSD:  decimal.Zero,
+		GpuCostUSD:      decimal.Zero,
 		TotalCostUSD:    decimal.Zero,
 		RetryCostUSD:    decimal.Zero,
+		NetworkByHost:   map[string]interface{}{"hosts": []interface{}{}},
 		SchemaVersion:   "1",
 	}
 }
@@ -121,6 +141,8 @@ func (t Task) ToDict() map[string]interface{} {
 		"llm_cost_usd":        t.LLMCostUSD.String(),
 		"external_cost_usd":   t.ExternalCostUSD.String(),
 		"compute_cost_usd":    t.ComputeCostUSD.String(),
+		"network_cost_usd":    t.NetworkCostUSD.String(),
+		"gpu_cost_usd":        t.GpuCostUSD.String(),
 		"total_cost_usd":      t.TotalCostUSD.String(),
 		"total_input_tokens":  t.TotalInputTokens,
 		"total_output_tokens": t.TotalOutputTokens,
@@ -128,6 +150,10 @@ func (t Task) ToDict() map[string]interface{} {
 		"retry_count":         t.RetryCount,
 		"retry_cost_usd":      t.RetryCostUSD.String(),
 		"failure_count":       t.FailureCount,
+		"network_bytes_in":    t.NetworkBytesIn,
+		"network_bytes_out":   t.NetworkBytesOut,
+		"network_call_count":  t.NetworkCallCount,
+		"network_by_host":     t.networkByHostForDict(),
 		"schema_version":      t.SchemaVersion,
 	}
 	if t.EndedAt != nil {
@@ -285,6 +311,12 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 	if v, ok := d["compute_cost_usd"].(string); ok {
 		t.ComputeCostUSD = decimal.RequireFromString(v)
 	}
+	if v, ok := d["network_cost_usd"].(string); ok {
+		t.NetworkCostUSD = decimal.RequireFromString(v)
+	}
+	if v, ok := d["gpu_cost_usd"].(string); ok {
+		t.GpuCostUSD = decimal.RequireFromString(v)
+	}
 	if v, ok := d["total_cost_usd"].(string); ok {
 		t.TotalCostUSD = decimal.RequireFromString(v)
 	}
@@ -306,11 +338,36 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 	if v := dictInt(d, "failure_count"); v != nil {
 		t.FailureCount = *v
 	}
+	if v := dictInt64(d, "network_bytes_in"); v != nil {
+		t.NetworkBytesIn = *v
+	}
+	if v := dictInt64(d, "network_bytes_out"); v != nil {
+		t.NetworkBytesOut = *v
+	}
+	if v := dictInt64(d, "network_call_count"); v != nil {
+		t.NetworkCallCount = *v
+	}
+	if v, ok := d["network_by_host"].(map[string]interface{}); ok && v != nil {
+		t.NetworkByHost = v
+	}
+	if t.NetworkByHost == nil {
+		t.NetworkByHost = map[string]interface{}{"hosts": []interface{}{}}
+	}
 	if v, ok := d["schema_version"].(string); ok {
 		t.SchemaVersion = v
 	}
 
 	return t, nil
+}
+
+// networkByHostForDict returns the NetworkByHost map, defaulting to
+// {"hosts": []} if the field is nil. Mirrors Python's
+// `network_by_host=field(default_factory=lambda: {"hosts": []})`.
+func (t Task) networkByHostForDict() map[string]interface{} {
+	if t.NetworkByHost == nil {
+		return map[string]interface{}{"hosts": []interface{}{}}
+	}
+	return t.NetworkByHost
 }
 
 // EventFromDict deserializes an Event from a map matching the Standard Event Schema v1 wire format.
@@ -423,6 +480,30 @@ func dictInt(d map[string]interface{}, key string) *int {
 		v := int(n)
 		return &v
 	case *int:
+		return n
+	default:
+		return nil
+	}
+}
+
+// dictInt64 extracts an int64 (or other numeric) value from a map and returns
+// a pointer to the int64. Handles native int/int64 values (from ToDict) and
+// float64 values (from json.Unmarshal).
+func dictInt64(d map[string]interface{}, key string) *int64 {
+	v, ok := d[key]
+	if !ok {
+		return nil
+	}
+	switch n := v.(type) {
+	case int64:
+		return &n
+	case int:
+		v := int64(n)
+		return &v
+	case float64:
+		v := int64(n)
+		return &v
+	case *int64:
 		return n
 	default:
 		return nil

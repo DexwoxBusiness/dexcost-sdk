@@ -16,7 +16,19 @@ from typing import Any
 __version__ = "0.1.0"
 
 from dexcost.clients import TrackedAnthropic, TrackedOpenAI
+from dexcost.compute_wrap import (
+    wrap_azure_functions_handler,
+    wrap_cloud_functions_handler,
+    wrap_cloud_run_handler,
+    wrap_lambda_handler,
+    wrap_vercel_handler,
+)
 from dexcost.config import DexcostConfig, InvalidAPIKeyError, validate_api_key
+from dexcost.gpu_wrap import (
+    wrap_modal_handler,
+    wrap_replicate_handler,
+    wrap_runpod_handler,
+)
 from dexcost.context import (
     DexcostContext,
     async_task_context,
@@ -124,6 +136,8 @@ def init(
     network_event_threshold_bytes: int = 102_400,
     network_event_on_error: bool = True,
     network_event_latency_ms: int = 0,
+    compute_billing_overrides: dict[str, str] | None = None,
+    k8s_node_aware: bool = False,
 ) -> DexcostConfig:
     """Initialize dexcost SDK configuration (US-017).
 
@@ -164,6 +178,12 @@ def init(
         network_event_latency_ms=network_event_latency_ms,
     )
 
+    # v2 network-cost — kick off non-blocking cloud detection.  No-op when
+    # track_network is off.  Phase 1a/1b run synchronously here (sub-ms);
+    # Phase 2 runs on a daemon thread that never blocks init().
+    from dexcost.cloud_detect import start_background_detection as _start_detect
+    _start_detect(track_network=_global_config.track_network)
+
     # Dev mode — console output, no cloud push
     if _global_config.is_dev:
         from dexcost.dev_console import enable_dev_mode
@@ -183,6 +203,8 @@ def init(
         enable_retry_heuristics=enable_retry_heuristics,
         retry_heuristic_window=retry_heuristic_window,
         retry_heuristic_threshold=retry_heuristic_threshold,
+        compute_billing_overrides=compute_billing_overrides,
+        k8s_node_aware=k8s_node_aware,
     )
 
     # Wire the browser adapter to the tracker's storage so track_browser()

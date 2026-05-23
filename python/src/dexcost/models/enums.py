@@ -19,6 +19,8 @@ class EventType(str, Enum):
     COMPUTE_COST = "compute_cost"
     RETRY_MARKER = "retry_marker"
     NETWORK = "network"
+    GPU_COST = "gpu_cost"
+    GPU_UTILIZATION_SIGNAL = "gpu_utilization_signal"
 
 
 class CostConfidence(str, Enum):

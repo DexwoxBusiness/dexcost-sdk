@@ -25,6 +25,43 @@ pub fn get_current_task() -> Option<Task> {
 }
 
 // ---------------------------------------------------------------------------
+// Per-call network-event suppression flag (v1 §5.3 invariant)
+// ---------------------------------------------------------------------------
+// When set, the HTTP adapter still records bytes into the accountant but does
+// NOT emit a standalone `network` event. LLM instruments wrap their HTTP call
+// inside `suppress_network_event(...)` so a single call doesn't produce both
+// an `llm_call` event AND a `network` event.
+
+tokio::task_local! {
+    static SUPPRESS_NETWORK_EVENT: bool;
+}
+
+/// Returns `true` when the current task-local scope has suppressed
+/// `network` events. Bytes are still counted; only the standalone event is
+/// withheld.
+pub fn is_network_event_suppressed() -> bool {
+    SUPPRESS_NETWORK_EVENT.try_with(|v| *v).unwrap_or(false)
+}
+
+/// Runs `fut` inside a scope where `network`-event emission is suppressed.
+///
+/// LLM instruments wrap their outbound HTTP call in this helper so each
+/// call produces at most one of `{llm_call, external_cost, network}` —
+/// the v1 §5.3 "≤ 1 event per HTTP call" invariant.
+///
+/// ```ignore
+/// suppress_network_event(async {
+///     client.post(url).send().await
+/// }).await
+/// ```
+pub async fn suppress_network_event<F, T>(fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    SUPPRESS_NETWORK_EVENT.scope(true, fut).await
+}
+
+// ---------------------------------------------------------------------------
 // Global ambient context — customer/project attribution without explicit IDs
 // ---------------------------------------------------------------------------
 
@@ -218,5 +255,44 @@ mod tests {
         assert!(task.customer_id.is_none());
         assert!(task.project_id.is_none());
         assert_eq!(task.task_type, "test.call");
+    }
+
+    // ── Suppression flag tests (v1 §5.3) ────────────────────────────────
+
+    #[tokio::test]
+    async fn suppress_is_false_outside_scope() {
+        assert!(!is_network_event_suppressed());
+    }
+
+    #[tokio::test]
+    async fn suppress_is_true_inside_scope() {
+        suppress_network_event(async {
+            assert!(is_network_event_suppressed());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn suppress_resets_after_scope() {
+        suppress_network_event(async {
+            assert!(is_network_event_suppressed());
+        })
+        .await;
+        assert!(!is_network_event_suppressed());
+    }
+
+    #[tokio::test]
+    async fn suppress_propagates_through_nested_awaits() {
+        suppress_network_event(async {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            assert!(is_network_event_suppressed());
+            // Nested suppression scope is idempotent (still true).
+            suppress_network_event(async {
+                assert!(is_network_event_suppressed());
+            })
+            .await;
+            assert!(is_network_event_suppressed());
+        })
+        .await;
     }
 }

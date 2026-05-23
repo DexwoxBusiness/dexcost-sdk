@@ -43,6 +43,18 @@ type Config struct {
 	// flagging a heuristic retry. Defaults to 0.8 when zero.
 	RetryHeuristicThreshold float64 `json:"retry_heuristic_threshold,omitempty"`
 
+	// ComputeBillingOverrides flips per-billing-model defaults at pricing
+	// time. Today the only recognised key is "cloud_run":"instance" which
+	// switches Cloud Run from the request-based default to instance-based
+	// math (Decision #1). Mirrors python init(compute_billing_overrides=).
+	ComputeBillingOverrides map[string]string `json:"compute_billing_overrides,omitempty"`
+
+	// K8sNodeAware opts in to the future /api/v1/nodes probe that resolves
+	// the underlying node SKU for K8s pods. The probe HTTP call is wired
+	// in a later focused task; this flag is plumbed now so callers can
+	// future-proof their Init() call.
+	K8sNodeAware bool `json:"k8s_node_aware,omitempty"`
+
 	keyType string
 }
 

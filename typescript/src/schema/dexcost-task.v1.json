@@ -87,6 +87,16 @@
       "pattern": "^-?\\d+(\\.\\d+)?$",
       "description": "Aggregated compute cost in USD (Decimal as string)."
     },
+    "network_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated cloud-egress cost in USD (Decimal as string). Distinct from external_cost_usd, which captures vendor API fees — see spec Decision #7."
+    },
+    "gpu_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated GPU cost in USD (Decimal as string). Computed at task finalize from per-PID NVML SM-time × catalog rate. Distinct from compute_cost_usd (CPU/memory billing dimension)."
+    },
     "total_cost_usd": {
       "type": "string",
       "pattern": "^-?\\d+(\\.\\d+)?$",
@@ -121,6 +131,25 @@
       "type": "integer",
       "minimum": 0,
       "description": "Number of failed events in this task."
+    },
+    "network_bytes_in": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total bytes received across all HTTP responses for this task."
+    },
+    "network_bytes_out": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total bytes sent across all HTTP requests for this task."
+    },
+    "network_call_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of outbound HTTP calls recorded for this task."
+    },
+    "network_by_host": {
+      "type": "object",
+      "description": "Per-host breakdown of network usage, shape {\"hosts\": [...]} capped at 20 entries plus an _other overflow bucket."
     },
     "schema_version": {
       "type": "string",

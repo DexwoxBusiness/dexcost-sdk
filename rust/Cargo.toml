@@ -8,7 +8,7 @@ repository = "https://github.com/DexwoxBusiness/dexcost"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "blocking"] }
 reqwest-middleware = { version = "0.4", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,9 +37,14 @@ thiserror = "2"
 anyhow = "1"
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+unicode-normalization = "0.1"
+# Phase 2 GPU — optional NVML binding. Customer opts in via `cargo build --features gpu`.
+# Build on GPU-less hosts (CI laptops, ARM Macs) MUST stay green without the feature.
+nvml-wrapper = { version = "0.10", optional = true }
 
 [features]
 default = []
+gpu = ["nvml-wrapper"]
 axum-middleware = ["axum"]
 tower-middleware = ["tower", "tower-http"]
 actix-middleware = ["actix-web", "actix-service"]
@@ -51,3 +56,4 @@ tracing-bridge = ["tracing", "tracing-subscriber"]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 wiremock = "0.6"
+serial_test = "3"

@@ -13,7 +13,10 @@ export type EventType =
   | "llm_call"
   | "external_cost"
   | "compute_cost"
-  | "retry_marker";
+  | "retry_marker"
+  | "network"
+  | "gpu_cost"
+  | "gpu_utilization_signal";
 
 /** How trustworthy the reported costUsd value is. */
 export type CostConfidence = "exact" | "computed" | "estimated" | "unknown";
@@ -51,6 +54,19 @@ export interface Task {
   llmCostUsd: number;
   externalCostUsd: number;
   computeCostUsd: number;
+  /**
+   * v2 cloud-egress cost in USD, computed at task finalize from the
+   * accountant's canonical external_bytes_out scalar. Distinct from
+   * externalCostUsd (vendor API charges) — see Decision #7.
+   */
+  networkCostUsd: number;
+  /**
+   * v2 GPU cost in USD, computed at task finalize from the GpuAccountant's
+   * NVML diff (per-PID SM-time) + cgroup-walk PID filter. Distinct from
+   * computeCostUsd (CPU/memory rollup) — GPU billing is a separate dimension.
+   * Mirrors the Python SDK's Task.gpu_cost_usd field.
+   */
+  gpuCostUsd: number;
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -58,7 +74,33 @@ export interface Task {
   retryCount: number;
   retryCostUsd: number;
   failureCount: number;
+  // Network capture aggregates (v1 — bytes only).
+  networkBytesIn: number;
+  networkBytesOut: number;
+  networkCallCount: number;
+  /**
+   * Per-host network breakdown, shape `{ hosts: Array<...> }`. Capped at 20
+   * entries plus an `_other` overflow bucket during finalize.
+   */
+  networkByHost: Record<string, unknown>;
   schemaVersion: string;
+  /**
+   * In-memory only. The per-task ComputeAccountant (cgroup start/end
+   * snapshots + runtime context). Never serialized — the buffer's
+   * upsertTask() writes named columns only, so this field cannot leak to
+   * SQLite or the wire payload. Compatible with the Python SDK's
+   * Task._compute pattern.
+   *
+   * Typed as unknown to avoid a circular import from core/compute-
+   * accountant.ts (which imports from cgroup-reader / compute-runtime).
+   */
+  _compute?: unknown;
+  /**
+   * In-memory only. The per-task GpuAccountant (NVML start snapshot +
+   * cgroup PID scope + per-device handles). Never serialized — same
+   * contract as _compute. Mirrors Python's Task._gpu.
+   */
+  _gpu?: unknown;
 }
 
 /**
@@ -100,6 +142,8 @@ export function createTask(overrides: Partial<Task> & { taskId: string }): Task 
     llmCostUsd: 0,
     externalCostUsd: 0,
     computeCostUsd: 0,
+    networkCostUsd: 0,
+    gpuCostUsd: 0,
     totalCostUsd: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -107,6 +151,10 @@ export function createTask(overrides: Partial<Task> & { taskId: string }): Task 
     retryCount: 0,
     retryCostUsd: 0,
     failureCount: 0,
+    networkBytesIn: 0,
+    networkBytesOut: 0,
+    networkCallCount: 0,
+    networkByHost: { hosts: [] },
     schemaVersion: "1",
     ...overrides,
   };
@@ -148,6 +196,8 @@ export function taskToDict(task: Task): Record<string, unknown> {
     llm_cost_usd: String(task.llmCostUsd),
     external_cost_usd: String(task.externalCostUsd),
     compute_cost_usd: String(task.computeCostUsd),
+    network_cost_usd: String(task.networkCostUsd),
+    gpu_cost_usd: String(task.gpuCostUsd),
     total_cost_usd: String(task.totalCostUsd),
     total_input_tokens: task.totalInputTokens,
     total_output_tokens: task.totalOutputTokens,
@@ -155,6 +205,10 @@ export function taskToDict(task: Task): Record<string, unknown> {
     retry_count: task.retryCount,
     retry_cost_usd: String(task.retryCostUsd),
     failure_count: task.failureCount,
+    network_bytes_in: task.networkBytesIn,
+    network_bytes_out: task.networkBytesOut,
+    network_call_count: task.networkCallCount,
+    network_by_host: task.networkByHost,
     schema_version: task.schemaVersion,
   };
 }
@@ -240,6 +294,8 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     llmCostUsd: _toNumber(data["llm_cost_usd"]),
     externalCostUsd: _toNumber(data["external_cost_usd"]),
     computeCostUsd: _toNumber(data["compute_cost_usd"]),
+    networkCostUsd: _toNumber(data["network_cost_usd"]),
+    gpuCostUsd: _toNumber(data["gpu_cost_usd"]),
     totalCostUsd: _toNumber(data["total_cost_usd"]),
     totalInputTokens: _toNumber(data["total_input_tokens"]),
     totalOutputTokens: _toNumber(data["total_output_tokens"]),
@@ -247,6 +303,13 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     retryCount: _toNumber(data["retry_count"]),
     retryCostUsd: _toNumber(data["retry_cost_usd"]),
     failureCount: _toNumber(data["failure_count"]),
+    networkBytesIn: _toNumber(data["network_bytes_in"]),
+    networkBytesOut: _toNumber(data["network_bytes_out"]),
+    networkCallCount: _toNumber(data["network_call_count"]),
+    networkByHost:
+      data["network_by_host"] && typeof data["network_by_host"] === "object"
+        ? (data["network_by_host"] as Record<string, unknown>)
+        : { hosts: [] },
     schemaVersion: _optString(data["schema_version"]) ?? "1",
   };
 }

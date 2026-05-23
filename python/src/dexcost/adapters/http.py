@@ -615,7 +615,10 @@ def _handle_domain_rate(
         # orphan rows are created.
         return True
     if track_network:
-        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+        task._network.record(
+            domain, bytes_in=bytes_in, bytes_out=bytes_out,
+            is_internal=byte_details.get("is_internal_traffic"),
+        )
     event = Event(
         task_id=task.task_id, event_type="external_cost",
         cost_usd=rate["cost_usd"], cost_confidence="exact",
@@ -644,7 +647,10 @@ def _handle_catalog_entry(
         # no-op rule; no orphan rows are created.
         return True
     if track_network:
-        task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+        task._network.record(
+            domain, bytes_in=bytes_in, bytes_out=bytes_out,
+            is_internal=byte_details.get("is_internal_traffic"),
+        )
     result = catalog.extract_cost(
         entry, response_headers, _get_response_body(response) if response else None
     )
@@ -683,7 +689,10 @@ def _handle_uncataloged(
     task = get_current_task()
     if task is None:
         return  # anonymous traffic — never create orphan rows
-    task._network.record(domain, bytes_in=bytes_in, bytes_out=bytes_out)
+    task._network.record(
+        domain, bytes_in=bytes_in, bytes_out=bytes_out,
+        is_internal=byte_details.get("is_internal_traffic"),
+    )
     if is_network_event_suppressed():
         return  # the `llm_call` event already represents this call
     notable = (
@@ -694,11 +703,17 @@ def _handle_uncataloged(
     if not notable:
         return  # counters already updated; below threshold → no event
 
+    # v2 §6.4 — emission stamps cost_usd=0 and a cost_pending marker; the real
+    # egress cost is back-filled by _aggregate_costs at task finalize.
     event = Event(
         task_id=task.task_id, event_type="network",
         cost_usd=Decimal("0"), cost_confidence="unknown",
         pricing_source=None, service_name=domain,
-        details={"url": url, "method": method, "status_code": status_code, **byte_details},
+        details={
+            "url": url, "method": method, "status_code": status_code,
+            "cost_pending": True,
+            **byte_details,
+        },
     )
     _persist_event(event)
 
