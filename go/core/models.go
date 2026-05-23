@@ -23,11 +23,13 @@ const (
 type EventType string
 
 const (
-	EventTypeLLMCall      EventType = "llm_call"
-	EventTypeExternalCost EventType = "external_cost"
-	EventTypeComputeCost  EventType = "compute_cost"
-	EventTypeRetryMarker  EventType = "retry_marker"
-	EventTypeNetwork      EventType = "network"
+	EventTypeLLMCall               EventType = "llm_call"
+	EventTypeExternalCost          EventType = "external_cost"
+	EventTypeComputeCost           EventType = "compute_cost"
+	EventTypeRetryMarker           EventType = "retry_marker"
+	EventTypeNetwork               EventType = "network"
+	EventTypeGPUCost               EventType = "gpu_cost"
+	EventTypeGPUUtilizationSignal  EventType = "gpu_utilization_signal"
 )
 
 // CostConfidence indicates how trustworthy the reported cost is.
@@ -75,7 +77,11 @@ type Task struct {
 	// accountant's canonical external_bytes_out scalar. Distinct from
 	// ExternalCostUSD (vendor API charges) — see Decision #7.
 	NetworkCostUSD decimal.Decimal `json:"network_cost_usd"`
-	TotalCostUSD   decimal.Decimal `json:"total_cost_usd"`
+	// v2 GPU cost (Phase 2 — Decision #1/#3 capture). Computed at task
+	// finalize from the per-task GpuAccountant's gpu_cost event back-fill.
+	// Distinct from ComputeCostUSD (CPU/RAM) and ExternalCostUSD (vendor APIs).
+	GpuCostUSD   decimal.Decimal `json:"gpu_cost_usd"`
+	TotalCostUSD decimal.Decimal `json:"total_cost_usd"`
 
 	// Token totals
 	TotalInputTokens  int `json:"total_input_tokens"`
@@ -109,6 +115,7 @@ func NewTask(taskType string) Task {
 		ExternalCostUSD: decimal.Zero,
 		ComputeCostUSD:  decimal.Zero,
 		NetworkCostUSD:  decimal.Zero,
+		GpuCostUSD:      decimal.Zero,
 		TotalCostUSD:    decimal.Zero,
 		RetryCostUSD:    decimal.Zero,
 		NetworkByHost:   map[string]interface{}{"hosts": []interface{}{}},
@@ -135,6 +142,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"external_cost_usd":   t.ExternalCostUSD.String(),
 		"compute_cost_usd":    t.ComputeCostUSD.String(),
 		"network_cost_usd":    t.NetworkCostUSD.String(),
+		"gpu_cost_usd":        t.GpuCostUSD.String(),
 		"total_cost_usd":      t.TotalCostUSD.String(),
 		"total_input_tokens":  t.TotalInputTokens,
 		"total_output_tokens": t.TotalOutputTokens,
@@ -305,6 +313,9 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 	}
 	if v, ok := d["network_cost_usd"].(string); ok {
 		t.NetworkCostUSD = decimal.RequireFromString(v)
+	}
+	if v, ok := d["gpu_cost_usd"].(string); ok {
+		t.GpuCostUSD = decimal.RequireFromString(v)
 	}
 	if v, ok := d["total_cost_usd"].(string); ok {
 		t.TotalCostUSD = decimal.RequireFromString(v)
