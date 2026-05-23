@@ -119,6 +119,10 @@ func resetNVMLForTests() {
 	nvmlWarnMu.Unlock()
 }
 
+// ResetNVMLForTests is the exported alias of resetNVMLForTests so other
+// packages (adapters_test, etc.) can reset NVML state.
+func ResetNVMLForTests() { resetNVMLForTests() }
+
 // ─── log-once-per-failure-mode (convention §11) ─────────────────────────
 
 var (
