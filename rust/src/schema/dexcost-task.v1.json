@@ -92,6 +92,16 @@
       "pattern": "^-?\\d+(\\.\\d+)?$",
       "description": "Total aggregated cost in USD (Decimal as string)."
     },
+    "network_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated cloud-egress cost in USD (Decimal as string). Distinct from external_cost_usd, which captures vendor API fees — see spec Decision #7."
+    },
+    "gpu_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated GPU cost in USD (Decimal as string). Populated by Phase 2 GPU capture; total_cost_usd = llm + external + compute + network + gpu."
+    },
     "total_input_tokens": {
       "type": "integer",
       "minimum": 0,

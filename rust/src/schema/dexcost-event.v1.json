@@ -27,7 +27,7 @@
     },
     "event_type": {
       "type": "string",
-      "enum": ["llm_call", "external_cost", "compute_cost", "retry_marker", "network"],
+      "enum": ["llm_call", "external_cost", "compute_cost", "retry_marker", "network", "gpu_cost", "gpu_utilization_signal"],
       "description": "Discriminator for the event category."
     },
     "occurred_at": {

@@ -12,6 +12,7 @@ use crate::core::models::{CostConfidence, CostEvent, EventType, PricingSource, T
 use crate::error::DexcostError;
 use crate::pricing::compute_pricing::ComputePricingEngine;
 use crate::pricing::egress_pricing::EgressPricingEngine;
+use crate::pricing::gpu_pricing::GpuPricingEngine;
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::rates::RateRegistry;
 use crate::transport::buffer::EventBuffer;
@@ -100,6 +101,12 @@ pub struct TrackedTask {
     compute_billing_overrides: HashMap<String, String>,
     /// Opt-in K8s node-aware billing mode (Decision #11). False by default.
     k8s_node_aware: bool,
+    /// Phase 2 GPU pricing engine for deferred-cost back-fill of gpu_cost
+    /// events at task finalize. Defaults to a fresh
+    /// `GpuPricingEngine::new()` per task. No init() knobs — GPU billing
+    /// models are unambiguous per provider (Modal is always
+    /// per_gpu_second_active, etc.).
+    gpu_pricing: GpuPricingEngine,
 }
 
 impl TrackedTask {
@@ -133,6 +140,7 @@ impl TrackedTask {
             compute_pricing: ComputePricingEngine::new(),
             compute_billing_overrides: HashMap::new(),
             k8s_node_aware: false,
+            gpu_pricing: GpuPricingEngine::new(),
         }
     }
 
@@ -156,6 +164,7 @@ impl TrackedTask {
             compute_pricing: ComputePricingEngine::new(),
             compute_billing_overrides: HashMap::new(),
             k8s_node_aware: false,
+            gpu_pricing: GpuPricingEngine::new(),
         }
     }
 
@@ -185,6 +194,17 @@ impl TrackedTask {
     /// events under the cost_pending deferred-cost pattern.
     pub fn buffer_handle_for_tests(&self) -> Arc<Mutex<EventBuffer>> {
         self.buffer.clone()
+    }
+
+    /// Attach a [`GpuAccountant`] to the underlying task. Public — the
+    /// Rust SDK lacks a global tracker singleton, so handler wraps must
+    /// thread `&mut TrackedTask` explicitly. Used by
+    /// `adapters::gpu_wrap::wrap_modal_handler` etc.
+    pub fn attach_gpu_for_tests(
+        &mut self,
+        accountant: std::sync::Arc<crate::core::gpu_accountant::GpuAccountant>,
+    ) {
+        self.task.gpu = Some(accountant);
     }
 
     /// Records an LLM call event on this task.
@@ -641,6 +661,27 @@ impl TrackedTask {
             );
         }
 
+        // ── GPU finalize — auto-emit long-running event + back-fill cost ──
+        //
+        // Phase 2 Task 8. Third back-fill block after egress and compute.
+        // Mirrors Python tracker._finalize_gpu (commit 56d8d43). For long-
+        // running GPU runtimes (AWS_EC2_GPU / GCP_GCE_BUNDLED /
+        // GCP_GCE_N1_ATTACHED / AZURE_VM_GPU / AZURE_VM_VGPU / LAMBDA_LABS /
+        // COREWEAVE), this is where the dual events are emitted. Serverless
+        // runtimes (MODAL / RUNPOD / REPLICATE) emit via the handler wrap
+        // and this step is a no-op for them.
+        //
+        // gpu_utilization_signal events are NEVER touched by the back-fill
+        // walker — they stay at cost_usd=0 (Decision #3 / convention §1
+        // carve-out). The filter on event_type == GpuCost is load-bearing.
+        let gpu_result = self.finalize_gpu().await;
+        if let Err(e) = gpu_result {
+            eprintln!(
+                "[dexcost] WARNING: GPU cost computation failed for task {}: {}",
+                self.task.task_id, e
+            );
+        }
+
         // Remove the accountant from the registry; subsequent HTTP calls
         // attributed to this task_id won't find one (matches Python's
         // frozen-then-snapshot semantics — late bytes are dropped, not
@@ -896,6 +937,132 @@ impl TrackedTask {
             self.task.compute_cost_usd += delta;
             self.task.total_cost_usd += delta;
         }
+
+        Ok(())
+    }
+
+    /// GPU finalize: auto-emit the long-running GPU event (if applicable)
+    /// and back-fill `cost_pending=true` gpu_cost events for this task.
+    /// Tracks DELTAs (new - old) and adds to `task.gpu_cost_usd` /
+    /// `task.total_cost_usd` to preserve any retry_marker costs already
+    /// summed.
+    ///
+    /// Mirrors `python/src/dexcost/tracker.py:_finalize_gpu` (commit
+    /// 56d8d43). gpu_utilization_signal events are NEVER touched by this
+    /// back-fill — the filter on event_type == GpuCost is the load-bearing
+    /// implementation of convention §1's signal-event carve-out.
+    async fn finalize_gpu(&mut self) -> Result<(), DexcostError> {
+        use crate::core::gpu_runtime::GpuRuntimeKind;
+        let cloud_env = get_cloud_env();
+        let pricing_version = format!("gpu:{}", self.gpu_pricing.catalog_version());
+
+        // Stage 1 — long-running GPU runtimes auto-emit one gpu_cost event
+        // (with cost_pending: true) plus N gpu_utilization_signal events.
+        // Serverless runtimes (Modal / RunPod / Replicate) already emitted
+        // via the handler wrap; we no-op for them here.
+        if let Some(acc) = self.task.gpu.clone() {
+            let is_long_running = matches!(
+                acc.runtime,
+                GpuRuntimeKind::AwsEc2Gpu
+                    | GpuRuntimeKind::GcpGceBundled
+                    | GpuRuntimeKind::GcpGceN1Attached
+                    | GpuRuntimeKind::AzureVmGpu
+                    | GpuRuntimeKind::AzureVmVgpu
+                    | GpuRuntimeKind::LambdaLabs
+                    | GpuRuntimeKind::Coreweave
+            );
+            if is_long_running {
+                let duration_ms = match (self.task.ended_at, Some(self.task.started_at)) {
+                    (Some(end), Some(start)) => (end - start).num_milliseconds().max(0),
+                    _ => 0,
+                };
+                if let Some(bundle) = acc.snapshot_end_and_build(duration_ms) {
+                    let mut buf = self.buffer.lock().await;
+                    // gpu_cost event
+                    let mut event =
+                        CostEvent::new(&self.task.task_id, EventType::GpuCost);
+                    event.cost_usd = Decimal::ZERO;
+                    event.cost_confidence = CostConfidence::Estimated;
+                    event.pricing_source = Some(PricingSource::ServiceCatalog);
+                    event.pricing_version = Some(pricing_version.clone());
+                    event.occurred_at = bundle.ended_at;
+                    if let serde_json::Value::Object(map) = bundle.cost_event_details {
+                        for (k, v) in map {
+                            event.details.insert(k, v);
+                        }
+                    }
+                    buf.add_event(event);
+
+                    // gpu_utilization_signal events — observability only.
+                    // No pricing_source, no pricing_version; cost stays 0.
+                    for sig in bundle.signal_event_details {
+                        let mut sig_event = CostEvent::new(
+                            &self.task.task_id,
+                            EventType::GpuUtilizationSignal,
+                        );
+                        sig_event.cost_usd = Decimal::ZERO;
+                        sig_event.cost_confidence = CostConfidence::Exact;
+                        sig_event.pricing_source = None;
+                        sig_event.occurred_at = bundle.ended_at;
+                        if let serde_json::Value::Object(map) = sig {
+                            for (k, v) in map {
+                                sig_event.details.insert(k, v);
+                            }
+                        }
+                        buf.add_event(sig_event);
+                    }
+                    drop(buf);
+                }
+            }
+        }
+
+        // Stage 2 — back-fill cost_pending GpuCost events.
+        // FILTERS BY event_type == GpuCost — gpu_utilization_signal events
+        // are NEVER touched (Decision #3 / convention §1 carve-out).
+        let mut buf = self.buffer.lock().await;
+        let pending: Vec<CostEvent> = buf
+            .query_events(&self.task.task_id)
+            .into_iter()
+            .filter(|e| {
+                e.event_type == EventType::GpuCost
+                    && e.details
+                        .get("cost_pending")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .collect();
+
+        for mut ev in pending {
+            let old_cost = ev.cost_usd;
+            let details_value =
+                serde_json::Value::Object(ev.details.clone().into_iter().collect());
+            let result = self.gpu_pricing.resolve_gpu_cost(&details_value, &cloud_env, None);
+            ev.cost_usd = result.cost_usd;
+            ev.cost_confidence = match result.cost_confidence.as_str() {
+                "computed" => CostConfidence::Computed,
+                "estimated" => CostConfidence::Estimated,
+                "exact" => CostConfidence::Exact,
+                _ => CostConfidence::Unknown,
+            };
+            ev.pricing_source = Some(PricingSource::ServiceCatalog);
+            ev.pricing_version = Some(pricing_version.clone());
+            ev.details.insert(
+                "gpu_pricing_source".to_string(),
+                serde_json::Value::String(result.pricing_source),
+            );
+            // Strip cost_pending + internal Decision #1 / Decision #4
+            // hints — these don't leak to downstream consumers.
+            ev.details.remove("cost_pending");
+            ev.details.remove("_cgroup_scope_fallback");
+            ev.details.remove("_nvml_product_name_lower");
+            buf.update_event(&ev);
+
+            // Track DELTA — preserves retry_marker totals already aggregated.
+            let delta = result.cost_usd - old_cost;
+            self.task.gpu_cost_usd += delta;
+            self.task.total_cost_usd += delta;
+        }
+        drop(buf);
 
         Ok(())
     }
