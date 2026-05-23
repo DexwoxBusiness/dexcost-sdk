@@ -114,6 +114,9 @@ func doInit(cfg *Config) error {
 	// Compute wraps emit per-invocation compute_cost events; share the same
 	// durable buffer so tracker.aggregateCosts finds them at task finalize.
 	adapters.SetComputeEventBuffer(buf)
+	// GPU wraps emit gpu_cost + gpu_utilization_signal events into the same
+	// buffer so tracker.aggregateCosts back-fills cost_usd at task finalize.
+	adapters.SetGPUEventBuffer(buf)
 
 	// Start pusher if in cloud mode and not in dev mode.
 	if cfg.StorageMode() == "cloud" && !IsDevMode() {
@@ -372,6 +375,28 @@ func WrapAzureFunctionsHandler[T any, R any](fn func(context.Context, T) (R, err
 // WrapVercelHandler instruments a Vercel Fluid handler.
 func WrapVercelHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
 	return adapters.WrapVercelHandler(fn)
+}
+
+// ─── GPU capture handler wraps (Phase 2 Task 7) ──────────────────────────
+//
+// Each wrap times the handler, snapshots NVML on entry+exit, walks the
+// task's cgroup PIDs, and emits one gpu_cost event (cost_pending=true) plus
+// N gpu_utilization_signal events per invocation. The pricing engine
+// back-fills cost_usd at task finalize.
+
+// WrapModalGPUHandler instruments a Modal handler for GPU capture.
+func WrapModalGPUHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapModalGPUHandler(fn)
+}
+
+// WrapRunpodGPUHandler instruments a RunPod handler for GPU capture.
+func WrapRunpodGPUHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapRunpodGPUHandler(fn)
+}
+
+// WrapReplicateGPUHandler instruments a Replicate handler for GPU capture.
+func WrapReplicateGPUHandler[T any, R any](fn func(context.Context, T) (R, error)) func(context.Context, T) (R, error) {
+	return adapters.WrapReplicateGPUHandler(fn)
 }
 
 func init() {

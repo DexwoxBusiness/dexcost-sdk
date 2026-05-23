@@ -46,6 +46,9 @@ type Tracker struct {
 	computePricingEngine    *pricing.ComputePricingEngine
 	computeBillingOverrides map[string]string
 	k8sNodeAware            bool
+
+	// GPU v2 (Phase 2). Optional — lazy-init at first finalize.
+	gpuPricingEngine *pricing.GpuPricingEngine
 }
 
 // NewTracker creates a Tracker using the provided Buffer and pricing engine.
@@ -586,6 +589,19 @@ func (tt *TrackedTask) aggregateCosts(events []Event) {
 			}
 		}()
 		tt.finalizeCompute(events)
+	}()
+
+	// ── GPU finalize — v2 GPU pricing + per-event back-fill (Phase 2) ───
+	// Mirrors python tracker._finalize_gpu. Tier-5 fail-silent in its own
+	// recover(); a GPU pricing bug never breaks task finalize. Signal
+	// events stay at cost=0 and never aggregate into totals (convention §1).
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[dexcost] WARNING: gpu cost computation panicked for task %s: %v", tt.Task.TaskID, r)
+			}
+		}()
+		tt.finalizeGPU(events)
 	}()
 }
 
