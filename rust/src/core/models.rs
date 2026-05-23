@@ -15,6 +15,13 @@ pub enum TaskStatus {
 }
 
 /// EventType discriminates cost-generating events.
+///
+/// Phase 2 adds GPU-specific event types:
+/// - `GpuCost`: per-task aggregated GPU cost event (one per task)
+/// - `GpuUtilizationSignal`: per-device observability event with no
+///   cost_usd / pricing_source / pricing_version. The Control Layer
+///   MUST NOT aggregate signal events into any dollar field
+///   (convention §1 carve-out, Decision #3).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
@@ -23,6 +30,8 @@ pub enum EventType {
     ComputeCost,
     RetryMarker,
     Network,
+    GpuCost,
+    GpuUtilizationSignal,
 }
 
 /// CostConfidence indicates how trustworthy the reported cost is.
@@ -93,6 +102,13 @@ pub struct Task {
     /// to zero for legacy payloads.
     #[serde(default)]
     pub network_cost_usd: Decimal,
+    /// Phase 2 GPU — aggregated GPU cost in USD, computed at task finalize
+    /// by `_finalize_gpu`. Distinct from `compute_cost_usd` (CPU/memory) and
+    /// `external_cost_usd` (vendor API charges). `total_cost_usd` =
+    /// `llm + external + compute + network + gpu`. Defaults to zero for
+    /// legacy payloads.
+    #[serde(default)]
+    pub gpu_cost_usd: Decimal,
     /// In-memory accumulator for HTTP byte usage. Not serialised — each
     /// deserialised Task gets a fresh accountant. Cloning the Task shares
     /// the accountant by Arc-refcount, which is the right behaviour during
@@ -104,6 +120,12 @@ pub struct Task {
     /// handler wraps / auto-task path. Mirrors Python's `_compute` field.
     #[serde(skip, default)]
     pub compute: Option<std::sync::Arc<crate::core::compute_accountant::ComputeAccountant>>,
+    /// Optional in-memory GPU accountant. Not serialised — set by the
+    /// GPU handler wraps / auto-task path. Mirrors Python's `_gpu` field.
+    /// Set lazily by Modal / RunPod / Replicate wraps OR by the tracker
+    /// when a long-running GPU runtime is detected.
+    #[serde(skip, default)]
+    pub gpu: Option<std::sync::Arc<crate::core::gpu_accountant::GpuAccountant>>,
     pub schema_version: String,
 }
 
@@ -141,8 +163,10 @@ impl Task {
             network_call_count: 0,
             network_by_host: default_network_by_host(),
             network_cost_usd: Decimal::ZERO,
+            gpu_cost_usd: Decimal::ZERO,
             network_accountant: std::sync::Arc::default(),
             compute: None,
+            gpu: None,
             schema_version: "1".to_string(),
         }
     }
@@ -177,6 +201,7 @@ impl Task {
             "network_call_count": self.network_call_count,
             "network_by_host": self.network_by_host,
             "network_cost_usd": self.network_cost_usd.to_string(),
+            "gpu_cost_usd": self.gpu_cost_usd.to_string(),
             "schema_version": self.schema_version,
         })
     }
@@ -377,6 +402,60 @@ mod tests {
                 "hosts": [{"host": "a.com", "calls": 3, "bytes_in": 4096, "bytes_out": 512}]
             })
         );
+    }
+
+    // ── Phase 2 GPU foundation: gpu_cost_usd + new EventType variants ──
+
+    #[test]
+    fn test_event_type_gpu_cost_serializes() {
+        let val = serde_json::to_string(&EventType::GpuCost).unwrap();
+        assert_eq!(val, "\"gpu_cost\"");
+    }
+
+    #[test]
+    fn test_event_type_gpu_utilization_signal_serializes() {
+        let val = serde_json::to_string(&EventType::GpuUtilizationSignal).unwrap();
+        assert_eq!(val, "\"gpu_utilization_signal\"");
+    }
+
+    #[test]
+    fn test_event_type_gpu_round_trip() {
+        let parsed: EventType = serde_json::from_str("\"gpu_cost\"").unwrap();
+        assert_eq!(parsed, EventType::GpuCost);
+        let parsed: EventType = serde_json::from_str("\"gpu_utilization_signal\"").unwrap();
+        assert_eq!(parsed, EventType::GpuUtilizationSignal);
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_defaults_to_zero() {
+        let task = Task::new("x");
+        assert_eq!(task.gpu_cost_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_in_to_dict() {
+        let task = Task::new("x");
+        let dict = task.to_dict();
+        assert_eq!(dict["gpu_cost_usd"], serde_json::json!("0"));
+        assert!(dict["gpu_cost_usd"].is_string());
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_round_trip() {
+        let mut task = Task::new("x");
+        task.gpu_cost_usd = Decimal::new(12345, 4); // 1.2345
+        let value = serde_json::to_value(&task).unwrap();
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.gpu_cost_usd, Decimal::new(12345, 4));
+    }
+
+    #[test]
+    fn test_task_gpu_cost_usd_absent_in_payload_defaults_to_zero() {
+        // Legacy payloads without gpu_cost_usd round-trip with zero default.
+        let mut value = serde_json::to_value(Task::new("x")).unwrap();
+        value.as_object_mut().unwrap().remove("gpu_cost_usd");
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.gpu_cost_usd, Decimal::ZERO);
     }
 
     #[test]

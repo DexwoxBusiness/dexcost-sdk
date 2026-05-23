@@ -110,6 +110,35 @@ pub fn log_event(event: &CostEvent, task_type: &str) {
                 task_tag(task_type),
             ));
         }
+        EventType::GpuCost => {
+            let runtime = event
+                .details
+                .get("gpu_runtime")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            print_line(&format!(
+                "\x1b[35m\u{25c6}\x1b[0m gpu_cost  {}  ${}{}",
+                runtime,
+                cost,
+                task_tag(task_type),
+            ));
+        }
+        EventType::GpuUtilizationSignal => {
+            // convention §1 carve-out: signal events have no cost; render as observability.
+            let pct = event
+                .details
+                .get("sm_util_pct")
+                .and_then(|v| v.as_f64());
+            let pct_s = match pct {
+                Some(p) => format!("{:.1}%", p),
+                None => "n/a".to_string(),
+            };
+            print_line(&format!(
+                "\x1b[34m\u{25cb}\x1b[0m gpu_signal  sm_util_pct: {}{}",
+                pct_s,
+                task_tag(task_type),
+            ));
+        }
     }
 }
 
