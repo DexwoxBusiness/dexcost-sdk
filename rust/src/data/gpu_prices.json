@@ -1,0 +1,412 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_updated": "2026-05-22",
+    "currency": "USD",
+    "default_per_instance_hour_usd": "55.04",
+    "default_per_gpu_second_active_usd": "0.000694",
+    "default_per_gpu_hour_reserved_usd": "3.99",
+    "default_per_vgpu_hour_usd": "0.454",
+    "description": "Dexcost GPU catalog — per-billing-model rates by cloud provider/region/SKU. NVIDIA only in v1 (Decision #5); AMD/Intel deferred. Community-maintained; submit PRs to add or refresh rates.",
+    "notes": "VRAM tier is encoded in the SKU key (e.g. a100-40gb vs a100-80gb-sxm5); no per-VRAM-GiB multiplier — see Decision #7. MIG slices billed at full-GPU rate (Decision #2). Each SKU carries an aliases array of raw NVML productName strings for Decision #4 mapping. Four billing models: per_instance_hour (AWS/GCP/Azure VM), per_gpu_second_active (Modal/RunPod/Replicate), per_gpu_hour_reserved (Lambda Labs/CoreWeave), per_vgpu_hour (Azure NVadsA10 v5 fractional). Refresh cadence: WEEKLY per Decision #11 (vs Phase 1 compute's monthly). Integrity test soft-warns at 90 days, hard-fails at 365 days. Defaults: per_instance_hour = AWS p5.48xlarge us-east-1; per_gpu_second_active = Modal A100-80GB; per_gpu_hour_reserved = Lambda H100 SXM 8x; per_vgpu_hour = Azure NV6ads_A10_v5 eastus."
+  },
+  "aws": {
+    "_last_verified": "2026-05-22",
+    "ec2_gpu": {
+      "regions": {
+        "us-east-1": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.526",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.2xlarge":   {"hourly_usd": "0.752",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.4xlarge":   {"hourly_usd": "1.204",     "vcpu_count": "16",  "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.8xlarge":   {"hourly_usd": "2.176",     "vcpu_count": "32",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "3.912",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.16xlarge":  {"hourly_usd": "4.352",     "vcpu_count": "64",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "7.824",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.006",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.2xlarge":     {"hourly_usd": "1.212",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.4xlarge":     {"hourly_usd": "1.624",     "vcpu_count": "16",  "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.8xlarge":     {"hourly_usd": "2.448",     "vcpu_count": "32",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.12xlarge":    {"hourly_usd": "5.672",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.16xlarge":    {"hourly_usd": "4.096",     "vcpu_count": "64",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.24xlarge":    {"hourly_usd": "8.144",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "4", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "16.288",    "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g6.xlarge":      {"hourly_usd": "0.8048",    "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.2xlarge":     {"hourly_usd": "0.9776",    "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.4xlarge":     {"hourly_usd": "1.3232",    "vcpu_count": "16",  "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.8xlarge":     {"hourly_usd": "2.0144",    "vcpu_count": "32",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.12xlarge":    {"hourly_usd": "4.6016",    "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.16xlarge":    {"hourly_usd": "3.3968",    "vcpu_count": "64",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.24xlarge":    {"hourly_usd": "6.6752",    "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "4", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.48xlarge":    {"hourly_usd": "13.3504",   "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6e.xlarge":     {"hourly_usd": "1.861",     "vcpu_count": "4",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.2xlarge":    {"hourly_usd": "2.24208",   "vcpu_count": "8",   "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.4xlarge":    {"hourly_usd": "3.00424",   "vcpu_count": "16",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.8xlarge":    {"hourly_usd": "4.52856",   "vcpu_count": "32",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.12xlarge":   {"hourly_usd": "10.49264",  "vcpu_count": "48",  "memory_gb": "384",  "gpu_count": "4", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.16xlarge":   {"hourly_usd": "7.57719",   "vcpu_count": "64",  "memory_gb": "512",  "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.24xlarge":   {"hourly_usd": "15.06559",  "vcpu_count": "96",  "memory_gb": "768",  "gpu_count": "4", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.48xlarge":   {"hourly_usd": "30.13118",  "vcpu_count": "192", "memory_gb": "1536", "gpu_count": "8", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "p3.2xlarge":     {"hourly_usd": "3.06",      "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB", "NVIDIA V100-SXM2-16GB"]},
+            "p3.8xlarge":     {"hourly_usd": "12.24",     "vcpu_count": "32",  "memory_gb": "244",  "gpu_count": "4", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB", "NVIDIA V100-SXM2-16GB"]},
+            "p3.16xlarge":    {"hourly_usd": "24.48",     "vcpu_count": "64",  "memory_gb": "488",  "gpu_count": "8", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB", "NVIDIA V100-SXM2-16GB"]},
+            "p3dn.24xlarge":  {"hourly_usd": "31.212",    "vcpu_count": "96",  "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "v100-32gb",        "gpu_vram_gb": "32", "aliases": ["Tesla V100-SXM2-32GB", "NVIDIA V100-SXM2-32GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "21.957642", "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB", "A100-SXM4-40GB"]},
+            "p4de.24xlarge":  {"hourly_usd": "27.44705",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",   "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB", "A100-SXM4-80GB"]},
+            "p5.48xlarge":    {"hourly_usd": "55.04",     "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",   "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3", "NVIDIA H100-SXM5-80GB"]},
+            "p5en.48xlarge":  {"hourly_usd": "63.296",    "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h200-141gb-sxm5",  "gpu_vram_gb": "141", "aliases": ["NVIDIA H200", "NVIDIA H200 141GB HBM3e"]}
+          }
+        },
+        "us-east-2": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.526",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.2xlarge":   {"hourly_usd": "0.752",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.4xlarge":   {"hourly_usd": "1.204",     "vcpu_count": "16",  "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.8xlarge":   {"hourly_usd": "2.176",     "vcpu_count": "32",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "3.912",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.16xlarge":  {"hourly_usd": "4.352",     "vcpu_count": "64",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "7.824",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.006",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.2xlarge":     {"hourly_usd": "1.212",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.4xlarge":     {"hourly_usd": "1.624",     "vcpu_count": "16",  "memory_gb": "64",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.8xlarge":     {"hourly_usd": "2.448",     "vcpu_count": "32",  "memory_gb": "128",  "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.12xlarge":    {"hourly_usd": "5.672",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.16xlarge":    {"hourly_usd": "4.096",     "vcpu_count": "64",  "memory_gb": "256",  "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.24xlarge":    {"hourly_usd": "8.144",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "4", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "16.288",    "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g6.xlarge":      {"hourly_usd": "0.8048",    "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.12xlarge":    {"hourly_usd": "4.6016",    "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.48xlarge":    {"hourly_usd": "13.3504",   "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6e.xlarge":     {"hourly_usd": "1.861",     "vcpu_count": "4",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.48xlarge":   {"hourly_usd": "30.13118",  "vcpu_count": "192", "memory_gb": "1536", "gpu_count": "8", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "p3.2xlarge":     {"hourly_usd": "3.06",      "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB", "NVIDIA V100-SXM2-16GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "21.95764",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "p5.48xlarge":    {"hourly_usd": "55.04",     "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",   "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "p5en.48xlarge":  {"hourly_usd": "63.296",    "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h200-141gb-sxm5",  "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]}
+          }
+        },
+        "us-west-2": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.526",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.2xlarge":   {"hourly_usd": "0.752",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "3.912",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "7.824",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.006",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "16.288",    "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g6.xlarge":      {"hourly_usd": "0.8048",    "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.48xlarge":    {"hourly_usd": "13.3504",   "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6e.xlarge":     {"hourly_usd": "1.861",     "vcpu_count": "4",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.48xlarge":   {"hourly_usd": "30.13118",  "vcpu_count": "192", "memory_gb": "1536", "gpu_count": "8", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "p3.2xlarge":     {"hourly_usd": "3.06",      "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3.16xlarge":    {"hourly_usd": "24.48",     "vcpu_count": "64",  "memory_gb": "488",  "gpu_count": "8", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3dn.24xlarge":  {"hourly_usd": "31.212",    "vcpu_count": "96",  "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "v100-32gb",        "gpu_vram_gb": "32", "aliases": ["Tesla V100-SXM2-32GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "21.95764",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "p4de.24xlarge":  {"hourly_usd": "27.44705",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",   "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "p5.48xlarge":    {"hourly_usd": "55.04",     "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",   "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "p5en.48xlarge":  {"hourly_usd": "63.296",    "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h200-141gb-sxm5",  "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]}
+          }
+        },
+        "eu-west-1": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.587",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.2xlarge":   {"hourly_usd": "0.838",     "vcpu_count": "8",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "4.362",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "8.724",     "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.123",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "18.18233",  "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "p3.2xlarge":     {"hourly_usd": "3.305",     "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3.16xlarge":    {"hourly_usd": "26.44",     "vcpu_count": "64",  "memory_gb": "488",  "gpu_count": "8", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3dn.24xlarge":  {"hourly_usd": "33.711",    "vcpu_count": "96",  "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "v100-32gb",        "gpu_vram_gb": "32", "aliases": ["Tesla V100-SXM2-32GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "23.71569",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]}
+          }
+        },
+        "eu-central-1": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.658",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "4.89",      "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "9.78",      "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.258",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "20.3681",   "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g6.xlarge":      {"hourly_usd": "1.0064",    "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.48xlarge":    {"hourly_usd": "16.69464",  "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6e.xlarge":     {"hourly_usd": "2.327",     "vcpu_count": "4",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.48xlarge":   {"hourly_usd": "37.67612",  "vcpu_count": "192", "memory_gb": "1536", "gpu_count": "8", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "p3.2xlarge":     {"hourly_usd": "3.823",     "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3.16xlarge":    {"hourly_usd": "30.584",    "vcpu_count": "64",  "memory_gb": "488",  "gpu_count": "8", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "27.43298",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "p4de.24xlarge":  {"hourly_usd": "34.29122",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",   "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]}
+          }
+        },
+        "ap-northeast-1": {
+          "instance_types": {
+            "g4dn.xlarge":    {"hourly_usd": "0.710",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.12xlarge":  {"hourly_usd": "5.281",     "vcpu_count": "48",  "memory_gb": "192",  "gpu_count": "4", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g4dn.metal":     {"hourly_usd": "10.562",    "vcpu_count": "96",  "memory_gb": "384",  "gpu_count": "8", "gpu_sku": "t4-16gb",          "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "g5.xlarge":      {"hourly_usd": "1.459",     "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g5.48xlarge":    {"hourly_usd": "23.62246",  "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "a10g-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10G"]},
+            "g6.xlarge":      {"hourly_usd": "1.1672",    "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6.48xlarge":    {"hourly_usd": "19.36206",  "vcpu_count": "192", "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "l4-24gb",          "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "g6e.xlarge":     {"hourly_usd": "2.699",     "vcpu_count": "4",   "memory_gb": "32",   "gpu_count": "1", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "g6e.48xlarge":   {"hourly_usd": "43.69912",  "vcpu_count": "192", "memory_gb": "1536", "gpu_count": "8", "gpu_sku": "l40s-48gb",        "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+            "p3.2xlarge":     {"hourly_usd": "4.194",     "vcpu_count": "8",   "memory_gb": "61",   "gpu_count": "1", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3.16xlarge":    {"hourly_usd": "33.552",    "vcpu_count": "64",  "memory_gb": "488",  "gpu_count": "8", "gpu_sku": "v100-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "p3dn.24xlarge":  {"hourly_usd": "42.783",    "vcpu_count": "96",  "memory_gb": "768",  "gpu_count": "8", "gpu_sku": "v100-32gb",        "gpu_vram_gb": "32", "aliases": ["Tesla V100-SXM2-32GB"]},
+            "p4d.24xlarge":   {"hourly_usd": "30.09784",  "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",   "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "p4de.24xlarge":  {"hourly_usd": "37.6223",   "vcpu_count": "96",  "memory_gb": "1152", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",   "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "p5.48xlarge":    {"hourly_usd": "68.80",     "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",   "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "p5en.48xlarge":  {"hourly_usd": "79.12",     "vcpu_count": "192", "memory_gb": "2048", "gpu_count": "8", "gpu_sku": "h200-141gb-sxm5",  "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]}
+          }
+        }
+      }
+    }
+  },
+  "gcp": {
+    "_last_verified": "2026-05-22",
+    "gce_gpu_attached": {
+      "regions": {
+        "us-central1": {
+          "accelerator_types": {
+            "nvidia-tesla-t4":   {"gpu_hour_usd": "0.35",  "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "nvidia-tesla-p4":   {"gpu_hour_usd": "0.60",  "gpu_sku": "p4-8gb",          "gpu_vram_gb": "8",  "aliases": ["Tesla P4", "NVIDIA P4"]},
+            "nvidia-tesla-v100": {"gpu_hour_usd": "2.48",  "gpu_sku": "v100-16gb",       "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "nvidia-tesla-p100": {"gpu_hour_usd": "1.46",  "gpu_sku": "p100-16gb",       "gpu_vram_gb": "16", "aliases": ["Tesla P100-PCIE-16GB"]},
+            "nvidia-l4":         {"gpu_hour_usd": "0.71",  "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "nvidia-tesla-a100": {"gpu_hour_usd": "3.67",  "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "nvidia-a100-80gb":  {"gpu_hour_usd": "5.07",  "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "nvidia-h100-80gb":  {"gpu_hour_usd": "11.06", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]}
+          }
+        },
+        "us-east1": {
+          "accelerator_types": {
+            "nvidia-tesla-t4":   {"gpu_hour_usd": "0.35",  "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "nvidia-l4":         {"gpu_hour_usd": "0.71",  "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "nvidia-tesla-a100": {"gpu_hour_usd": "3.67",  "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]}
+          }
+        },
+        "us-west1": {
+          "accelerator_types": {
+            "nvidia-tesla-t4":   {"gpu_hour_usd": "0.35",  "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "nvidia-l4":         {"gpu_hour_usd": "0.71",  "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "nvidia-tesla-v100": {"gpu_hour_usd": "2.48",  "gpu_sku": "v100-16gb",       "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "nvidia-tesla-a100": {"gpu_hour_usd": "3.67",  "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]}
+          }
+        },
+        "europe-west4": {
+          "accelerator_types": {
+            "nvidia-tesla-t4":   {"gpu_hour_usd": "0.41",  "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "nvidia-l4":         {"gpu_hour_usd": "0.74",  "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "nvidia-tesla-a100": {"gpu_hour_usd": "3.75",  "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "nvidia-a100-80gb":  {"gpu_hour_usd": "5.58",  "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "nvidia-h100-80gb":  {"gpu_hour_usd": "14.07", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]}
+          }
+        },
+        "asia-east1": {
+          "accelerator_types": {
+            "nvidia-tesla-t4":   {"gpu_hour_usd": "0.40",  "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+            "nvidia-l4":         {"gpu_hour_usd": "0.82",  "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]},
+            "nvidia-tesla-v100": {"gpu_hour_usd": "2.68",  "gpu_sku": "v100-16gb",       "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+            "nvidia-h100-80gb":  {"gpu_hour_usd": "12.80", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]}
+          }
+        }
+      }
+    },
+    "gce_gpu_bundled": {
+      "regions": {
+        "us-central1": {
+          "instance_types": {
+            "a2-highgpu-1g":  {"hourly_usd": "3.6734", "vcpu_count": "12",  "memory_gb": "85",   "gpu_count": "1", "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "a2-ultragpu-1g": {"hourly_usd": "5.0688", "vcpu_count": "12",  "memory_gb": "170",  "gpu_count": "1", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "a3-highgpu-8g":  {"hourly_usd": "88.49",  "vcpu_count": "208", "memory_gb": "1872", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "g2-standard-4":  {"hourly_usd": "0.7068", "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]}
+          }
+        },
+        "us-east1": {
+          "instance_types": {
+            "a2-highgpu-1g":  {"hourly_usd": "3.6734", "vcpu_count": "12", "memory_gb": "85",  "gpu_count": "1", "gpu_sku": "a100-40gb-sxm4", "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "g2-standard-4":  {"hourly_usd": "0.7068", "vcpu_count": "4",  "memory_gb": "16",  "gpu_count": "1", "gpu_sku": "l4-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]}
+          }
+        },
+        "us-east4": {
+          "instance_types": {
+            "a3-highgpu-8g":  {"hourly_usd": "88.56",  "vcpu_count": "208", "memory_gb": "1872", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5", "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]}
+          }
+        },
+        "us-west1": {
+          "instance_types": {
+            "a2-highgpu-1g":  {"hourly_usd": "3.6734", "vcpu_count": "12", "memory_gb": "85",  "gpu_count": "1", "gpu_sku": "a100-40gb-sxm4", "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "g2-standard-4":  {"hourly_usd": "0.7068", "vcpu_count": "4",  "memory_gb": "16",  "gpu_count": "1", "gpu_sku": "l4-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]}
+          }
+        },
+        "europe-west4": {
+          "instance_types": {
+            "a2-highgpu-1g":  {"hourly_usd": "3.748",   "vcpu_count": "12",  "memory_gb": "85",   "gpu_count": "1", "gpu_sku": "a100-40gb-sxm4", "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "a2-ultragpu-1g": {"hourly_usd": "5.5809",  "vcpu_count": "12",  "memory_gb": "170",  "gpu_count": "1", "gpu_sku": "a100-80gb-sxm4", "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "a3-highgpu-8g":  {"hourly_usd": "112.54",  "vcpu_count": "208", "memory_gb": "1872", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5", "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "g2-standard-4":  {"hourly_usd": "0.7429",  "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]}
+          }
+        },
+        "asia-east1": {
+          "instance_types": {
+            "a3-highgpu-8g":  {"hourly_usd": "102.36",  "vcpu_count": "208", "memory_gb": "1872", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5", "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+            "g2-standard-4":  {"hourly_usd": "0.8184",  "vcpu_count": "4",   "memory_gb": "16",   "gpu_count": "1", "gpu_sku": "l4-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA L4"]}
+          }
+        }
+      }
+    }
+  },
+  "azure": {
+    "_last_verified": "2026-05-22",
+    "vm_gpu": {
+      "regions": {
+        "eastus": {
+          "instance_types": {
+            "Standard_NC24ads_A100_v4":   {"hourly_usd": "3.673",  "vcpu_count": "24", "memory_gb": "220",  "gpu_count": "1", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_NC48ads_A100_v4":   {"hourly_usd": "7.346",  "vcpu_count": "48", "memory_gb": "440",  "gpu_count": "2", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_NC96ads_A100_v4":   {"hourly_usd": "9.554",  "vcpu_count": "96", "memory_gb": "880",  "gpu_count": "4", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_ND96amsr_A100_v4":  {"hourly_usd": "32.77",  "vcpu_count": "96", "memory_gb": "1900", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]},
+            "Standard_ND96isr_H100_v5":   {"hourly_usd": "98.32",  "vcpu_count": "96", "memory_gb": "1900", "gpu_count": "8", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 80GB HBM3"]}
+          }
+        },
+        "eastus2": {
+          "instance_types": {
+            "Standard_NC48ads_A100_v4":   {"hourly_usd": "7.346",  "vcpu_count": "48", "memory_gb": "440",  "gpu_count": "2", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_NC96ads_A100_v4":   {"hourly_usd": "14.692", "vcpu_count": "96", "memory_gb": "880",  "gpu_count": "4", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_ND96amsr_A100_v4":  {"hourly_usd": "32.77",  "vcpu_count": "96", "memory_gb": "1900", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]}
+          }
+        },
+        "westeurope": {
+          "instance_types": {
+            "Standard_NC96ads_A100_v4":   {"hourly_usd": "3.82",   "vcpu_count": "96", "memory_gb": "880",  "gpu_count": "4", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_NC8ads_A10_v4":     {"hourly_usd": "1.43",   "vcpu_count": "8",  "memory_gb": "56",   "gpu_count": "1", "gpu_sku": "a10-24gb",        "gpu_vram_gb": "24",  "aliases": ["NVIDIA A10"]},
+            "Standard_ND96asr_A100_v4":   {"hourly_usd": "35.357", "vcpu_count": "96", "memory_gb": "1900", "gpu_count": "8", "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40",  "aliases": ["NVIDIA A100-SXM4-40GB"]},
+            "Standard_ND96amsr_A100_v4":  {"hourly_usd": "40.962", "vcpu_count": "96", "memory_gb": "1900", "gpu_count": "8", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]}
+          }
+        },
+        "southeastasia": {
+          "instance_types": {
+            "Standard_NC24ads_A100_v4":   {"hourly_usd": "2.39",   "vcpu_count": "24", "memory_gb": "220", "gpu_count": "1", "gpu_sku": "a100-80gb-pcie", "gpu_vram_gb": "80", "aliases": ["NVIDIA A100 80GB PCIe"]},
+            "Standard_NC96ads_A100_v4":   {"hourly_usd": "19.10",  "vcpu_count": "96", "memory_gb": "880", "gpu_count": "4", "gpu_sku": "a100-80gb-pcie", "gpu_vram_gb": "80", "aliases": ["NVIDIA A100 80GB PCIe"]}
+          }
+        }
+      }
+    },
+    "vm_vgpu": {
+      "regions": {
+        "eastus": {
+          "instance_types": {
+            "Standard_NV6ads_A10_v5":    {"vgpu_hour_usd": "0.454", "vcpu_count": "6",  "memory_gb": "55",  "vgpu_profile": "1/6 A10", "gpu_sku": "a10-vgpu-1of6",  "gpu_vram_gb": "4",  "aliases": ["NVIDIA A10-4Q", "NVIDIA A10"]},
+            "Standard_NV12ads_A10_v5":   {"vgpu_hour_usd": "0.908", "vcpu_count": "12", "memory_gb": "110", "vgpu_profile": "1/3 A10", "gpu_sku": "a10-vgpu-1of3",  "gpu_vram_gb": "8",  "aliases": ["NVIDIA A10-8Q", "NVIDIA A10"]},
+            "Standard_NV18ads_A10_v5":   {"vgpu_hour_usd": "1.6",   "vcpu_count": "18", "memory_gb": "220", "vgpu_profile": "1/2 A10", "gpu_sku": "a10-vgpu-1of2",  "gpu_vram_gb": "12", "aliases": ["NVIDIA A10-12Q", "NVIDIA A10"]},
+            "Standard_NV36ads_A10_v5":   {"vgpu_hour_usd": "3.2",   "vcpu_count": "36", "memory_gb": "440", "vgpu_profile": "full A10", "gpu_sku": "a10-24gb",       "gpu_vram_gb": "24", "aliases": ["NVIDIA A10"]},
+            "Standard_NV36adms_A10_v5":  {"vgpu_hour_usd": "4.52",  "vcpu_count": "36", "memory_gb": "880", "vgpu_profile": "full A10 high-mem", "gpu_sku": "a10-24gb", "gpu_vram_gb": "24", "aliases": ["NVIDIA A10"]},
+            "Standard_NV72ads_A10_v5":   {"vgpu_hour_usd": "6.52",  "vcpu_count": "72", "memory_gb": "880", "vgpu_profile": "2x A10",   "gpu_sku": "a10-24gb",       "gpu_vram_gb": "24", "aliases": ["NVIDIA A10"]}
+          }
+        }
+      }
+    }
+  },
+  "modal": {
+    "_last_verified": "2026-05-22",
+    "per_gpu_second_active": {
+      "default": {
+        "t4":              {"gpu_second_usd": "0.000164", "gpu_hour_usd": "0.59", "gpu_sku": "t4-16gb",         "gpu_vram_gb": "16",  "aliases": ["Tesla T4", "NVIDIA T4"]},
+        "l4":              {"gpu_second_usd": "0.000222", "gpu_hour_usd": "0.80", "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24",  "aliases": ["NVIDIA L4"]},
+        "a10":             {"gpu_second_usd": "0.000306", "gpu_hour_usd": "1.10", "gpu_sku": "a10-24gb",        "gpu_vram_gb": "24",  "aliases": ["NVIDIA A10"]},
+        "l40s":            {"gpu_second_usd": "0.000542", "gpu_hour_usd": "1.95", "gpu_sku": "l40s-48gb",       "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40S"]},
+        "a100-40gb":       {"gpu_second_usd": "0.000583", "gpu_hour_usd": "2.10", "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40",  "aliases": ["NVIDIA A100-SXM4-40GB"]},
+        "a100-80gb":       {"gpu_second_usd": "0.000694", "gpu_hour_usd": "2.50", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]},
+        "rtx-pro-6000":    {"gpu_second_usd": "0.000842", "gpu_hour_usd": "3.03", "gpu_sku": "rtx-pro-6000-96gb", "gpu_vram_gb": "96", "aliases": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]},
+        "h100":            {"gpu_second_usd": "0.001097", "gpu_hour_usd": "3.95", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 80GB HBM3"]},
+        "h200":            {"gpu_second_usd": "0.001261", "gpu_hour_usd": "4.54", "gpu_sku": "h200-141gb-sxm5", "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]},
+        "b200":            {"gpu_second_usd": "0.001736", "gpu_hour_usd": "6.25", "gpu_sku": "b200-180gb-sxm6", "gpu_vram_gb": "180", "aliases": ["NVIDIA B200"]}
+      }
+    }
+  },
+  "runpod": {
+    "_last_verified": "2026-05-22",
+    "per_gpu_second_active": {
+      "default": {
+        "on_demand": {
+          "rtx-a5000":       {"gpu_second_usd": "0.000044", "gpu_hour_usd": "0.16", "gpu_sku": "rtx-a5000-24gb",  "gpu_vram_gb": "24",  "aliases": ["NVIDIA RTX A5000"]},
+          "rtx-3090":        {"gpu_second_usd": "0.000061", "gpu_hour_usd": "0.22", "gpu_sku": "rtx-3090-24gb",   "gpu_vram_gb": "24",  "aliases": ["NVIDIA GeForce RTX 3090"]},
+          "rtx-a6000":       {"gpu_second_usd": "0.000092", "gpu_hour_usd": "0.33", "gpu_sku": "rtx-a6000-48gb",  "gpu_vram_gb": "48",  "aliases": ["NVIDIA RTX A6000"]},
+          "rtx-4090":        {"gpu_second_usd": "0.000094", "gpu_hour_usd": "0.34", "gpu_sku": "rtx-4090-24gb",   "gpu_vram_gb": "24",  "aliases": ["NVIDIA GeForce RTX 4090"]},
+          "a40":             {"gpu_second_usd": "0.000097", "gpu_hour_usd": "0.35", "gpu_sku": "a40-48gb",        "gpu_vram_gb": "48",  "aliases": ["NVIDIA A40"]},
+          "l4":              {"gpu_second_usd": "0.000122", "gpu_hour_usd": "0.44", "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24",  "aliases": ["NVIDIA L4"]},
+          "l40":             {"gpu_second_usd": "0.000192", "gpu_hour_usd": "0.69", "gpu_sku": "l40-48gb",        "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40"]},
+          "rtx-6000-ada":    {"gpu_second_usd": "0.000206", "gpu_hour_usd": "0.74", "gpu_sku": "rtx-6000-ada-48gb", "gpu_vram_gb": "48", "aliases": ["NVIDIA RTX 6000 Ada Generation"]},
+          "l40s":            {"gpu_second_usd": "0.000219", "gpu_hour_usd": "0.79", "gpu_sku": "l40s-48gb",       "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40S"]},
+          "a100-80gb-pcie":  {"gpu_second_usd": "0.000331", "gpu_hour_usd": "1.19", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+          "a100-80gb-sxm":   {"gpu_second_usd": "0.000386", "gpu_hour_usd": "1.39", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]},
+          "h100-pcie":       {"gpu_second_usd": "0.000553", "gpu_hour_usd": "1.99", "gpu_sku": "h100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 PCIe", "NVIDIA H100 80GB PCIe"]},
+          "h100-nvl":        {"gpu_second_usd": "0.000719", "gpu_hour_usd": "2.59", "gpu_sku": "h100-94gb-nvl",   "gpu_vram_gb": "94",  "aliases": ["NVIDIA H100 NVL"]},
+          "h100-sxm":        {"gpu_second_usd": "0.000747", "gpu_hour_usd": "2.69", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 80GB HBM3"]},
+          "h200":            {"gpu_second_usd": "0.000997", "gpu_hour_usd": "3.59", "gpu_sku": "h200-141gb-sxm5", "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]},
+          "b200":            {"gpu_second_usd": "0.001661", "gpu_hour_usd": "5.98", "gpu_sku": "b200-180gb-sxm6", "gpu_vram_gb": "180", "aliases": ["NVIDIA B200"]}
+        },
+        "community_cloud": {
+          "rtx-a5000":       {"gpu_second_usd": "0.000044", "gpu_hour_usd": "0.16", "gpu_sku": "rtx-a5000-24gb",  "gpu_vram_gb": "24",  "aliases": ["NVIDIA RTX A5000"]},
+          "rtx-3090":        {"gpu_second_usd": "0.000061", "gpu_hour_usd": "0.22", "gpu_sku": "rtx-3090-24gb",   "gpu_vram_gb": "24",  "aliases": ["NVIDIA GeForce RTX 3090"]},
+          "rtx-a6000":       {"gpu_second_usd": "0.000092", "gpu_hour_usd": "0.33", "gpu_sku": "rtx-a6000-48gb",  "gpu_vram_gb": "48",  "aliases": ["NVIDIA RTX A6000"]},
+          "rtx-4090":        {"gpu_second_usd": "0.000094", "gpu_hour_usd": "0.34", "gpu_sku": "rtx-4090-24gb",   "gpu_vram_gb": "24",  "aliases": ["NVIDIA GeForce RTX 4090"]},
+          "a40":             {"gpu_second_usd": "0.000097", "gpu_hour_usd": "0.35", "gpu_sku": "a40-48gb",        "gpu_vram_gb": "48",  "aliases": ["NVIDIA A40"]},
+          "l4":              {"gpu_second_usd": "0.000122", "gpu_hour_usd": "0.44", "gpu_sku": "l4-24gb",         "gpu_vram_gb": "24",  "aliases": ["NVIDIA L4"]},
+          "l40":             {"gpu_second_usd": "0.000192", "gpu_hour_usd": "0.69", "gpu_sku": "l40-48gb",        "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40"]},
+          "l40s":            {"gpu_second_usd": "0.000219", "gpu_hour_usd": "0.79", "gpu_sku": "l40s-48gb",       "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40S"]},
+          "a100-80gb-pcie":  {"gpu_second_usd": "0.000331", "gpu_hour_usd": "1.19", "gpu_sku": "a100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100 80GB PCIe"]},
+          "a100-80gb-sxm":   {"gpu_second_usd": "0.000386", "gpu_hour_usd": "1.39", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]},
+          "h100-pcie":       {"gpu_second_usd": "0.000553", "gpu_hour_usd": "1.99", "gpu_sku": "h100-80gb-pcie",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 PCIe"]},
+          "h100-sxm":        {"gpu_second_usd": "0.000747", "gpu_hour_usd": "2.69", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 80GB HBM3"]},
+          "h200":            {"gpu_second_usd": "0.000997", "gpu_hour_usd": "3.59", "gpu_sku": "h200-141gb-sxm5", "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]}
+        }
+      }
+    }
+  },
+  "lambda_labs": {
+    "_last_verified": "2026-05-22",
+    "per_gpu_hour_reserved": {
+      "default": {
+        "rtx-6000":            {"gpu_hour_usd": "0.69", "gpu_sku": "rtx-6000-24gb",   "gpu_vram_gb": "24", "aliases": ["Quadro RTX 6000"]},
+        "v100":                {"gpu_hour_usd": "0.79", "gpu_sku": "v100-16gb",       "gpu_vram_gb": "16", "aliases": ["Tesla V100-SXM2-16GB"]},
+        "a6000":               {"gpu_hour_usd": "1.09", "gpu_sku": "rtx-a6000-48gb",  "gpu_vram_gb": "48", "aliases": ["NVIDIA RTX A6000"]},
+        "a10":                 {"gpu_hour_usd": "1.29", "gpu_sku": "a10-24gb",        "gpu_vram_gb": "24", "aliases": ["NVIDIA A10"]},
+        "a100-40gb-sxm":       {"gpu_hour_usd": "1.99", "gpu_sku": "a100-40gb-sxm4",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-SXM4-40GB"]},
+        "a100-40gb-pcie":      {"gpu_hour_usd": "1.99", "gpu_sku": "a100-40gb-pcie",  "gpu_vram_gb": "40", "aliases": ["NVIDIA A100-PCIE-40GB"]},
+        "gh200":               {"gpu_hour_usd": "2.29", "gpu_sku": "gh200-96gb",      "gpu_vram_gb": "96", "aliases": ["NVIDIA GH200 480GB"]},
+        "a100-80gb-sxm":       {"gpu_hour_usd": "2.79", "gpu_sku": "a100-80gb-sxm4",  "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+        "h100-pcie":           {"gpu_hour_usd": "3.29", "gpu_sku": "h100-80gb-pcie",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 PCIe", "NVIDIA H100 80GB PCIe"]},
+        "h100-sxm-8x":         {"gpu_hour_usd": "3.99", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+        "h100-sxm-1x":         {"gpu_hour_usd": "4.29", "gpu_sku": "h100-80gb-sxm5",  "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]},
+        "b200-sxm6-8x":        {"gpu_hour_usd": "6.69", "gpu_sku": "b200-180gb-sxm6", "gpu_vram_gb": "180", "aliases": ["NVIDIA B200"]},
+        "b200-sxm6-1x":        {"gpu_hour_usd": "6.99", "gpu_sku": "b200-180gb-sxm6", "gpu_vram_gb": "180", "aliases": ["NVIDIA B200"]}
+      }
+    }
+  },
+  "coreweave": {
+    "_last_verified": "2026-05-22",
+    "per_gpu_hour_reserved": {
+      "default": {
+        "l40":           {"gpu_hour_usd": "1.25", "gpu_sku": "l40-48gb",          "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40"]},
+        "l40s":          {"gpu_hour_usd": "2.25", "gpu_sku": "l40s-48gb",         "gpu_vram_gb": "48",  "aliases": ["NVIDIA L40S"]},
+        "rtx-pro-6000":  {"gpu_hour_usd": "2.50", "gpu_sku": "rtx-pro-6000-96gb", "gpu_vram_gb": "96",  "aliases": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]},
+        "a100-80gb":     {"gpu_hour_usd": "2.70", "gpu_sku": "a100-80gb-sxm4",    "gpu_vram_gb": "80",  "aliases": ["NVIDIA A100-SXM4-80GB"]},
+        "h100-hgx-sxm5": {"gpu_hour_usd": "6.16", "gpu_sku": "h100-80gb-sxm5",    "gpu_vram_gb": "80",  "aliases": ["NVIDIA H100 80GB HBM3"]},
+        "h200-hgx":      {"gpu_hour_usd": "6.31", "gpu_sku": "h200-141gb-sxm5",   "gpu_vram_gb": "141", "aliases": ["NVIDIA H200"]},
+        "gh200":         {"gpu_hour_usd": "6.50", "gpu_sku": "gh200-96gb",        "gpu_vram_gb": "96",  "aliases": ["NVIDIA GH200 480GB"]},
+        "hgx-b200":      {"gpu_hour_usd": "8.60", "gpu_sku": "b200-180gb-sxm6",   "gpu_vram_gb": "180", "aliases": ["NVIDIA B200"]},
+        "gb200-nvl72":   {"gpu_hour_usd": "10.50", "gpu_sku": "gb200-186gb",      "gpu_vram_gb": "186", "aliases": ["NVIDIA GB200"]}
+      }
+    }
+  },
+  "replicate": {
+    "_last_verified": "2026-05-22",
+    "per_gpu_second_active": {
+      "default": {
+        "t4":          {"gpu_second_usd": "0.000225", "gpu_hour_usd": "0.81",  "gpu_sku": "t4-16gb",        "gpu_vram_gb": "16", "aliases": ["Tesla T4", "NVIDIA T4"]},
+        "l40s":        {"gpu_second_usd": "0.000975", "gpu_hour_usd": "3.51",  "gpu_sku": "l40s-48gb",      "gpu_vram_gb": "48", "aliases": ["NVIDIA L40S"]},
+        "a100-80gb":   {"gpu_second_usd": "0.001400", "gpu_hour_usd": "5.04",  "gpu_sku": "a100-80gb-sxm4", "gpu_vram_gb": "80", "aliases": ["NVIDIA A100-SXM4-80GB"]},
+        "h100":        {"gpu_second_usd": "0.001525", "gpu_hour_usd": "5.49",  "gpu_sku": "h100-80gb-sxm5", "gpu_vram_gb": "80", "aliases": ["NVIDIA H100 80GB HBM3"]}
+      }
+    }
+  }
+}
