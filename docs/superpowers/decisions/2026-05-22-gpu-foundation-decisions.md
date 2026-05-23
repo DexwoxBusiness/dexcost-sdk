@@ -29,11 +29,35 @@ The eleven decisions that gate the Phase 2 — GPU Foundation spec, plus the str
 4. Permissions are the failure mode, not the design center. Inside an unprivileged container, the cgroup walk may fail (`/proc/<other_pid>/cgroup` returns EACCES) or NVML may return `NVML_ERROR_NO_PERMISSION` for non-self PIDs. Fail-silent + log-once + degrade to self-PID-only via convention §11 — the customer still gets a number, the log surfaces the degradation, dexcost keeps running.
 
 **Implementation sharpening:**
-- The GPU accountant reads `/proc/<self>/cgroup` once at task start to identify the cgroup path; caches it for the task lifetime.
+
+*Which cgroup to walk — this is the load-bearing detail.* `/proc/<self>/cgroup` returns whatever cgroup the calling process happens to live in, which varies across environments. The spec must specify the **container-scope** cgroup, not the systemd user slice or the cgroup root.
+
+- The GPU accountant reads `/proc/<self>/cgroup` once at task start and **classifies the cgroup scope** by prefix:
+  - `kubepods/` or `kubepods.slice/` → K8s pod scope; walk this cgroup (captures all pod PIDs).
+  - `docker/` or `system.slice/docker-*.scope` → Docker container scope; walk this cgroup.
+  - `containerd/` or `system.slice/containerd-*.scope` → containerd scope; walk this cgroup.
+  - `crio-*` or `crio.scope` → CRI-O scope; walk this cgroup.
+  - `user.slice/` (systemd user session) → **bare-metal-no-container**; do NOT walk (would capture unrelated user PIDs). Degrade to self-PID-only.
+  - `/` (root cgroup, common in privileged single-tenant hosts) → ambiguous; degrade to self-PID-only.
+  - Anything else → unknown scope; degrade to self-PID-only.
+- The bare-metal-no-container case logs once: `gpu_no_container_scope` — the customer sees the degradation and knows the SDK works best inside a container.
+- **Multi-container K8s pod limitation (documented as a v1 known-limit):** if dexcost runs in container A and a sidecar in container B holds the GPU, attribution will miss container B's PIDs because each container has its own cgroup scope under the pod cgroup. The walk could in theory ascend to the pod cgroup, but that requires cross-container `/proc/<other_pid>/cgroup` read access which is denied in standard pod security contexts. Surface this case at `cost_confidence: estimated` with `pricing_source: "gpu_catalog:<provider>:<sku>:multi_container_pod_partial"` when NVML reports compute processes whose PIDs are NOT in the dexcost container's cgroup. v1.1 explores cross-container attribution via the Downward API.
+
+*Snapshot mechanics:*
 - At each NVML sample (start, end), enumerate `cgroup.procs` (cgroup v2) or `tasks` (cgroup v1, future); call `nvmlDeviceGetProcessUtilization` for each PID in the set; accumulate.
 - A PID that disappears between start and end (forked worker exited) is handled by reading its terminal `lastSeenTimeStamp` from the start snapshot — the end snapshot won't list it but the start snapshot captured its accumulated samples.
-- Per-mode log-once tokens: `gpu_cgroup_walk_forbidden`, `gpu_nvml_pid_forbidden:<pid>`, `gpu_cgroup_v1_only` (future v1.1).
-- Confidence labelling: full cgroup walk succeeded → `computed`; degraded to self-only → `estimated` + `pricing_source: "gpu_catalog:<provider>:<sku>:self_pid_only"`.
+- Per-mode log-once tokens: `gpu_cgroup_walk_forbidden`, `gpu_nvml_pid_forbidden:<pid>`, `gpu_no_container_scope`, `gpu_multi_container_pod_partial`, `gpu_cgroup_v1_only` (future v1.1).
+
+*Confidence labelling matrix:*
+| Scope | NVML access | `cost_confidence` | `pricing_source` suffix |
+|---|---|---|---|
+| Container cgroup walk succeeded, all PIDs accessible | `computed` | (none) |
+| Container cgroup walk succeeded, some PID NVML access denied | `estimated` | `:nvml_partial` |
+| Container cgroup walk failed → self-PID-only | `estimated` | `:self_pid_only` |
+| Bare-metal-no-container → self-PID-only | `estimated` | `:no_container_scope` |
+| Multi-container K8s pod, external PIDs detected | `estimated` | `:multi_container_pod_partial` |
+
+**Verification gate (must resolve before spec writing concludes):** the spec section for Decision #1 MUST include the cgroup-scope classification table above, the bare-metal-no-container handling, and the multi-container K8s pod limitation. Without this, Decision #1 reads as architecturally correct but underspecified — and the silent-overcount (bare-metal) and silent-undercount (multi-container K8s) cases would only surface during integration testing.
 
 **Customer-facing framing (mandatory):**
 > dexcost-GPU attributes GPU time across your task's cgroup — both the parent process and any worker processes it spawned (PyTorch DataLoader, Ray, multiprocessing, vLLM workers). In unprivileged containers where the cgroup walk or NVML lookup is denied, dexcost falls back to attributing only the calling process's GPU usage; this surfaces as `cost_confidence: estimated` and a per-process log warning. To get full attribution, grant the dexcost-running container `--cap-add=SYS_PTRACE` or run NVML with `nvidia-container-toolkit --gpus all` (the default on modern Kubernetes GPU operators).
@@ -55,6 +79,8 @@ The eleven decisions that gate the Phase 2 — GPU Foundation spec, plus the str
 
 **Schema-forward-compatible:** `details.mig_profile` (e.g. `"1g.5gb"`, `"2g.10gb"`, `"3g.20gb"`, `null` if not MIG) is captured for v1 even though v1 ignores it for the math. v1.1 adds the fractional math additively when needed; no schema migration.
 
+**Transparency log-once:** when NVML reports `MIG-` UUIDs on the device, the GPU accountant emits `gpu_mig_detected_full_billing_applied` once per task per device. This surfaces the "we saw your MIG config and intentionally chose full-GPU billing" decision to the customer. Without the log, a customer running 7 tasks on 7 MIG slices of one A100 sees the full-A100 rate attributed 7 times in parallel — correct per the decision, but mysteriously high without the explanation.
+
 ---
 
 ### Decision 3 — `gpu_utilization_signal` event type (the 380× idle gap call)
@@ -72,25 +98,40 @@ The eleven decisions that gate the Phase 2 — GPU Foundation spec, plus the str
 This is **the only convention-text update Phase 2 introduces** — `conventions.md §1` (one event type per subsystem) gains an explicit carve-out: *"A subsystem MAY introduce a secondary 'signal' event type alongside its primary cost event, provided the signal event has no `cost_usd` field and is documented as observability-only. Phase 2 GPU's `gpu_utilization_signal` is the reference example."*
 
 **Implementation sharpening:**
-- Event shape:
-  ```
-  event_type:     "gpu_utilization_signal"
-  task_id:        <UUID>
-  timestamp:      <ISO-8601>
-  details: {
-    gpu_index:        0,
-    gpu_sku:          "h100-80gb-sxm5",
-    sm_util_pct:      35.0,         # NVML smUtil — kernel-time percentage (NOT SM-occupancy)
-    mem_util_pct:     22.0,         # NVML memUtil
-    vram_used_bytes:  21474836480,
-    vram_total_bytes: 85899345920,
-    process_count:    4,            # NVML compute-processes count on this device
-    sampled_at:       <ISO-8601>,
-  }
-  ```
+
+*Emission cadence — task-window-averaged, NOT point-sampled.* Point-sampling at `task.end()` would produce misleading output: a task running at 80% utilization for 5 minutes then idling 10 seconds before finalize would emit `sm_util_pct: 0`. The accountant computes the average across the full task window using the per-PID timestamp state already required by Decision #8:
+
+```
+sm_util_pct = (sum(total_sm_us_per_pid across cgroup membership)
+               / task_wall_duration_us
+               / gpu_count_on_device) * 100
+```
+
+The numerator is already accumulated for `gpu_seconds_used` (the dollar-attribution figure); the same value divided by wall-time and SM count yields the time-averaged utilization. No extra NVML calls; no extra integration math beyond what Decision #8 already requires.
+
+*Event shape:*
+```
+event_type:     "gpu_utilization_signal"
+task_id:        <UUID>
+timestamp:      <ISO-8601>
+details: {
+  gpu_index:        0,
+  gpu_sku:          "h100-80gb-sxm5",
+  sm_util_pct:      35.0,           # task-window-averaged kernel-time %
+  mem_util_pct:     22.0,           # task-window-averaged NVML memUtil
+  vram_used_peak_bytes: 21474836480,  # peak across the task window (NOT point sample)
+  vram_total_bytes: 85899345920,
+  process_count:    4,              # cgroup-membership PIDs that held GPU during window
+  sample_count:     53,             # number of NVML samples accumulated
+  task_duration_ms: 312500,         # the window the averages cover
+}
+```
+
 - NO `cost_usd`, NO `pricing_source`, NO `cost_confidence`, NO `pricing_version`. Pure observability.
 - Emitted exactly once per task per GPU at task finalize, mirroring `compute_cost`'s emission discipline.
-- The `sm_util_pct` field documentation MUST say: *"NVML smUtil — percent of time the GPU's SMs had ≥1 kernel running. NOT fractional SM occupancy. A single-block kernel pegging the GPU reads as 100% even if it uses 1/108 SMs."* (per research §1.1)
+- `vram_used_peak_bytes` is intentionally a peak (high-water mark across the task) rather than an average, because VRAM is fungible and peak-vs-limit is the actionable metric for right-sizing.
+- The `sm_util_pct` field documentation MUST say: *"NVML smUtil averaged across the task window — percent of time the GPU's SMs had ≥1 kernel running. NOT fractional SM occupancy. A single-block kernel pegging the GPU reads as 100% even if it uses 1/108 SMs."* (per research §1.1)
+- If `task_duration_ms == 0` (task started and ended within the same NVML sample period — sub-100ms tasks), emit `sm_util_pct: null` rather than dividing by zero. The signal is degenerate at that timescale.
 
 ---
 
@@ -108,9 +149,9 @@ This is **the only convention-text update Phase 2 introduces** — `conventions.
 **Rationale:** Keeps the mapping close to the rate (one PR updates both rate AND aliases when a new variant ships). Separate file (option b) creates a drift surface where aliases get added without rate updates. Code regex (option c) requires a release to add a new variant — defeats the catalog's community-PR model.
 
 **Implementation sharpening:**
-- Aliases are matched case-insensitively after collapsing whitespace runs.
+- Aliases are matched after a normalization pass: **Unicode NFC normalization → lowercase → collapse whitespace runs (including non-breaking spaces U+00A0, narrow no-break space U+202F, and zero-width characters) → strip leading/trailing whitespace.** NVIDIA's `productName` strings have historically carried non-breaking spaces and other Unicode quirks across driver versions; NFC normalization prevents the "alias works on my laptop but not on this Modal container" failure mode where two visually-identical strings differ at the byte level.
 - A `productName` that matches multiple aliases (rare; would indicate catalog overlap) logs `gpu_alias_ambiguous:<productName>` once and uses the first match.
-- No match found → `gpu_sku_unknown:<productName>` once + fall through to the GPU's `device_class` (`"hopper"`, `"ampere"`, `"ada-lovelace"`) which carries a coarse-default rate.
+- No match found → `gpu_sku_unknown:<productName>` once + fall through to the GPU's `device_class` (`"hopper"`, `"ampere"`, `"ada-lovelace"`, `"blackwell"`) which carries a coarse-default rate.
 - A `device_class` default rate covers the long tail of new NVIDIA SKUs that ship between catalog refreshes — the customer gets `estimated` confidence and a rate within ~30% of true, rather than $0.
 
 ---
@@ -139,7 +180,7 @@ This is **the only convention-text update Phase 2 introduces** — `conventions.
 
 **Customer-facing framing (mandatory — must appear in README, Cost Intelligence dashboard, marketing site):**
 
-> dexcost-GPU's compute total will run lower than your cloud bill on long-running GPU runtimes. On a `p5.48xlarge` ($55/hr) sitting idle 60% of the time, your `dexcost_gpu_total` will read 40% of your cloud GPU spend. **This is by design** — dexcost measures what your tasks actually consumed. The `gpu_utilization_signal` events (Decision #3) surface the idle gap explicitly so you can act on it: right-size to smaller GPUs, move to a serverless GPU cloud (Modal, RunPod, Replicate), or schedule batch workloads to fill idle capacity.
+> dexcost-GPU's compute total runs lower than your cloud GPU bill by the percentage of GPU-hours your tasks didn't actively consume. On long-running GPU instances (EC2 `p5`, GCE A100, Azure ND series), idle periods between tasks are real billable time on your cloud invoice but invisible to dexcost — dexcost measures what your tasks actually used, not what your provisioned capacity could have done. **This gap is by design.** The `gpu_utilization_signal` events (Decision #3) surface the gap explicitly as a real utilization percentage so you can act on it: right-size to smaller GPUs, move bursty workloads to a serverless GPU cloud (Modal, RunPod, Replicate) where you only pay for active seconds, or schedule batch workloads to fill idle capacity.
 
 The reconciliation surface (future Cost Intelligence feature) is where the per-cloud "$X attributed vs. $Y invoiced" variance gets explained as a first-class line item.
 
@@ -216,21 +257,29 @@ The reconciliation surface (future Cost Intelligence feature) is where the per-c
 
 ## Strengthenings — implementation polish that landed during decision review
 
-These aren't decision overrides; they're sharpenings that emerged during the lock-in conversation and need to be reflected in the spec.
+These aren't decision overrides; they're sharpenings that emerged during the two-pass lock-in conversation (initial draft → critique → resolution) and need to be reflected in the spec.
 
-1. **Decision #1 — cgroup walk is the primary path.** The fail-silent fallback to self-PID-only is explicit but secondary. Confidence labelling (`computed` vs `estimated`) is the customer-visible signal that the fallback kicked in.
+1. **Decision #1 — cgroup-scope classification is the load-bearing detail.** Walking the wrong cgroup level silently overcounts (bare-metal-no-container hits the systemd user slice) or silently undercounts (multi-container K8s pods miss sidecar PIDs). The classification table + bare-metal fallback + multi-container limitation landed inline in Decision #1's sharpenings as a verification gate — the spec MUST include them, not "consider them."
 
-2. **Decision #3 — `gpu_utilization_signal` is the convention-text-update.** This is the ONLY cross-subsystem convention change Phase 2 introduces — `conventions.md §1` gains the carve-out for observability-only signal events. Document this in the conventions file as part of spec writing, not as a separate change request.
+2. **Decision #2 — `gpu_mig_detected_full_billing_applied` log-once for transparency.** When NVML reports MIG UUIDs, the customer should see the SDK observed the configuration and intentionally chose full-GPU billing. Without this, 7 tasks on 7 MIG slices of one A100 look mysteriously like 7× the rate.
 
-3. **Decision #4 — `device_class` fallback prevents the cold-start zero-attribution case.** When a new NVIDIA SKU (e.g. B100 "Blackwell" launching in 2026-Q4) ships before the catalog updates, the customer still gets a rate via the device-class default (~30% accuracy band) instead of `$0`. The cost-confidence is `estimated`, the pricing_source carries `:device_class_fallback`.
+3. **Decision #3 — emission is task-window-averaged, NOT point-sampled.** Point-sampling at `task.end()` would emit `sm_util_pct: 0` for any task with a quiet tail. Task-window averaging uses the per-PID timestamp accumulation Decision #8 already requires; cost is zero (math is already done for `gpu_seconds_used`). Customer-visible result: utilization is meaningful and actionable, not a finalize-time snapshot artifact.
 
-4. **Decision #5 — `details.gpu_vendor` captured for ALL events** even when all v1 values are `"nvidia"`. Enables v1.1 AMD/Intel without a schema migration.
+4. **Decision #3 — `gpu_utilization_signal` is the convention-text-update.** This is the ONLY cross-subsystem convention change Phase 2 introduces — `conventions.md §1` gains the carve-out for observability-only signal events. Document this in the conventions file as part of spec writing, not as a separate change request.
 
-5. **Decision #6 — the customer-facing framing language must ship in product surfaces** (README, dashboard, marketing site) AT v1 launch, not "later." The Phase 1 lesson was that without the framing, the first customer files a bug and the framing has to be retrofitted under support pressure. Don't repeat.
+5. **Decision #4 — NFC normalization on alias matching.** NVIDIA's `productName` strings carry non-breaking spaces and other Unicode quirks across driver versions; without NFC normalization, two visually-identical strings can differ at the byte level and miss the alias match. ~5 LOC per SDK; prevents a "alias works on my laptop, not on Modal" surprise.
 
-6. **Decision #8 — NVML buffer-overflow detection.** A `gpu_nvml_buffer_overflow` log-once is the early signal that tasks are running longer than NVML's sample buffer can retain (per-device, per-process). This is documentation-only in v1 (the customer can't fix it from outside dexcost) but flags a future v1.1 enhancement: sample buffer flushing on a background thread for long-running batch jobs.
+6. **Decision #4 — `device_class` fallback prevents cold-start $0 attribution.** When a new NVIDIA SKU ships before the catalog updates, the customer gets a rate within ~30% via the device-class default instead of zero. `cost_confidence: estimated`, `pricing_source: ":device_class_fallback"`.
 
-7. **Decision #11 — soft-warn vs hard-fail thresholds.** 90-day soft-warn / 365-day hard-fail for GPU mirrors compute's 180/730 but at half the duration. The integrity test must explicitly distinguish the two thresholds and emit different log levels (WARN vs ERROR) so CI doesn't fail on a 91-day-stale catalog.
+7. **Decision #5 — `details.gpu_vendor` captured for ALL events** even when all v1 values are `"nvidia"`. Enables v1.1 AMD/Intel without a schema migration.
+
+8. **Decision #6 — framing uses general percentage language, not the specific 40% number.** The example becomes illustrative ("on a `p5.48xlarge` sitting idle 60% of the time...") rather than expectation-setting ("your total will read 40%..."). Avoids anchoring customer expectations to one specific utilization rate.
+
+9. **Decision #6 — customer-facing framing language must ship in product surfaces** (README, dashboard, marketing site) AT v1 launch, not "later." Phase 1 lesson: without the framing, the first customer files a bug and the framing gets retrofitted under support pressure.
+
+10. **Decision #8 — NVML buffer-overflow detection.** A `gpu_nvml_buffer_overflow` log-once flags tasks running longer than NVML's sample buffer can retain. Documentation-only in v1 (no customer-side fix); flags v1.1 enhancement for background sample-buffer flushing on long-running batch jobs.
+
+11. **Decision #11 — soft-warn vs hard-fail thresholds with distinct log levels.** 90-day soft-warn / 365-day hard-fail for GPU mirrors compute's 180/730 but at half the duration. The integrity test emits WARN at 90 days and ERROR at 365 days so CI doesn't fail on a 91-day-stale catalog.
 
 ---
 
@@ -283,8 +332,10 @@ Phase 2 introduces ONE convention update vs. inherits:
 
 ## Verdict
 
-**All 11 approved. Seven strengthenings folded in. Three customer-facing artifacts to produce (Decision #1 cgroup-walk fallback framing + Decision #3 `gpu_utilization_signal` documentation + Decision #6 idle-gap framing). One convention text update to land (§1 observability-signal carve-out). Ready to move to spec.**
+**All 11 approved (10 directly, 1 with explicit verification gate). Eleven strengthenings folded in across two critique passes. Three customer-facing artifacts to produce (Decision #1 cgroup-walk fallback framing + Decision #3 `gpu_utilization_signal` documentation + Decision #6 idle-gap framing). One convention text update to land (§1 observability-signal carve-out). Ready to move to spec.**
 
-The most important decision is #1 — multi-PID attribution via cgroup walk. Getting this right is what makes dexcost-GPU's numbers match customer intuition for the most common 2026 distributed-training workloads (PyTorch DDP, Ray, vLLM workers). Getting it wrong silently under-attributes by 4-8× on first install and triggers the trust-erosion failure mode.
+The most important decision is #1 — multi-PID attribution via cgroup walk. Getting this right is what makes dexcost-GPU's numbers match customer intuition for the most common 2026 distributed-training workloads (PyTorch DDP, Ray, vLLM workers). Getting it wrong silently under-attributes by 4-8× (forked workers) or silently over-attributes (bare-metal-no-container hits the wrong cgroup scope) on first install and triggers the trust-erosion failure mode either way. The cgroup-scope classification table (Decision #1 sharpening) is the verification gate the spec MUST clear before declaring the decision implemented.
 
-The discipline pattern (research → critique → decisions → spec → plan → implementation) that produced Phase 1's quality holds for Phase 2.
+**Process observation worth noting:** Phase 2's decisions log is *shorter and denser* than Phase 1's (11 decisions vs Phase 1's 10, but in fewer lines), even after the second critique pass added two sharpenings. That's the cross-subsystem conventions doc earning its keep — most of the patterns Phase 1 had to litigate from scratch (event-shape, confidence enum, source-measurement boundary, fail-silent, log-once) inherit by reference here. Subsystem D (storage) and E (catalog updates) should be tighter still. The discipline is compounding correctly.
+
+The pattern (research → critique → decisions → critique → spec → plan → implementation) that produced Phase 1's quality holds for Phase 2, with the second-critique-pass on the decisions log being the addition that surfaced the cgroup-scope underspecification and the point-sample vs. window-averaged emission cadence question before they became implementation surprises.
