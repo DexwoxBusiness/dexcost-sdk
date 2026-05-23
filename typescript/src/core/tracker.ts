@@ -19,6 +19,9 @@ import { EgressPricingEngine } from "../pricing/egress-pricing.js";
 import { ComputePricingEngine } from "../pricing/compute-pricing.js";
 import { ComputeAccountant } from "./compute-accountant.js";
 import { RuntimeKind } from "./compute-runtime.js";
+import { GpuPricingEngine } from "../pricing/gpu-pricing.js";
+import { GpuAccountant } from "./gpu-accountant.js";
+import { GpuRuntimeKind } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
 import Decimal from "decimal.js";
 import { EventPusher } from "../transport/pusher.js";
@@ -461,6 +464,24 @@ export class TrackedTask {
       );
     }
 
+    // ── GPU capture (Phase 2 v1 + v2) ─────────────────────────────────────
+    // Long-running GPU runtimes (AWS_EC2_GPU / GCP_GCE_BUNDLED / etc.) emit
+    // 1 gpu_cost + N gpu_utilization_signal at task finalize from the cgroup
+    // walk + NVML snapshot diff. Serverless runtimes (Modal / RunPod /
+    // Replicate) have already emitted via the handler wrap. Either way the
+    // GpuPricingEngine back-fills gpu_cost.costUsd here via the deferred-
+    // cost pattern. gpu_utilization_signal events are NEVER priced
+    // (Decision #3 observability carve-out). Tier-5 fail-silent.
+    try {
+      this._finalizeGpu();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[dexcost] gpu cost computation failed for task ${this._task.taskId}:`,
+        err,
+      );
+    }
+
     this._buffer.upsertTask(this._task);
     logTaskComplete(this._task);
   }
@@ -560,6 +581,135 @@ export class TrackedTask {
 
     const deltaNum = costDelta.toNumber();
     task.computeCostUsd += deltaNum;
+    task.totalCostUsd += deltaNum;
+  }
+
+  /**
+   * GPU auto-emission + back-fill at task finalize.
+   *
+   * Mirrors python tracker.py:_finalize_gpu. Three steps:
+   *
+   *  1. Long-running GPU runtimes (AwsEc2Gpu / GcpGceBundled /
+   *     GcpGceN1Attached / AzureVmGpu / AzureVmVgpu / LambdaLabs /
+   *     CoreWeave) call accountant.snapshotEndAndBuild(durationMs) and
+   *     persist a gpu_cost event (cost_pending=true) plus N
+   *     gpu_utilization_signal events. Serverless GPU runtimes (Modal /
+   *     RunPod / Replicate) have already emitted via the handler wrap;
+   *     this step is a no-op for them.
+   *  2. Back-fills cost_usd on every gpu_cost event with cost_pending=true:
+   *     resolves rate via GpuPricingEngine.resolveGpuCost, sets cost_usd,
+   *     pricing_source, cost_confidence, pricing_version ("gpu:<version>"
+   *     — distinct from compute / egress prefixes), and strips the
+   *     internal cost_pending / _cgroup_scope_fallback /
+   *     _nvml_product_name_lower hints from details before re-persisting.
+   *  3. gpu_utilization_signal events are NEVER touched by the back-fill
+   *     walker — they stay at cost_usd=0 (Decision #3 observability
+   *     carve-out). Load-bearing convention §1 carve-out — see test
+   *     gpu-auto-emission.test.ts.
+   *
+   * Delta-based total adjustment preserves any retry_marker costs already
+   * accumulated by the main aggregation loop.
+   */
+  private _finalizeGpu(): void {
+    const task = this._task;
+    const accountant = (task as any)._gpu as GpuAccountant | undefined;
+    const cloudEnv = getCloudEnv();
+
+    let durationMs = 0;
+    let windowS = new Decimal(0);
+    if (task.endedAt && task.startedAt) {
+      const ms = task.endedAt.getTime() - task.startedAt.getTime();
+      durationMs = Math.trunc(ms);
+      windowS = new Decimal(ms).dividedBy(1000);
+    }
+
+    // 1. Long-running GPU runtimes: snapshot + persist dual events.
+    const longRunningGpu = new Set<string>([
+      GpuRuntimeKind.AwsEc2Gpu,
+      GpuRuntimeKind.GcpGceBundled,
+      GpuRuntimeKind.GcpGceN1Attached,
+      GpuRuntimeKind.AzureVmGpu,
+      GpuRuntimeKind.AzureVmVgpu,
+      GpuRuntimeKind.LambdaLabs,
+      GpuRuntimeKind.CoreWeave,
+    ]);
+    const newEventIds = new Set<string>();
+    if (accountant && longRunningGpu.has(accountant.runtime)) {
+      const { costDetails, signalEvents } = accountant.snapshotEndAndBuild(
+        durationMs,
+      );
+      if (costDetails !== null) {
+        const ev = createCostEvent({
+          eventId: randomUUID(),
+          taskId: task.taskId,
+          eventType: "gpu_cost",
+          costUsd: 0,
+          costConfidence: "unknown",
+          isRetry: false,
+          details: costDetails as unknown as Record<string, unknown>,
+        });
+        this._buffer.addEvent(ev);
+        this._events.push(ev);
+        newEventIds.add(ev.eventId);
+      }
+      if (signalEvents) {
+        for (const sig of signalEvents) {
+          const sev = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "gpu_utilization_signal",
+            costUsd: 0, // Decision #3 — observability only
+            costConfidence: "unknown",
+            isRetry: false,
+            details: sig as unknown as Record<string, unknown>,
+          });
+          this._buffer.addEvent(sev);
+          this._events.push(sev);
+        }
+      }
+    }
+
+    // 2. Back-fill cost on every gpu_cost event with cost_pending=true.
+    //    Per Decision #3, gpu_utilization_signal events are NEVER priced.
+    const engine = this._tracker.gpuPricing;
+    const events = this._buffer.queryEvents(task.taskId);
+    let costDelta = new Decimal(0);
+    for (const ev of events) {
+      if (ev.eventType !== "gpu_cost") continue;
+      const details = (ev.details || {}) as Record<string, unknown>;
+      if (details.cost_pending !== true) continue;
+      const oldCost = new Decimal(ev.costUsd);
+      const priced = engine.resolveGpuCost(
+        details as Record<string, any>,
+        cloudEnv,
+        windowS,
+      );
+      ev.costUsd = priced.costUsd.toNumber();
+      ev.pricingSource = priced.pricingSource as any;
+      ev.costConfidence = priced.costConfidence;
+      ev.pricingVersion = `gpu:${engine.catalogVersion}`;
+      const newDetails: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(details)) {
+        if (
+          k !== "cost_pending" &&
+          k !== "_cgroup_scope_fallback" &&
+          k !== "_nvml_product_name_lower"
+        ) {
+          newDetails[k] = v;
+        }
+      }
+      ev.details = newDetails;
+      this._buffer.updateEvent(ev);
+
+      const delta = priced.costUsd.minus(oldCost);
+      costDelta = costDelta.plus(delta);
+      if (newEventIds.has(ev.eventId)) {
+        costDelta = costDelta.plus(oldCost); // always 0; explicit
+      }
+    }
+
+    const deltaNum = costDelta.toNumber();
+    task.gpuCostUsd += deltaNum;
     task.totalCostUsd += deltaNum;
   }
 
@@ -729,6 +879,7 @@ export class CostTracker {
   private _options: TrackerOptions;
   private _pricing: PricingEngine;
   private _computePricing: ComputePricingEngine;
+  private _gpuPricing: GpuPricingEngine;
   private _computeBillingOverrides: Record<string, string>;
   private _k8sNodeAware: boolean;
   private _rateRegistry: RateRegistry;
@@ -769,6 +920,10 @@ export class CostTracker {
 
     this._pricing = new PricingEngine();
     this._computePricing = new ComputePricingEngine();
+    // GPU pricing engine (Phase 2 — bundled gpu_prices.json). No init knob
+    // needed: GPU billing models are unambiguous per provider (Modal is
+    // always per_gpu_second_active, etc.). Mirrors python tracker.py.
+    this._gpuPricing = new GpuPricingEngine();
     this._computeBillingOverrides = { ...(options.computeBillingOverrides ?? {}) };
     this._k8sNodeAware = options.k8sNodeAware ?? false;
 
@@ -840,6 +995,11 @@ export class CostTracker {
   /** The compute pricing engine — wires through to TrackedTask.end finalize. */
   get computePricing(): ComputePricingEngine {
     return this._computePricing;
+  }
+
+  /** The GPU pricing engine — wires through to TrackedTask.end finalize. */
+  get gpuPricing(): GpuPricingEngine {
+    return this._gpuPricing;
   }
 
   /** Compute billing-model dispatch overrides (e.g. cloud_run=instance). */
