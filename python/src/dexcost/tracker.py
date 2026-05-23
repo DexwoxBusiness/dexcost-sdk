@@ -683,6 +683,10 @@ class CostTracker:
         )
         self._k8s_node_aware: bool = k8s_node_aware
 
+        # GPU pricing engine (Phase 2 — bundled gpu_prices.json).
+        from dexcost.gpu_pricing import GpuPricingEngine
+        self._gpu_pricing = GpuPricingEngine()
+
         # Configurable auto-instrumentation (US-015)
         self._instrumented: set[str] = set()
         if auto_instrument is None:
@@ -1194,6 +1198,122 @@ class CostTracker:
                 "compute cost computation failed for task %s",
                 task.task_id, exc_info=True,
             )
+
+        # ── GPU capture (Phase 2 v1 + v2) ────────────────────────────────
+        # Long-running GPU runtimes emit gpu_cost + gpu_utilization_signal at
+        # finalize from the cgroup walk + NVML snapshot diff; serverless GPU
+        # runtimes have already emitted from the handler wrap. Either way,
+        # v2 GpuPricingEngine back-fills gpu_cost.cost_usd here.
+        try:
+            self._finalize_gpu(task)
+        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+            _log.warning(
+                "gpu cost computation failed for task %s",
+                task.task_id, exc_info=True,
+            )
+
+    def _finalize_gpu(self, task: Task) -> None:
+        """Emit long-running GPU events (if any) and back-fill cost_pending=true
+        gpu_cost events. Mirrors _finalize_compute's delta-not-recompute pattern.
+
+        Long-running GPU runtimes (AWS_EC2_GPU / GCP_GCE_BUNDLED /
+        GCP_GCE_N1_ATTACHED / AZURE_VM_GPU / AZURE_VM_VGPU / LAMBDA_LABS /
+        COREWEAVE) snapshot at task finalize. Serverless runtimes
+        (MODAL / RUNPOD / REPLICATE) have already emitted via the handler
+        wrap. Either way the back-fill step is the same.
+
+        gpu_utilization_signal events are NEVER priced — they have
+        cost_usd=0 by design (Decision #3 observability carve-out) and are
+        skipped by the back-fill walker.
+        """
+        from dexcost import cloud_detect
+        from dexcost.gpu_pricing import GpuPricingEngine
+        from dexcost.gpu_runtime import GpuRuntimeKind
+        from dexcost.models.event import Event
+
+        accountant = getattr(task, "_gpu", None)
+        cloud_env = cloud_detect.get_cloud_env()
+
+        duration_ms = 0
+        window_s = Decimal("0")
+        if task.ended_at and task.started_at:
+            duration_ms = int(
+                (task.ended_at - task.started_at).total_seconds() * 1000,
+            )
+            window_s = Decimal(
+                str((task.ended_at - task.started_at).total_seconds()),
+            )
+
+        # 1. Long-running GPU runtimes: snapshot + persist dual events.
+        long_running_gpu = {
+            GpuRuntimeKind.AWS_EC2_GPU,
+            GpuRuntimeKind.GCP_GCE_BUNDLED,
+            GpuRuntimeKind.GCP_GCE_N1_ATTACHED,
+            GpuRuntimeKind.AZURE_VM_GPU,
+            GpuRuntimeKind.AZURE_VM_VGPU,
+            GpuRuntimeKind.LAMBDA_LABS,
+            GpuRuntimeKind.COREWEAVE,
+        }
+        new_event_ids: set = set()
+        if (
+            accountant is not None
+            and accountant.runtime in long_running_gpu
+        ):
+            cost_details, signal_events = accountant.snapshot_end_and_build(
+                duration_ms=duration_ms,
+            )
+            if cost_details is not None:
+                ev = Event(
+                    task_id=task.task_id,
+                    event_type="gpu_cost",
+                    cost_usd=Decimal("0"),
+                    details=cost_details,
+                )
+                self._storage.insert_event(ev)
+                new_event_ids.add(ev.event_id)
+            if signal_events:
+                for sig in signal_events:
+                    sev = Event(
+                        task_id=task.task_id,
+                        event_type="gpu_utilization_signal",
+                        cost_usd=Decimal("0"),  # Decision #3 — observability only
+                        details=sig,
+                    )
+                    self._storage.insert_event(sev)
+
+        # 2. Back-fill cost on every gpu_cost event with cost_pending=true.
+        #    Per Decision #3, gpu_utilization_signal events are NEVER priced.
+        engine = self._gpu_pricing
+        events = self._storage.query_events(task_id=str(task.task_id))
+        cost_delta = Decimal("0")
+        for ev in events:
+            if ev.event_type != "gpu_cost":
+                continue
+            details = ev.details or {}
+            if not details.get("cost_pending"):
+                continue
+            old_cost = ev.cost_usd
+            priced = engine.resolve_gpu_cost(
+                details, cloud_env, window_s=window_s,
+            )
+            ev.cost_usd = priced.cost_usd
+            ev.pricing_source = priced.pricing_source
+            ev.cost_confidence = priced.cost_confidence
+            ev.pricing_version = f"gpu:{engine.catalog_version}"
+            ev.details = {
+                k: v for k, v in details.items()
+                if k not in ("cost_pending", "_cgroup_scope_fallback",
+                              "_nvml_product_name_lower")
+            }
+            self._storage.update_event(ev)
+
+            delta = priced.cost_usd - old_cost
+            cost_delta += delta
+            if ev.event_id in new_event_ids:
+                cost_delta += old_cost  # always $0 — explicit
+
+        task.gpu_cost_usd += cost_delta
+        task.total_cost_usd += cost_delta
 
     def _finalize_compute(self, task: Task) -> None:
         """Emit the long-running compute_cost event (if any) and back-fill
