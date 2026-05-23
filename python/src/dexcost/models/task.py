@@ -81,6 +81,13 @@ class Task:
         init=False, default=None, compare=False, repr=False
     )
 
+    # In-memory only — the per-task GPU accountant. Set lazily by the GPU
+    # handler wrap or the tracker on long-running GPU runtimes. ``None``
+    # for tasks that never touch a GPU.
+    _gpu: Any = field(
+        init=False, default=None, compare=False, repr=False
+    )
+
     # Schema contract
     schema_version: str = "1"
 

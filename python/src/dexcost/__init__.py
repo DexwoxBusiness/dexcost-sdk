@@ -24,6 +24,11 @@ from dexcost.compute_wrap import (
     wrap_vercel_handler,
 )
 from dexcost.config import DexcostConfig, InvalidAPIKeyError, validate_api_key
+from dexcost.gpu_wrap import (
+    wrap_modal_handler,
+    wrap_replicate_handler,
+    wrap_runpod_handler,
+)
 from dexcost.context import (
     DexcostContext,
     async_task_context,
