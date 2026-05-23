@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     external_cost_usd   TEXT,
     compute_cost_usd    TEXT,
     network_cost_usd    TEXT NOT NULL DEFAULT '0',
+    gpu_cost_usd        TEXT NOT NULL DEFAULT '0',
     total_cost_usd      TEXT,
     total_input_tokens   INTEGER,
     total_output_tokens  INTEGER,
@@ -241,13 +242,13 @@ class SQLiteStorage:
             self._conn.execute(
                 """INSERT INTO tasks (
                     task_id, task_type, status, started_at, ended_at, metadata,
-                    llm_cost_usd, external_cost_usd, compute_cost_usd, network_cost_usd, total_cost_usd,
+                    llm_cost_usd, external_cost_usd, compute_cost_usd, network_cost_usd, gpu_cost_usd, total_cost_usd,
                     total_input_tokens, total_output_tokens, total_cached_tokens,
                     retry_count, retry_cost_usd, failure_count,
                     customer_id, project_id, parent_task_id,
                     experiment_id, variant,
                     network_bytes_in, network_bytes_out, network_call_count, network_by_host
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(task.task_id),
                     task.task_type,
@@ -259,6 +260,7 @@ class SQLiteStorage:
                     str(task.external_cost_usd),
                     str(task.compute_cost_usd),
                     str(task.network_cost_usd),
+                    str(task.gpu_cost_usd),
                     str(task.total_cost_usd),
                     task.total_input_tokens,
                     task.total_output_tokens,
@@ -290,7 +292,7 @@ class SQLiteStorage:
             self._conn.execute(
                 """UPDATE tasks SET
                     task_type=?, status=?, started_at=?, ended_at=?, metadata=?,
-                    llm_cost_usd=?, external_cost_usd=?, compute_cost_usd=?, network_cost_usd=?, total_cost_usd=?,
+                    llm_cost_usd=?, external_cost_usd=?, compute_cost_usd=?, network_cost_usd=?, gpu_cost_usd=?, total_cost_usd=?,
                     total_input_tokens=?, total_output_tokens=?, total_cached_tokens=?,
                     retry_count=?, retry_cost_usd=?, failure_count=?,
                     customer_id=?, project_id=?, parent_task_id=?,
@@ -308,6 +310,7 @@ class SQLiteStorage:
                     str(task.external_cost_usd),
                     str(task.compute_cost_usd),
                     str(task.network_cost_usd),
+                    str(task.gpu_cost_usd),
                     str(task.total_cost_usd),
                     task.total_input_tokens,
                     task.total_output_tokens,
@@ -628,6 +631,11 @@ class SQLiteStorage:
             network_cost_usd=(
                 _dec(row["network_cost_usd"])
                 if "network_cost_usd" in row.keys()
+                else Decimal("0")
+            ),
+            gpu_cost_usd=(
+                _dec(row["gpu_cost_usd"])
+                if "gpu_cost_usd" in row.keys()
                 else Decimal("0")
             ),
             total_cost_usd=_dec(row["total_cost_usd"]),
