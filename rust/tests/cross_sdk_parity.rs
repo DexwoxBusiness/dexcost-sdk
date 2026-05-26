@@ -266,12 +266,11 @@ fn cross_sdk_compute_dispatch_b5() {
 }
 
 #[test]
-#[ignore = "B5b — Rust IaaS share-math diverges from Python by factor of vcpu_count; tracked as separate finding"]
 fn cross_sdk_compute_pricing_exact_parity_b5b() {
-    // The strict assertion the plan §2.3.1 originally asked for —
-    // exact cost parity vs Python across all four SDKs. Currently
-    // FAILS on Rust because price_iaas_share fallback math is wrong.
-    // Will GREEN once B5b math fix lands.
+    // The strict assertion the plan §2.3.1 asked for — exact cost
+    // parity vs Python across all four SDKs. Post-B5b: Rust now mirrors
+    // Python's _iaas_share formula (vcpu_seconds / (vcpu_count × 3600)
+    // × instance_hourly).
     use dexcost::cloud_detect::CloudEnv;
     let engine = dexcost::pricing::compute_pricing::ComputePricingEngine::new();
     let cloud_env = CloudEnv::none();
