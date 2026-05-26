@@ -7,7 +7,14 @@
  * Uses better-sqlite3 for synchronous, high-performance SQLite access.
  */
 
-import Database from "better-sqlite3";
+// Type-only import — keeps the static reference for TS without pulling
+// the runtime binding in. The runtime side is loaded dynamically via
+// createRequire inside the constructor so module load doesn't crash
+// when better-sqlite3 is unavailable (Vercel Edge, Cloudflare Workers,
+// Bun configurations without the native binding). Sprint 1 Theme B /
+// §2.2.3 (B8).
+import type Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -233,9 +240,47 @@ const INDEXES = [
  * Costs are stored as TEXT strings to avoid floating-point precision loss.
  */
 export class EventBuffer {
-  private _db: Database.Database;
+  // null when better-sqlite3 is unavailable; every method short-circuits.
+  private _db: Database.Database | null;
+
+  /**
+   * Test-only seam. When `true`, the constructor takes the no-binding
+   * fallback path without attempting the require — used by
+   * tests/runtime-fallback.test.ts to simulate Vercel Edge / Cloudflare
+   * Workers behaviour without touching the real native module. Do NOT
+   * set this in production code. Sprint 1 Theme B / §2.2.3 (B8).
+   */
+  static _forceFallbackForTest = false;
 
   constructor(dbPath?: string) {
+    // Sprint 1 Theme B / §2.2.3 (B8): try to load better-sqlite3
+    // dynamically. If the native binding is absent or fails to load
+    // (Vercel Edge, Cloudflare Workers, Bun without bindings), fall
+    // back to a no-op buffer so init() doesn't crash the customer app.
+    // Events recorded in this mode are silently dropped.
+    let DatabaseCtor: typeof Database | null = null;
+    if (EventBuffer._forceFallbackForTest) {
+      this._db = null;
+      console.warn(
+        "dexcost: EventBuffer._forceFallbackForTest is set — using no-op buffer",
+      );
+      return;
+    }
+    try {
+      const require = createRequire(import.meta.url);
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      DatabaseCtor = require("better-sqlite3") as typeof Database;
+    } catch (err) {
+      console.warn(
+        "dexcost: better-sqlite3 not available in this runtime; events " +
+          "will not be persisted locally. Install better-sqlite3 as a " +
+          "peer dependency for durable buffering. Cause: " +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      this._db = null;
+      return;
+    }
+
     const resolvedPath = dbPath ?? join(homedir(), ".dexcost", "buffer.db");
     try {
       mkdirSync(dirname(resolvedPath), { recursive: true });
@@ -243,7 +288,7 @@ export class EventBuffer {
       throw new Error(`Cannot create dexcost storage directory: ${err instanceof Error ? err.message : err}`);
     }
 
-    this._db = new Database(resolvedPath);
+    this._db = new DatabaseCtor(resolvedPath);
 
     // PRAGMAs and DDL
     try {
@@ -292,6 +337,7 @@ export class EventBuffer {
    * is swallowed. Any other failure is also tolerated so init never crashes.
    */
   private _migrateAddColumn(table: string, column: string, definition: string): void {
+    if (!this._db) return;
     try {
       this._db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     } catch {
@@ -303,6 +349,7 @@ export class EventBuffer {
    * Add a cost event to the buffer with sync_status = 'pending'.
    */
   addEvent(event: CostEvent): void {
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -353,6 +400,7 @@ export class EventBuffer {
    * `'synced'` after a successful POST so unchanged tasks are not re-sent.
    */
   upsertTask(task: Task): void {
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -404,6 +452,7 @@ export class EventBuffer {
    * Return up to `limit` pending events, ordered by timestamp ASC.
    */
   getPendingEvents(limit: number = 100): CostEvent[] {
+    if (!this._db) return [];
     const rows = this._db
       .prepare(
         `SELECT * FROM events WHERE sync_status = 'pending' ORDER BY timestamp ASC LIMIT ?`
@@ -416,6 +465,7 @@ export class EventBuffer {
    * Mark the given event IDs as synced.
    */
   markSynced(eventIds: string[]): void {
+    if (!this._db) return;
     if (eventIds.length === 0) return;
     try {
       const placeholders = eventIds.map(() => "?").join(", ");
@@ -431,6 +481,7 @@ export class EventBuffer {
    * Retrieve a task by ID, or undefined if not found.
    */
   getTask(taskId: string): Task | undefined {
+    if (!this._db) return undefined;
     const row = this._db
       .prepare("SELECT * FROM tasks WHERE task_id = ?")
       .get(taskId) as TaskRow | undefined;
@@ -441,6 +492,7 @@ export class EventBuffer {
    * Return all tasks in the buffer.
    */
   getAllTasks(): Task[] {
+    if (!this._db) return [];
     const rows = this._db.prepare("SELECT * FROM tasks").all() as TaskRow[];
     return rows.map(rowToTask);
   }
@@ -452,6 +504,7 @@ export class EventBuffer {
    * every push cycle.
    */
   getPendingTasks(): Task[] {
+    if (!this._db) return [];
     const rows = this._db
       .prepare("SELECT * FROM tasks WHERE sync_status = 'pending'")
       .all() as TaskRow[];
@@ -465,6 +518,7 @@ export class EventBuffer {
    * from subsequent pushes until they are upserted again.
    */
   markTasksSynced(taskIds: string[]): void {
+    if (!this._db) return;
     if (taskIds.length === 0) return;
     try {
       const placeholders = taskIds.map(() => "?").join(", ");
@@ -478,6 +532,7 @@ export class EventBuffer {
 
   /** The number of tasks awaiting sync (`sync_status = 'pending'`). */
   get pendingTaskCount(): number {
+    if (!this._db) return 0;
     const row = this._db
       .prepare("SELECT COUNT(*) AS count FROM tasks WHERE sync_status = 'pending'")
       .get() as CountRow;
@@ -488,6 +543,7 @@ export class EventBuffer {
    * Return all events in the buffer (including synced).
    */
   getAllEvents(): CostEvent[] {
+    if (!this._db) return [];
     const rows = this._db.prepare("SELECT * FROM events").all() as EventRow[];
     return rows.map(rowToEvent);
   }
@@ -496,6 +552,7 @@ export class EventBuffer {
    * Return events for a specific task, ordered by timestamp DESC.
    */
   queryEvents(taskId: string): CostEvent[] {
+    if (!this._db) return [];
     const rows = this._db
       .prepare("SELECT * FROM events WHERE task_id = ? ORDER BY timestamp DESC")
       .all(taskId) as EventRow[];
@@ -506,6 +563,7 @@ export class EventBuffer {
    * Update all columns of an existing event in-place.
    */
   updateEvent(event: CostEvent): void {
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -560,6 +618,7 @@ export class EventBuffer {
    * Return the number of pending (unsynced) events.
    */
   get pendingCount(): number {
+    if (!this._db) return 0;
     const row = this._db
       .prepare("SELECT COUNT(*) AS count FROM events WHERE sync_status = 'pending'")
       .get() as CountRow;
@@ -572,6 +631,7 @@ export class EventBuffer {
    * Returns the number of deleted rows.
    */
   purgeSynced(retentionHours: number = 48): number {
+    if (!this._db) return 0;
     try {
       const cutoff = new Date(Date.now() - retentionHours * 3_600_000).toISOString();
       const result = this._db
@@ -600,6 +660,7 @@ export class EventBuffer {
    * days). Returns the number of deleted rows.
    */
   purgeOldPending(maxAgeDays: number = 7): number {
+    if (!this._db) return 0;
     try {
       const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
       const result = this._db
@@ -621,6 +682,7 @@ export class EventBuffer {
    * Close the underlying database connection.
    */
   close(): void {
+    if (!this._db) return;
     this._db.close();
   }
 }
