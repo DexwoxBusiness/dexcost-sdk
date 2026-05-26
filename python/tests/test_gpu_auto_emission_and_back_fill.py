@@ -67,8 +67,8 @@ def test_ec2_gpu_task_emits_dual_events_and_back_fills_cost(tracker, monkeypatch
     # 30 GPU-seconds across 8 GPUs in a 60-second window.
     snapshots = [
         {},
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
-                                  time_stamp=30_000_000)},
+        {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
+                                  time_stamp=30_000_000)]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
@@ -146,8 +146,8 @@ def test_signal_events_never_aggregated_into_gpu_cost_usd(tracker, monkeypatch):
     _stub_nvml_and_cgroup(monkeypatch)
     snapshots = [
         {},
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
-                                  time_stamp=10_000_000)},
+        {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
+                                  time_stamp=10_000_000)]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",

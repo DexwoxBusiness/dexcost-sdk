@@ -236,13 +236,18 @@ def get_compute_running_processes(handle) -> list[ProcessInfo] | None:
 
 def get_process_utilization(
     handle, last_seen_timestamps: dict[int, int],
-) -> dict[int, UtilSample] | None:
+) -> dict[int, list[UtilSample]] | None:
     """Return per-PID utilization samples; UPDATE timestamps dict in place.
 
     Decision #8 — NVML's ``nvmlDeviceGetProcessUtilization`` returns samples
     accumulated since ``lastSeenTimeStamp``. The caller persists per-PID
     timestamps across snapshot calls so we don't lose samples between calls
     when the internal NVML buffer wraps.
+
+    Returns ``dict[int, list[UtilSample]]`` — multiple samples per PID,
+    sorted by ``time_stamp`` ascending. Pre-B2 the wrapper collapsed
+    samples to the latest per PID, throwing away the integration data
+    the accountant now needs (Sprint 2 Theme C / §3.1.1).
 
     The earliest baseline call passes ``last_seen_timestamps={}``; each
     subsequent call passes the dict the previous call updated.
@@ -260,14 +265,22 @@ def get_process_utilization(
             f"nvmlDeviceGetProcessUtilization failed ({exc})",
         )
         return None
-    out: dict[int, UtilSample] = {}
+    out: dict[int, list[UtilSample]] = {}
     for s in raw:
         pid = int(s.pid)
         ts = int(getattr(s, "timeStamp", 0) or 0)
         sm = int(getattr(s, "smUtil", 0) or 0)
         mem = int(getattr(s, "memUtil", 0) or 0)
-        out[pid] = UtilSample(pid=pid, sm_util=sm, mem_util=mem, time_stamp=ts)
-        last_seen_timestamps[pid] = ts
+        out.setdefault(pid, []).append(
+            UtilSample(pid=pid, sm_util=sm, mem_util=mem, time_stamp=ts)
+        )
+        # last_seen tracks the MAX ts per PID across this batch.
+        if ts > last_seen_timestamps.get(pid, 0):
+            last_seen_timestamps[pid] = ts
+    # Sort each PID's samples by timestamp ascending — the integration
+    # in the accountant assumes monotonic ordering.
+    for pid in out:
+        out[pid].sort(key=lambda s: s.time_stamp)
     return out
 
 

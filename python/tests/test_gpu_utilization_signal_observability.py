@@ -64,8 +64,8 @@ def _stub_nvml(monkeypatch):
     )
     snapshots = [
         {},
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
-                                  time_stamp=30_000_000)},
+        {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=50, mem_util=30,
+                                  time_stamp=30_000_000)]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",

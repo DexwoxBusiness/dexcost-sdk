@@ -132,10 +132,14 @@ def test_get_process_utilization_updates_timestamps_in_place():
     with patch.object(nvml_reader, "_pynvml", fake), \
          patch.object(nvml_reader, "_NVML_AVAILABLE", True):
         samples = nvml_reader.get_process_utilization("h", timestamps)
+    # Post-B2 (Sprint 2 Theme C / §3.1.1): return shape is
+    # dict[pid, list[UtilSample]] — multiple samples per PID are
+    # preserved so the accountant can integrate sm_util × dt.
     assert 1234 in samples
-    assert samples[1234].sm_util == 50
-    assert samples[5678].mem_util == 40
-    # Timestamps dict was updated to the per-PID last-seen values.
+    assert isinstance(samples[1234], list)
+    assert samples[1234][0].sm_util == 50
+    assert samples[5678][0].mem_util == 40
+    # Timestamps dict was updated to the per-PID last-seen (max) values.
     assert timestamps[1234] == 1_000_000
     assert timestamps[5678] == 1_000_100
 
