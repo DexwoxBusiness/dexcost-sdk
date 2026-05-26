@@ -29,6 +29,10 @@ tower-http = { version = "0.6", optional = true }
 actix-web = { version = "4", optional = true }
 actix-service = { version = "2", optional = true }
 regex = "1"
+# parking_lot::RwLock is non-poisoning and runtime-agnostic — used by the
+# pricing engine so its synchronous API can be invoked from inside a Tokio
+# runtime without panicking (Sprint 1 Theme B / B4).
+parking_lot = "0.12"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 dirs-next = "2"
 jsonschema = "0.45.0"

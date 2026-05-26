@@ -827,6 +827,7 @@ dependencies = [
  "http 1.4.0",
  "jsonschema",
  "nvml-wrapper",
+ "parking_lot",
  "regex",
  "reqwest 0.12.28",
  "reqwest-middleware",

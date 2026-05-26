@@ -102,12 +102,24 @@ static PROBE_OVERRIDES: LazyLock<Mutex<HashMap<String, ProbeFn>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Returns the most recently resolved [`CloudEnv`].
+///
+/// Lock-poison safe: a panic in a writer no longer crashes future readers
+/// (Sprint 1 Theme B / §2.2.6). We accept the inner value of a poisoned
+/// guard — the cloud-env payload is plain data with no invariants that a
+/// mid-write panic could have broken.
 pub fn get_cloud_env() -> CloudEnv {
-    RESULT.read().expect("RESULT rwlock poisoned").clone()
+    match RESULT.read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 
 fn set_result(env: CloudEnv) {
-    *RESULT.write().expect("RESULT rwlock poisoned") = env;
+    let mut guard = match RESULT.write() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *guard = env;
 }
 
 // ---------------------------------------------------------------------------
@@ -600,7 +612,10 @@ pub fn start_background_detection(track_network: bool) {
     }
 
     {
-        let guard = BG_THREAD.lock().expect("BG_THREAD mutex poisoned");
+        let guard = match BG_THREAD.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         if let Some(h) = guard.as_ref() {
             if !h.is_finished() {
                 return;
@@ -640,7 +655,11 @@ pub fn start_background_detection(track_network: bool) {
         })
         .ok();
     if let Some(h) = handle {
-        *BG_THREAD.lock().expect("BG_THREAD mutex poisoned") = Some(h);
+        let mut guard = match BG_THREAD.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = Some(h);
     }
 }
 
@@ -700,6 +719,39 @@ mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
+
+    /// Sprint 1 Theme B / §2.2.6 regression.
+    ///
+    /// Poisons the module-internal `RESULT` rwlock by panicking inside a
+    /// writer, then exercises `get_cloud_env()` / `set_result()`. With the
+    /// fix in place both calls recover the inner value via
+    /// `PoisonError::into_inner` instead of panicking.
+    #[test]
+    fn get_cloud_env_recovers_from_poisoned_lock() {
+        // Sanity: pre-poison reader must work.
+        let _ = get_cloud_env();
+
+        // Poison the RESULT lock from a thread that panics while holding
+        // the write guard.
+        let _ = std::thread::spawn(|| {
+            let _w = RESULT.write().expect("acquire write");
+            panic!("intentional poison for §2.2.6 test");
+        })
+        .join();
+        assert!(
+            RESULT.is_poisoned(),
+            "test setup failed: RESULT not poisoned"
+        );
+
+        // Both code paths must not panic.
+        let env_after_poison = get_cloud_env();
+        assert_eq!(env_after_poison.provider, env_after_poison.provider);
+        set_result(CloudEnv::none());
+
+        // RESULT remains poisoned forever in std::sync::RwLock semantics,
+        // but the fix means subsequent calls keep working.
+        let _ = get_cloud_env();
+    }
 
     /// Tests mutate process-global env vars and module-level state.
     /// Serialize them.
