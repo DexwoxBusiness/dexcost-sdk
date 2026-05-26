@@ -6,7 +6,15 @@
  * (no network I/O). Mirrors the Python SDK's `adapters/aws_lambda.py`.
  */
 
-import pricingData from "./data/aws_lambda_pricing.json" with { type: "json" };
+// Sprint 3 Theme E / §4.2.3 — Node 18 compat: runtime JSON load.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const _thisDir = dirname(fileURLToPath(import.meta.url));
+const pricingData = JSON.parse(
+  readFileSync(join(_thisDir, "data", "aws_lambda_pricing.json"), "utf-8"),
+);
 
 interface RegionPricing {
   duration_per_gb_second: string;

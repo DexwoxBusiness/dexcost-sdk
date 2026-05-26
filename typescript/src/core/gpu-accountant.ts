@@ -302,6 +302,14 @@ export class GpuAccountant {
     let anyPidTouched = false;
 
     for (const i of this._deviceIndexes) {
+      // Sprint 2 Theme C / §3.1.1 (B2 TS port) — snapshot per-PID
+      // baseline timestamps BEFORE the end NVML call mutates
+      // `_initialTimestamps[i]` in place. Reading the mutated map
+      // afterwards would zero every PID's first-sample dt.
+      const baselineTsPerPid: Record<number, number> = {
+        ...this._initialTimestamps[i],
+      };
+
       const endSamples =
         this.hooks.getProcessUtilization(i, this._initialTimestamps[i]) ?? {};
       for (const pidKey of Object.keys(endSamples)) {
@@ -316,21 +324,57 @@ export class GpuAccountant {
         );
       }
 
-      const relevant: UtilSample[] = [];
-      for (const [pidKey, sample] of Object.entries(endSamples)) {
-        if (cgroupPidUnion.has(Number(pidKey))) relevant.push(sample);
+      // Filter to cgroup-PID union. Each value is a list of samples.
+      const relevantByPid: Record<number, UtilSample[]> = {};
+      for (const [pidKey, samples] of Object.entries(endSamples)) {
+        const pid = Number(pidKey);
+        if (cgroupPidUnion.has(pid) && samples.length > 0) {
+          relevantByPid[pid] = samples;
+        }
       }
+      const relevantPidCount = Object.keys(relevantByPid).length;
 
-      if (relevant.length > 0) {
+      if (relevantPidCount > 0) {
         anyPidTouched = true;
-        const maxTs = relevant.reduce(
-          (acc, s) => (s.timeStamp > acc ? s.timeStamp : acc),
-          0,
-        );
-        const baseTsValues = Object.values(this._initialTimestamps[i]);
-        const baseTs =
-          baseTsValues.length > 0 ? Math.min(...baseTsValues) : 0;
-        const gpuSecondsForDevice = Math.max(0, maxTs - baseTs) / 1_000_000.0;
+
+        // B2: integrate sm_util × dt across the sample sequence.
+        // Two semantics for "first sample of a PID with no baseline":
+        //  - Device had ZERO PIDs at start → first sample's window
+        //    extends back to the derived task_start_ts.
+        //  - Other PIDs were active but this one wasn't → PID
+        //    joined mid-task; first-sample dt is 0.
+        const deviceHadBaselinePids = Object.keys(baselineTsPerPid).length > 0;
+        let maxSampleTs = 0;
+        for (const samples of Object.values(relevantByPid)) {
+          for (const s of samples) {
+            if (s.timeStamp > maxSampleTs) maxSampleTs = s.timeStamp;
+          }
+        }
+        const taskStartTs = Math.max(0, maxSampleTs - durationMs * 1000);
+
+        let gpuSecondsForDevice = 0;
+        let memUtilSum = 0;
+        let memUtilN = 0;
+        for (const [pidKey, samples] of Object.entries(relevantByPid)) {
+          const pid = Number(pidKey);
+          let baselineForPid: number;
+          if (pid in baselineTsPerPid) {
+            baselineForPid = baselineTsPerPid[pid];
+          } else if (deviceHadBaselinePids) {
+            baselineForPid = samples[0].timeStamp;
+          } else {
+            baselineForPid = taskStartTs;
+          }
+          let prevTs = baselineForPid;
+          for (const s of samples) {
+            const dtUs = Math.max(0, s.timeStamp - prevTs);
+            gpuSecondsForDevice +=
+              (s.smUtil / 100.0) * (dtUs / 1_000_000.0);
+            prevTs = s.timeStamp;
+            memUtilSum += s.memUtil;
+            memUtilN += 1;
+          }
+        }
         perDeviceGpuSeconds[i] = gpuSecondsForDevice;
 
         let smUtilPct: number | null;
@@ -340,8 +384,7 @@ export class GpuAccountant {
         } else {
           smUtilPct = null;
         }
-        const memUtilAvg =
-          relevant.reduce((acc, s) => acc + s.memUtil, 0) / relevant.length;
+        const memUtilAvg = memUtilN > 0 ? memUtilSum / memUtilN : 0;
 
         signalEvents.push({
           gpu_index: i,
@@ -351,7 +394,7 @@ export class GpuAccountant {
           vram_used_peak_bytes: this._vramUsedPeak[i] ?? 0,
           vram_total_bytes: this._vramTotal[i] ?? 0,
           process_count: this._pidsTouchedPerDevice[i].size,
-          sample_count: relevant.length,
+          sample_count: memUtilN,
           task_duration_ms: durationMs,
         });
       } else if (degenerateWindow) {

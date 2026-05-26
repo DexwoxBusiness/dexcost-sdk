@@ -23,10 +23,10 @@ func withGpuMockOneDevice(t *testing.T) {
 		DeviceCount:  1,
 		ProductNames: map[int]string{0: "NVIDIA H100 80GB HBM3"},
 		Memory:       map[int]NVMLMemInfo{0: {TotalBytes: 80 * 1024 * 1024 * 1024}},
-		PerCallUtilization: map[int][]map[int]NVMLUtilSample{
+		PerCallUtilization: map[int][]map[int][]NVMLUtilSample{
 			0: {
-				{selfPID: {PID: selfPID, SMUtil: 0, TimeStamp: 0}},
-				{selfPID: {PID: selfPID, SMUtil: 80, TimeStamp: 1_000_000}},
+				{selfPID: {{PID: selfPID, SMUtil: 0, TimeStamp: 0}}},
+				{selfPID: {{PID: selfPID, SMUtil: 80, TimeStamp: 1_000_000}}},
 			},
 		},
 	}

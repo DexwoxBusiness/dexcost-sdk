@@ -8,6 +8,7 @@ import (
 
 	"github.com/DexwoxBusiness/dexcost-go/core"
 	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-go/security"
 )
 
 // TrackedOpenAI wraps an OpenAI-compatible client to automatically record
@@ -74,7 +75,7 @@ func (t *TrackedOpenAI) CreateChatCompletion(ctx context.Context, req interface{
 		event.CostConfidence = core.CostConfidenceUnknown
 		event.PricingSource = core.PricingSourceUnknown
 		event.LatencyMs = &latencyMs
-		event.Details["error"] = err.Error()
+		event.Details["error"] = security.ScrubURLsInText(err.Error())
 		if insErr := t.tracker.Buffer().InsertEvent(event); insErr != nil {
 			log.Printf("[dexcost] failed to persist event: %v", insErr)
 		}

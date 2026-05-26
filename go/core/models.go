@@ -3,11 +3,24 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
+
+// canonicalTimeFormat is the wire-format pattern for occurred_at /
+// started_at / ended_at fields. Sprint 3 Theme F / §4.1.1 (P1):
+// RFC3339 with microsecond precision (6 fractional digits, zero-padded)
+// and "Z" suffix, matching the Python canonical.
+const canonicalTimeFormat = "2006-01-02T15:04:05.000000Z"
+
+// formatCanonicalTime serialises a time.Time to the canonical wire
+// format. Always UTC; nanoseconds are truncated to microseconds.
+func formatCanonicalTime(t time.Time) string {
+	return t.UTC().Format(canonicalTimeFormat)
+}
 
 // TaskStatus represents the lifecycle status of a tracked task.
 type TaskStatus string
@@ -45,12 +58,16 @@ const (
 // PricingSource indicates where the cost figure was derived from.
 type PricingSource string
 
+// Sprint 3 Theme F / §4.1.3 (P3): canonical 8-value set aligned
+// across all 4 SDKs.
 const (
 	PricingSourceLiteLLM          PricingSource = "litellm"
+	PricingSourceTokencost        PricingSource = "tokencost"
 	PricingSourceProviderResponse PricingSource = "provider_response"
 	PricingSourceManual           PricingSource = "manual"
 	PricingSourceCustom           PricingSource = "custom"
 	PricingSourceRateRegistry     PricingSource = "rate_registry"
+	PricingSourceServiceCatalog   PricingSource = "service_catalog"
 	PricingSourceUnknown          PricingSource = "unknown"
 )
 
@@ -130,7 +147,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"task_id":             t.TaskID.String(),
 		"task_type":           t.TaskType,
 		"status":              string(t.Status),
-		"started_at":          t.StartedAt.Format(time.RFC3339Nano),
+		"started_at":          formatCanonicalTime(t.StartedAt),
 		"ended_at":            nil,
 		"metadata":            t.Metadata,
 		"customer_id":         nilIfEmpty(t.CustomerID),
@@ -157,7 +174,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"schema_version":      t.SchemaVersion,
 	}
 	if t.EndedAt != nil {
-		d["ended_at"] = t.EndedAt.Format(time.RFC3339Nano)
+		d["ended_at"] = formatCanonicalTime(*t.EndedAt)
 	}
 	if t.ParentTaskID != nil {
 		d["parent_task_id"] = t.ParentTaskID.String()
@@ -217,7 +234,7 @@ func (e Event) ToDict() map[string]interface{} {
 		"event_id":        e.EventID.String(),
 		"task_id":         e.TaskID.String(),
 		"event_type":      string(e.EventType),
-		"occurred_at":     e.OccurredAt.Format(time.RFC3339Nano),
+		"occurred_at":     formatCanonicalTime(e.OccurredAt),
 		"cost_usd":        e.CostUSD.String(),
 		"cost_confidence": string(e.CostConfidence),
 		"pricing_source":  nilIfEmpty(string(e.PricingSource)),
@@ -250,6 +267,19 @@ func TaskToDictJSON(t Task) ([]byte, error) {
 // EventToDictJSON returns the JSON bytes of EventToDict.
 func EventToDictJSON(e Event) ([]byte, error) {
 	return json.Marshal(e.ToDict())
+}
+
+// parseDecimalOrZero parses a decimal string from a wire payload. On parse
+// failure (corrupt input, forwards-incompat schema, partial write) logs a
+// warning and returns Decimal.Zero rather than panicking via
+// decimal.RequireFromString — Sprint 1 Theme B / §2.2.2 1c.
+func parseDecimalOrZero(s, field string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		log.Printf("dexcost: failed to parse %s=%q as decimal, defaulting to 0: %v", field, s, err)
+		return decimal.Zero
+	}
+	return d
 }
 
 // TaskFromDict deserializes a Task from a map matching the Standard Event Schema v1 wire format.
@@ -303,22 +333,22 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 		t.Variant = v
 	}
 	if v, ok := d["llm_cost_usd"].(string); ok {
-		t.LLMCostUSD = decimal.RequireFromString(v)
+		t.LLMCostUSD = parseDecimalOrZero(v, "llm_cost_usd")
 	}
 	if v, ok := d["external_cost_usd"].(string); ok {
-		t.ExternalCostUSD = decimal.RequireFromString(v)
+		t.ExternalCostUSD = parseDecimalOrZero(v, "external_cost_usd")
 	}
 	if v, ok := d["compute_cost_usd"].(string); ok {
-		t.ComputeCostUSD = decimal.RequireFromString(v)
+		t.ComputeCostUSD = parseDecimalOrZero(v, "compute_cost_usd")
 	}
 	if v, ok := d["network_cost_usd"].(string); ok {
-		t.NetworkCostUSD = decimal.RequireFromString(v)
+		t.NetworkCostUSD = parseDecimalOrZero(v, "network_cost_usd")
 	}
 	if v, ok := d["gpu_cost_usd"].(string); ok {
-		t.GpuCostUSD = decimal.RequireFromString(v)
+		t.GpuCostUSD = parseDecimalOrZero(v, "gpu_cost_usd")
 	}
 	if v, ok := d["total_cost_usd"].(string); ok {
-		t.TotalCostUSD = decimal.RequireFromString(v)
+		t.TotalCostUSD = parseDecimalOrZero(v, "total_cost_usd")
 	}
 	if v := dictInt(d, "total_input_tokens"); v != nil {
 		t.TotalInputTokens = *v
@@ -333,7 +363,7 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 		t.RetryCount = *v
 	}
 	if v, ok := d["retry_cost_usd"].(string); ok {
-		t.RetryCostUSD = decimal.RequireFromString(v)
+		t.RetryCostUSD = parseDecimalOrZero(v, "retry_cost_usd")
 	}
 	if v := dictInt(d, "failure_count"); v != nil {
 		t.FailureCount = *v
@@ -398,7 +428,7 @@ func EventFromDict(d map[string]interface{}) (Event, error) {
 		}
 	}
 	if v, ok := d["cost_usd"].(string); ok {
-		e.CostUSD = decimal.RequireFromString(v)
+		e.CostUSD = parseDecimalOrZero(v, "cost_usd")
 	}
 	if v, ok := d["cost_confidence"].(string); ok {
 		e.CostConfidence = CostConfidence(v)

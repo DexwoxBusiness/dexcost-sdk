@@ -63,7 +63,12 @@ type NVMLBackend interface {
 	ProductName(devIdx int) (string, bool)
 	MIGMode(devIdx int) bool
 	ComputeRunningProcesses(devIdx int) ([]NVMLProcessInfo, bool)
-	ProcessUtilization(devIdx int, lastSeen map[int]int64) (map[int]NVMLUtilSample, bool)
+	// ProcessUtilization returns a list of utilization samples per PID
+	// observed since `lastSeen[pid]`. Multi-sample-per-PID is required
+	// for B2 integration math (Sprint 2 Theme C / §3.1.1, Go port);
+	// pre-fix the API collapsed to a single sample and the accountant
+	// could not integrate sm_util × dt across the task window.
+	ProcessUtilization(devIdx int, lastSeen map[int]int64) (map[int][]NVMLUtilSample, bool)
 	MemoryInfo(devIdx int) (NVMLMemInfo, bool)
 }
 
@@ -79,7 +84,7 @@ func (noopNVMLBackend) MIGMode(int) bool               { return false }
 func (noopNVMLBackend) ComputeRunningProcesses(int) ([]NVMLProcessInfo, bool) {
 	return nil, false
 }
-func (noopNVMLBackend) ProcessUtilization(int, map[int]int64) (map[int]NVMLUtilSample, bool) {
+func (noopNVMLBackend) ProcessUtilization(int, map[int]int64) (map[int][]NVMLUtilSample, bool) {
 	return nil, false
 }
 func (noopNVMLBackend) MemoryInfo(int) (NVMLMemInfo, bool) { return NVMLMemInfo{}, false }
@@ -232,7 +237,12 @@ func GetNVMLComputeRunningProcesses(devIdx int) []NVMLProcessInfo {
 // GetNVMLProcessUtilization returns per-PID utilization samples for device
 // devIdx and updates the lastSeen map in place (Decision #8 persistent
 // state). Returns nil on failure.
-func GetNVMLProcessUtilization(devIdx int, lastSeen map[int]int64) map[int]NVMLUtilSample {
+//
+// Returns map[pid][]NVMLUtilSample — multiple samples per PID, sorted
+// by TimeStamp ascending. Sprint 2 Theme C / §3.1.1 (B2 Go port):
+// pre-fix the wrapper collapsed samples to the latest per PID, losing
+// the integration data the accountant now needs.
+func GetNVMLProcessUtilization(devIdx int, lastSeen map[int]int64) map[int][]NVMLUtilSample {
 	if lastSeen == nil {
 		return nil
 	}
@@ -245,8 +255,13 @@ func GetNVMLProcessUtilization(devIdx int, lastSeen map[int]int64) map[int]NVMLU
 		nvmlWarnOnce("gpu_process_utilization_failed")
 		return nil
 	}
-	for pid, s := range out {
-		lastSeen[pid] = s.TimeStamp
+	// Record the max timestamp seen per PID — same as Python.
+	for pid, samples := range out {
+		for _, s := range samples {
+			if s.TimeStamp > lastSeen[pid] {
+				lastSeen[pid] = s.TimeStamp
+			}
+		}
 	}
 	return out
 }
@@ -279,7 +294,10 @@ type MockNVMLBackend struct {
 	ProductNames   map[int]string
 	MIGModes       map[int]bool
 	Procs          map[int][]NVMLProcessInfo
-	Utilizations   map[int]map[int]NVMLUtilSample
+	// Utilizations: map[devIdx][pid][]Sample. Single-element slice gives
+	// the legacy single-sample behaviour; multi-element slices exercise
+	// B2 integration math.
+	Utilizations   map[int]map[int][]NVMLUtilSample
 	Memory         map[int]NVMLMemInfo
 	ProductNameErr map[int]bool
 	DeviceCountErr bool
@@ -287,7 +305,7 @@ type MockNVMLBackend struct {
 	// PerCallUtilization, when set, returns the slice element at index
 	// invocationCount[devIdx] on each call, allowing tests to model NVML
 	// snapshot evolution across start/end calls.
-	PerCallUtilization map[int][]map[int]NVMLUtilSample
+	PerCallUtilization map[int][]map[int][]NVMLUtilSample
 	invocationCount    map[int]int
 
 	mu sync.Mutex
@@ -347,7 +365,7 @@ func (m *MockNVMLBackend) GetComputeRunningProcesses(devIdx int) ([]NVMLProcessI
 	return m.Procs[devIdx], true
 }
 
-func (m *MockNVMLBackend) GetProcessUtilization(devIdx int, _ map[int]int64) (map[int]NVMLUtilSample, bool) {
+func (m *MockNVMLBackend) GetProcessUtilization(devIdx int, _ map[int]int64) (map[int][]NVMLUtilSample, bool) {
 	if !m.nvmlAvailable() {
 		return nil, false
 	}
@@ -366,10 +384,10 @@ func (m *MockNVMLBackend) GetProcessUtilization(devIdx int, _ map[int]int64) (ma
 		if len(seq) > 0 {
 			return seq[len(seq)-1], true
 		}
-		return map[int]NVMLUtilSample{}, true
+		return map[int][]NVMLUtilSample{}, true
 	}
 	if m.Utilizations == nil {
-		return map[int]NVMLUtilSample{}, true
+		return map[int][]NVMLUtilSample{}, true
 	}
 	return m.Utilizations[devIdx], true
 }
@@ -398,7 +416,7 @@ func (a *mockAdapter) MIGMode(i int) bool            { return a.m.GetMIGMode(i) 
 func (a *mockAdapter) ComputeRunningProcesses(i int) ([]NVMLProcessInfo, bool) {
 	return a.m.GetComputeRunningProcesses(i)
 }
-func (a *mockAdapter) ProcessUtilization(i int, ls map[int]int64) (map[int]NVMLUtilSample, bool) {
+func (a *mockAdapter) ProcessUtilization(i int, ls map[int]int64) (map[int][]NVMLUtilSample, bool) {
 	return a.m.GetProcessUtilization(i, ls)
 }
 func (a *mockAdapter) MemoryInfo(i int) (NVMLMemInfo, bool) { return a.m.GetMemoryInfo(i) }

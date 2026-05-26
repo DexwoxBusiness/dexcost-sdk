@@ -1,0 +1,10 @@
+{
+  "_comment": "Regression fixture for B1 (URL credentials in details). This is the RAW INPUT URL the customer's HTTP call hit. After the scrubber lands, the SDK must NOT persist user:secret@ in details.url. See expected_outputs/security/url_with_basic_auth.json for the expected post-scrub form.",
+  "_test_input": {
+    "url": "https://alice:s3cr3t-p4ss@api.example.com/v1/chat?session=abc",
+    "method": "POST",
+    "status_code": 200,
+    "request_bytes": 256,
+    "response_bytes": 8192
+  }
+}

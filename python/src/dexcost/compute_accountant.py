@@ -73,6 +73,11 @@ class ComputeAccountant:
         self.initialization_type = initialization_type
         self.region = region
         self._start_cpu_usec: int | None = None
+        # Sprint 2 Theme C / §3.1.3 Fix 1: snapshot the cgroup-lifetime
+        # memory.peak at task start so back-to-back tasks in a long-lived
+        # container report only the peak THIS task pushed, not the
+        # accumulated high-water mark inherited from prior workloads.
+        self._start_mem_peak: int | None = None
 
     # ------------------------------------------------------------------
     # Long-running runtimes (Fargate / EC2 / GCE / Azure VM / K8s pod /
@@ -80,13 +85,25 @@ class ComputeAccountant:
     # ------------------------------------------------------------------
 
     def snapshot_start(self) -> None:
-        """Capture the cgroup CPU counter at task start. Idempotent."""
+        """Capture the cgroup CPU counter + memory peak at task start.
+
+        Idempotent. The memory baseline is the key fix for §3.1.3 Fix 1:
+        cgroup v2 ``memory.peak`` is a high-water mark since the cgroup
+        was created, so a long-lived container's prior workload would
+        otherwise inflate every subsequent task's reported peak.
+        """
         with self._lock:
             if self._start_cpu_usec is not None:
                 return
         s = read_cpu_stat()
+        # B2 (read_memory_peak falls back to read_memory_current if peak
+        # file is missing — same pattern as end-of-task read at line 105).
+        mp = read_memory_peak()
+        if mp is None:
+            mp = read_memory_current() or 0
         with self._lock:
             self._start_cpu_usec = s.usage_usec if s else 0
+            self._start_mem_peak = int(mp)
 
     def snapshot_end_and_build(self, duration_ms: int) -> dict[str, Any] | None:
         """Capture cgroup CPU/memory at task end and build the event details.
@@ -98,25 +115,41 @@ class ComputeAccountant:
                 return None
             self._frozen = True
             start_cpu = self._start_cpu_usec or 0
+            start_mem_peak = self._start_mem_peak or 0
 
         end = read_cpu_stat()
         cpu_max = read_cpu_max()
         # capture §6 case 6 — memory.peak missing → fall back to memory.current.
-        mem_peak = read_memory_peak()
-        if mem_peak is None:
-            mem_peak = read_memory_current() or 0
+        mem_peak_end = read_memory_peak()
+        if mem_peak_end is None:
+            mem_peak_end = read_memory_current() or 0
         mem_limit = read_memory_max() or 0
 
+        # Sprint 2 Theme C / §3.1.3 Fix 1: subtract start-of-task peak so
+        # we report only what THIS task pushed the high-water mark by.
+        # Clamp at 0 — peak can't decrease, but the read is racy across
+        # cgroup remounts and we'd rather report 0 than negative.
+        memory_bytes_peak = max(0, int(mem_peak_end) - start_mem_peak)
+
+        # Sprint 2 Theme C / §3.1.3 Fix 2: a negative CPU delta signals
+        # the cgroup counter was reset mid-task (remount, container
+        # restart). Report 0 vcpu-seconds AND mark cost_confidence as
+        # estimated so the downstream pricer doesn't charge $0 with
+        # apparent confidence.
         vcpu_seconds_used = 0.0
-        if end is not None and end.usage_usec >= start_cpu:
-            vcpu_seconds_used = (end.usage_usec - start_cpu) / 1_000_000
+        cost_confidence: str | None = None
+        if end is not None:
+            if end.usage_usec >= start_cpu:
+                vcpu_seconds_used = (end.usage_usec - start_cpu) / 1_000_000
+            else:
+                cost_confidence = "estimated"
 
         vcpu_count = cpu_max.vcpu_count if cpu_max else float(os.cpu_count() or 1)
 
-        return {
+        details: dict[str, Any] = {
             "billing_model": _billing_model_for(self.runtime),
             "duration_ms": duration_ms,
-            "memory_bytes_peak": int(mem_peak),
+            "memory_bytes_peak": memory_bytes_peak,
             "memory_bytes_limit": int(mem_limit),
             "vcpu_count": vcpu_count,
             "vcpu_seconds_used": vcpu_seconds_used,
@@ -126,6 +159,9 @@ class ComputeAccountant:
             "initialization_type": None,
             "cost_pending": True,
         }
+        if cost_confidence is not None:
+            details["cost_confidence"] = cost_confidence
+        return details
 
     # ------------------------------------------------------------------
     # Serverless runtimes

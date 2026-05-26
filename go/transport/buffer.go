@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -296,15 +297,15 @@ func (b *SQLiteBuffer) GetTask(taskID string) (*core.Task, error) {
 		Status:            core.TaskStatus(status),
 		StartedAt:         started,
 		Metadata:          unmarshalMetadata(metadataStr.String),
-		LLMCostUSD:        decimal.RequireFromString(llmCost),
-		ExternalCostUSD:   decimal.RequireFromString(extCost),
-		ComputeCostUSD:    decimal.RequireFromString(compCost),
-		TotalCostUSD:      decimal.RequireFromString(totalCost),
+		LLMCostUSD:        parseDecimalOrZero(llmCost, "llm_cost_usd"),
+		ExternalCostUSD:   parseDecimalOrZero(extCost, "external_cost_usd"),
+		ComputeCostUSD:    parseDecimalOrZero(compCost, "compute_cost_usd"),
+		TotalCostUSD:      parseDecimalOrZero(totalCost, "total_cost_usd"),
 		TotalInputTokens:  inTok,
 		TotalOutputTokens: outTok,
 		TotalCachedTokens: cacheTok,
 		RetryCount:        retryCnt,
-		RetryCostUSD:      decimal.RequireFromString(retryCost),
+		RetryCostUSD:      parseDecimalOrZero(retryCost, "retry_cost_usd"),
 		FailureCount:      failCnt,
 		SchemaVersion:     schemaVer,
 	}
@@ -718,15 +719,15 @@ func scanTasks(rows *sql.Rows) ([]core.Task, error) {
 			Status:            core.TaskStatus(status),
 			StartedAt:         started,
 			Metadata:          unmarshalMetadata(metadataStr.String),
-			LLMCostUSD:        decimal.RequireFromString(llmCost),
-			ExternalCostUSD:   decimal.RequireFromString(extCost),
-			ComputeCostUSD:    decimal.RequireFromString(compCost),
-			TotalCostUSD:      decimal.RequireFromString(totalCost),
+			LLMCostUSD:        parseDecimalOrZero(llmCost, "llm_cost_usd"),
+			ExternalCostUSD:   parseDecimalOrZero(extCost, "external_cost_usd"),
+			ComputeCostUSD:    parseDecimalOrZero(compCost, "compute_cost_usd"),
+			TotalCostUSD:      parseDecimalOrZero(totalCost, "total_cost_usd"),
 			TotalInputTokens:  inTok,
 			TotalOutputTokens: outTok,
 			TotalCachedTokens: cacheTok,
 			RetryCount:        retryCnt,
-			RetryCostUSD:      decimal.RequireFromString(retryCost),
+			RetryCostUSD:      parseDecimalOrZero(retryCost, "retry_cost_usd"),
 			FailureCount:      failCnt,
 			SchemaVersion:     schemaVer,
 		}
@@ -803,7 +804,7 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 			TaskID:         taskUUID,
 			EventType:      core.EventType(etype),
 			OccurredAt:     occurred,
-			CostUSD:        decimal.RequireFromString(costStr),
+			CostUSD:        parseDecimalOrZero(costStr, "events.cost_usd"),
 			CostConfidence: core.CostConfidence(confStr),
 			PricingSource:  core.PricingSource(pricSrc),
 			PricingVersion: pricVer,
@@ -840,6 +841,19 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+// parseDecimalOrZero parses a decimal string read from a SQLite column.
+// On parse failure (corrupt row, partial write, forwards-incompat migration)
+// it logs a warning and returns decimal.Zero rather than panicking via
+// decimal.RequireFromString — Sprint 1 Theme B / §2.2.2 1c.
+func parseDecimalOrZero(s, field string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		log.Printf("dexcost: failed to parse %s=%q as decimal, defaulting to 0: %v", field, s, err)
+		return decimal.Zero
+	}
+	return d
 }
 
 // marshalMetadata serialises a task metadata map to a JSON string for the

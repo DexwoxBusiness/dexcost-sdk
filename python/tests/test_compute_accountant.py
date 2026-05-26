@@ -23,9 +23,12 @@ def test_long_running_runtime_emits_one_event_with_diff(monkeypatch):
         "dexcost.compute_accountant.read_cpu_max",
         lambda: CpuMax(quota_us=100000, period_us=100000, vcpu_count=1.0),
     )
+    # §3.1.3 Fix 1: memory_bytes_peak is now per-task (end − start).
+    # Start at 0 MB, end at 512 MB → 512 MB pushed during the task.
+    mem_peak_seq = iter([0, 512 * 1024 * 1024])
     monkeypatch.setattr(
         "dexcost.compute_accountant.read_memory_peak",
-        lambda: 512 * 1024 * 1024,
+        lambda: next(mem_peak_seq),
     )
     monkeypatch.setattr(
         "dexcost.compute_accountant.read_memory_max",
@@ -129,9 +132,13 @@ def test_memory_peak_falls_back_to_current_when_missing(monkeypatch):
         lambda: CpuMax(quota_us=100000, period_us=100000, vcpu_count=1.0),
     )
     monkeypatch.setattr("dexcost.compute_accountant.read_memory_peak", lambda: None)
+    # §3.1.3 Fix 1: read_memory_current is the fallback at both start
+    # and end of task. Start at 0, end at 256 MB → reports 256 MB
+    # pushed during the task.
+    mem_current_seq = iter([0, 256 * 1024 * 1024])
     monkeypatch.setattr(
         "dexcost.compute_accountant.read_memory_current",
-        lambda: 256 * 1024 * 1024,
+        lambda: next(mem_current_seq),
     )
     monkeypatch.setattr(
         "dexcost.compute_accountant.read_memory_max",

@@ -39,7 +39,13 @@ static CGROUP_ROOT: LazyLock<RwLock<PathBuf>> =
     LazyLock::new(|| RwLock::new(PathBuf::from("/sys/fs/cgroup")));
 
 fn root() -> PathBuf {
-    CGROUP_ROOT.read().expect("CGROUP_ROOT rwlock poisoned").clone()
+    // Lock-poison safe: a panic in a writer no longer crashes future readers
+    // (Sprint 1 Theme B / §2.2.6). The path is plain data with no invariants
+    // a mid-write panic could have broken.
+    match CGROUP_ROOT.read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 
 /// Test-only: override the cgroup root path. Use a `tempfile::TempDir`

@@ -16,6 +16,7 @@ import (
 
 	"github.com/DexwoxBusiness/dexcost-go/core"
 	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-go/security"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -253,7 +254,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		protocol:            protocol,
 		method:              req.Method,
 		statusCode:          statusCode,
-		url:                 req.URL.String(),
+		url:                 security.ScrubURL(req.URL.String()),
 	})
 	return resp, nil
 }
@@ -277,7 +278,7 @@ func (t *trackingTransport) recordDomainRate(
 	event.CostUSD = rate.CostUSD
 	event.CostConfidence = core.CostConfidenceExact
 	event.PricingSource = core.PricingSourceRateRegistry
-	event.Details["url"] = req.URL.String()
+	event.Details["url"] = security.ScrubURL(req.URL.String())
 	event.Details["per"] = rate.Per
 	for k, v := range byteDetails {
 		event.Details[k] = v
@@ -305,7 +306,7 @@ func (t *trackingTransport) recordCatalogEntry(
 	result := cat.ExtractCost(entry, headers, body)
 
 	event := core.NewEvent(taskID, core.EventTypeExternalCost)
-	event.Details["url"] = req.URL.String()
+	event.Details["url"] = security.ScrubURL(req.URL.String())
 	for k, v := range byteDetails {
 		event.Details[k] = v
 	}

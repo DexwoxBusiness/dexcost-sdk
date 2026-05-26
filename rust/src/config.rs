@@ -6,6 +6,24 @@ use crate::error::DexcostError;
 
 const DEFAULT_ENDPOINT: &str = "https://api.dexcost.io";
 
+/// Returns true if the given URL is an acceptable DEXCOST_ENDPOINT.
+///
+/// Production traffic must be `https://`. As a documented exception
+/// (matching standard browser security models for localhost),
+/// `http://localhost[:port]/...` and `http://127.0.0.1[:port]/...`
+/// are also accepted so that mock servers used in tests (wiremock,
+/// httpbin, etc.) don't trigger the allow-list fallback.
+/// Sprint 2 Theme D follow-on to A2 (commit 64bd3dd).
+fn is_allowed_endpoint(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    if url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1") {
+        return true;
+    }
+    false
+}
+
 /// SDK configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -42,6 +60,20 @@ pub struct Config {
     /// Opt-in K8s node-aware compute billing (Decision #11). When `false`
     /// (default), k8s pods bill at the per-vCPU-hour default rate.
     pub k8s_node_aware: bool,
+
+    // Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+    // parity with Python `init(network_event_*)`. The HTTP adapter
+    // reads these to decide whether a captured call deserves an
+    // emitted `network` event (in addition to the always-emitted
+    // `external_cost`). Defaults match Python.
+    /// Emit a `network` event when combined request+response bytes
+    /// exceed this. Default 102_400 (100 KiB). Set 0 to disable.
+    pub network_event_threshold_bytes: u64,
+    /// Emit a `network` event on response status >= 400. Default true.
+    pub network_event_on_error: bool,
+    /// Emit a `network` event when call latency exceeds this many ms.
+    /// Default 0 (latency trigger disabled).
+    pub network_event_latency_ms: u64,
 }
 
 impl Default for Config {
@@ -59,6 +91,10 @@ impl Default for Config {
             buffer_path: None,
             compute_billing_overrides: HashMap::new(),
             k8s_node_aware: false,
+            // P4 defaults — match Python init() values.
+            network_event_threshold_bytes: 102_400,
+            network_event_on_error: true,
+            network_event_latency_ms: 0,
         }
     }
 }
@@ -69,9 +105,26 @@ impl Config {
         Self::default()
     }
 
-    /// Control Layer endpoint. Hardcoded default, overridable via DEXCOST_ENDPOINT env var.
+    /// Control Layer endpoint. Hardcoded default, overridable via
+    /// DEXCOST_ENDPOINT env var. Sprint 1 Theme A / §2.1 (A2): only
+    /// `https://` URLs are accepted. An attacker who controls the env
+    /// (misconfigured CI runner, hostile container) could otherwise
+    /// silently exfiltrate cost telemetry to an HTTP collector — we
+    /// refuse and fall back to the production default.
     pub(crate) fn endpoint(&self) -> String {
-        env::var("DEXCOST_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string())
+        match env::var("DEXCOST_ENDPOINT") {
+            Ok(v) if is_allowed_endpoint(&v) => v,
+            Ok(v) => {
+                eprintln!(
+                    "dexcost: DEXCOST_ENDPOINT={:?} rejected — only https:// \
+                     (or http://localhost / http://127.0.0.1 for tests) URLs \
+                     are accepted. Falling back to {}.",
+                    v, DEFAULT_ENDPOINT
+                );
+                DEFAULT_ENDPOINT.to_string()
+            }
+            Err(_) => DEFAULT_ENDPOINT.to_string(),
+        }
     }
 
     /// Validates and resolves the configuration, reading env vars as fallback.
@@ -193,6 +246,26 @@ mod tests {
         std::env::set_var("DEXCOST_ENDPOINT", "https://custom.api.dev");
         let config = Config::default();
         assert_eq!(config.endpoint(), "https://custom.api.dev");
+        std::env::remove_var("DEXCOST_ENDPOINT");
+    }
+
+    /// A2 regression — Sprint 1 Theme A / §2.1. Non-https endpoint values
+    /// are rejected (warn + fall back to production default) so a hostile
+    /// env (misconfigured CI runner, compromised container) cannot
+    /// exfiltrate telemetry to an HTTP collector.
+    #[test]
+    fn test_endpoint_rejects_http_falls_back_to_default() {
+        std::env::set_var("DEXCOST_ENDPOINT", "http://attacker.example/");
+        let config = Config::default();
+        assert_eq!(config.endpoint(), "https://api.dexcost.io");
+        std::env::remove_var("DEXCOST_ENDPOINT");
+    }
+
+    #[test]
+    fn test_endpoint_rejects_arbitrary_scheme() {
+        std::env::set_var("DEXCOST_ENDPOINT", "javascript:alert(1)");
+        let config = Config::default();
+        assert_eq!(config.endpoint(), "https://api.dexcost.io");
         std::env::remove_var("DEXCOST_ENDPOINT");
     }
 

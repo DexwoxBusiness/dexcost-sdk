@@ -54,7 +54,7 @@ def test_modal_emits_gpu_cost_and_one_signal(accountant_factory, monkeypatch):
     # Two snapshots: initial (baseline; samples=[]) and end (1234us of GPU time).
     snapshots = [
         {},  # initial: no samples yet
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=80, mem_util=30, time_stamp=1_234_000)},
+        {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=80, mem_util=30, time_stamp=1_234_000)]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
@@ -150,7 +150,7 @@ def test_bare_metal_scope_sets_no_container_scope_fallback(accountant_factory, m
     )
     snapshots = [
         {},
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=50, mem_util=20, time_stamp=500_000)},
+        {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=50, mem_util=20, time_stamp=500_000)]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
@@ -270,12 +270,17 @@ def test_sm_util_pct_is_window_averaged_not_point_sample(accountant_factory, mon
     )
 
     # Simulate 5 seconds total: 4s @ 80%, 1s @ 0%.
-    # End-snapshot returns the ACCUMULATED sm-time: 0.8 × 4_000_000 + 0 × 1_000_000 = 3_200_000 microseconds.
-    # gpu_seconds_used = 3.2; window = 5s; sm_util_pct = 3.2/5 × 100 = 64%
+    # B2 (Sprint 2 Theme C / §3.1.1): integration is Σ sm_util × dt, so
+    # the mock now exposes two samples covering each utilization window.
+    # First sample @ t=4s, sm=80%: covers 0..4s → 0.8 × 4 = 3.2 sm-sec.
+    # Second sample @ t=5s, sm=0%:  covers 4..5s → 0   × 1 = 0   sm-sec.
+    # Total gpu_seconds_used = 3.2; window-averaged sm_util_pct = 64%.
     snapshots = [
-        {},  # baseline
-        {os.getpid(): UtilSample(pid=os.getpid(), sm_util=0, mem_util=0,
-                                  time_stamp=3_200_000)},
+        {},  # baseline (no PIDs at start)
+        {os.getpid(): [
+            UtilSample(pid=os.getpid(), sm_util=80, mem_util=0, time_stamp=4_000_000),
+            UtilSample(pid=os.getpid(), sm_util=0,  mem_util=0, time_stamp=5_000_000),
+        ]},
     ]
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
@@ -362,8 +367,8 @@ def test_multi_device_emits_one_signal_per_device(accountant_factory, monkeypatc
         call_count["n"] += 1
         if call_count["n"] <= 4:  # 4 baseline (per device)
             return {}
-        return {os.getpid(): UtilSample(pid=os.getpid(), sm_util=50, mem_util=20,
-                                         time_stamp=500_000)}
+        return {os.getpid(): [UtilSample(pid=os.getpid(), sm_util=50, mem_util=20,
+                                         time_stamp=500_000)]}
     monkeypatch.setattr(
         "dexcost.gpu_accountant.nvml_reader.get_process_utilization", fake_util,
     )

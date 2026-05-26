@@ -16,17 +16,17 @@ import (
 // PID union (which on non-container hosts degrades to self-PID-only).
 func gpuMockWithDevices(deviceCount int) *MockNVMLBackend {
 	selfPID := os.Getpid()
-	utilStart := map[int]map[int]NVMLUtilSample{}
-	utilEnd := map[int]map[int]NVMLUtilSample{}
+	utilStart := map[int]map[int][]NVMLUtilSample{}
+	utilEnd := map[int]map[int][]NVMLUtilSample{}
 	productNames := map[int]string{}
 	mem := map[int]NVMLMemInfo{}
 	for i := 0; i < deviceCount; i++ {
 		productNames[i] = "NVIDIA H100 80GB HBM3"
-		utilStart[i] = map[int]NVMLUtilSample{
-			selfPID: {PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0},
+		utilStart[i] = map[int][]NVMLUtilSample{
+			selfPID:{{PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0}},
 		}
-		utilEnd[i] = map[int]NVMLUtilSample{
-			selfPID: {PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000},
+		utilEnd[i] = map[int][]NVMLUtilSample{
+			selfPID:{{PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000}},
 		}
 		mem[i] = NVMLMemInfo{UsedBytes: 40 * 1024 * 1024 * 1024, TotalBytes: 80 * 1024 * 1024 * 1024}
 	}
@@ -35,7 +35,7 @@ func gpuMockWithDevices(deviceCount int) *MockNVMLBackend {
 		DeviceCount:  deviceCount,
 		ProductNames: productNames,
 		Memory:       mem,
-		PerCallUtilization: map[int][]map[int]NVMLUtilSample{
+		PerCallUtilization: map[int][]map[int][]NVMLUtilSample{
 			0: {utilStart[0], utilEnd[0]},
 		},
 	}
@@ -109,9 +109,12 @@ func TestGpuAccountantSmUtilPctWindowAveraged(t *testing.T) {
 
 	a := NewGpuAccountant(GpuRuntimeModal, cloud.CloudEnv{Provider: "modal"})
 	a.SnapshotStart()
-	// duration_ms = 2000 — task ran 2 seconds, but only 1s of GPU activity
-	// (TimeStamp delta from 0 → 1_000_000 µs = 1s). So sm_util_pct should
-	// be ~50%, NOT 80% (the point-sample value).
+	// B2 semantics (Sprint 2 Theme C / §3.1.1 Go port): integrate
+	// sm_util × dt across the sample sequence. Mock has one PID with
+	// baseline ts=0 and end sample ts=1_000_000 sm=80%, so
+	// gpu_seconds_for_device = 0.8 × 1s = 0.8 sm-seconds. Over the
+	// 2s task window: sm_util_pct = 0.8/2 × 100 = 40%.
+	// (Pre-fix `wall_dt × 100%` interpretation gave 50%.)
 	_, signals := a.SnapshotEndAndBuild(2000)
 	if len(signals) != 1 {
 		t.Fatalf("expected 1 signal; got %d", len(signals))
@@ -125,9 +128,9 @@ func TestGpuAccountantSmUtilPctWindowAveraged(t *testing.T) {
 	if !ok {
 		t.Fatalf("sm_util_pct should be float64; got %T", smUtilV)
 	}
-	if smUtil < 49 || smUtil > 51 {
-		t.Errorf("Decision #3 — sm_util_pct should be window-averaged (~50%%); "+
-			"got %v (point-sample bug?)", smUtil)
+	if smUtil < 39 || smUtil > 41 {
+		t.Errorf("Decision #3 + B2 integration — sm_util_pct should be "+
+			"~40%% (0.8 sm-sec / 2s window × 100); got %v", smUtil)
 	}
 }
 
@@ -140,7 +143,7 @@ func TestGpuAccountantDegenerateWindowEmitsNilSmUtilPct(t *testing.T) {
 		ProductNames: map[int]string{0: "NVIDIA H100 80GB HBM3"},
 		Memory:       map[int]NVMLMemInfo{0: {TotalBytes: 80 * 1024 * 1024 * 1024}},
 		// No utilization samples at all — degenerate window.
-		PerCallUtilization: map[int][]map[int]NVMLUtilSample{
+		PerCallUtilization: map[int][]map[int][]NVMLUtilSample{
 			0: {{}, {}},
 		},
 	}

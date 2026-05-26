@@ -68,8 +68,14 @@ def _make_response(
     h: dict[str, str] = {}
     if content_type:
         h["content-type"] = content_type
+    # Default Content-Length when a body is supplied — real HTTP servers
+    # always set it for non-streaming responses, and B11 (Sprint 2 Theme
+    # C / §3.1.2) treats missing Content-Length as "too large to read"
+    # so tests that want JSON extraction need a value here.
     if content_length is not None:
         h["content-length"] = str(content_length)
+    elif body is not None:
+        h["content-length"] = "256"  # arbitrary small value below 1 MB
     if headers:
         h.update(headers)
     response.headers = h

@@ -1,0 +1,4 @@
+{
+  "raw_url": "https://alice:s3cr3t-p4ss@api.example.com/v1/chat?session=abc",
+  "scrubbed_url": "https://api.example.com/v1/chat?session=REDACTED"
+}

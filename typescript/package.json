@@ -19,16 +19,19 @@
     "test": "vitest run",
     "lint": "tsc --noEmit"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
-    "better-sqlite3": "^12.8.0",
     "decimal.js": "^10.6.0",
     "js-yaml": "^4.1.1"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.30.0",
     "ai": ">=3.0.0",
+    "better-sqlite3": ">=11.0.0",
     "openai": ">=4.0.0",
     "playwright": ">=1.40.0"
   },
@@ -42,9 +45,15 @@
     "ai": {
       "optional": true
     },
+    "better-sqlite3": {
+      "optional": true
+    },
     "playwright": {
       "optional": true
     }
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

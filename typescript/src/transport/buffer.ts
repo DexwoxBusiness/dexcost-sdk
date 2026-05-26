@@ -7,7 +7,14 @@
  * Uses better-sqlite3 for synchronous, high-performance SQLite access.
  */
 
-import Database from "better-sqlite3";
+// Type-only import — keeps the static reference for TS without pulling
+// the runtime binding in. The runtime side is loaded dynamically via
+// createRequire inside the constructor so module load doesn't crash
+// when better-sqlite3 is unavailable (Vercel Edge, Cloudflare Workers,
+// Bun configurations without the native binding). Sprint 1 Theme B /
+// §2.2.3 (B8).
+import type Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -223,6 +230,191 @@ const INDEXES = [
 ];
 
 // ---------------------------------------------------------------------------
+// MemoryBufferStore — in-memory fallback when better-sqlite3 is unavailable
+// (Vercel Edge, Cloudflare Workers, Bun without bindings).
+//
+// Sprint 1 Theme B / §2.2.3 (B8 follow-on). The audit-minimum no-op
+// fallback (commit a6eb6db) kept customer apps alive but silently
+// dropped events. This store provides durable in-memory buffering with
+// a hard 10k-entry cap per kind (events, tasks) and FIFO eviction
+// (Map iteration order = insertion order). Events still don't survive
+// process restarts — that's the SQLite path's job — but they're now
+// available to the sync pusher within the process lifetime.
+// ---------------------------------------------------------------------------
+
+const MEM_BUFFER_MAX_EVENTS = 10_000;
+const MEM_BUFFER_MAX_TASKS = 10_000;
+
+interface MemEventEntry {
+  event: CostEvent;
+  syncStatus: "pending" | "synced";
+  capturedAt: Date;
+  syncedAt: Date | null;
+}
+
+interface MemTaskEntry {
+  task: Task;
+  syncStatus: "pending" | "synced";
+  capturedAt: Date;
+  syncedAt: Date | null;
+}
+
+class MemoryBufferStore {
+  private _events = new Map<string, MemEventEntry>();
+  private _tasks = new Map<string, MemTaskEntry>();
+
+  addEvent(event: CostEvent): void {
+    this._evict(this._events, MEM_BUFFER_MAX_EVENTS);
+    // Clone to detach from caller mutations.
+    this._events.set(event.eventId, {
+      event: { ...event },
+      syncStatus: "pending",
+      capturedAt: new Date(),
+      syncedAt: null,
+    });
+  }
+
+  updateEvent(event: CostEvent): void {
+    // Only update if entry exists — matches SQLite's UPDATE semantics
+    // (no-op when no row matches).
+    const existing = this._events.get(event.eventId);
+    if (existing == null) return;
+    existing.event = { ...event };
+  }
+
+  upsertTask(task: Task): void {
+    const existing = this._tasks.get(task.taskId);
+    if (existing != null) {
+      existing.task = { ...task };
+      return;
+    }
+    this._evict(this._tasks, MEM_BUFFER_MAX_TASKS);
+    this._tasks.set(task.taskId, {
+      task: { ...task },
+      syncStatus: "pending",
+      capturedAt: new Date(),
+      syncedAt: null,
+    });
+  }
+
+  getPendingEvents(limit: number): CostEvent[] {
+    const out: CostEvent[] = [];
+    for (const entry of this._events.values()) {
+      if (entry.syncStatus !== "pending") continue;
+      out.push(entry.event);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  markSynced(eventIds: string[]): void {
+    const now = new Date();
+    for (const id of eventIds) {
+      const entry = this._events.get(id);
+      if (entry != null) {
+        entry.syncStatus = "synced";
+        entry.syncedAt = now;
+      }
+    }
+  }
+
+  getTask(taskId: string): Task | undefined {
+    return this._tasks.get(taskId)?.task;
+  }
+
+  getAllTasks(): Task[] {
+    return Array.from(this._tasks.values(), (e) => e.task);
+  }
+
+  getPendingTasks(): Task[] {
+    const out: Task[] = [];
+    for (const entry of this._tasks.values()) {
+      if (entry.syncStatus === "pending") out.push(entry.task);
+    }
+    return out;
+  }
+
+  markTasksSynced(taskIds: string[]): void {
+    const now = new Date();
+    for (const id of taskIds) {
+      const entry = this._tasks.get(id);
+      if (entry != null) {
+        entry.syncStatus = "synced";
+        entry.syncedAt = now;
+      }
+    }
+  }
+
+  get pendingTaskCount(): number {
+    let n = 0;
+    for (const e of this._tasks.values()) if (e.syncStatus === "pending") n += 1;
+    return n;
+  }
+
+  get pendingCount(): number {
+    let n = 0;
+    for (const e of this._events.values()) if (e.syncStatus === "pending") n += 1;
+    return n;
+  }
+
+  getAllEvents(): CostEvent[] {
+    return Array.from(this._events.values(), (e) => e.event);
+  }
+
+  queryEvents(taskId: string): CostEvent[] {
+    const out: CostEvent[] = [];
+    for (const entry of this._events.values()) {
+      if (entry.event.taskId === taskId) out.push(entry.event);
+    }
+    return out;
+  }
+
+  purgeSynced(retentionHours: number): number {
+    const cutoff = Date.now() - retentionHours * 3600 * 1000;
+    let removed = 0;
+    for (const [id, entry] of this._events) {
+      if (entry.syncStatus === "synced" && entry.syncedAt != null &&
+          entry.syncedAt.getTime() < cutoff) {
+        this._events.delete(id);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  purgeOldPending(maxAgeDays: number): number {
+    const cutoff = Date.now() - maxAgeDays * 24 * 3600 * 1000;
+    let removed = 0;
+    for (const [id, entry] of this._events) {
+      if (entry.syncStatus === "pending" && entry.capturedAt.getTime() < cutoff) {
+        this._events.delete(id);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  close(): void {
+    this._events.clear();
+    this._tasks.clear();
+  }
+
+  // Test-only: total entry counts (used by buffer regression tests to
+  // exercise the FIFO eviction cap without going through every getter).
+  _eventCount(): number { return this._events.size; }
+  _taskCount(): number { return this._tasks.size; }
+
+  private _evict<V>(map: Map<string, V>, max: number): void {
+    while (map.size >= max) {
+      // Map iteration order = insertion order, so first key is oldest.
+      const oldestKey = map.keys().next().value;
+      if (oldestKey === undefined) break;
+      map.delete(oldestKey);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // EventBuffer
 // ---------------------------------------------------------------------------
 
@@ -233,9 +425,53 @@ const INDEXES = [
  * Costs are stored as TEXT strings to avoid floating-point precision loss.
  */
 export class EventBuffer {
-  private _db: Database.Database;
+  // null when better-sqlite3 is unavailable; in that case `_mem` holds
+  // the in-memory fallback store and every method delegates to it.
+  private _db: Database.Database | null;
+  private _mem: MemoryBufferStore | null = null;
+
+  /**
+   * Test-only seam. When `true`, the constructor takes the no-binding
+   * fallback path without attempting the require — used by
+   * tests/runtime-fallback.test.ts to simulate Vercel Edge / Cloudflare
+   * Workers behaviour without touching the real native module. Do NOT
+   * set this in production code. Sprint 1 Theme B / §2.2.3 (B8).
+   */
+  static _forceFallbackForTest = false;
 
   constructor(dbPath?: string) {
+    // Sprint 1 Theme B / §2.2.3 (B8): try to load better-sqlite3
+    // dynamically. If the native binding is absent or fails to load
+    // (Vercel Edge, Cloudflare Workers, Bun without bindings), fall
+    // back to a Map-based in-memory buffer with a 10k-entry cap so
+    // init() doesn't crash the customer app and events are still
+    // available to the sync pusher within the process lifetime.
+    let DatabaseCtor: typeof Database | null = null;
+    if (EventBuffer._forceFallbackForTest) {
+      this._db = null;
+      this._mem = new MemoryBufferStore();
+      console.warn(
+        "dexcost: EventBuffer._forceFallbackForTest is set — using in-memory buffer (events do not survive process restart)",
+      );
+      return;
+    }
+    try {
+      const require = createRequire(import.meta.url);
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      DatabaseCtor = require("better-sqlite3") as typeof Database;
+    } catch (err) {
+      console.warn(
+        "dexcost: better-sqlite3 not available in this runtime; falling " +
+          "back to in-memory buffer (events do not survive process " +
+          "restart, hard cap 10k entries). Install better-sqlite3 as a " +
+          "peer dependency for durable buffering. Cause: " +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      this._db = null;
+      this._mem = new MemoryBufferStore();
+      return;
+    }
+
     const resolvedPath = dbPath ?? join(homedir(), ".dexcost", "buffer.db");
     try {
       mkdirSync(dirname(resolvedPath), { recursive: true });
@@ -243,7 +479,7 @@ export class EventBuffer {
       throw new Error(`Cannot create dexcost storage directory: ${err instanceof Error ? err.message : err}`);
     }
 
-    this._db = new Database(resolvedPath);
+    this._db = new DatabaseCtor(resolvedPath);
 
     // PRAGMAs and DDL
     try {
@@ -292,6 +528,7 @@ export class EventBuffer {
    * is swallowed. Any other failure is also tolerated so init never crashes.
    */
   private _migrateAddColumn(table: string, column: string, definition: string): void {
+    if (!this._db) return;
     try {
       this._db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     } catch {
@@ -303,6 +540,8 @@ export class EventBuffer {
    * Add a cost event to the buffer with sync_status = 'pending'.
    */
   addEvent(event: CostEvent): void {
+    if (this._mem) { this._mem.addEvent(event); return; }
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -353,6 +592,8 @@ export class EventBuffer {
    * `'synced'` after a successful POST so unchanged tasks are not re-sent.
    */
   upsertTask(task: Task): void {
+    if (this._mem) { this._mem.upsertTask(task); return; }
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -404,6 +645,8 @@ export class EventBuffer {
    * Return up to `limit` pending events, ordered by timestamp ASC.
    */
   getPendingEvents(limit: number = 100): CostEvent[] {
+    if (this._mem) return this._mem.getPendingEvents(limit);
+    if (!this._db) return [];
     const rows = this._db
       .prepare(
         `SELECT * FROM events WHERE sync_status = 'pending' ORDER BY timestamp ASC LIMIT ?`
@@ -416,6 +659,8 @@ export class EventBuffer {
    * Mark the given event IDs as synced.
    */
   markSynced(eventIds: string[]): void {
+    if (this._mem) { this._mem.markSynced(eventIds); return; }
+    if (!this._db) return;
     if (eventIds.length === 0) return;
     try {
       const placeholders = eventIds.map(() => "?").join(", ");
@@ -431,6 +676,8 @@ export class EventBuffer {
    * Retrieve a task by ID, or undefined if not found.
    */
   getTask(taskId: string): Task | undefined {
+    if (this._mem) return this._mem.getTask(taskId);
+    if (!this._db) return undefined;
     const row = this._db
       .prepare("SELECT * FROM tasks WHERE task_id = ?")
       .get(taskId) as TaskRow | undefined;
@@ -441,6 +688,8 @@ export class EventBuffer {
    * Return all tasks in the buffer.
    */
   getAllTasks(): Task[] {
+    if (this._mem) return this._mem.getAllTasks();
+    if (!this._db) return [];
     const rows = this._db.prepare("SELECT * FROM tasks").all() as TaskRow[];
     return rows.map(rowToTask);
   }
@@ -452,6 +701,8 @@ export class EventBuffer {
    * every push cycle.
    */
   getPendingTasks(): Task[] {
+    if (this._mem) return this._mem.getPendingTasks();
+    if (!this._db) return [];
     const rows = this._db
       .prepare("SELECT * FROM tasks WHERE sync_status = 'pending'")
       .all() as TaskRow[];
@@ -465,6 +716,8 @@ export class EventBuffer {
    * from subsequent pushes until they are upserted again.
    */
   markTasksSynced(taskIds: string[]): void {
+    if (this._mem) { this._mem.markTasksSynced(taskIds); return; }
+    if (!this._db) return;
     if (taskIds.length === 0) return;
     try {
       const placeholders = taskIds.map(() => "?").join(", ");
@@ -478,6 +731,8 @@ export class EventBuffer {
 
   /** The number of tasks awaiting sync (`sync_status = 'pending'`). */
   get pendingTaskCount(): number {
+    if (this._mem) return this._mem.pendingTaskCount;
+    if (!this._db) return 0;
     const row = this._db
       .prepare("SELECT COUNT(*) AS count FROM tasks WHERE sync_status = 'pending'")
       .get() as CountRow;
@@ -488,6 +743,8 @@ export class EventBuffer {
    * Return all events in the buffer (including synced).
    */
   getAllEvents(): CostEvent[] {
+    if (this._mem) return this._mem.getAllEvents();
+    if (!this._db) return [];
     const rows = this._db.prepare("SELECT * FROM events").all() as EventRow[];
     return rows.map(rowToEvent);
   }
@@ -496,6 +753,8 @@ export class EventBuffer {
    * Return events for a specific task, ordered by timestamp DESC.
    */
   queryEvents(taskId: string): CostEvent[] {
+    if (this._mem) return this._mem.queryEvents(taskId);
+    if (!this._db) return [];
     const rows = this._db
       .prepare("SELECT * FROM events WHERE task_id = ? ORDER BY timestamp DESC")
       .all(taskId) as EventRow[];
@@ -506,6 +765,8 @@ export class EventBuffer {
    * Update all columns of an existing event in-place.
    */
   updateEvent(event: CostEvent): void {
+    if (this._mem) { this._mem.updateEvent(event); return; }
+    if (!this._db) return;
     try {
       this._db
         .prepare(
@@ -560,6 +821,8 @@ export class EventBuffer {
    * Return the number of pending (unsynced) events.
    */
   get pendingCount(): number {
+    if (this._mem) return this._mem.pendingCount;
+    if (!this._db) return 0;
     const row = this._db
       .prepare("SELECT COUNT(*) AS count FROM events WHERE sync_status = 'pending'")
       .get() as CountRow;
@@ -572,6 +835,8 @@ export class EventBuffer {
    * Returns the number of deleted rows.
    */
   purgeSynced(retentionHours: number = 48): number {
+    if (this._mem) return this._mem.purgeSynced(retentionHours);
+    if (!this._db) return 0;
     try {
       const cutoff = new Date(Date.now() - retentionHours * 3_600_000).toISOString();
       const result = this._db
@@ -600,6 +865,8 @@ export class EventBuffer {
    * days). Returns the number of deleted rows.
    */
   purgeOldPending(maxAgeDays: number = 7): number {
+    if (this._mem) return this._mem.purgeOldPending(maxAgeDays);
+    if (!this._db) return 0;
     try {
       const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
       const result = this._db
@@ -621,6 +888,8 @@ export class EventBuffer {
    * Close the underlying database connection.
    */
   close(): void {
+    if (this._mem) { this._mem.close(); this._mem = null; return; }
+    if (!this._db) return;
     this._db.close();
   }
 }

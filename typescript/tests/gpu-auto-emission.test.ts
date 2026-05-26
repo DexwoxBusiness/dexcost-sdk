@@ -34,12 +34,9 @@ function stubHooks(timeStampMicros: number) {
   const samples = [
     {},
     {
-      [SELF]: {
-        pid: SELF,
-        smUtil: 50,
-        memUtil: 30,
-        timeStamp: timeStampMicros,
-      },
+      [SELF]: [
+        { pid: SELF, smUtil: 50, memUtil: 30, timeStamp: timeStampMicros },
+      ],
     },
   ];
   return {

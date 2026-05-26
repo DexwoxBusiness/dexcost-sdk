@@ -5,8 +5,20 @@
  * using Ajv. Mirrors the Python SDK's schema.py validate() function.
  */
 
-import eventSchema from "./dexcost-event.v1.json" with { type: "json" };
-import taskSchema from "./dexcost-task.v1.json" with { type: "json" };
+// Sprint 3 Theme E / §4.2.3 — runtime JSON load for Node 18 support.
+// `import x from "./x.json" with { type: "json" }` is Node 22+ syntax;
+// reading the file at runtime works on every supported Node version.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const _thisDir = dirname(fileURLToPath(import.meta.url));
+const eventSchema = JSON.parse(
+  readFileSync(join(_thisDir, "dexcost-event.v1.json"), "utf-8"),
+);
+const taskSchema = JSON.parse(
+  readFileSync(join(_thisDir, "dexcost-task.v1.json"), "utf-8"),
+);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let ajv: any;

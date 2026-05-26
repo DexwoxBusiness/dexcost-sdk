@@ -54,15 +54,12 @@ describe("GpuAccountant — Modal serverless emission", () => {
 
   it("emits one gpu_cost + one gpu_utilization_signal per device", () => {
     let call = 0;
-    const samples: Array<Record<number, UtilSample>> = [
+    const samples: Array<Record<number, UtilSample[]>> = [
       {}, // baseline
       {
-        [SELF]: {
-          pid: SELF,
-          smUtil: 80,
-          memUtil: 30,
-          timeStamp: 1_234_000,
-        },
+        [SELF]: [
+          { pid: SELF, smUtil: 80, memUtil: 30, timeStamp: 1_234_000 },
+        ],
       },
     ];
     const hooks = baseHooks({
@@ -147,10 +144,10 @@ describe("GpuAccountant — Decision #1 fallback labels", () => {
   it("bare_metal_user_slice → _cgroup_scope_fallback=no_container_scope", () => {
     _resetWarningStateForTests();
     let call = 0;
-    const samples: Array<Record<number, UtilSample>> = [
+    const samples: Array<Record<number, UtilSample[]>> = [
       {},
       {
-        [SELF]: { pid: SELF, smUtil: 50, memUtil: 20, timeStamp: 500_000 },
+        [SELF]: [{ pid: SELF, smUtil: 50, memUtil: 20, timeStamp: 500_000  }],
       },
     ];
     const hooks = baseHooks({
@@ -210,12 +207,18 @@ describe("GpuAccountant — Decision #2 MIG transparency", () => {
 describe("GpuAccountant — Decision #3 window-averaged sm_util_pct", () => {
   it("4s@80% + 1s@0% over 5s → sm_util_pct ≈ 64%", () => {
     _resetWarningStateForTests();
-    // Simulate accumulated active-GPU-microseconds = 3.2s (0.8 × 4_000_000)
+    // B2 (Sprint 2 Theme C / §3.1.1) — integration is Σ sm_util × dt.
+    // First sample @ t=4s sm=80%: covers 0..4s → 0.8 × 4 = 3.2 sm-sec.
+    // Second sample @ t=5s sm=0%:  covers 4..5s → 0   × 1 = 0   sm-sec.
+    // Total gpu_seconds_used = 3.2; sm_util_pct = 3.2/5 × 100 = 64%.
     let call = 0;
-    const samples: Array<Record<number, UtilSample>> = [
+    const samples: Array<Record<number, UtilSample[]>> = [
       {},
       {
-        [SELF]: { pid: SELF, smUtil: 0, memUtil: 0, timeStamp: 3_200_000 },
+        [SELF]: [
+          { pid: SELF, smUtil: 80, memUtil: 0, timeStamp: 4_000_000 },
+          { pid: SELF, smUtil: 0,  memUtil: 0, timeStamp: 5_000_000 },
+        ],
       },
     ];
     const hooks = baseHooks({
@@ -267,7 +270,7 @@ describe("GpuAccountant — multi-device", () => {
         utilCall++;
         if (utilCall <= 4) return {};
         return {
-          [SELF]: { pid: SELF, smUtil: 50, memUtil: 20, timeStamp: 500_000 },
+          [SELF]: [{ pid: SELF, smUtil: 50, memUtil: 20, timeStamp: 500_000  }],
         };
       },
     });

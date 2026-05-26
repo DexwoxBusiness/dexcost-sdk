@@ -3,6 +3,7 @@ package dexcost
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -31,6 +32,21 @@ type Config struct {
 	TrackHTTP bool `json:"track_http,omitempty"`
 	// ServiceCatalogURL fetches an external service catalog on init.
 	ServiceCatalogURL string `json:"service_catalog_url,omitempty"`
+
+	// Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+	// parity with Python `init(network_event_*)`. The HTTP adapter
+	// reads these to decide whether a captured call deserves an
+	// emitted `network` event (in addition to the always-emitted
+	// `external_cost`). Defaults match Python.
+	//
+	// NetworkEventThresholdBytes: emit when combined request+response
+	// bytes exceed this. Default 102_400 (100 KiB). Set 0 to disable.
+	NetworkEventThresholdBytes int `json:"network_event_threshold_bytes,omitempty"`
+	// NetworkEventOnError: emit on response status >= 400. Default true.
+	NetworkEventOnError bool `json:"network_event_on_error,omitempty"`
+	// NetworkEventLatencyMs: emit when call latency exceeds this many
+	// milliseconds. Default 0 (latency trigger disabled).
+	NetworkEventLatencyMs int `json:"network_event_latency_ms,omitempty"`
 
 	// EnableRetryHeuristics turns on the in-memory RetryHeuristicEngine for
 	// automatic retry detection. Off by default — without this the engine is
@@ -79,11 +95,23 @@ func ValidateAPIKey(key string) (string, error) {
 
 // resolvedEndpoint returns the Control Layer endpoint URL.
 // Hardcoded default, overridable only via DEXCOST_ENDPOINT env var.
+//
+// Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted. An
+// attacker who controls the env (misconfigured CI runner, hostile
+// container) could otherwise silently exfiltrate cost telemetry to
+// an HTTP collector — we refuse and fall back to the production
+// default with a warning.
 func (c *Config) resolvedEndpoint() string {
-	if env := os.Getenv("DEXCOST_ENDPOINT"); env != "" {
-		return env
+	env := os.Getenv("DEXCOST_ENDPOINT")
+	if env == "" {
+		return defaultEndpoint
 	}
-	return defaultEndpoint
+	if !strings.HasPrefix(env, "https://") {
+		log.Printf("dexcost: DEXCOST_ENDPOINT=%q rejected — only https:// "+
+			"URLs are accepted. Falling back to %s.", env, defaultEndpoint)
+		return defaultEndpoint
+	}
+	return env
 }
 
 func (c *Config) applyDefaults() {

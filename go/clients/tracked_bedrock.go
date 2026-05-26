@@ -8,6 +8,7 @@ import (
 
 	"github.com/DexwoxBusiness/dexcost-go/core"
 	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-go/security"
 	"github.com/google/uuid"
 )
 
@@ -133,7 +134,7 @@ func minimalFailedEvent(taskID uuid.UUID, provider string, latencyMs int, err er
 	event.PricingSource = core.PricingSourceUnknown
 	event.LatencyMs = &latencyMs
 	if err != nil {
-		event.Details["error"] = err.Error()
+		event.Details["error"] = security.ScrubURLsInText(err.Error())
 	}
 	return event
 }

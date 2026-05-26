@@ -6,7 +6,23 @@
  */
 
 import { randomUUID } from "node:crypto";
+import Decimal from "decimal.js";
 import type { Task, CostEvent, EventType, CostConfidence, PricingSource } from "./models.js";
+
+/**
+ * Decimal-based addition to defeat floating-point drift in cost
+ * accumulation. Sprint 2 Theme E / §3.3.1 (B3).
+ *
+ * Native `a + b` on `number` accumulates ~2e-16 of error per add;
+ * over 10 000 events that adds up to a visible drift in the per-
+ * task total. decimal.js does exact decimal arithmetic; we convert
+ * back to `number` at the boundary so the customer-facing field
+ * type stays `number` (full `number → string` wire-format change
+ * is deferred to a major version per plan §0.7).
+ */
+function decAdd(a: number, b: number): number {
+  return new Decimal(a).plus(b).toNumber();
+}
 import { createTask, createCostEvent } from "./models.js";
 import { getCurrentTask, runWithTask } from "./context.js";
 import { EventBuffer } from "../transport/buffer.js";
@@ -23,7 +39,6 @@ import { GpuPricingEngine } from "../pricing/gpu-pricing.js";
 import { GpuAccountant } from "./gpu-accountant.js";
 import { GpuRuntimeKind } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
-import Decimal from "decimal.js";
 import { EventPusher } from "../transport/pusher.js";
 import { PricingEngine } from "../pricing/engine.js";
 import { RateRegistry } from "../pricing/rates.js";
@@ -36,7 +51,33 @@ import {
   uninstrumentProvider,
 } from "../instruments/index.js";
 
-const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+export const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+
+/**
+ * Resolves the Control Layer endpoint from the DEXCOST_ENDPOINT env
+ * var. Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted.
+ * An attacker who controls the env (misconfigured CI runner, hostile
+ * container) could otherwise silently exfiltrate cost telemetry to an
+ * HTTP collector — we refuse and fall back to the production default
+ * with a console.warn.
+ *
+ * Exported for testability; the CostTracker constructor is the only
+ * production caller.
+ */
+export function resolveEndpoint(): string {
+  const env = process.env.DEXCOST_ENDPOINT;
+  if (env === undefined || env === "") {
+    return DEFAULT_ENDPOINT;
+  }
+  if (!env.startsWith("https://")) {
+    console.warn(
+      `dexcost: DEXCOST_ENDPOINT=${JSON.stringify(env)} rejected — only ` +
+        `https:// URLs are accepted. Falling back to ${DEFAULT_ENDPOINT}.`,
+    );
+    return DEFAULT_ENDPOINT;
+  }
+  return env;
+}
 
 /** Event types accepted by `recordCost` (non-LLM cost events). */
 const NON_LLM_EVENT_TYPES = new Set<EventType>(["external_cost", "compute_cost"]);
@@ -56,11 +97,62 @@ import "../instruments/mcp.js";
 
 let _instance: CostTracker | null = null;
 
+/**
+ * Sprint 2 Theme E / §3.3.2 (B9) — exit-time flush handlers.
+ *
+ * Pre-fix events recorded just before `process.exit(0)` were lost:
+ * the buffered in-memory queue and the not-yet-flushed pusher batch
+ * both died with the process. These handlers run on process tear-
+ * down (graceful exit, SIGTERM, SIGINT) and synchronously close the
+ * tracker. closeAsync() flushes the pending push first.
+ *
+ * The handlers are stored so `close()` can unregister them — avoids
+ * cross-test listener-leak when init/close cycles repeatedly.
+ */
+let _exitHandlers: {
+  beforeExit?: (code: number) => void;
+  sigterm?: NodeJS.SignalsListener;
+  sigint?: NodeJS.SignalsListener;
+} | null = null;
+
+function _registerExitHandlers(): void {
+  if (_exitHandlers !== null) return;
+  const beforeExit = (_code: number): void => {
+    // Synchronous best-effort flush on graceful exit. Node will wait
+    // for any returned promise from `beforeExit` (unlike `exit`), so
+    // closeAsync's in-flight push has a chance to land.
+    void globalCloseAsync();
+  };
+  const sigterm: NodeJS.SignalsListener = () => {
+    // SIGTERM: containerized environments (k8s, docker stop) deliver
+    // this 30s before SIGKILL. Run closeAsync to flush, then let the
+    // default handler take over (re-emit so other listeners run).
+    void globalCloseAsync();
+  };
+  const sigint: NodeJS.SignalsListener = () => {
+    // SIGINT (Ctrl+C in dev): same flush guarantee.
+    void globalCloseAsync();
+  };
+  process.on("beforeExit", beforeExit);
+  process.on("SIGTERM", sigterm);
+  process.on("SIGINT", sigint);
+  _exitHandlers = { beforeExit, sigterm, sigint };
+}
+
+function _unregisterExitHandlers(): void {
+  if (_exitHandlers === null) return;
+  if (_exitHandlers.beforeExit) process.off("beforeExit", _exitHandlers.beforeExit);
+  if (_exitHandlers.sigterm) process.off("SIGTERM", _exitHandlers.sigterm);
+  if (_exitHandlers.sigint) process.off("SIGINT", _exitHandlers.sigint);
+  _exitHandlers = null;
+}
+
 export function init(options: TrackerOptions = {}): CostTracker {
   if (_instance !== null) {
     throw new Error("dexcost already initialized — call close() first to reset");
   }
   _instance = new CostTracker(options);
+  _registerExitHandlers();
   return _instance;
 }
 
@@ -69,6 +161,28 @@ export function getTracker(): CostTracker {
     throw new Error("dexcost not initialized — call init() first");
   }
   return _instance;
+}
+
+/**
+ * Update the SDK's API key and resume sync after auth failure.
+ *
+ * Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer returns
+ * 401/403 the pusher sets `_authFailed=true` and stops; without this
+ * function the only recovery is restarting the customer's process.
+ *
+ * Returns `true` on success, `false` if `init()` has not been called
+ * (logs a console warning).
+ */
+export function setApiKey(newKey: string): boolean {
+  if (_instance === null) {
+    console.warn(
+      "dexcost: setApiKey called before init(); ignoring. " +
+        "Call dexcost.init({apiKey:...}) first.",
+    );
+    return false;
+  }
+  _instance.setApiKey(newKey);
+  return true;
 }
 
 export async function globalTrack<T>(
@@ -87,6 +201,7 @@ export function globalClose(): void {
     _instance.close();
     _instance = null;
   }
+  _unregisterExitHandlers();
 }
 
 export async function globalCloseAsync(): Promise<void> {
@@ -94,6 +209,7 @@ export async function globalCloseAsync(): Promise<void> {
     await _instance.closeAsync();
     _instance = null;
   }
+  _unregisterExitHandlers();
 }
 
 /** Configuration options for a CostTracker instance. */
@@ -138,6 +254,22 @@ export interface TrackerOptions {
    * Optional URL to refresh the HTTP service catalog from on init.
    */
   serviceCatalogUrl?: string;
+
+  /**
+   * Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+   * parity with Python `init(network_event_*)`. The HTTP adapter
+   * reads these to decide whether a captured call deserves an
+   * emitted `network` event (in addition to the always-emitted
+   * `external_cost`). Defaults match Python.
+   *
+   * Emit when combined request+response bytes exceed this.
+   * Default 102_400 (100 KiB). Set 0 to disable.
+   */
+  networkEventThresholdBytes?: number;
+  /** Emit on response status >= 400. Default true. */
+  networkEventOnError?: boolean;
+  /** Emit when call latency exceeds this many ms. Default 0 (off). */
+  networkEventLatencyMs?: number;
   /**
    * Per-billing-model dispatch overrides for the compute pricing engine.
    * Currently used to switch Cloud Run from request-based to instance-
@@ -272,7 +404,7 @@ export class TrackedTask {
         event.retryOf = match.matchedEventId;
         event.details = { ...event.details, retry_confidence: match.confidence };
         this._task.retryCount += 1;
-        this._task.retryCostUsd += costUsd;
+        this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
       }
     }
 
@@ -287,8 +419,8 @@ export class TrackedTask {
     }
 
     // Aggregate into task
-    this._task.llmCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.llmCostUsd = decAdd(this._task.llmCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
     this._task.totalInputTokens += inputTokens;
     this._task.totalOutputTokens += outputTokens;
     if (cachedTokens !== undefined) {
@@ -340,11 +472,11 @@ export class TrackedTask {
 
     // Aggregate into task
     if (eventType === "external_cost") {
-      this._task.externalCostUsd += costUsd;
+      this._task.externalCostUsd = decAdd(this._task.externalCostUsd, costUsd);
     } else if (eventType === "compute_cost") {
-      this._task.computeCostUsd += costUsd;
+      this._task.computeCostUsd = decAdd(this._task.computeCostUsd, costUsd);
     }
-    this._task.totalCostUsd += costUsd;
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
     this._buffer.upsertTask(this._task);
     return event;
@@ -376,8 +508,8 @@ export class TrackedTask {
 
     // Aggregate into task
     this._task.retryCount += 1;
-    this._task.retryCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
     this._buffer.upsertTask(this._task);
     return event;
@@ -580,8 +712,8 @@ export class TrackedTask {
     }
 
     const deltaNum = costDelta.toNumber();
-    task.computeCostUsd += deltaNum;
-    task.totalCostUsd += deltaNum;
+    task.computeCostUsd = decAdd(task.computeCostUsd, deltaNum);
+    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
   }
 
   /**
@@ -709,8 +841,8 @@ export class TrackedTask {
     }
 
     const deltaNum = costDelta.toNumber();
-    task.gpuCostUsd += deltaNum;
-    task.totalCostUsd += deltaNum;
+    task.gpuCostUsd = decAdd(task.gpuCostUsd, deltaNum);
+    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
   }
 
   /**
@@ -798,13 +930,13 @@ export class TrackedTask {
 
       // First-pass total_cost_usd summed this event at 0 (cost_pending);
       // add the back-filled cost.
-      this._task.totalCostUsd += evCost;
+      this._task.totalCostUsd = decAdd(this._task.totalCostUsd, evCost);
     }
 
     // Add network_cost_usd to total — captures every external byte
     // (cataloged + below-threshold un-cataloged calls included via the
     // accountant scalar even when they emitted no per-event row).
-    this._task.totalCostUsd += this._task.networkCostUsd;
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, this._task.networkCostUsd);
   }
 
   /**
@@ -833,8 +965,8 @@ export class TrackedTask {
     this._events.push(event);
     this._buffer.addEvent(event);
     logEvent(event, this._task.taskType);
-    this._task.externalCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.externalCostUsd = decAdd(this._task.externalCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
     this._buffer.upsertTask(this._task);
     return event;
   }
@@ -891,7 +1023,11 @@ export class CostTracker {
   constructor(options: TrackerOptions = {}) {
     this._options = {
       batchSize: 100,
-      flushIntervalMs: 30000,
+      // Sprint 3 Theme F / §4.1.3 P5: default flush 5 s, matching
+      // Python's `flush_interval=5.0`. Pre-fix the TS default was
+      // 30 s, leaving up to 6× more time for events to be lost on
+      // process exit (and inconsistent with Python's UX).
+      flushIntervalMs: 5000,
       ...options,
     };
 
@@ -909,7 +1045,7 @@ export class CostTracker {
       enableDevMode();
     }
 
-    const endpoint = process.env.DEXCOST_ENDPOINT ?? DEFAULT_ENDPOINT;
+    const endpoint = resolveEndpoint();
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
 
@@ -1134,6 +1270,18 @@ export class CostTracker {
   async flush(): Promise<void> {
     if (this._pusher) {
       await this._pusher.flush();
+    }
+  }
+
+  /**
+   * Update the API key on both pricing engine and pusher. Sprint 2
+   * Theme D / §3.2.3 (B14) — entry point for `dexcost.setApiKey`.
+   */
+  setApiKey(newKey: string): void {
+    this._config = { ...this._config, apiKey: newKey };
+    this._pricing.setApiKey(newKey);
+    if (this._pusher) {
+      this._pusher.setApiKey(newKey);
     }
   }
 

@@ -1,0 +1,13 @@
+{
+  "_description": "Single h100-80gb-sxm5 for 1 hour.",
+  "billing_model": "per_instance_hour",
+  "gpu_vendor": "nvidia",
+  "gpu_sku": "h100-80gb-sxm5",
+  "gpu_count": 1,
+  "region": "us-east-1",
+  "duration_ms": 3600000,
+  "gpu_seconds_used": 3600,
+  "instance_type": "p5.48xlarge",
+  "vgpu_profile": null,
+  "mig_profile": null
+}

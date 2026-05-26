@@ -202,6 +202,14 @@ Python and TS both fixed.)
 - [ ] 🟡 CLI `rates` has no persistent store.
 
 ### Rust
+- [x] ✅ **B5b — `price_iaas_share` math now mirrors Python.** Fixed in Sprint 1
+  follow-on (commit log: `fix(rust): B5b ...`). The function now computes
+  `cost = vcpu_seconds_used / (vcpu_count × 3600) × instance_hourly` — algebraic
+  equivalent of Python's `share_factor × task_instance_hours × instance_hourly`.
+  Regression test at
+  `rust/tests/cross_sdk_parity.rs::cross_sdk_compute_pricing_exact_parity_b5b`
+  no longer `#[ignore]`d and passes against both EC2-share and k8s-pod
+  fixtures.
 - [ ] 🟡 `start_task` never enters task-local scope → parent linking broken unless the
   caller manually uses `with_task` (which isn't exported).
 - [ ] 🟡 CLI `rates` uses flat JSON; library uses YAML — round-trip broken.

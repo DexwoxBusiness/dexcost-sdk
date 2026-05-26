@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DexwoxBusiness/dexcost-go/internal/safego"
 	"github.com/shopspring/decimal"
 )
 
@@ -323,7 +324,11 @@ func (e *Engine) StartBackgroundRefresh(endpoint string, interval time.Duration)
 	// Initial refresh before the first tick.
 	_ = e.RefreshFromServer(endpoint) //nolint:errcheck
 
-	go func() {
+	// safego.Go wraps a `defer recover()` so a panic in the background
+	// refresh (network teardown, malformed cost map mid-parse, etc.) is
+	// logged but cannot crash the customer's process.
+	// Sprint 1 Theme B / §2.2.5.
+	safego.Go("pricing-refresh", func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -334,7 +339,7 @@ func (e *Engine) StartBackgroundRefresh(endpoint string, interval time.Duration)
 				return
 			}
 		}
-	}()
+	})
 }
 
 // StopBackgroundRefresh stops the background refresh goroutine if one is

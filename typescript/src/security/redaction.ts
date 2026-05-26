@@ -85,3 +85,76 @@ export function enforceMetadataLimit(
   }
   return { _truncated: true, _original_size_bytes: byteSize };
 }
+
+/**
+ * Canonical set of query parameter names (case-insensitive) that
+ * {@link scrubUrl} strips. Must stay in sync with the same set in
+ * Python (dexcost/redaction.py), Go (security/redaction.go), and Rust
+ * (security/redaction.rs).
+ */
+const SENSITIVE_QUERY_PARAMS: ReadonlySet<string> = new Set([
+  "api_key",
+  "apikey",
+  "access_token",
+  "token",
+  "auth",
+  "password",
+  "secret",
+  "signature",
+  "x-amz-signature",
+  "x-amz-credential",
+  "x-amz-security-token",
+  "session",
+]);
+
+const USERINFO_RE = /^(https?:\/\/)([^@/?#]+@)?(.+)$/;
+
+/**
+ * Strip credentials from a URL before it is captured into an event.
+ *
+ * Removes:
+ *  - userinfo (`user:pass@`) from the authority
+ *  - query parameters whose name (case-insensitive) is in the canonical
+ *    sensitive set OR ends with `-signature`, `-credential`, or
+ *    `-security-token` (AWS SigV4 surface)
+ *
+ * Preserves scheme, host, port, path, non-sensitive query params, and
+ * fragment. The shape of every removed query parameter is preserved as
+ * `name=REDACTED` so downstream callers can still see which keys were
+ * present without leaking the values.
+ *
+ * Canonical algorithm — Python/Go/Rust SDK implementations must produce
+ * byte-identical output for the same input (enforced by
+ * /fixtures/expected_outputs/security/).
+ */
+export function scrubUrl(url: string): string {
+  if (!url) return url;
+  const m = USERINFO_RE.exec(url);
+  if (m) {
+    url = m[1] + m[3];
+  }
+
+  let fragment = "";
+  const hashIdx = url.indexOf("#");
+  if (hashIdx >= 0) {
+    fragment = url.slice(hashIdx);
+    url = url.slice(0, hashIdx);
+  }
+  const qIdx = url.indexOf("?");
+  if (qIdx < 0) return url + fragment;
+  const base = url.slice(0, qIdx);
+  const query = url.slice(qIdx + 1);
+
+  const parts = query.split("&").map((part) => {
+    const eqIdx = part.indexOf("=");
+    const name = eqIdx >= 0 ? part.slice(0, eqIdx) : part;
+    const lname = name.toLowerCase();
+    const sensitive =
+      SENSITIVE_QUERY_PARAMS.has(lname) ||
+      lname.endsWith("-signature") ||
+      lname.endsWith("-credential") ||
+      lname.endsWith("-security-token");
+    return sensitive ? `${name}=REDACTED` : part;
+  });
+  return `${base}?${parts.join("&")}${fragment}`;
+}

@@ -1,0 +1,31 @@
+{
+  "_comment": "Regression fixture for TS network-event-on-error gap. Python/Go/Rust emit a network event on 4xx/5xx regardless of byte threshold. TypeScript historically only emitted when combined bytes exceeded 100KiB and silently dropped small failed requests. After the fix, ALL four SDKs must emit this event.",
+  "event_id": "22222222-0007-0000-0000-000000000001",
+  "task_id": "11111111-0001-0000-0000-000000000001",
+  "event_type": "network",
+  "occurred_at": "2026-05-26T12:35:02.000000Z",
+  "cost_usd": "0.000000",
+  "cost_confidence": "computed",
+  "pricing_source": "manual",
+  "pricing_version": "egress:1.0.0",
+  "service_name": "api.tavily.com",
+  "provider": null,
+  "model": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "cached_tokens": null,
+  "latency_ms": 45,
+  "is_retry": false,
+  "retry_reason": null,
+  "retry_of": null,
+  "details": {
+    "method": "POST",
+    "status_code": 429,
+    "protocol": "https",
+    "request_bytes": 512,
+    "response_bytes": 128,
+    "is_internal_traffic": false,
+    "cost_pending": false
+  },
+  "schema_version": "1"
+}

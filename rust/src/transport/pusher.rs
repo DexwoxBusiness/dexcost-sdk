@@ -31,6 +31,11 @@ pub struct EventPusher {
     /// Set permanently when the API key is rejected (HTTP 401/403). Once set,
     /// the sync loop stops and never retries — mirrors Python `sync.py:325-328`.
     auth_failed: Arc<AtomicBool>,
+    /// Sprint 2 Theme D / §3.2.3 (B14): runtime override for the API key
+    /// set via `set_api_key`. When `Some`, takes precedence over
+    /// `config.api_key` in the Bearer header. Lets customers recover
+    /// from 401/403 without restarting the process.
+    api_key_override: Arc<parking_lot::RwLock<Option<String>>>,
 }
 
 impl EventPusher {
@@ -46,6 +51,7 @@ impl EventPusher {
             stop: Arc::new(Notify::new()),
             flush_notify: Arc::new(Notify::new()),
             auth_failed: Arc::new(AtomicBool::new(false)),
+            api_key_override: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -53,6 +59,20 @@ impl EventPusher {
     /// API key (HTTP 401/403).
     pub fn is_auth_failed(&self) -> bool {
         self.auth_failed.load(Ordering::SeqCst)
+    }
+
+    /// Update the API key and clear the auth-failed flag so the push
+    /// loop can resume. Sprint 2 Theme D / §3.2.3 (B14).
+    ///
+    /// Note: the spawned push task at `pusher.rs:73-77` returns early
+    /// when `auth_failed` is true, so a fresh key alone is not enough
+    /// to revive a dead loop — callers should also `start()` a new
+    /// task if `is_auth_failed()` was previously true. For SDK-level
+    /// orchestration the wrapping global init/set_api_key handles
+    /// the restart.
+    pub fn set_api_key(&self, new_key: String) {
+        *self.api_key_override.write() = Some(new_key);
+        self.auth_failed.store(false, Ordering::SeqCst);
     }
 
     /// Starts the background flush loop. Returns a JoinHandle for the spawned task.
@@ -63,6 +83,7 @@ impl EventPusher {
         let stop = self.stop.clone();
         let flush_notify = self.flush_notify.clone();
         let auth_failed = self.auth_failed.clone();
+        let api_key_override = self.api_key_override.clone();
 
         tokio::spawn(async move {
             let interval = Duration::from_secs(config.flush_interval_secs);
@@ -79,14 +100,14 @@ impl EventPusher {
                 tokio::select! {
                     _ = stop.notified() => {
                         // Final flush before exiting
-                        let _ = Self::push_batch(&buffer, &config, &client, &auth_failed).await;
+                        let _ = Self::push_batch(&buffer, &config, &client, &auth_failed, &api_key_override).await;
                         return;
                     }
                     _ = flush_notify.notified() => {
-                        let _ = Self::push_batch(&buffer, &config, &client, &auth_failed).await;
+                        let _ = Self::push_batch(&buffer, &config, &client, &auth_failed, &api_key_override).await;
                     }
                     _ = tokio::time::sleep(interval + backoff) => {
-                        match Self::push_batch(&buffer, &config, &client, &auth_failed).await {
+                        match Self::push_batch(&buffer, &config, &client, &auth_failed, &api_key_override).await {
                             Ok(_) => backoff = Duration::from_secs(0),
                             Err(_) => {
                                 if backoff.is_zero() {
@@ -128,7 +149,7 @@ impl EventPusher {
 
     /// Triggers an immediate flush.
     pub async fn flush(&self) -> Result<(), DexcostError> {
-        Self::push_batch(&self.buffer, &self.config, &self.client, &self.auth_failed).await
+        Self::push_batch(&self.buffer, &self.config, &self.client, &self.auth_failed, &self.api_key_override).await
     }
 
     /// Signals the background loop to stop.
@@ -194,6 +215,7 @@ impl EventPusher {
         config: &Config,
         client: &reqwest::Client,
         auth_failed: &Arc<AtomicBool>,
+        api_key_override: &Arc<parking_lot::RwLock<Option<String>>>,
     ) -> Result<(), DexcostError> {
         // Skip entirely once the API key has been permanently rejected.
         if auth_failed.load(Ordering::SeqCst) {
@@ -302,10 +324,28 @@ impl EventPusher {
         let task_dicts: Vec<serde_json::Value> =
             tasks_to_send.iter().map(|t| t.to_dict()).collect();
 
-        // Push with adaptive splitting for oversized payloads.
-        // Tasks are only sent with the first chunk to avoid duplication.
-        Self::push_with_split(&event_dicts, &task_dicts, config, client, auth_failed, 0).await?;
+        // Push with adaptive splitting for oversized payloads. Sprint 2
+        // Theme D / §3.2.1 (B12): push_with_split marks events/tasks
+        // synced at each leaf POST that succeeds, so a sibling-half
+        // failure does not unwind work that already reached the
+        // control plane.
+        Self::push_with_split(
+            &event_dicts,
+            &task_dicts,
+            &event_ids,
+            &task_ids_sent,
+            buffer,
+            config,
+            client,
+            auth_failed,
+            api_key_override,
+            0,
+        )
+        .await?;
 
+        // Outer mark_synced retained as a defensive idempotent
+        // no-op safety net for any future code path that returns Ok
+        // without recursing into the leaf.
         let mut buf = buffer.lock().await;
         buf.mark_synced(&event_ids);
         buf.mark_tasks_synced(&task_ids_sent);
@@ -316,12 +356,17 @@ impl EventPusher {
     /// MAX_PAYLOAD_BYTES. Tasks are only sent with the first half to avoid
     /// duplication. Uses `Box::pin` because recursive async fns require
     /// indirection to avoid infinitely-sized futures.
+    #[allow(clippy::too_many_arguments)]
     fn push_with_split<'a>(
         events: &'a [serde_json::Value],
         tasks: &'a [serde_json::Value],
+        event_ids: &'a [String],
+        task_ids: &'a [String],
+        buffer: &'a Arc<Mutex<EventBuffer>>,
         config: &'a Config,
         client: &'a reqwest::Client,
         auth_failed: &'a Arc<AtomicBool>,
+        api_key_override: &'a Arc<parking_lot::RwLock<Option<String>>>,
         depth: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DexcostError>> + Send + 'a>>
     {
@@ -332,7 +377,14 @@ impl EventPusher {
             }))?;
 
             if payload.len() <= MAX_PAYLOAD_BYTES || depth >= MAX_SPLIT_DEPTH {
-                return Self::post_raw(&payload, config, client, auth_failed).await;
+                Self::post_raw(&payload, config, client, auth_failed, api_key_override).await?;
+                // Sprint 2 Theme D / §3.2.1 (B12) — mark synced at the
+                // leaf so a sibling-half failure does not re-send
+                // already-POSTed events.
+                let mut buf = buffer.lock().await;
+                buf.mark_synced(event_ids);
+                buf.mark_tasks_synced(task_ids);
+                return Ok(());
             }
 
             if events.len() <= 1 {
@@ -344,15 +396,42 @@ impl EventPusher {
             }
 
             let mid = events.len() / 2;
+            let mid_id = event_ids.len() / 2;
             eprintln!(
                 "[dexcost] Batch too large ({} bytes, {} events), splitting",
                 payload.len(),
                 events.len()
             );
 
-            Self::push_with_split(&events[..mid], tasks, config, client, auth_failed, depth + 1)
-                .await?;
-            Self::push_with_split(&events[mid..], &[], config, client, auth_failed, depth + 1).await
+            // First half carries the tasks (Tasks are only sent with
+            // the first chunk to avoid duplication); second half: no
+            // tasks (so empty task_ids for the leaf mark).
+            Self::push_with_split(
+                &events[..mid],
+                tasks,
+                &event_ids[..mid_id],
+                task_ids,
+                buffer,
+                config,
+                client,
+                auth_failed,
+                api_key_override,
+                depth + 1,
+            )
+            .await?;
+            Self::push_with_split(
+                &events[mid..],
+                &[],
+                &event_ids[mid_id..],
+                &[],
+                buffer,
+                config,
+                client,
+                auth_failed,
+                api_key_override,
+                depth + 1,
+            )
+            .await
         })
     }
 
@@ -367,6 +446,7 @@ impl EventPusher {
         config: &Config,
         client: &reqwest::Client,
         auth_failed: &Arc<AtomicBool>,
+        api_key_override: &Arc<parking_lot::RwLock<Option<String>>>,
     ) -> Result<(), DexcostError> {
         let url = format!("{}/v1/ingest", config.endpoint());
         let mut req = client
@@ -374,8 +454,14 @@ impl EventPusher {
             .header("Content-Type", "application/json")
             .body(body.to_owned());
 
-        if let Some(ref api_key) = config.api_key {
-            req = req.header("Authorization", format!("Bearer {}", api_key));
+        // B14: prefer the runtime override populated by set_api_key,
+        // fall back to the config value baked in at construction.
+        let bearer = api_key_override
+            .read()
+            .clone()
+            .or_else(|| config.api_key.clone());
+        if let Some(ref key) = bearer {
+            req = req.header("Authorization", format!("Bearer {}", key));
         }
 
         let resp = req.send().await?;

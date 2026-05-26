@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 
 
 _DEFAULT_ENDPOINT = "https://api.dexcost.io"
+_log = logging.getLogger(__name__)
 
 
 class InvalidAPIKeyError(ValueError):
@@ -84,8 +86,24 @@ class DexcostConfig:
 
     @property
     def endpoint(self) -> str:
-        """Control Layer endpoint. Hardcoded default, overridable via DEXCOST_ENDPOINT env var."""
-        return os.environ.get("DEXCOST_ENDPOINT", _DEFAULT_ENDPOINT)
+        """Control Layer endpoint. Hardcoded default, overridable via
+        DEXCOST_ENDPOINT env var. Sprint 1 Theme A / §2.1 (A2): only
+        ``https://`` URLs are accepted. An attacker who controls the
+        env (misconfigured CI runner, hostile container) could
+        otherwise silently exfiltrate cost telemetry to an HTTP
+        collector — we refuse and fall back to the production default.
+        """
+        env_value = os.environ.get("DEXCOST_ENDPOINT")
+        if env_value is None:
+            return _DEFAULT_ENDPOINT
+        if not env_value.startswith("https://"):
+            _log.warning(
+                "dexcost: DEXCOST_ENDPOINT=%r rejected — only https:// "
+                "URLs are accepted. Falling back to %s.",
+                env_value, _DEFAULT_ENDPOINT,
+            )
+            return _DEFAULT_ENDPOINT
+        return env_value
 
     @property
     def is_dev(self) -> bool:

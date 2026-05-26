@@ -125,21 +125,33 @@ func (sm *SessionManager) GetOrCreateSessionForIdentity(ctx context.Context, cal
 	}
 	identity := customerID + "\x00" + projectID + "\x00" + agent
 
-	sm.mu.Lock()
-	for _, entry := range sm.sessions {
-		if entry.identity == identity {
-			entry.lastActivity = time.Now()
-			task := entry.task
-			sm.mu.Unlock()
-			return task
-		}
-	}
-	sm.mu.Unlock()
-
+	// Sprint 2 Theme D / §3.2.2 (B13): single locked find-or-create
+	// critical section. Pre-fix the lookup released the mutex before
+	// running CreateAutoTask + buffer.InsertTask, then re-acquired to
+	// insert — concurrent callers with the same identity all missed
+	// the lookup, all created tasks, all inserted under separate IDs
+	// → duplicate sessions on customer dashboards.
+	//
+	// The buffer.InsertTask call still happens INSIDE the lock. That
+	// is acceptable: SQLite INSERTs are sub-ms locally and only ONE
+	// task is ever persisted per identity per process lifetime. For
+	// the unbounded-throughput case the file-level comment at line 15
+	// recommends sharded locking.
 	taskType := "agent_session"
 	if agent != "" {
 		taskType = agent
 	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	for _, entry := range sm.sessions {
+		if entry.identity == identity {
+			entry.lastActivity = time.Now()
+			return entry.task
+		}
+	}
+
 	task := core.CreateAutoTask(ctx, taskType)
 	task.Metadata["session"] = true
 	task.Metadata["initiated_by"] = callType
@@ -150,14 +162,33 @@ func (sm *SessionManager) GetOrCreateSessionForIdentity(ctx context.Context, cal
 		}
 	}
 
-	sm.mu.Lock()
+	// Sprint 4 §5.2 (A3) — hard count cap. The idleTimeout reaper
+	// already evicts time-stale sessions, but a flood of distinct
+	// identities (e.g. one anonymous user per request in a misconfigured
+	// app) could otherwise exhaust process memory faster than the
+	// reaper runs. Cap at 10 000 active sessions: when over, evict the
+	// least-recently-active entry to make room.
+	const sessionsCap = 10_000
+	if len(sm.sessions) >= sessionsCap {
+		var oldestID uint64
+		var oldestActivity time.Time
+		first := true
+		for id, e := range sm.sessions {
+			if first || e.lastActivity.Before(oldestActivity) {
+				oldestID = id
+				oldestActivity = e.lastActivity
+				first = false
+			}
+		}
+		delete(sm.sessions, oldestID)
+	}
+
 	sm.nextID++
 	sm.sessions[sm.nextID] = &sessionEntry{
 		task:         &task,
 		lastActivity: time.Now(),
 		identity:     identity,
 	}
-	sm.mu.Unlock()
 	return &task
 }
 

@@ -13,9 +13,9 @@
 //!   - `cloud_functions`      → request+vcpu-second+gib-second (BINARY GiB)
 //!   - `azure_functions`      → execution+gb-second (DECIMAL GB)
 //!   - `vercel_fluid`         → cpu-hour+memory-gb-hour
-//!   - `ec2_share` / `gce_share` / `azure_vm_share`
+//!   - `ec2` / `gce` / `azure_vm` (IaaS share model — canonical, no `_share` suffix)
 //!                            → SKU hourly_usd / vcpu_count × duration share
-//!   - `k8s_pod_share`        → vcpu-hour × pod limits × duration share
+//!   - `k8s_pod`              → vcpu-hour × pod limits × duration share
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -202,10 +202,16 @@ impl ComputePricingEngine {
             "cloud_functions" => self.price_cloud_functions(details, cloud_env, overrides),
             "azure_functions" => self.price_azure_functions(details, cloud_env, overrides),
             "vercel_fluid" => self.price_vercel_fluid(details, cloud_env, overrides),
-            "ec2_share" => self.price_iaas_share(details, cloud_env, overrides, "aws", "ec2", window_s),
-            "gce_share" => self.price_iaas_share(details, cloud_env, overrides, "gcp", "gce", window_s),
-            "azure_vm_share" => self.price_iaas_share(details, cloud_env, overrides, "azure", "vm", window_s),
-            "k8s_pod_share" => self.price_k8s_pod_share(details, overrides, window_s),
+            // Sprint 1 Theme F / §2.3.1 (B5): canonical billing_model
+            // discriminators have no `_share` suffix — Python and Go both
+            // emit "ec2" / "gce" / "azure_vm" / "k8s_pod", and the cross-
+            // SDK fixtures use the same. Pre-fix Rust matched `_share`
+            // variants and silently fell through to zero_unknown for
+            // every canonical payload.
+            "ec2" => self.price_iaas_share(details, cloud_env, overrides, "aws", "ec2", window_s),
+            "gce" => self.price_iaas_share(details, cloud_env, overrides, "gcp", "gce", window_s),
+            "azure_vm" => self.price_iaas_share(details, cloud_env, overrides, "azure", "vm", window_s),
+            "k8s_pod" => self.price_k8s_pod_share(details, overrides, window_s),
             _ => ComputeCost::zero_unknown(),
         }
     }
@@ -608,21 +614,30 @@ impl ComputePricingEngine {
         runtime: &str,
         _window_s: Option<Decimal>,
     ) -> ComputeCost {
+        // B5b — Sprint 1 Theme F. Mirror Python's _iaas_share formula
+        // (`compute_pricing.py:537`) so all four SDKs produce identical
+        // cost for the same fixture:
+        //   share_factor       = vcpu_seconds_used / (vcpu_count × window_s)
+        //   task_instance_hours = share_factor × (window_s / 3600)
+        // which simplifies algebraically to:
+        //   cost = vcpu_seconds_used / (vcpu_count × 3600) × instance_hourly
+        //
+        // `instance_hourly` resolves in 3 tiers (matching Python's
+        // `_resolve_iaas_rate`): catalog SKU hit → catalog default per-
+        // runtime → meta default `default_ec2_vcpu_hour_usd` (badly named
+        // — historically an instance-hourly rate, not per-vCPU). `vcpu_count`
+        // is read from input details, NOT from the catalog block (Python
+        // does the same; using catalog vcpu_count instead silently distorts
+        // share_factor for any host running fewer vCPU than the SKU max).
+        let vcpu_seconds_used = Self::dec_field(details, "vcpu_seconds_used");
+        let vcpu_count_in = Self::dec_field(details, "vcpu_count");
         let duration_ms = Self::dec_field(details, "duration_ms");
         let duration_s = duration_ms / *MS_PER_S;
-        let duration_hr = duration_s / *HOUR_S;
-
-        // Per Decision #9 — idle is INVISIBLE on long-running runtimes.
-        // The accountant only emits when actual CPU was consumed; the share
-        // path bills duration × (vcpu_used/vcpu_total) × hourly. We don't
-        // synthesize idle time here; the caller must pass vcpu_seconds_used.
-        let vcpu_seconds_used = Self::dec_field(details, "vcpu_seconds_used");
 
         let region = cloud_env.region.as_deref();
         let instance_type = cloud_env.instance_type.as_deref();
         let mut source = format!("compute_catalog:{}:default", runtime);
         let mut hourly_usd: Option<Decimal> = None;
-        let mut vcpu_count: Option<Decimal> = None;
         let mut confidence = "estimated";
 
         if let (Some(r), Some(it)) = (region, instance_type) {
@@ -637,11 +652,6 @@ impl ComputePricingEngine {
             {
                 if let Some(v) = block.get("hourly_usd").and_then(Self::dec_from) {
                     hourly_usd = Some(v);
-                }
-                if let Some(v) = block.get("vcpu_count").and_then(Self::dec_from) {
-                    vcpu_count = Some(v);
-                }
-                if hourly_usd.is_some() && vcpu_count.is_some() {
                     source = format!("compute_catalog:{}:{}:{}", runtime, r, it);
                     confidence = "computed";
                 }
@@ -658,18 +668,15 @@ impl ComputePricingEngine {
             };
         }
 
-        let cost = match (hourly_usd, vcpu_count) {
-            (Some(h), Some(v)) if v > Decimal::ZERO => {
-                // share = vcpu_seconds_used / (vcpu_count * 3600)
-                let share = vcpu_seconds_used / (v * *HOUR_S);
-                share * h * duration_hr / (duration_hr.max(Decimal::ONE))
-                    // Simplify: vcpu_seconds_used / (vcpu_count * 3600) * hourly_usd
-            }
-            _ => {
-                // Tier 4: use per-vcpu-hour default
-                let per_vcpu = self.meta_default("default_ec2_vcpu_hour_usd");
-                vcpu_seconds_used / *HOUR_S * per_vcpu
-            }
+        // Resolve instance_hourly: catalog SKU hit, else meta default.
+        let instance_hourly = hourly_usd
+            .unwrap_or_else(|| self.meta_default("default_ec2_vcpu_hour_usd"));
+
+        // Guard against degenerate inputs (matches Python: returns 0).
+        let cost = if vcpu_count_in > Decimal::ZERO && duration_s > Decimal::ZERO {
+            vcpu_seconds_used / (vcpu_count_in * *HOUR_S) * instance_hourly
+        } else {
+            Decimal::ZERO
         };
 
         ComputeCost {
@@ -1125,9 +1132,10 @@ mod tests {
             instance_type: Some("c7g.xlarge".into()),
         };
         let details = json!({
-            "billing_model": "ec2_share",
+            "billing_model": "ec2",
             "duration_ms": "60000",
-            "vcpu_seconds_used": "30", // 30 vcpu-seconds
+            "vcpu_count": 4,         // B5b: required input — Python parity
+            "vcpu_seconds_used": "30", // 30 vcpu-seconds out of 4×60=240 available
         });
         let c = eng.resolve_compute_cost(&details, &env, &HashMap::new(), None);
         assert!(c.cost_usd > Decimal::ZERO);
@@ -1144,8 +1152,9 @@ mod tests {
             instance_type: None,
         };
         let details = json!({
-            "billing_model": "k8s_pod_share",
+            "billing_model": "k8s_pod",
             "duration_ms": "60000",
+            "vcpu_count": 2,
             "vcpu_seconds_used": "30",
         });
         let c = eng.resolve_compute_cost(&details, &env, &HashMap::new(), None);

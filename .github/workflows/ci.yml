@@ -1,0 +1,191 @@
+name: CI
+
+# Bootstraps the dexcost-sdk CI matrix. Two-tier strategy:
+#
+# 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
+#    that SDK's existing test suite (including bundled catalog drift checks
+#    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
+#    EXCLUDES the cross-SDK parity test, which is intentionally RED today.
+#
+# 2. cross-sdk-parity job is allowed to fail (continue-on-error). It runs the
+#    four cross_sdk_parity test files (Python canonical + Go/TS/Rust RED-state
+#    consumers) and surfaces RED -> GREEN transitions per-commit as Sprint 1+
+#    bug fixes land. Failure here is the live remediation backlog, not a
+#    merge blocker.
+#
+# Per-SDK hardening flags pin specific audit findings:
+#   - Go    : -race (catches B13 session race, race conditions in pusher)
+#   - Rust  : clippy --deny warnings (catches B7 panic paths in clippy lints)
+#   - TS    : node 20 + node 22 matrix (catches B9 native-binding ABI drift
+#             and runtime-specific issues like B10 fork-safety surface)
+#   - Python: 3.10 + 3.11 + 3.12 matrix (catches version-specific regressions)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python:
+    name: python tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: Test (excluding cross-SDK parity)
+        working-directory: python
+        run: python -m pytest tests/ --ignore=tests/test_cross_sdk_parity.py -v
+
+  go:
+    name: go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+          cache-dependency-path: go/go.sum
+      - name: Test with -race (excluding cross-SDK parity)
+        working-directory: go
+        # -race catches B13 session race + transport pusher accounting bugs.
+        # -skip introduced in Go 1.20.
+        run: go test -race -skip '^TestCrossSDK' ./...
+
+  typescript:
+    name: typescript tests (node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - name: Install
+        working-directory: typescript
+        run: npm ci || npm install
+      - name: Lint (tsc --noEmit)
+        working-directory: typescript
+        run: npm run lint
+      - name: Test (excluding cross-SDK parity)
+        working-directory: typescript
+        run: npx vitest run --exclude 'tests/cross-sdk-parity.test.ts'
+
+  rust:
+    name: rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # Clippy is non-blocking on initial CI setup: there are 18 pre-existing
+      # violations including await_holding_lock (a real deadlock vector) that
+      # Sprint 2/3 will clean up. Once green, flip continue-on-error to false
+      # and tighten -W to -D.
+      - name: Clippy (non-blocking)
+        working-directory: rust
+        continue-on-error: true
+        run: cargo clippy --all-targets -- -W clippy::all
+      - name: Test (lib + bins + non-parity integration tests)
+        working-directory: rust
+        # Each integration test in tests/*.rs is its own binary; run all
+        # EXCEPT cross_sdk_parity which is tracked in the parity job.
+        run: |
+          cargo test --lib --bins
+          for t in tests/*.rs; do
+            name=$(basename "$t" .rs)
+            if [ "$name" != "cross_sdk_parity" ]; then
+              cargo test --test "$name"
+            fi
+          done
+
+  cross-sdk-parity:
+    name: cross-SDK parity (RED-tracking, non-blocking)
+    runs-on: ubuntu-latest
+    # This job intentionally allows failure. Each failing sub-test pins an
+    # audit finding scheduled for Sprint 1+. As bugs are fixed, sub-tests
+    # flip green; the suite must be fully green by the close of Sprint 4.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [python, go, typescript, rust]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        if: matrix.sdk == 'python'
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - name: Setup Go
+        if: matrix.sdk == 'go'
+        uses: actions/setup-go@v5
+        with: { go-version: "1.21", cache-dependency-path: go/go.sum }
+      - name: Setup Node
+        if: matrix.sdk == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - name: Setup Rust
+        if: matrix.sdk == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        if: matrix.sdk == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust }
+
+      - name: P2 cost-map drift check (all SDKs)
+        if: matrix.sdk == 'python'
+        run: bash scripts/check_cost_map_drift.sh
+
+      - name: Run cross-SDK parity (python)
+        if: matrix.sdk == 'python'
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest pytest-asyncio
+          python -m pytest tests/test_cross_sdk_parity.py -v
+
+      - name: Run cross-SDK parity (go)
+        if: matrix.sdk == 'go'
+        working-directory: go
+        run: go test -v -run '^TestCrossSDK' .
+
+      - name: Run cross-SDK parity (typescript)
+        if: matrix.sdk == 'typescript'
+        working-directory: typescript
+        run: |
+          npm ci || npm install
+          npx vitest run tests/cross-sdk-parity.test.ts
+
+      - name: Run cross-SDK parity (rust)
+        if: matrix.sdk == 'rust'
+        working-directory: rust
+        run: cargo test --test cross_sdk_parity

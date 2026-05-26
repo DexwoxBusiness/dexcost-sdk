@@ -265,15 +265,15 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 	anyPIDTouched := false
 
 	for i := 0; i < deviceCount; i++ {
-		// Snapshot baseTS BEFORE the end call mutates initialTimestamps.
-		baseTS := int64(0)
-		first := true
-		for _, ts := range a.initialTimestamps[i] {
-			if first || ts < baseTS {
-				baseTS = ts
-				first = false
-			}
+		// Sprint 2 Theme C / §3.1.1 (B2 Go port) — snapshot per-PID
+		// baseline timestamps BEFORE the end call mutates
+		// initialTimestamps in place. Reading the mutated map after
+		// the end call would zero out each PID's first-sample dt.
+		baselineTSPerPID := map[int]int64{}
+		for pid, ts := range a.initialTimestamps[i] {
+			baselineTSPerPID[pid] = ts
 		}
+
 		end := GetNVMLProcessUtilization(i, a.initialTimestamps[i])
 		for pid := range end {
 			a.pidsTouchedPerDevice[i][pid] = struct{}{}
@@ -283,32 +283,69 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 				a.vramUsedPeak[i] = mem.UsedBytes
 			}
 		}
-		// Filter to cgroup PID set.
-		var relevant []NVMLUtilSample
-		for pid, s := range end {
-			if _, in := cgroupPIDUnion[pid]; in {
-				relevant = append(relevant, s)
+		// Filter to cgroup PID set. Each value is a list of samples.
+		relevantByPID := map[int][]NVMLUtilSample{}
+		for pid, samples := range end {
+			if _, in := cgroupPIDUnion[pid]; in && len(samples) > 0 {
+				relevantByPID[pid] = samples
 			}
 		}
-		if len(relevant) > 0 {
+
+		if len(relevantByPID) > 0 {
 			anyPIDTouched = true
-			maxTS := int64(0)
-			for _, s := range relevant {
-				if s.TimeStamp > maxTS {
-					maxTS = s.TimeStamp
+
+			// B2: integrate SM utilization. For each PID, dt for each
+			// sample is `sample.TimeStamp - prev_ts`, where prev_ts is
+			// the previous sample's ts OR the PID's baseline. Two
+			// semantics for "first sample with no baseline":
+			//   * Device had ZERO PIDs at start → first sample's window
+			//     extends back to the derived task_start_ts.
+			//   * Other PIDs were active but this one wasn't → PID
+			//     joined mid-task; first-sample dt is 0.
+			deviceHadBaselinePIDs := len(baselineTSPerPID) > 0
+			maxSampleTS := int64(0)
+			for _, samples := range relevantByPID {
+				for _, s := range samples {
+					if s.TimeStamp > maxSampleTS {
+						maxSampleTS = s.TimeStamp
+					}
 				}
 			}
-			delta := maxTS - baseTS
-			if delta < 0 {
-				delta = 0
+			taskStartTS := maxSampleTS - durationMS*1000
+			if taskStartTS < 0 {
+				taskStartTS = 0
 			}
-			seconds := float64(delta) / 1_000_000.0
-			perDeviceGPUSeconds[i] = seconds
+
+			var gpuSecondsForDevice float64
+			memUtilSum := 0
+			memUtilN := 0
+			for pid, samples := range relevantByPID {
+				baselineForPID, hasBaseline := baselineTSPerPID[pid]
+				if !hasBaseline {
+					if deviceHadBaselinePIDs {
+						baselineForPID = samples[0].TimeStamp
+					} else {
+						baselineForPID = taskStartTS
+					}
+				}
+				prevTS := baselineForPID
+				for _, s := range samples {
+					dtUS := s.TimeStamp - prevTS
+					if dtUS < 0 {
+						dtUS = 0
+					}
+					gpuSecondsForDevice += float64(s.SMUtil) / 100.0 * float64(dtUS) / 1_000_000.0
+					prevTS = s.TimeStamp
+					memUtilSum += s.MemUtil
+					memUtilN++
+				}
+			}
+			perDeviceGPUSeconds[i] = gpuSecondsForDevice
 
 			var smUtilPct interface{}
 			if durationMS > 0 {
 				ws := float64(durationMS) / 1000.0
-				v := seconds / ws * 100.0
+				v := gpuSecondsForDevice / ws * 100.0
 				if v > 100.0 {
 					v = 100.0
 				}
@@ -317,22 +354,21 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 				smUtilPct = nil
 			}
 
-			memUtilSum := 0
-			for _, s := range relevant {
-				memUtilSum += s.MemUtil
+			memUtilAvg := float64(0)
+			if memUtilN > 0 {
+				memUtilAvg = float64(memUtilSum) / float64(memUtilN)
 			}
-			memUtilAvg := float64(memUtilSum) / float64(len(relevant))
 
 			signals = append(signals, map[string]any{
-				"gpu_index":             i,
-				"gpu_sku":               gpuSku,
-				"sm_util_pct":           smUtilPct,
-				"mem_util_pct":          memUtilAvg,
-				"vram_used_peak_bytes":  a.vramUsedPeak[i],
-				"vram_total_bytes":      a.vramTotal[i],
-				"process_count":         len(a.pidsTouchedPerDevice[i]),
-				"sample_count":          len(relevant),
-				"task_duration_ms":      durationMS,
+				"gpu_index":            i,
+				"gpu_sku":              gpuSku,
+				"sm_util_pct":          smUtilPct,
+				"mem_util_pct":         memUtilAvg,
+				"vram_used_peak_bytes": a.vramUsedPeak[i],
+				"vram_total_bytes":     a.vramTotal[i],
+				"process_count":        len(a.pidsTouchedPerDevice[i]),
+				"sample_count":         memUtilN,
+				"task_duration_ms":     durationMS,
 			})
 		} else if degenerate {
 			signals = append(signals, map[string]any{

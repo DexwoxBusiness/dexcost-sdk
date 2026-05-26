@@ -45,6 +45,13 @@ pub enum CostConfidence {
 }
 
 /// PricingSource indicates where the cost figure was derived from.
+///
+/// Sprint 3 Theme F / §4.1.3 (P3): the first 8 variants are the
+/// canonical cross-SDK set (Python/Go/TS all match). `UserOverride`
+/// is a Rust-only legacy variant — serializes as `"user_override"`
+/// which Python/Go/TS will deserialize via their pricing_source
+/// catch-all paths but not round-trip. New emit sites should pick
+/// from the canonical 8.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PricingSource {
@@ -55,8 +62,9 @@ pub enum PricingSource {
     Custom,
     RateRegistry,
     ServiceCatalog,
-    UserOverride,
     Unknown,
+    /// Rust-only legacy variant — see doc comment above.
+    UserOverride,
 }
 
 /// Task represents a tracked business task (e.g. "resolve support ticket").
@@ -178,8 +186,8 @@ impl Task {
             "task_id": self.task_id,
             "task_type": self.task_type,
             "status": self.status,
-            "started_at": self.started_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-            "ended_at": self.ended_at.map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+            "started_at": self.started_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            "ended_at": self.ended_at.map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)),
             "metadata": self.metadata,
             "customer_id": self.customer_id,
             "project_id": self.project_id,
@@ -267,7 +275,7 @@ impl CostEvent {
             "event_id": self.event_id,
             "task_id": self.task_id,
             "event_type": self.event_type,
-            "occurred_at": self.occurred_at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            "occurred_at": self.occurred_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
             "cost_usd": self.cost_usd.to_string(),
             "cost_confidence": self.cost_confidence,
             "pricing_source": self.pricing_source,

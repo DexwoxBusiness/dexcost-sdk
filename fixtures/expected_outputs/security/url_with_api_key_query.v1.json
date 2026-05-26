@@ -1,0 +1,4 @@
+{
+  "raw_url": "https://api.openai.com/v1/chat/completions?api_key=sk-proj-abcd1234efgh5678&page=2&limit=50",
+  "scrubbed_url": "https://api.openai.com/v1/chat/completions?api_key=REDACTED&page=2&limit=50"
+}

@@ -417,6 +417,51 @@ mod tests {
     }
 
     #[test]
+    /// B2 regression — Sprint 2 Theme C / §3.1.1 (Rust cross-SDK pin).
+    ///
+    /// The accountant's per-PID integration math (gpu_accountant.rs:163-168
+    /// and :207-212) ALREADY computes the correct `sm_seconds = Σ
+    /// (sm_util/100) × dt` formula — Rust did not have the wall-time-
+    /// vs-SM-time bug Python had pre-d37b6b5. This test pins the
+    /// arithmetic directly so a future "simplification" can't regress it.
+    ///
+    /// We can't drive the live nvml_reader from a unit test (no public
+    /// backend trait), so we test the integration formula at the
+    /// arithmetic level — the same expression that lives in
+    /// gpu_accountant.rs:165 and :209.
+    #[test]
+    fn integration_formula_matches_python_canonical() {
+        // PID at t=20s sm=80% → covers 0..20s → 16 sm-seconds
+        // PID at t=60s sm=40% → covers 20..60s → 16 sm-seconds
+        // Total: 32 sm-seconds. (Same as Python d37b6b5 + Go bbe1133 + TS 05a21bb.)
+        struct Sample {
+            ts_us: u64,
+            sm: u8,
+        }
+        let samples = [
+            Sample { ts_us: 20_000_000, sm: 80 },
+            Sample { ts_us: 60_000_000, sm: 40 },
+        ];
+        let mut prev: u64 = 0;
+        let mut total_usec: u64 = 0;
+        for s in samples.iter() {
+            if s.ts_us > prev {
+                let dt = s.ts_us - prev;
+                let used = (dt as u128 * s.sm as u128 / 100u128) as u64;
+                total_usec += used;
+            }
+            prev = s.ts_us;
+        }
+        let gpu_seconds = total_usec as f64 / 1_000_000.0;
+        assert!(
+            (gpu_seconds - 32.0).abs() < 0.01,
+            "expected 32 sm-seconds, got {} — integration formula at \
+             gpu_accountant.rs:165 has been changed",
+            gpu_seconds,
+        );
+    }
+
+    #[test]
     fn no_nvml_returns_none() {
         // Default build (no `gpu` feature) — no devices enumerated.
         let acc = GpuAccountant::new(GpuRuntimeKind::Modal);

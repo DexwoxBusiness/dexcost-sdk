@@ -130,6 +130,17 @@ class GpuAccountant:
             )
             if baseline:
                 self._pids_touched_per_device[i].update(baseline.keys())
+                # B2 (Sprint 2 Theme C / §3.1.1): record per-PID baseline
+                # timestamp directly from the returned samples instead of
+                # relying on the nvml_reader's in-place mutation of
+                # _initial_timestamps. This decouples the accountant from
+                # the wrapper's bookkeeping side-effects and makes tests
+                # that mock get_process_utilization deterministic.
+                for pid, samples_list in baseline.items():
+                    if samples_list:
+                        self._initial_timestamps[i][pid] = max(
+                            s.time_stamp for s in samples_list
+                        )
 
         # Snapshot cgroup PIDs (Decision #1 scope classification).
         self._scope = cgroup_walker.classify_scope()
@@ -201,6 +212,13 @@ class GpuAccountant:
 
         any_pid_touched = False
         for i, handle in enumerate(self._device_handles):
+            # B2 (Sprint 2 Theme C / §3.1.1) — snapshot baseline timestamps
+            # BEFORE the end call mutates _initial_timestamps in place.
+            # Each PID's first integration-dt is `first_sample.time_stamp -
+            # baseline_ts_per_pid[pid]`; reading the mutated dict afterwards
+            # would zero out the dt for every PID.
+            baseline_ts_per_pid = dict(self._initial_timestamps[i])
+
             end_samples = nvml_reader.get_process_utilization(
                 handle, self._initial_timestamps[i],
             ) or {}
@@ -214,30 +232,67 @@ class GpuAccountant:
                     self._vram_used_peak.get(i, 0), mem.used_bytes,
                 )
 
-            # Filter to cgroup-PID set (Decision #1 boundary).
-            relevant_samples = [
-                s for pid, s in end_samples.items() if pid in cgroup_pid_union
-            ]
+            # Filter to cgroup-PID set (Decision #1 boundary). After B2 the
+            # NVML wrapper returns dict[pid, list[UtilSample]] — multiple
+            # samples per PID covering the task window.
+            relevant_samples_by_pid: dict[int, list] = {
+                pid: samples_list
+                for pid, samples_list in end_samples.items()
+                if pid in cgroup_pid_union and samples_list
+            }
 
-            if relevant_samples:
+            if relevant_samples_by_pid:
                 any_pid_touched = True
-                # gpu_seconds_used per device: NVML's per-PID timeStamp
-                # represents accumulated SM-microseconds in the canonical
-                # implementation; we take the highest observed timestamp
-                # delta from baseline as the active-GPU-microseconds.
-                max_ts = max(s.time_stamp for s in relevant_samples)
-                base_ts = (
-                    min(self._initial_timestamps[i].values())
-                    if self._initial_timestamps[i] else 0
-                )
-                gpu_seconds_for_device = max(0, max_ts - base_ts) / 1_000_000.0
+                # B2 (Sprint 2 Theme C / §3.1.1) — integrate SM utilization.
+                # The CORRECT formula is sm_seconds = Σ (sm_util[i]/100) ×
+                # dt[i], where dt[i] is the wall interval covered by each
+                # sample (`sample.time_stamp - prev_ts`, with prev_ts =
+                # baseline for the first sample of a PID, or the previous
+                # sample's ts thereafter). Pre-fix the accountant used
+                # `max_ts - base_ts` directly, which is wall time × 100%
+                # utilization — silently inflating cost on underutilized
+                # GPUs.
+                gpu_seconds_for_device = 0.0
+                mem_util_sum = 0.0
+                mem_util_n = 0
+                # Two semantics for "first sample of a PID with no baseline":
+                #  - If the device had ZERO PIDs at snapshot_start, the first
+                #    sample is treated as covering [task_start, first_ts].
+                #    The PID was running but NVML just hadn't reported yet.
+                #  - If OTHER PIDs were active at baseline but this PID was
+                #    not, the PID joined mid-task; first-sample dt is 0 (its
+                #    own ts is its first observation).
+                # Derive task_start_ts from duration_ms + max observed sample
+                # timestamp (NVML emits absolute microseconds since epoch).
+                device_had_baseline_pids = bool(baseline_ts_per_pid)
+                all_ts = [
+                    s.time_stamp
+                    for sl in relevant_samples_by_pid.values()
+                    for s in sl
+                ]
+                max_sample_ts = max(all_ts) if all_ts else 0
+                task_start_ts = max(0, max_sample_ts - duration_ms * 1000)
+                for pid, samples_list in relevant_samples_by_pid.items():
+                    baseline_ts_for_pid = baseline_ts_per_pid.get(pid)
+                    if baseline_ts_for_pid is None:
+                        if device_had_baseline_pids:
+                            baseline_ts_for_pid = samples_list[0].time_stamp
+                        else:
+                            baseline_ts_for_pid = task_start_ts
+                    prev_ts = baseline_ts_for_pid
+                    for s in samples_list:
+                        dt_us = max(0, s.time_stamp - prev_ts)
+                        gpu_seconds_for_device += (
+                            (s.sm_util / 100.0) * (dt_us / 1_000_000.0)
+                        )
+                        prev_ts = s.time_stamp
+                        mem_util_sum += s.mem_util
+                        mem_util_n += 1
                 per_device_gpu_seconds[i] = gpu_seconds_for_device
 
-                # Decision #3 sharpening: sm_util_pct is TASK-WINDOW-AVERAGED,
-                # NOT a point sample. Compute from the active-GPU-seconds:
-                #   sm_util_pct = (active_seconds / window_seconds) × 100
-                # Reuses Decision #8's per-PID timestamp accumulator — no
-                # extra NVML calls.
+                # Decision #3 sharpening: sm_util_pct is TASK-WINDOW-AVERAGED.
+                # Now derived from the integrated sm_seconds — exact, not
+                # an approximation.
                 if duration_ms > 0:
                     window_s = duration_ms / 1000.0
                     sm_util_pct_val: float | None = min(
@@ -247,9 +302,7 @@ class GpuAccountant:
                 else:
                     sm_util_pct_val = None  # degenerate window
 
-                mem_util_avg = (
-                    sum(s.mem_util for s in relevant_samples) / len(relevant_samples)
-                )
+                mem_util_avg = mem_util_sum / mem_util_n if mem_util_n else 0.0
 
                 signal_events.append({
                     "gpu_index": i,
@@ -259,7 +312,7 @@ class GpuAccountant:
                     "vram_used_peak_bytes": self._vram_used_peak.get(i, 0),
                     "vram_total_bytes": self._vram_total.get(i, 0),
                     "process_count": len(self._pids_touched_per_device[i]),
-                    "sample_count": len(relevant_samples),
+                    "sample_count": mem_util_n,
                     "task_duration_ms": duration_ms,
                 })
             elif degenerate_window:

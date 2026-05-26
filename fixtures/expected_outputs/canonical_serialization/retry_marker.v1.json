@@ -1,0 +1,22 @@
+{
+  "cached_tokens": null,
+  "cost_confidence": "exact",
+  "cost_usd": "0.0070",
+  "details": {},
+  "event_id": "22222222-000a-0000-0000-000000000001",
+  "event_type": "retry_marker",
+  "input_tokens": 300,
+  "is_retry": true,
+  "latency_ms": 950,
+  "model": "gpt-4o",
+  "occurred_at": "2026-05-26T12:35:05.000000Z",
+  "output_tokens": 100,
+  "pricing_source": "provider_response",
+  "pricing_version": "2026-05-01",
+  "provider": "openai",
+  "retry_of": "22222222-0001-0000-0000-000000000001",
+  "retry_reason": "rate_limit",
+  "schema_version": "1",
+  "service_name": "openai",
+  "task_id": "11111111-0001-0000-0000-000000000001"
+}

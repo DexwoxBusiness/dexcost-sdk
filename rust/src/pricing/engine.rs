@@ -5,7 +5,13 @@ use std::time::Duration;
 
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
-use tokio::sync::RwLock;
+// parking_lot::RwLock is non-poisoning and runtime-agnostic; lets the
+// synchronous pricing API (`get_cost_sync`, `set_custom_pricing_sync`)
+// be invoked from inside a Tokio runtime without panicking. The lock
+// is only ever held for brief read/write critical sections — no awaits
+// happen while holding it — so blocking the executor for the lock
+// acquisition is acceptable (Sprint 1 Theme B / B4).
+use parking_lot::RwLock;
 
 use crate::core::models::{CostConfidence, PricingSource};
 
@@ -40,7 +46,7 @@ struct CustomPricing {
     output_per_1k: Decimal,
 }
 
-/// Inner mutable state guarded by a tokio RwLock.
+/// Inner mutable state guarded by a parking_lot RwLock.
 struct Inner {
     models: HashMap<String, ModelPricing>,
     custom: HashMap<String, CustomPricing>,
@@ -157,7 +163,7 @@ impl PricingEngine {
         cached_tokens: i64,
         cache_creation_tokens: i64,
     ) -> CostResult {
-        let inner = self.inner.read().await;
+        let inner = self.inner.read();
 
         // Check custom pricing first
         if let Some(cp) = inner.custom.get(model) {
@@ -203,7 +209,7 @@ impl PricingEngine {
         cached_tokens: i64,
         cache_creation_tokens: i64,
     ) -> CostResult {
-        let inner = self.inner.blocking_read();
+        let inner = self.inner.read();
 
         // Check custom pricing first
         if let Some(cp) = inner.custom.get(model) {
@@ -332,7 +338,7 @@ impl PricingEngine {
         input_per_1k: Decimal,
         output_per_1k: Decimal,
     ) {
-        let mut inner = self.inner.write().await;
+        let mut inner = self.inner.write();
         inner.custom.insert(
             model.to_string(),
             CustomPricing {
@@ -349,7 +355,7 @@ impl PricingEngine {
         input_per_1k: Decimal,
         output_per_1k: Decimal,
     ) {
-        let mut inner = self.inner.blocking_write();
+        let mut inner = self.inner.write();
         inner.custom.insert(
             model.to_string(),
             CustomPricing {
@@ -361,22 +367,22 @@ impl PricingEngine {
 
     /// Returns the pricing version (12-char SHA-256 prefix of the cost map data).
     pub fn pricing_version_sync(&self) -> String {
-        self.inner.blocking_read().pricing_version.clone()
+        self.inner.read().pricing_version.clone()
     }
 
     /// Returns the pricing version asynchronously.
     pub async fn pricing_version(&self) -> String {
-        self.inner.read().await.pricing_version.clone()
+        self.inner.read().pricing_version.clone()
     }
 
     /// Returns the number of models in the pricing data.
     pub fn model_count_sync(&self) -> usize {
-        self.inner.blocking_read().models.len()
+        self.inner.read().models.len()
     }
 
     /// Returns the number of models asynchronously.
     pub async fn model_count(&self) -> usize {
-        self.inner.read().await.models.len()
+        self.inner.read().models.len()
     }
 
     // -------------------------------------------------------------------------
@@ -412,7 +418,7 @@ impl PricingEngine {
         let (new_models, new_version) = Self::parse_cost_map(&models_bytes);
 
         {
-            let mut inner = self.inner.write().await;
+            let mut inner = self.inner.write();
             inner.models = new_models;
             inner.pricing_version = new_version;
         }
@@ -505,7 +511,7 @@ impl RefreshWorker {
         let models_bytes = serde_json::to_vec(models_val)?;
         let (new_models, new_version) = PricingEngine::parse_cost_map(&models_bytes);
 
-        let mut inner = self.inner.write().await;
+        let mut inner = self.inner.write();
         inner.models = new_models;
         inner.pricing_version = new_version;
 

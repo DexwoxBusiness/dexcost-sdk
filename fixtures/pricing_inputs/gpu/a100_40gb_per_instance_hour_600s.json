@@ -1,0 +1,13 @@
+{
+  "_description": "Single a100-40gb for 10 minutes at per-instance-hour pricing. Reference per May 2026 gpu_prices catalog v1.0.0.",
+  "billing_model": "per_instance_hour",
+  "gpu_vendor": "nvidia",
+  "gpu_sku": "a100-40gb",
+  "gpu_count": 1,
+  "region": "us-east-1",
+  "duration_ms": 600000,
+  "gpu_seconds_used": 600,
+  "instance_type": "p4d.24xlarge",
+  "vgpu_profile": null,
+  "mig_profile": null
+}

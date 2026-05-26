@@ -49,9 +49,19 @@ func ResolveRuntime() RuntimeKind {
 	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
 		return RuntimeLambda
 	}
+	// Sprint 2 Theme C / §3.1.3 Fix 3 — ECS-on-EC2 tasks ALSO receive
+	// ECS_CONTAINER_METADATA_URI_V4 per AWS docs. Only Fargate sets
+	// AWS_EXECUTION_ENV=AWS_ECS_FARGATE in addition. Without this
+	// disambiguator the SDK silently billed ECS-EC2 customers at
+	// the (more expensive) Fargate pricing tier; falling through to
+	// the IaaS detection path (which returns RuntimeEC2) is correct
+	// for ECS-on-EC2.
 	if os.Getenv("ECS_CONTAINER_METADATA_URI_V4") != "" ||
 		os.Getenv("ECS_CONTAINER_METADATA_URI") != "" {
-		return RuntimeFargate
+		if os.Getenv("AWS_EXECUTION_ENV") == "AWS_ECS_FARGATE" {
+			return RuntimeFargate
+		}
+		// Else: ECS-on-EC2 — fall through to IaaS detection below.
 	}
 	if os.Getenv("K_SERVICE") != "" {
 		// Cloud Functions Gen2 sets BOTH K_SERVICE and FUNCTION_TARGET;

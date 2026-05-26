@@ -1,6 +1,8 @@
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 use hex;
+use regex::Regex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -54,6 +56,119 @@ pub fn enforce_metadata_limit(
         Value::Number(byte_size.into()),
     );
     stub
+}
+
+/// Canonical set of query parameter names (case-insensitive) that
+/// [`scrub_url`] strips. Must stay in sync with the same set in Python
+/// (dexcost/redaction.py), Go (security/redaction.go), and TypeScript
+/// (src/security/redaction.ts).
+fn sensitive_query_params() -> &'static HashSet<&'static str> {
+    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SET.get_or_init(|| {
+        [
+            "api_key",
+            "apikey",
+            "access_token",
+            "token",
+            "auth",
+            "password",
+            "secret",
+            "signature",
+            "x-amz-signature",
+            "x-amz-credential",
+            "x-amz-security-token",
+            "session",
+        ]
+        .into_iter()
+        .collect()
+    })
+}
+
+fn userinfo_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(https?://)([^@/?#]+@)?(.+)$").unwrap())
+}
+
+fn url_in_text_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?://[^\s"'<>`]+"#).unwrap())
+}
+
+/// Runs [`scrub_url`] over every URL found in `text`. Used to redact URLs
+/// embedded in free-form error messages, exception strings, and log lines
+/// before they are captured into event details.
+///
+/// The URL matcher accepts `http(s)://` followed by any non-whitespace,
+/// non-quote, non-bracket character — broad enough to catch real URLs
+/// without breaking on punctuation that commonly delimits them in prose.
+pub fn scrub_urls_in_text(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    url_in_text_re()
+        .replace_all(text, |caps: &regex::Captures<'_>| scrub_url(&caps[0]))
+        .into_owned()
+}
+
+/// Strip credentials from a URL before it is captured into an event.
+///
+/// Removes:
+///   - userinfo (`user:pass@`) from the authority
+///   - query parameters whose name (case-insensitive) is in the canonical
+///     sensitive set OR ends with `-signature`, `-credential`, or
+///     `-security-token` (AWS SigV4 surface)
+///
+/// Preserves scheme, host, port, path, non-sensitive query params, and
+/// fragment. The shape of every removed query parameter is preserved as
+/// `name=REDACTED` so downstream callers can still see which keys were
+/// present without leaking the values.
+///
+/// Canonical algorithm — Python/Go/TypeScript SDK implementations must
+/// produce byte-identical output for the same input (enforced by
+/// `/fixtures/expected_outputs/security/`).
+pub fn scrub_url(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+    let mut url = if let Some(caps) = userinfo_re().captures(url) {
+        format!("{}{}", &caps[1], &caps[3])
+    } else {
+        url.to_string()
+    };
+
+    let mut fragment = String::new();
+    if let Some(hash_idx) = url.find('#') {
+        fragment = url[hash_idx..].to_string();
+        url.truncate(hash_idx);
+    }
+    let q_idx = match url.find('?') {
+        Some(i) => i,
+        None => return url + &fragment,
+    };
+    let (base, query_with_q) = url.split_at(q_idx);
+    let query = &query_with_q[1..];
+    let sensitive_set = sensitive_query_params();
+
+    let scrubbed_parts: Vec<String> = query
+        .split('&')
+        .map(|part| {
+            let name = match part.find('=') {
+                Some(eq) => &part[..eq],
+                None => part,
+            };
+            let lname = name.to_ascii_lowercase();
+            let sensitive = sensitive_set.contains(lname.as_str())
+                || lname.ends_with("-signature")
+                || lname.ends_with("-credential")
+                || lname.ends_with("-security-token");
+            if sensitive {
+                format!("{name}=REDACTED")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect();
+    format!("{base}?{}{fragment}", scrubbed_parts.join("&"))
 }
 
 #[cfg(test)]
@@ -129,6 +244,102 @@ mod tests {
         let data = map_from_value(json!({"a": "b"}));
         let result = enforce_metadata_limit(&data, 10240);
         assert_eq!(result, data);
+    }
+
+    // --- scrub_url ---
+
+    #[test]
+    fn scrub_url_empty() {
+        assert_eq!(scrub_url(""), "");
+    }
+
+    #[test]
+    fn scrub_url_no_credentials_unchanged() {
+        let u = "https://api.example.com/v1/chat?page=2&limit=50";
+        assert_eq!(scrub_url(u), u);
+    }
+
+    #[test]
+    fn scrub_url_strips_basic_auth() {
+        assert_eq!(
+            scrub_url("https://alice:s3cr3t@api.example.com/v1/chat"),
+            "https://api.example.com/v1/chat"
+        );
+    }
+
+    #[test]
+    fn scrub_url_strips_username_only() {
+        assert_eq!(
+            scrub_url("https://token123@api.example.com/path"),
+            "https://api.example.com/path"
+        );
+    }
+
+    #[test]
+    fn scrub_url_redacts_api_key() {
+        assert_eq!(
+            scrub_url("https://api.example.com/v1?api_key=sk-secret&page=2"),
+            "https://api.example.com/v1?api_key=REDACTED&page=2"
+        );
+    }
+
+    #[test]
+    fn scrub_url_case_insensitive() {
+        let out = scrub_url("https://api.example.com/?ApiKey=abc&AUTH=xyz&keep=1");
+        assert!(out.contains("ApiKey=REDACTED"), "got {out}");
+        assert!(out.contains("AUTH=REDACTED"), "got {out}");
+        assert!(out.contains("keep=1"), "got {out}");
+    }
+
+    #[test]
+    fn scrub_url_aws_sigv4() {
+        let u = "https://my-bucket.s3.amazonaws.com/obj.json\
+                 ?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+                 &X-Amz-Credential=AKIA%2F20260526%2Fus-east-1%2Fs3%2Faws4_request\
+                 &X-Amz-Date=20260526T123456Z\
+                 &X-Amz-Signature=abcdef1234567890";
+        let out = scrub_url(u);
+        assert!(out.contains("X-Amz-Credential=REDACTED"), "got {out}");
+        assert!(out.contains("X-Amz-Signature=REDACTED"), "got {out}");
+        assert!(out.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"), "got {out}");
+        assert!(out.contains("X-Amz-Date=20260526T123456Z"), "got {out}");
+    }
+
+    #[test]
+    fn scrub_url_security_token_suffix() {
+        let out = scrub_url("https://api.aws.amazon.com/?X-Amz-Security-Token=FQoG&page=1");
+        assert!(out.contains("X-Amz-Security-Token=REDACTED"), "got {out}");
+        assert!(out.contains("page=1"), "got {out}");
+    }
+
+    #[test]
+    fn scrub_url_preserves_fragment() {
+        assert_eq!(
+            scrub_url("https://docs.example.com/api?api_key=secret#installation"),
+            "https://docs.example.com/api?api_key=REDACTED#installation"
+        );
+    }
+
+    #[test]
+    fn scrub_url_preserves_path_and_port() {
+        assert_eq!(
+            scrub_url("https://api.example.com:8443/v2/agents/run?token=xyz"),
+            "https://api.example.com:8443/v2/agents/run?token=REDACTED"
+        );
+    }
+
+    #[test]
+    fn scrub_url_no_query_unchanged() {
+        let u = "https://api.example.com/v1/path/segment";
+        assert_eq!(scrub_url(u), u);
+    }
+
+    #[test]
+    fn scrub_url_value_with_equals() {
+        assert_eq!(
+            scrub_url("https://api.example.com/?api_key=abc==pad&keep=ok"),
+            "https://api.example.com/?api_key=REDACTED&keep=ok"
+        );
     }
 
     // 7. enforce_metadata_limit — returns a deterministic stub when over limit

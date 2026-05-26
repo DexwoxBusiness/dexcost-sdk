@@ -44,20 +44,22 @@ type RetryHeuristicEngine struct {
 	recentEvents  map[uuid.UUID][]Event // taskID -> events
 }
 
-// NewRetryHeuristicEngine creates a new engine with the given window (seconds)
-// and confidence threshold.
-func NewRetryHeuristicEngine(windowSeconds, threshold float64) *RetryHeuristicEngine {
+// NewRetryHeuristicEngine creates a new engine with the given window
+// (seconds) and confidence threshold. Returns an error on invalid config
+// instead of panicking — callers (NewTracker today) propagate the error
+// (Sprint 1 Theme B / §2.2.2 1d).
+func NewRetryHeuristicEngine(windowSeconds, threshold float64) (*RetryHeuristicEngine, error) {
 	if windowSeconds <= 0 {
-		panic(fmt.Sprintf("dexcost: windowSeconds must be positive, got %f", windowSeconds))
+		return nil, fmt.Errorf("dexcost: windowSeconds must be positive, got %f", windowSeconds)
 	}
 	if threshold <= 0 || threshold > 1 {
-		panic(fmt.Sprintf("dexcost: threshold must be in (0, 1], got %f", threshold))
+		return nil, fmt.Errorf("dexcost: threshold must be in (0, 1], got %f", threshold)
 	}
 	return &RetryHeuristicEngine{
 		windowSeconds: windowSeconds,
 		threshold:     threshold,
 		recentEvents:  make(map[uuid.UUID][]Event),
-	}
+	}, nil
 }
 
 // WindowSeconds returns the rolling window size in seconds.

@@ -45,6 +45,22 @@ export class EventPusher {
   }
 
   /**
+   * Update the API key and clear any auth-failed state so the push
+   * loop can resume. Sprint 2 Theme D / §3.2.3 (B14). When the
+   * Control Layer returns 401/403 the pusher sets `_authFailed=true`
+   * and calls `stop()`. Without this method the only recovery is
+   * restarting the customer's process.
+   */
+  setApiKey(newKey: string): void {
+    this._options = { ...this._options, apiKey: newKey };
+    this._authFailed = false;
+    // If the loop was torn down by the prior auth failure, restart it.
+    if (!this._interval) {
+      this.start();
+    }
+  }
+
+  /**
    * Start the periodic background push loop.
    */
   start(): void {
@@ -129,8 +145,10 @@ export class EventPusher {
 
       const ok = await this.pushWithSplit(pending, tasks);
       if (ok) {
+        // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
+        // POST; these calls are kept as a defensive idempotent safety
+        // net for any future path that returns true without splitting.
         this._buffer.markSynced(pending.map((e) => e.eventId));
-        // Mark the pushed tasks synced so they are not re-sent next cycle.
         this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
         this._backoffMs = 1000; // Reset backoff on success
 
@@ -257,7 +275,19 @@ export class EventPusher {
     }
 
     if (payload.length <= MAX_PAYLOAD_BYTES || depth >= MAX_DEPTH) {
-      return this.postRaw(payload);
+      const ok = await this.postRaw(payload);
+      if (ok) {
+        // Sprint 2 Theme D / §3.2.1 (B12): mark synced at the leaf so
+        // a sibling-half failure does not unwind work that succeeded.
+        // Pre-fix the outer caller marked synced ONLY when both halves
+        // returned true; first-half-OK + second-half-fail re-sent the
+        // first half on the next tick → duplicates at the control plane.
+        this._buffer.markSynced(events.map((e) => e.eventId));
+        if (tasks.length > 0) {
+          this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
+        }
+      }
+      return ok;
     }
 
     if (events.length <= 1) {

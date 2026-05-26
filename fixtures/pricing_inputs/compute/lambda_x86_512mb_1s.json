@@ -1,0 +1,13 @@
+{
+  "_description": "AWS Lambda, x86_64, 512 MB, 1 second, on-demand. Reference cost should be approximately $0.0000208 per the May 2026 catalog.",
+  "billing_model": "lambda",
+  "region": "us-east-1",
+  "architecture": "x86_64",
+  "duration_ms": 1000,
+  "memory_bytes_peak": 536870912,
+  "memory_bytes_limit": 536870912,
+  "vcpu_count": 0.5,
+  "vcpu_seconds_used": 0.5,
+  "invocation_count": 1,
+  "initialization_type": "on_demand"
+}

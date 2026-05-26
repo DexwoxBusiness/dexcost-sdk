@@ -31,6 +31,7 @@ from dexcost.adapters._netbytes import classify_destination, measure_bytes_from_
 from dexcost.config import DexcostConfig
 from dexcost.context import get_current_task, is_network_event_suppressed
 from dexcost.models.event import Event
+from dexcost.redaction import scrub_url
 from dexcost.service_catalog import ServiceCatalog
 from dexcost.session import get_session_manager
 
@@ -471,29 +472,54 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
 
     Returns None if:
     - Content-Type is not application/json
+    - Content-Type is text/event-stream (SSE — never drain)
+    - Transfer-Encoding is chunked (B11 — never drain streaming)
+    - Content-Length is missing (unknown size — treat as too large)
     - Content-Length > 1 MB
     - Parsing fails
+
+    Sprint 2 Theme C / §3.1.2 (B11): pre-fix the adapter
+    unconditionally called `response.json()`, draining customer
+    streaming bodies (LLM streaming completions, SSE feeds, large
+    downloads) and breaking their `iter_content` / `iter_lines`.
     """
     headers = _get_response_headers(response)
+    # Case-insensitive lookup helper.
+    def _hdr(name: str) -> str:
+        target = name.lower()
+        for k, v in headers.items():
+            if k.lower() == target:
+                return v
+        return ""
 
-    # Check content type
-    content_type = ""
-    for k, v in headers.items():
-        if k.lower() == "content-type":
-            content_type = v.lower()
-            break
+    content_type = _hdr("content-type").lower()
     if "application/json" not in content_type:
         return None
+    # SSE responses also commonly advertise application/json+stream
+    # in some catalogs; explicit guard so the check survives future
+    # Content-Type variants.
+    if "text/event-stream" in content_type:
+        return None
 
-    # Check content length
-    for k, v in headers.items():
-        if k.lower() == "content-length":
-            try:
-                if int(v) > _MAX_BODY_SIZE:
-                    return None
-            except (ValueError, TypeError):
-                pass
-            break
+    # B11: chunked transfer encoding means the body streams indefinitely
+    # — calling .json() would consume the entire stream and starve the
+    # customer's iterator.
+    transfer_encoding = _hdr("transfer-encoding").lower()
+    if "chunked" in transfer_encoding:
+        return None
+
+    # B11: missing Content-Length is treated as "unknown size, too big
+    # to extract". Catalog matchers fall back to fallback_credits when
+    # the body is unavailable.
+    content_length_raw = _hdr("content-length")
+    if not content_length_raw:
+        return None
+    try:
+        if int(content_length_raw) > _MAX_BODY_SIZE:
+            return None
+    except (ValueError, TypeError):
+        # Malformed Content-Length — refuse to read the body.
+        return None
 
     # Try to parse JSON
     try:
@@ -547,6 +573,11 @@ def _handle_http_call(
     Fail-silent: any exception is swallowed and counted (see
     get_network_error_count) so a measurement bug never breaks the call.
     """
+    # Scrub credentials once at the choke point so every downstream
+    # handler receives an already-safe URL. Avoids the in-memory window
+    # where the raw URL with userinfo / api_key would otherwise live
+    # between extraction and event creation.
+    url = scrub_url(url)
     try:
         _handle_http_call_inner(
             url, method, request_headers or {}, request_body_len, response, latency_ms

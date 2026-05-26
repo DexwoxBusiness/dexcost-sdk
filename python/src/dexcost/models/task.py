@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from dexcost.models._serde import iso_canonical
 from dexcost.network_accountant import NetworkAccountant
 
 
@@ -101,8 +102,8 @@ class Task:
             "task_id": str(self.task_id),
             "task_type": self.task_type,
             "status": self.status,
-            "started_at": self.started_at.isoformat(),
-            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "started_at": iso_canonical(self.started_at),
+            "ended_at": iso_canonical(self.ended_at) if self.ended_at else None,
             "metadata": self.metadata,
             "customer_id": self.customer_id,
             "project_id": self.project_id,

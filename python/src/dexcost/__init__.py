@@ -8,10 +8,15 @@ and workflows.
 from __future__ import annotations
 
 import atexit
+import logging
+import os
+from typing import Any
+
+_log = logging.getLogger(__name__)
+
 from contextlib import contextmanager
 from collections.abc import Generator
 from decimal import Decimal
-from typing import Any
 
 __version__ = "0.1.0"
 
@@ -76,6 +81,53 @@ _global_config: DexcostConfig | None = None
 _sync_worker: SyncWorker | None = None
 _pricing_engine: PricingEngine | None = None
 _global_tracker: CostTracker | None = None
+# Sprint 1 Theme B / §2.2.4: register_at_fork must be installed exactly
+# once per process (not once per init() call) — guards against the hook
+# being registered multiple times if init() is called after close().
+_fork_hook_registered: bool = False
+
+
+def _reinit_after_fork() -> None:
+    """Re-establish per-process state in a child after os.fork().
+
+    The child inherits the parent's SQLite connection fd (corrupting if
+    both processes write) and the parent's SyncWorker Thread object
+    (which is a dangling reference — the underlying OS thread is not
+    copied). This handler is registered via os.register_at_fork in
+    init() exactly once per process. Sprint 1 Theme B / §2.2.4.
+    """
+    global _sync_worker, _global_tracker, _global_config
+
+    # Drop the inherited SyncWorker reference WITHOUT calling .stop() —
+    # the underlying thread no longer exists in the child, so the
+    # threading.Event / join() in stop() would deadlock.
+    _sync_worker = None
+
+    # Close the inherited SQLite connection on the tracker and recreate
+    # storage so the child gets a fresh fd. Without this, parent + child
+    # writes interleave through the same fd and corrupt the file.
+    if _global_tracker is not None and _global_config is not None:
+        try:
+            _global_tracker._storage.close()
+        except Exception:
+            pass  # closing an inherited fd may fail; ignore
+        from dexcost.storage.sqlite import SQLiteStorage
+        _global_tracker._storage = SQLiteStorage(db_path=_global_config.buffer_path)
+
+        # Re-wire any adapter modules that hold their own reference.
+        from dexcost.adapters.browser import set_storage as _set_browser_storage
+        _set_browser_storage(_global_tracker._storage)
+
+        # Restart the sync worker on a fresh thread + fresh connection if
+        # we're in cloud mode. The child gets its own background pusher.
+        if _global_config.storage_mode == "cloud" and not _global_config.is_dev:
+            sync_storage = SQLiteStorage(db_path=_global_config.buffer_path)
+            _sync_worker = SyncWorker(
+                config=_global_config,
+                storage=sync_storage,
+                db_path=_global_config.buffer_path,
+            )
+            _sync_worker.start()
 
 
 def _atexit_handler() -> None:
@@ -162,7 +214,21 @@ def init(
         network_event_latency_ms: Emit a ``network`` event when call latency exceeds
             this many milliseconds. ``0`` disables latency-based emission (default).
     """
-    global _global_config, _sync_worker, _global_tracker
+    global _global_config, _sync_worker, _global_tracker, _fork_hook_registered
+
+    # Sprint 1 Theme B / §2.2.4(a): idempotency guard. A second init()
+    # call without an intervening close() would otherwise orphan the
+    # existing SyncWorker thread (the previous reference is dropped
+    # without .stop()) — duplicate workers then race on the same SQLite
+    # file. Log + return the existing tracker.
+    if _global_tracker is not None:
+        _log.warning(
+            "dexcost.init() called more than once without an intervening "
+            "close(); ignoring this call and keeping the existing tracker. "
+            "If you intend to reconfigure, call dexcost.close() first."
+        )
+        return _global_config  # type: ignore[return-value]
+
     _global_config = DexcostConfig(
         api_key=api_key,
         storage=storage,
@@ -227,6 +293,18 @@ def init(
         )
         _sync_worker.start()
         atexit.register(_atexit_handler)
+
+        # Sprint 1 Theme B / §2.2.4(b): fork safety. After os.fork() the
+        # child inherits the parent's SQLite connection fd and the
+        # SyncWorker Thread object (the thread itself does not survive
+        # fork — only the Python wrapper is copied). Concurrent writes
+        # from two processes to the same fd corrupt SQLite; the dangling
+        # thread object would make stop() / flush() hang. Reset both in
+        # the child by closing inherited resources and re-running the
+        # sync-worker bootstrap. Registered exactly once per process.
+        if not _fork_hook_registered and hasattr(os, "register_at_fork"):
+            os.register_at_fork(after_in_child=_reinit_after_fork)
+            _fork_hook_registered = True
 
     # Non-blocking pricing data refresh from Control Layer (US-044)
     if _global_config.storage_mode == "cloud" and not _global_config.is_dev:
@@ -333,6 +411,51 @@ def record_cost(
         pricing_version=pricing_version,
         details=details,
     )
+
+
+def set_api_key(new_key: str) -> bool:
+    """Update the SDK's API key and resume sync after auth failure.
+
+    Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer returns
+    401/403 the SyncWorker permanently stops (sync.py:366-369). Without
+    this function the only recovery is restarting the customer's
+    process. ``set_api_key`` updates the global config + clears the
+    worker's stop signal + restarts the worker thread if it has
+    already terminated.
+
+    Returns True on success, False if ``init()`` has not been called
+    (logs a warning).
+    """
+    global _global_config, _sync_worker, _global_tracker
+    if _global_config is None or _global_tracker is None:
+        _log.warning(
+            "dexcost.set_api_key() called before init(); ignoring. "
+            "Call dexcost.init(api_key=...) first."
+        )
+        return False
+    _global_config.api_key = new_key
+    if _sync_worker is None:
+        return True  # Local-only mode; nothing else to do.
+    # Clear the auth-failed signal so subsequent pushes proceed.
+    _sync_worker._stop_event.clear()
+    # Reset backoff so the next attempt isn't artificially delayed by
+    # the failure history that triggered the original auth issue.
+    _sync_worker._backoff = 1.0
+    # If the worker thread already terminated (auth-failure path
+    # `return`s from _run), spawn a fresh one. threading.Thread cannot
+    # be restarted, so we rebuild the SyncWorker with the same config
+    # and storage. The buffered events on disk persist across this
+    # transition.
+    if _sync_worker._thread is None or not _sync_worker._thread.is_alive():
+        from dexcost.storage.sqlite import SQLiteStorage
+        sync_storage = SQLiteStorage(db_path=_global_config.buffer_path)
+        _sync_worker = SyncWorker(
+            config=_global_config,
+            storage=sync_storage,
+            db_path=_global_config.buffer_path,
+        )
+        _sync_worker.start()
+    return True
 
 
 def close() -> None:
