@@ -1,7 +1,7 @@
 {
   "compute_cost_usd": "0.00",
   "customer_id": null,
-  "ended_at": "2026-05-26T12:34:30.000000+00:00",
+  "ended_at": "2026-05-26T12:34:30.000000Z",
   "external_cost_usd": "0.00",
   "failure_count": 0,
   "gpu_cost_usd": "0.00",
@@ -16,7 +16,7 @@
   "retry_cost_usd": "0.00",
   "retry_count": 0,
   "schema_version": "1",
-  "started_at": "2026-05-26T12:34:00.000000+00:00",
+  "started_at": "2026-05-26T12:34:00.000000Z",
   "status": "success",
   "task_id": "11111111-0004-0000-0000-000000000001",
   "task_type": "minimal_test",

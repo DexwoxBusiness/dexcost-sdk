@@ -9,7 +9,7 @@
   "is_retry": false,
   "latency_ms": 50,
   "model": "gpt-4o-mini",
-  "occurred_at": "2026-05-26T12:35:06.000000+00:00",
+  "occurred_at": "2026-05-26T12:35:06.000000Z",
   "output_tokens": 1,
   "pricing_source": "litellm",
   "pricing_version": "2026-05-01",

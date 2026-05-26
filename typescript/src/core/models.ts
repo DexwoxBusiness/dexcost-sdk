@@ -5,6 +5,22 @@
  * and mirror the Python SDK's Task and Event dataclasses.
  */
 
+/**
+ * Serialise a Date to the canonical wire format. Sprint 3 Theme F /
+ * §4.1.1 (P1): RFC3339 with microsecond precision (6 fractional
+ * digits) + "Z" suffix, matching the Python canonical.
+ *
+ * `Date.toISOString()` only gives 3-digit millisecond precision, so
+ * we pad with three trailing zeros. Customer-visible Date objects
+ * carry no sub-millisecond data anyway, so the pad is information-
+ * preserving — it just aligns the wire string for cross-SDK parity.
+ */
+function isoCanonical(d: Date): string {
+  const iso = d.toISOString();
+  // iso is `YYYY-MM-DDTHH:mm:ss.sssZ` (24 chars); pad to .sssNNNZ
+  return iso.slice(0, -1) + "000Z";
+}
+
 /** Lifecycle status of a tracked task. */
 export type TaskStatus = "pending" | "success" | "failed";
 
@@ -185,8 +201,8 @@ export function taskToDict(task: Task): Record<string, unknown> {
     task_id: task.taskId,
     task_type: task.taskType,
     status: task.status,
-    started_at: task.startedAt.toISOString(),
-    ended_at: task.endedAt ? task.endedAt.toISOString() : null,
+    started_at: isoCanonical(task.startedAt),
+    ended_at: task.endedAt ? isoCanonical(task.endedAt) : null,
     metadata: task.metadata,
     customer_id: task.customerId ?? null,
     project_id: task.projectId ?? null,
@@ -222,7 +238,7 @@ export function eventToDict(event: CostEvent): Record<string, unknown> {
     event_id: event.eventId,
     task_id: event.taskId,
     event_type: event.eventType,
-    occurred_at: event.occurredAt.toISOString(),
+    occurred_at: isoCanonical(event.occurredAt),
     cost_usd: String(event.costUsd),
     cost_confidence: event.costConfidence,
     pricing_source: event.pricingSource ?? null,

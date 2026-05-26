@@ -2,7 +2,7 @@
   "event_id": "22222222-0001-0000-0000-000000000001",
   "task_id": "11111111-0001-0000-0000-000000000001",
   "event_type": "llm_call",
-  "occurred_at": "2026-05-26T12:34:56.789012+00:00",
+  "occurred_at": "2026-05-26T12:34:56.789000Z",
   "cost_usd": "0.0265",
   "cost_confidence": "exact",
   "pricing_source": "provider_response",

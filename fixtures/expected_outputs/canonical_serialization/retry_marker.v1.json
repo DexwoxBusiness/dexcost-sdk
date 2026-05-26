@@ -9,7 +9,7 @@
   "is_retry": true,
   "latency_ms": 950,
   "model": "gpt-4o",
-  "occurred_at": "2026-05-26T12:35:05.000000+00:00",
+  "occurred_at": "2026-05-26T12:35:05.000000Z",
   "output_tokens": 100,
   "pricing_source": "provider_response",
   "pricing_version": "2026-05-01",

@@ -12,7 +12,7 @@
   "is_retry": false,
   "latency_ms": 1340,
   "model": "gpt-4o",
-  "occurred_at": "2026-05-26T12:34:56.789012+00:00",
+  "occurred_at": "2026-05-26T12:34:56.789000Z",
   "output_tokens": 420,
   "pricing_source": "provider_response",
   "pricing_version": "2026-05-01",

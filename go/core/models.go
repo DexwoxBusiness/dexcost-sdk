@@ -10,6 +10,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// canonicalTimeFormat is the wire-format pattern for occurred_at /
+// started_at / ended_at fields. Sprint 3 Theme F / §4.1.1 (P1):
+// RFC3339 with microsecond precision (6 fractional digits, zero-padded)
+// and "Z" suffix, matching the Python canonical.
+const canonicalTimeFormat = "2006-01-02T15:04:05.000000Z"
+
+// formatCanonicalTime serialises a time.Time to the canonical wire
+// format. Always UTC; nanoseconds are truncated to microseconds.
+func formatCanonicalTime(t time.Time) string {
+	return t.UTC().Format(canonicalTimeFormat)
+}
+
 // TaskStatus represents the lifecycle status of a tracked task.
 type TaskStatus string
 
@@ -131,7 +143,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"task_id":             t.TaskID.String(),
 		"task_type":           t.TaskType,
 		"status":              string(t.Status),
-		"started_at":          t.StartedAt.Format(time.RFC3339Nano),
+		"started_at":          formatCanonicalTime(t.StartedAt),
 		"ended_at":            nil,
 		"metadata":            t.Metadata,
 		"customer_id":         nilIfEmpty(t.CustomerID),
@@ -158,7 +170,7 @@ func (t Task) ToDict() map[string]interface{} {
 		"schema_version":      t.SchemaVersion,
 	}
 	if t.EndedAt != nil {
-		d["ended_at"] = t.EndedAt.Format(time.RFC3339Nano)
+		d["ended_at"] = formatCanonicalTime(*t.EndedAt)
 	}
 	if t.ParentTaskID != nil {
 		d["parent_task_id"] = t.ParentTaskID.String()
@@ -218,7 +230,7 @@ func (e Event) ToDict() map[string]interface{} {
 		"event_id":        e.EventID.String(),
 		"task_id":         e.TaskID.String(),
 		"event_type":      string(e.EventType),
-		"occurred_at":     e.OccurredAt.Format(time.RFC3339Nano),
+		"occurred_at":     formatCanonicalTime(e.OccurredAt),
 		"cost_usd":        e.CostUSD.String(),
 		"cost_confidence": string(e.CostConfidence),
 		"pricing_source":  nilIfEmpty(string(e.PricingSource)),

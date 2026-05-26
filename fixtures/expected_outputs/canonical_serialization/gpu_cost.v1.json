@@ -21,7 +21,7 @@
   "is_retry": false,
   "latency_ms": null,
   "model": null,
-  "occurred_at": "2026-05-26T12:35:03.000000+00:00",
+  "occurred_at": "2026-05-26T12:35:03.000000Z",
   "output_tokens": null,
   "pricing_source": "manual",
   "pricing_version": "gpu:1.0.0",

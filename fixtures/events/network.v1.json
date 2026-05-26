@@ -2,7 +2,7 @@
   "event_id": "22222222-0006-0000-0000-000000000001",
   "task_id": "11111111-0001-0000-0000-000000000001",
   "event_type": "network",
-  "occurred_at": "2026-05-26T12:35:01.000000+00:00",
+  "occurred_at": "2026-05-26T12:35:01.000000Z",
   "cost_usd": "0.000900",
   "cost_confidence": "computed",
   "pricing_source": "manual",

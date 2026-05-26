@@ -4,8 +4,8 @@
   "task_id": "11111111-0005-0000-0000-000000000001",
   "task_type": "rag_query",
   "status": "success",
-  "started_at": "2026-05-26T12:30:00.000000+00:00",
-  "ended_at": "2026-05-26T12:40:00.000000+00:00",
+  "started_at": "2026-05-26T12:30:00.000000Z",
+  "ended_at": "2026-05-26T12:40:00.000000Z",
   "metadata": {
     "agent": "research_agent_v2"
   },

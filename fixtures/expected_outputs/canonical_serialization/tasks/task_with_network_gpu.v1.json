@@ -1,7 +1,7 @@
 {
   "compute_cost_usd": "0.02",
   "customer_id": "cust_acme_corp",
-  "ended_at": "2026-05-26T12:40:00.000000+00:00",
+  "ended_at": "2026-05-26T12:40:00.000000Z",
   "external_cost_usd": "0.05",
   "failure_count": 0,
   "gpu_cost_usd": "1.80",
@@ -18,7 +18,7 @@
   "retry_cost_usd": "0.07",
   "retry_count": 1,
   "schema_version": "1",
-  "started_at": "2026-05-26T12:30:00.000000+00:00",
+  "started_at": "2026-05-26T12:30:00.000000Z",
   "status": "success",
   "task_id": "11111111-0005-0000-0000-000000000001",
   "task_type": "rag_query",
