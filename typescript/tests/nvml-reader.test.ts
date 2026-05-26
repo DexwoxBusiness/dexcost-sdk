@@ -131,10 +131,15 @@ describe("nvml-reader (TS shells out to nvidia-smi)", () => {
     const timestamps: Record<number, number> = {};
     const samples = getProcessUtilization(0, timestamps);
     expect(samples).not.toBeNull();
-    expect(samples![1234].smUtil).toBe(50);
-    expect(samples![1234].memUtil).toBe(30);
-    expect(samples![5678].smUtil).toBe(70);
-    expect(samples![5678].memUtil).toBe(40);
+    // B2 (Sprint 2 §3.1.1 TS port): getProcessUtilization now returns
+    // Record<pid, UtilSample[]> — a list per PID — so the accountant
+    // can integrate sm_util × dt across multiple observations. The
+    // nvidia-smi shell-out emits one row per PID per invocation, so
+    // each list has length 1 in this test.
+    expect(samples![1234]![0].smUtil).toBe(50);
+    expect(samples![1234]![0].memUtil).toBe(30);
+    expect(samples![5678]![0].smUtil).toBe(70);
+    expect(samples![5678]![0].memUtil).toBe(40);
     expect(timestamps[1234]).toBeGreaterThan(0);
     expect(timestamps[5678]).toBeGreaterThan(0);
   });

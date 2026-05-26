@@ -79,7 +79,7 @@ export interface GpuAccountantHooks {
   getProcessUtilization: (
     index: number,
     lastSeen: Record<number, number>,
-  ) => Record<number, UtilSample> | null;
+  ) => Record<number, UtilSample[]> | null;
 }
 
 function defaultHooks(): GpuAccountantHooks {

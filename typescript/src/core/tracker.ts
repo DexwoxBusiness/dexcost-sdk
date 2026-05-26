@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import Decimal from "decimal.js";
+import { Decimal } from "decimal.js";
 import type { Task, CostEvent, EventType, CostConfidence, PricingSource } from "./models.js";
 
 /**

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import dexcost.storage.migrations as _migrations
+from dexcost.models._serde import parse_canonical
 from dexcost.models.event import Event
 from dexcost.models.task import Task
 from dexcost.storage.migrations import run_sqlite_migrations
@@ -111,7 +112,7 @@ def _iso(dt: datetime | None) -> str | None:
 def _dt(val: str | None) -> datetime | None:
     if val is None:
         return None
-    return datetime.fromisoformat(val)
+    return parse_canonical(val)
 
 
 def _dec(val: str | None) -> Decimal:
@@ -622,7 +623,7 @@ class SQLiteStorage:
             task_id=task_id,
             task_type=row["task_type"],
             status=row["status"],
-            started_at=datetime.fromisoformat(row["started_at"]),
+            started_at=parse_canonical(row["started_at"]),
             ended_at=_dt(row["ended_at"]),
             metadata=_json_loads(row["metadata"]),
             llm_cost_usd=_dec(row["llm_cost_usd"]),
@@ -674,7 +675,7 @@ class SQLiteStorage:
             event_id=event_id,
             task_id=task_id,
             event_type=row["event_type"],
-            occurred_at=datetime.fromisoformat(row["timestamp"]),
+            occurred_at=parse_canonical(row["timestamp"]),
             cost_usd=_dec(row["cost_usd"]),
             cost_confidence=row["cost_confidence"],
             pricing_source=row["pricing_source"],

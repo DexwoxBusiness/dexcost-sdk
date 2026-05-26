@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from dexcost.models._serde import iso_canonical
+from dexcost.models._serde import iso_canonical, parse_canonical
 from dexcost.network_accountant import NetworkAccountant
 
 
@@ -141,8 +141,8 @@ class Task:
                 task_id=uuid.UUID(data["task_id"]),
                 task_type=data["task_type"],
                 status=data["status"],
-                started_at=datetime.fromisoformat(data["started_at"]),
-                ended_at=datetime.fromisoformat(data["ended_at"]) if data.get("ended_at") else None,
+                started_at=parse_canonical(data["started_at"]),
+                ended_at=parse_canonical(data["ended_at"]) if data.get("ended_at") else None,
                 metadata=data.get("metadata", {}),
                 customer_id=data.get("customer_id"),
                 project_id=data.get("project_id"),
