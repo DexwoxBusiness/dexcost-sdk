@@ -319,8 +319,14 @@ impl TrackedTask {
         if let Some(ct) = cached_tokens {
             self.task.total_cached_tokens += ct;
         }
-        self.task.total_cost_usd =
-            self.task.llm_cost_usd + self.task.external_cost_usd + self.task.compute_cost_usd;
+        // Sprint 2 Theme C / §3.1.3 Fix 5: 5-subsystem aggregation
+        // (network + gpu were dropped pre-fix, clobbering values set by
+        // earlier finalize / record paths).
+        self.task.total_cost_usd = self.task.llm_cost_usd
+            + self.task.external_cost_usd
+            + self.task.compute_cost_usd
+            + self.task.network_cost_usd
+            + self.task.gpu_cost_usd;
 
         // Run heuristic retry detection before recording.
         if let Some(ref heuristics) = self.heuristics {
@@ -439,8 +445,14 @@ impl TrackedTask {
             EventType::ComputeCost => self.task.compute_cost_usd += event.cost_usd,
             _ => self.task.external_cost_usd += event.cost_usd,
         }
-        self.task.total_cost_usd =
-            self.task.llm_cost_usd + self.task.external_cost_usd + self.task.compute_cost_usd;
+        // Sprint 2 Theme C / §3.1.3 Fix 5: 5-subsystem aggregation
+        // (network + gpu were dropped pre-fix, clobbering values set by
+        // earlier finalize / record paths).
+        self.task.total_cost_usd = self.task.llm_cost_usd
+            + self.task.external_cost_usd
+            + self.task.compute_cost_usd
+            + self.task.network_cost_usd
+            + self.task.gpu_cost_usd;
 
         // Dev console output
         crate::dev_console::log_event(&event, &self.task.task_type);
@@ -529,8 +541,14 @@ impl TrackedTask {
 
         // Aggregate into task
         self.task.external_cost_usd += event.cost_usd;
-        self.task.total_cost_usd =
-            self.task.llm_cost_usd + self.task.external_cost_usd + self.task.compute_cost_usd;
+        // Sprint 2 Theme C / §3.1.3 Fix 5: 5-subsystem aggregation
+        // (network + gpu were dropped pre-fix, clobbering values set by
+        // earlier finalize / record paths).
+        self.task.total_cost_usd = self.task.llm_cost_usd
+            + self.task.external_cost_usd
+            + self.task.compute_cost_usd
+            + self.task.network_cost_usd
+            + self.task.gpu_cost_usd;
 
         // Dev console output
         crate::dev_console::log_event(&event, &self.task.task_type);

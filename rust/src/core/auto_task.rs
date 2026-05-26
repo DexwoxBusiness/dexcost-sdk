@@ -76,7 +76,12 @@ pub fn finalize_auto_task(
                 // never aggregated.
             }
         }
-        task.total_cost_usd = task.llm_cost_usd + task.external_cost_usd + task.compute_cost_usd;
+        // Sprint 2 Theme C / §3.1.3 Fix 5: 5-subsystem sum.
+        task.total_cost_usd = task.llm_cost_usd
+            + task.external_cost_usd
+            + task.compute_cost_usd
+            + task.network_cost_usd
+            + task.gpu_cost_usd;
 
         if let Some(tokens) = ev.input_tokens {
             task.total_input_tokens += tokens;
