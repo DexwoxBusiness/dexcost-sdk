@@ -1,0 +1,25 @@
+{
+  "event_id": "22222222-0001-0000-0000-000000000001",
+  "task_id": "11111111-0001-0000-0000-000000000001",
+  "event_type": "llm_call",
+  "occurred_at": "2026-05-26T12:34:56.789012+00:00",
+  "cost_usd": "0.0265",
+  "cost_confidence": "exact",
+  "pricing_source": "provider_response",
+  "pricing_version": "2026-05-01",
+  "service_name": "openai",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "input_tokens": 1850,
+  "output_tokens": 420,
+  "cached_tokens": 512,
+  "latency_ms": 1340,
+  "is_retry": false,
+  "retry_reason": null,
+  "retry_of": null,
+  "details": {
+    "temperature": 0.7,
+    "max_tokens": 1024
+  },
+  "schema_version": "1"
+}

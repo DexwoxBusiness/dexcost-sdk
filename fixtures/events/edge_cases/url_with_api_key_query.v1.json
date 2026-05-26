@@ -1,0 +1,10 @@
+{
+  "_comment": "Regression fixture for B1. Customer query string carries an API key in a named parameter. Scrubber must strip ANY of: api_key, apikey, access_token, token, auth, password, secret, signature, X-*-Signature, X-*-Credential (case-insensitive). Non-sensitive query params (eg page, limit) must be preserved.",
+  "_test_input": {
+    "url": "https://api.openai.com/v1/chat/completions?api_key=sk-proj-abcd1234efgh5678&page=2&limit=50",
+    "method": "POST",
+    "status_code": 200,
+    "request_bytes": 1024,
+    "response_bytes": 4096
+  }
+}

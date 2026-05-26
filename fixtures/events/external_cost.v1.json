@@ -1,0 +1,26 @@
+{
+  "event_id": "22222222-0002-0000-0000-000000000001",
+  "task_id": "11111111-0001-0000-0000-000000000001",
+  "event_type": "external_cost",
+  "occurred_at": "2026-05-26T12:34:57.000000+00:00",
+  "cost_usd": "0.0050",
+  "cost_confidence": "exact",
+  "pricing_source": "manual",
+  "pricing_version": null,
+  "service_name": "tavily",
+  "provider": null,
+  "model": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "cached_tokens": null,
+  "latency_ms": 230,
+  "is_retry": false,
+  "retry_reason": null,
+  "retry_of": null,
+  "details": {
+    "endpoint": "/search",
+    "requests_count": 1,
+    "response_status": 200
+  },
+  "schema_version": "1"
+}

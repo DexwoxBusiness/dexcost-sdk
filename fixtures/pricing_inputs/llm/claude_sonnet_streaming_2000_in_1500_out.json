@@ -1,0 +1,8 @@
+{
+  "_description": "Claude Sonnet 4.6 streaming response, 2000 input tokens, 1500 output tokens.",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "input_tokens": 2000,
+  "output_tokens": 1500,
+  "cached_tokens": 0
+}

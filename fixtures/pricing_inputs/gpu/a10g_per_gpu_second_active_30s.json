@@ -1,0 +1,13 @@
+{
+  "_description": "Single a10g billed per-active-GPU-second (Modal/RunPod style). 30 seconds of work.",
+  "billing_model": "per_gpu_second_active",
+  "gpu_vendor": "nvidia",
+  "gpu_sku": "a10g",
+  "gpu_count": 1,
+  "region": "us-east-1",
+  "duration_ms": 30000,
+  "gpu_seconds_used": 30,
+  "instance_type": null,
+  "vgpu_profile": null,
+  "mig_profile": null
+}

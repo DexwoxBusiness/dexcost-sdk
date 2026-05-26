@@ -1,0 +1,31 @@
+{
+  "_comment": "Regression fixture for Rust total_cost_usd clobber. Rust's record_cost path overwrote total_cost_usd = llm + external + compute, dropping network + gpu. After the fix, total_cost_usd must equal SUM of all five subsystem costs.",
+  "_test_protocol": "total_cost_usd must equal 0.10 + 0.05 + 0.02 + 0.03 + 1.80 = 2.00. retry_cost_usd OVERLAPS the subsystem it occurred in (typically LLM) and is NOT added to total.",
+  "task_id": "11111111-0005-0000-0000-000000000001",
+  "task_type": "rag_query",
+  "status": "success",
+  "started_at": "2026-05-26T12:30:00.000000+00:00",
+  "ended_at": "2026-05-26T12:40:00.000000+00:00",
+  "metadata": {
+    "agent": "research_agent_v2"
+  },
+  "customer_id": "cust_acme_corp",
+  "project_id": "proj_helpdesk_ai",
+  "parent_task_id": null,
+  "llm_cost_usd": "0.10",
+  "external_cost_usd": "0.05",
+  "compute_cost_usd": "0.02",
+  "network_cost_usd": "0.03",
+  "gpu_cost_usd": "1.80",
+  "total_cost_usd": "2.00",
+  "total_input_tokens": 2150,
+  "total_output_tokens": 520,
+  "total_cached_tokens": 512,
+  "network_bytes_in": 10485760,
+  "network_bytes_out": 1024,
+  "network_call_count": 3,
+  "retry_count": 1,
+  "retry_cost_usd": "0.07",
+  "failure_count": 0,
+  "schema_version": "1"
+}

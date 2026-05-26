@@ -1,0 +1,4 @@
+{
+  "raw_url": "https://my-bucket.s3.amazonaws.com/path/to/object.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260526%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260526T123456Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=abcdef1234567890abcdef1234567890",
+  "scrubbed_url": "https://my-bucket.s3.amazonaws.com/path/to/object.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=REDACTED&X-Amz-Date=20260526T123456Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=REDACTED"
+}

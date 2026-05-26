@@ -1,0 +1,32 @@
+{
+  "cached_tokens": null,
+  "cost_confidence": "exact",
+  "cost_usd": "0.0000000000",
+  "details": {
+    "gpu_index": 0,
+    "gpu_sku": "a100-40gb",
+    "mem_util_pct": 18.0,
+    "process_count": 1,
+    "sample_count": 60,
+    "sm_util_pct": 12.5,
+    "task_duration_ms": 600000,
+    "vram_total_bytes": 42949672960,
+    "vram_used_peak_bytes": 10737418240
+  },
+  "event_id": "22222222-0009-0000-0000-000000000001",
+  "event_type": "gpu_utilization_signal",
+  "input_tokens": null,
+  "is_retry": false,
+  "latency_ms": null,
+  "model": null,
+  "occurred_at": "2026-05-26T12:35:04.000000+00:00",
+  "output_tokens": null,
+  "pricing_source": null,
+  "pricing_version": null,
+  "provider": null,
+  "retry_of": null,
+  "retry_reason": null,
+  "schema_version": "1",
+  "service_name": null,
+  "task_id": "11111111-0002-0000-0000-000000000001"
+}

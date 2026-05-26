@@ -1,0 +1,30 @@
+{
+  "cached_tokens": null,
+  "cost_confidence": "computed",
+  "cost_usd": "0.000900",
+  "details": {
+    "cost_pending": false,
+    "is_internal_traffic": false,
+    "method": "POST",
+    "protocol": "https",
+    "request_bytes": 1024,
+    "response_bytes": 10485760,
+    "status_code": 200
+  },
+  "event_id": "22222222-0006-0000-0000-000000000001",
+  "event_type": "network",
+  "input_tokens": null,
+  "is_retry": false,
+  "latency_ms": null,
+  "model": null,
+  "occurred_at": "2026-05-26T12:35:01.000000+00:00",
+  "output_tokens": null,
+  "pricing_source": "manual",
+  "pricing_version": "egress:1.0.0",
+  "provider": null,
+  "retry_of": null,
+  "retry_reason": null,
+  "schema_version": "1",
+  "service_name": "api.openai.com",
+  "task_id": "11111111-0001-0000-0000-000000000001"
+}

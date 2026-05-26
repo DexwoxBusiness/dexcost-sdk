@@ -1,0 +1,8 @@
+{
+  "_description": "1 GB egress from AWS us-east-1 to the public internet. Reference per May 2026 egress_prices catalog v1.0.0.",
+  "provider": "aws",
+  "region": "us-east-1",
+  "destination_class": "internet",
+  "bytes_out": 1073741824,
+  "is_internal_traffic": false
+}

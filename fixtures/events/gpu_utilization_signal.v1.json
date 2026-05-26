@@ -1,0 +1,33 @@
+{
+  "_comment": "Regression fixture for Go B6 (schema enum). Also enforces the gpu_utilization_signal invariant: cost_usd MUST be 0; control plane must not aggregate it into cost totals.",
+  "event_id": "22222222-0009-0000-0000-000000000001",
+  "task_id": "11111111-0002-0000-0000-000000000001",
+  "event_type": "gpu_utilization_signal",
+  "occurred_at": "2026-05-26T12:35:04.000000+00:00",
+  "cost_usd": "0.0000000000",
+  "cost_confidence": "exact",
+  "pricing_source": null,
+  "pricing_version": null,
+  "service_name": null,
+  "provider": null,
+  "model": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "cached_tokens": null,
+  "latency_ms": null,
+  "is_retry": false,
+  "retry_reason": null,
+  "retry_of": null,
+  "details": {
+    "gpu_index": 0,
+    "gpu_sku": "a100-40gb",
+    "sm_util_pct": 12.5,
+    "mem_util_pct": 18.0,
+    "vram_used_peak_bytes": 10737418240,
+    "vram_total_bytes": 42949672960,
+    "process_count": 1,
+    "sample_count": 60,
+    "task_duration_ms": 600000
+  },
+  "schema_version": "1"
+}

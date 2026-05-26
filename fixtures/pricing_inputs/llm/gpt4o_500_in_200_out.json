@@ -1,0 +1,8 @@
+{
+  "_description": "GPT-4o, 500 input tokens, 200 output tokens, no cached. Reference per LiteLLM catalog (May 2026).",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "input_tokens": 500,
+  "output_tokens": 200,
+  "cached_tokens": 0
+}
