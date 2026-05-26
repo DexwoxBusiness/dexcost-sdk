@@ -179,12 +179,31 @@ func setupServiceCatalog(cfg *Config) {
 	adapters.SetServiceCatalog(catalog)
 }
 
-// mustTracker panics if Init has not been called.
+// mustTracker returns the global tracker, or nil if Init() has not
+// been called. Callers must handle nil — the package-level public API
+// functions check for nil and silently no-op so customer code that
+// uses the SDK before (or without) Init() does not crash.
+//
+// Sprint 1 Theme B / §2.2.2 1a (B7-1a). The previous panic-on-nil
+// behaviour brought down customer apps that wired the SDK at module
+// load time but only called Init() conditionally.
 func mustTracker() *core.Tracker {
 	if globalTracker == nil {
-		panic("dexcost: Init() must be called before using the SDK")
+		warnInitNotCalled()
 	}
 	return globalTracker
+}
+
+// warnInitNotCalled logs once per process when SDK API is used before
+// Init(). Subsequent calls in the same process are silent so customer
+// logs aren't flooded.
+var initWarnOnce sync.Once
+
+func warnInitNotCalled() {
+	initWarnOnce.Do(func() {
+		log.Println("dexcost: Init() has not been called; cost recording disabled. " +
+			"Call dexcost.Init(...) at app startup to enable.")
+	})
 }
 
 // TrackedTask wraps core.TrackedTask for the public API.
@@ -195,6 +214,13 @@ type TrackedTask = core.TrackedTask
 // from the context.
 func StartTask(ctx context.Context, taskType string, opts ...TaskOption) (context.Context, *TrackedTask) {
 	tr := mustTracker()
+	if tr == nil {
+		// No-op path: return an empty TrackedTask + original ctx so
+		// customer code can call .RecordCost / .End on it without
+		// panicking. core.TrackedTask methods short-circuit on nil
+		// tracker. Sprint 1 Theme B / §2.2.2 1a.
+		return ctx, &core.TrackedTask{}
+	}
 	coreOpts := toTrackerOpts(opts)
 	return tr.StartTask(ctx, taskType, coreOpts...)
 }
@@ -215,7 +241,11 @@ func EndTask(ctx context.Context, status TaskStatus) error {
 	now := time.Now().UTC()
 	task.EndedAt = &now
 	task.Status = status
-	return mustTracker().Buffer().UpdateTask(*task)
+	tr := mustTracker()
+	if tr == nil {
+		return nil // Silent no-op when Init() not called.
+	}
+	return tr.Buffer().UpdateTask(*task)
 }
 
 // RecordCost records a non-LLM cost on the current task in the context.
@@ -232,7 +262,11 @@ func RecordCost(ctx context.Context, service string, operation string, costUSD d
 	event := core.NewEventWithOptions(task.TaskID, core.EventTypeExternalCost, opts...)
 	event.ServiceName = service
 	event.CostUSD = costUSD
-	return mustTracker().Buffer().InsertEvent(event)
+	tr := mustTracker()
+	if tr == nil {
+		return nil // Silent no-op when Init() not called.
+	}
+	return tr.Buffer().InsertEvent(event)
 }
 
 // Flush forces all buffered events to be pushed immediately (blocking).
@@ -278,7 +312,7 @@ func Close() {
 }
 
 // Tracker returns the global tracker for advanced usage.
-// Panics if Init has not been called.
+// Returns nil if Init() has not been called. Sprint 1 Theme B / §2.2.2 1a.
 func Tracker() *core.Tracker {
 	return mustTracker()
 }
@@ -303,6 +337,11 @@ func SetContext(ctx context.Context, customerID, projectID string) context.Conte
 // Panics if Init has not been called.
 func WrapOpenAI(inner interface{}) *clients.TrackedOpenAI {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedOpenAI(inner, nil, nil)
+	}
 	return clients.NewTrackedOpenAI(inner, tr, tr.Pricing())
 }
 
@@ -311,6 +350,11 @@ func WrapOpenAI(inner interface{}) *clients.TrackedOpenAI {
 // Panics if Init has not been called.
 func WrapAnthropic(inner interface{}) *clients.TrackedAnthropic {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedAnthropic(inner, nil, nil)
+	}
 	return clients.NewTrackedAnthropic(inner, tr, tr.Pricing())
 }
 
@@ -319,6 +363,11 @@ func WrapAnthropic(inner interface{}) *clients.TrackedAnthropic {
 // Panics if Init has not been called.
 func WrapGemini(inner interface{}) *clients.TrackedGemini {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedGemini(inner, nil, nil)
+	}
 	return clients.NewTrackedGemini(inner, tr, tr.Pricing())
 }
 
@@ -327,6 +376,11 @@ func WrapGemini(inner interface{}) *clients.TrackedGemini {
 // Panics if Init has not been called.
 func WrapBedrock(inner interface{}) *clients.TrackedBedrock {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedBedrock(inner, nil, nil)
+	}
 	return clients.NewTrackedBedrock(inner, tr, tr.Pricing())
 }
 
@@ -335,6 +389,11 @@ func WrapBedrock(inner interface{}) *clients.TrackedBedrock {
 // Panics if Init has not been called.
 func WrapCohere(inner interface{}) *clients.TrackedCohere {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedCohere(inner, nil, nil)
+	}
 	return clients.NewTrackedCohere(inner, tr, tr.Pricing())
 }
 
@@ -343,6 +402,11 @@ func WrapCohere(inner interface{}) *clients.TrackedCohere {
 // Panics if Init has not been called.
 func WrapGroq(inner interface{}) *clients.TrackedGroq {
 	tr := mustTracker()
+	if tr == nil {
+		// Init() not called — return a wrapper that proxies the underlying
+		// client without recording. Sprint 1 Theme B / §2.2.2 1a.
+		return clients.NewTrackedGroq(inner, nil, nil)
+	}
 	return clients.NewTrackedGroq(inner, tr, tr.Pricing())
 }
 

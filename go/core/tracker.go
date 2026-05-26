@@ -214,6 +214,9 @@ type TrackedTask struct {
 
 // LinkTrace attaches an external trace link (e.g. LangSmith, Datadog) to this task.
 func (tt *TrackedTask) LinkTrace(provider, traceID string) {
+	if tt == nil || tt.tracker == nil {
+		return
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	links, ok := tt.Task.Metadata["_trace_links"].([]interface{})
@@ -229,6 +232,9 @@ func (tt *TrackedTask) LinkTrace(provider, traceID string) {
 
 // GetTraceLinks returns all linked traces for this task.
 func (tt *TrackedTask) GetTraceLinks() []map[string]string {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	links, ok := tt.Task.Metadata["_trace_links"].([]interface{})
@@ -252,6 +258,11 @@ func (tt *TrackedTask) GetTraceLinks() []map[string]string {
 
 // RecordCost records a non-LLM cost event (external_cost) on this task.
 func (tt *TrackedTask) RecordCost(service string, costUSD decimal.Decimal, opts ...EventOption) error {
+	// Sprint 1 Theme B / §2.2.2 1a: nil-tracker check for the no-op
+	// TrackedTask returned by dexcost.StartTask before Init().
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
@@ -297,6 +308,9 @@ func (tt *TrackedTask) RecordCost(service string, costUSD decimal.Decimal, opts 
 // RecordLLMCall records an LLM call event on this task.
 // If costUSD is nil or zero, the pricing engine auto-computes the cost.
 func (tt *TrackedTask) RecordLLMCall(provider, model string, inputTokens, outputTokens int, opts ...LLMCallOption) error {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
@@ -392,6 +406,9 @@ func (tt *TrackedTask) RecordLLMCall(provider, model string, inputTokens, output
 // RecordUsage records a non-LLM cost event based on the rate registry.
 // It looks up the service in the rate registry and multiplies by units.
 func (tt *TrackedTask) RecordUsage(service string, units int) error {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
@@ -424,6 +441,9 @@ func (tt *TrackedTask) RecordUsage(service string, units int) error {
 
 // MarkRetry records a retry marker event on this task.
 func (tt *TrackedTask) MarkRetry(reason string, opts ...RetryOption) error {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
@@ -453,6 +473,9 @@ func (tt *TrackedTask) MarkRetry(reason string, opts ...RetryOption) error {
 // If eventID is uuid.Nil, the first retry event found for this task is cleared.
 // If the event is not found or not a retry, this is a no-op.
 func (tt *TrackedTask) MarkNotRetry(eventID uuid.UUID) error {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
@@ -493,6 +516,9 @@ func (tt *TrackedTask) MarkNotRetry(eventID uuid.UUID) error {
 
 // End ends the task with the given status and aggregates all event costs.
 func (tt *TrackedTask) End(status TaskStatus) error {
+	if tt == nil || tt.tracker == nil {
+		return nil
+	}
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	if tt.ended {
