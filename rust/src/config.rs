@@ -69,9 +69,25 @@ impl Config {
         Self::default()
     }
 
-    /// Control Layer endpoint. Hardcoded default, overridable via DEXCOST_ENDPOINT env var.
+    /// Control Layer endpoint. Hardcoded default, overridable via
+    /// DEXCOST_ENDPOINT env var. Sprint 1 Theme A / §2.1 (A2): only
+    /// `https://` URLs are accepted. An attacker who controls the env
+    /// (misconfigured CI runner, hostile container) could otherwise
+    /// silently exfiltrate cost telemetry to an HTTP collector — we
+    /// refuse and fall back to the production default.
     pub(crate) fn endpoint(&self) -> String {
-        env::var("DEXCOST_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string())
+        match env::var("DEXCOST_ENDPOINT") {
+            Ok(v) if v.starts_with("https://") => v,
+            Ok(v) => {
+                eprintln!(
+                    "dexcost: DEXCOST_ENDPOINT={:?} rejected — only https:// \
+                     URLs are accepted. Falling back to {}.",
+                    v, DEFAULT_ENDPOINT
+                );
+                DEFAULT_ENDPOINT.to_string()
+            }
+            Err(_) => DEFAULT_ENDPOINT.to_string(),
+        }
     }
 
     /// Validates and resolves the configuration, reading env vars as fallback.
@@ -193,6 +209,26 @@ mod tests {
         std::env::set_var("DEXCOST_ENDPOINT", "https://custom.api.dev");
         let config = Config::default();
         assert_eq!(config.endpoint(), "https://custom.api.dev");
+        std::env::remove_var("DEXCOST_ENDPOINT");
+    }
+
+    /// A2 regression — Sprint 1 Theme A / §2.1. Non-https endpoint values
+    /// are rejected (warn + fall back to production default) so a hostile
+    /// env (misconfigured CI runner, compromised container) cannot
+    /// exfiltrate telemetry to an HTTP collector.
+    #[test]
+    fn test_endpoint_rejects_http_falls_back_to_default() {
+        std::env::set_var("DEXCOST_ENDPOINT", "http://attacker.example/");
+        let config = Config::default();
+        assert_eq!(config.endpoint(), "https://api.dexcost.io");
+        std::env::remove_var("DEXCOST_ENDPOINT");
+    }
+
+    #[test]
+    fn test_endpoint_rejects_arbitrary_scheme() {
+        std::env::set_var("DEXCOST_ENDPOINT", "javascript:alert(1)");
+        let config = Config::default();
+        assert_eq!(config.endpoint(), "https://api.dexcost.io");
         std::env::remove_var("DEXCOST_ENDPOINT");
     }
 

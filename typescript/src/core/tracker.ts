@@ -36,7 +36,33 @@ import {
   uninstrumentProvider,
 } from "../instruments/index.js";
 
-const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+export const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+
+/**
+ * Resolves the Control Layer endpoint from the DEXCOST_ENDPOINT env
+ * var. Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted.
+ * An attacker who controls the env (misconfigured CI runner, hostile
+ * container) could otherwise silently exfiltrate cost telemetry to an
+ * HTTP collector — we refuse and fall back to the production default
+ * with a console.warn.
+ *
+ * Exported for testability; the CostTracker constructor is the only
+ * production caller.
+ */
+export function resolveEndpoint(): string {
+  const env = process.env.DEXCOST_ENDPOINT;
+  if (env === undefined || env === "") {
+    return DEFAULT_ENDPOINT;
+  }
+  if (!env.startsWith("https://")) {
+    console.warn(
+      `dexcost: DEXCOST_ENDPOINT=${JSON.stringify(env)} rejected — only ` +
+        `https:// URLs are accepted. Falling back to ${DEFAULT_ENDPOINT}.`,
+    );
+    return DEFAULT_ENDPOINT;
+  }
+  return env;
+}
 
 /** Event types accepted by `recordCost` (non-LLM cost events). */
 const NON_LLM_EVENT_TYPES = new Set<EventType>(["external_cost", "compute_cost"]);
@@ -909,7 +935,7 @@ export class CostTracker {
       enableDevMode();
     }
 
-    const endpoint = process.env.DEXCOST_ENDPOINT ?? DEFAULT_ENDPOINT;
+    const endpoint = resolveEndpoint();
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
 

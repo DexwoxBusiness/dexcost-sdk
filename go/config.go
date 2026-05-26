@@ -3,6 +3,7 @@ package dexcost
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -79,11 +80,23 @@ func ValidateAPIKey(key string) (string, error) {
 
 // resolvedEndpoint returns the Control Layer endpoint URL.
 // Hardcoded default, overridable only via DEXCOST_ENDPOINT env var.
+//
+// Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted. An
+// attacker who controls the env (misconfigured CI runner, hostile
+// container) could otherwise silently exfiltrate cost telemetry to
+// an HTTP collector — we refuse and fall back to the production
+// default with a warning.
 func (c *Config) resolvedEndpoint() string {
-	if env := os.Getenv("DEXCOST_ENDPOINT"); env != "" {
-		return env
+	env := os.Getenv("DEXCOST_ENDPOINT")
+	if env == "" {
+		return defaultEndpoint
 	}
-	return defaultEndpoint
+	if !strings.HasPrefix(env, "https://") {
+		log.Printf("dexcost: DEXCOST_ENDPOINT=%q rejected — only https:// "+
+			"URLs are accepted. Falling back to %s.", env, defaultEndpoint)
+		return defaultEndpoint
+	}
+	return env
 }
 
 func (c *Config) applyDefaults() {
