@@ -67,6 +67,23 @@ def enforce_metadata_limit(details: dict[str, Any]) -> dict[str, Any]:
     return {"_truncated": True, "_original_size_bytes": byte_size}
 
 
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>`]+")
+
+
+def scrub_urls_in_text(text: str) -> str:
+    """Run scrub_url over every URL found in ``text``.
+
+    Used to redact URLs embedded in free-form error messages, exception
+    strings, and log lines before they are captured into ``details``.
+    The URL matcher accepts ``http(s)://`` followed by any non-whitespace,
+    non-quote, non-bracket character — broad enough to catch real URLs
+    without breaking on punctuation that commonly delimits them in prose.
+    """
+    if not text:
+        return text
+    return _URL_IN_TEXT_RE.sub(lambda m: scrub_url(m.group(0)), text)
+
+
 def scrub_url(url: str) -> str:
     """Strip credentials from a URL before it is captured into an event.
 
@@ -81,8 +98,8 @@ def scrub_url(url: str) -> str:
     ``name=REDACTED`` so downstream callers can still see which keys were
     present without leaking the values.
 
-    This is the canonical algorithm; Go/TS/Rust SDK implementations must
-    produce byte-identical output for the same input (enforced by
+    Canonical algorithm — Go/TS/Rust SDK implementations must produce
+    byte-identical output for the same input (enforced by
     fixtures/expected_outputs/security/).
     """
     if not url:

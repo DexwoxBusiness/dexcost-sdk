@@ -6,6 +6,7 @@
  */
 
 import type { CostTracker } from "../core/tracker.js";
+import { scrubUrl } from "../security/redaction.js";
 
 /** Options for configuring the Express middleware. */
 export interface ExpressMiddlewareOptions {
@@ -86,11 +87,18 @@ export function createExpressMiddleware(
     }
 
     const method = typeof reqObj["method"] === "string" ? reqObj["method"] : "UNKNOWN";
-    const url = typeof reqObj["originalUrl"] === "string"
+    // Express keeps the raw query string on originalUrl even when the
+    // body is streamed (B11 correlation); a literal scrubUrl call here
+    // strips userinfo and sensitive query params before this lands in
+    // Task.taskType, which ships to the control plane.
+    const rawUrl = typeof reqObj["originalUrl"] === "string"
       ? reqObj["originalUrl"]
       : typeof reqObj["path"] === "string"
         ? reqObj["path"]
         : "/";
+    // scrubUrl is a no-op on relative paths (no scheme), but kicks in
+    // when callers pass absolute URLs through originalUrl.
+    const url = scrubUrl(rawUrl);
 
     const taskType = options.taskType?.(req) ?? `${method} ${url}`;
 

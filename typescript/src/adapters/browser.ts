@@ -22,6 +22,7 @@
 import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "../core/context.js";
 import { createCostEvent, type CostEvent } from "../core/models.js";
+import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -109,7 +110,8 @@ function _recordBrowserEvent(
   let pageUrl = "";
   try {
     const url: unknown = page?.url;
-    pageUrl = typeof url === "function" ? String(url.call(page)) : String(url ?? "");
+    const raw = typeof url === "function" ? String(url.call(page)) : String(url ?? "");
+    pageUrl = scrubUrl(raw);
   } catch {
     // page may have closed — ignore
   }

@@ -31,6 +31,7 @@ import {
 import { createAutoTask } from "../core/auto-task.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import { SessionManager } from "../core/session.js";
+import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +158,11 @@ export function trackHttp(buffer?: EventBuffer): void {
     init?: RequestInit,
   ): Promise<Response> {
     // ── v1 byte measurement — request side (known before fetch) ─────────
-    const urlStr = _resolveUrlStr(input);
+    // Scrub once at extraction so every downstream use (events, hostname
+    // parse, placeholder equality-lookup at the streamed-body re-type
+    // site) sees the same safe value. Critical for B11: re-type at
+    // _finaliseHttpCall must match on the same string that was stored.
+    const urlStr = scrubUrl(_resolveUrlStr(input));
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
     const requestBodyLen = _resolveRequestBodyLen(input, init);
@@ -280,7 +285,8 @@ function _patchNodeHttp(): void {
     function wrappedRequest(this: unknown, ...args: any[]): unknown {
       const req = original.apply(this, args);
       try {
-        const urlStr = _urlFromRequestArgs(isHttps, args);
+        const raw = _urlFromRequestArgs(isHttps, args);
+        const urlStr = raw ? scrubUrl(raw) : raw;
         if (urlStr) {
           // Record on response — body is not parsed for Node-level
           // requests (matches the Python urllib3 wrapper's behaviour).

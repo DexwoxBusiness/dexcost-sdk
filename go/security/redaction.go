@@ -90,6 +90,22 @@ var sensitiveQueryParams = map[string]struct{}{
 
 var userinfoRegex = regexp.MustCompile(`^(https?://)([^@/?#]+@)?(.+)$`)
 
+var urlInTextRegex = regexp.MustCompile(`https?://[^\s"'<>` + "`" + `]+`)
+
+// ScrubURLsInText runs ScrubURL over every URL found in `text`. Used to
+// redact URLs embedded in free-form error messages, exception strings,
+// and log lines before they are captured into event details.
+//
+// The URL matcher accepts `http(s)://` followed by any non-whitespace,
+// non-quote, non-bracket character — broad enough to catch real URLs
+// without breaking on punctuation that commonly delimits them in prose.
+func ScrubURLsInText(text string) string {
+	if text == "" {
+		return text
+	}
+	return urlInTextRegex.ReplaceAllStringFunc(text, ScrubURL)
+}
+
 // ScrubURL strips credentials from a URL before it is captured into an event.
 //
 // Removes:

@@ -27,6 +27,7 @@ from typing import Any
 
 from dexcost.context import get_current_task
 from dexcost.models.event import Event
+from dexcost.redaction import scrub_url
 
 _log = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def _record_browser_event(
 
     page_url: str = ""
     try:
-        page_url = str(getattr(page, "url", ""))
+        page_url = scrub_url(str(getattr(page, "url", "")))
     except Exception:
         pass
 

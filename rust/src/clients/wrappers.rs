@@ -12,6 +12,7 @@ use crate::core::models::{CostConfidence, CostEvent, EventType, PricingSource};
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::rates::RateRegistry;
 use crate::pricing::service_catalog::ServiceCatalog;
+use crate::security::redaction::scrub_url;
 use crate::transport::buffer::EventBuffer;
 
 /// Convenience type for the boxed error returned by the `record_*` helpers.
@@ -253,7 +254,7 @@ pub fn record_mcp_response(
 ) -> CostEvent {
     let mut event = CostEvent::new(task_id, EventType::ExternalCost);
     event.provider = Some("mcp".to_string());
-    event.service_name = Some(server_url.to_string());
+    event.service_name = Some(scrub_url(server_url));
 
     if let Some(size) = response_size_bytes {
         event.details.insert(
@@ -535,7 +536,10 @@ pub fn record_mcp_tool_call(
     event.service_name = Some(format!("mcp:{}", tool_name));
 
     event.details.insert("mcp_tool".to_string(), Value::String(tool_name.to_string()));
-    event.details.insert("mcp_server".to_string(), Value::String(server.unwrap_or("unknown").to_string()));
+    event.details.insert(
+        "mcp_server".to_string(),
+        Value::String(scrub_url(server.unwrap_or("unknown"))),
+    );
     event.details.insert("is_error".to_string(), Value::Bool(is_error));
     if let Some(ms) = latency_ms {
         event.latency_ms = Some(ms);

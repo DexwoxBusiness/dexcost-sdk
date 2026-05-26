@@ -27,6 +27,7 @@ from typing import Any
 from dexcost.context import get_current_task
 from dexcost.models.event import Event
 from dexcost.pricing import PricingEngine
+from dexcost.redaction import scrub_urls_in_text
 from dexcost.storage.protocol import StorageBackend
 
 _log = logging.getLogger(__name__)
@@ -182,7 +183,10 @@ class DexcostCallbackHandler:
             provider="langchain",
             model=model,
             latency_ms=latency_ms,
-            details={"error": str(error), "error_type": error_type},
+            details={
+                "error": scrub_urls_in_text(str(error)),
+                "error_type": error_type,
+            },
         )
         self._storage.insert_event(event)
 

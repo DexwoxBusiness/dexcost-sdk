@@ -89,6 +89,27 @@ fn userinfo_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^(https?://)([^@/?#]+@)?(.+)$").unwrap())
 }
 
+fn url_in_text_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?://[^\s"'<>`]+"#).unwrap())
+}
+
+/// Runs [`scrub_url`] over every URL found in `text`. Used to redact URLs
+/// embedded in free-form error messages, exception strings, and log lines
+/// before they are captured into event details.
+///
+/// The URL matcher accepts `http(s)://` followed by any non-whitespace,
+/// non-quote, non-bracket character — broad enough to catch real URLs
+/// without breaking on punctuation that commonly delimits them in prose.
+pub fn scrub_urls_in_text(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    url_in_text_re()
+        .replace_all(text, |caps: &regex::Captures<'_>| scrub_url(&caps[0]))
+        .into_owned()
+}
+
 /// Strip credentials from a URL before it is captured into an event.
 ///
 /// Removes:

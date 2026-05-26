@@ -31,6 +31,7 @@ from dexcost.adapters._netbytes import classify_destination, measure_bytes_from_
 from dexcost.config import DexcostConfig
 from dexcost.context import get_current_task, is_network_event_suppressed
 from dexcost.models.event import Event
+from dexcost.redaction import scrub_url
 from dexcost.service_catalog import ServiceCatalog
 from dexcost.session import get_session_manager
 
@@ -547,6 +548,11 @@ def _handle_http_call(
     Fail-silent: any exception is swallowed and counted (see
     get_network_error_count) so a measurement bug never breaks the call.
     """
+    # Scrub credentials once at the choke point so every downstream
+    # handler receives an already-safe URL. Avoids the in-memory window
+    # where the raw URL with userinfo / api_key would otherwise live
+    # between extraction and event creation.
+    url = scrub_url(url)
     try:
         _handle_http_call_inner(
             url, method, request_headers or {}, request_body_len, response, latency_ms

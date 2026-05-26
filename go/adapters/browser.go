@@ -7,6 +7,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-go/security"
 )
 
 // DefaultBrowserRatePerMinute is the fallback cost per minute of browser usage
@@ -73,7 +74,7 @@ func (s *BrowserSession) End() {
 	event.PricingSource = core.PricingSourceRateRegistry
 	event.Details["wall_clock_seconds"] = elapsed.Seconds()
 	event.Details["rate_per_minute"] = s.ratePerMinute.String()
-	event.Details["page_url"] = s.pageURL
+	event.Details["page_url"] = security.ScrubURL(s.pageURL)
 
 	persistEvent(event, nil)
 }

@@ -50,6 +50,7 @@ use crate::core::context::is_network_event_suppressed;
 use crate::core::models::{CostConfidence, CostEvent, EventType};
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::service_catalog::{CostExtractionResult, ServiceCatalog};
+use crate::security::redaction::scrub_url;
 use crate::transport::buffer::EventBuffer;
 
 /// Default `network` event emission threshold — combined request + response
@@ -479,8 +480,10 @@ fn build_network_event(
     ev.service_name = Some(host.to_string());
     // Compose details with the byte fields PLUS cost_pending marker
     // (v2 §6.4 — back-filled by _aggregate_costs at task finalize).
-    ev.details
-        .insert("url".to_string(), serde_json::Value::String(url.to_string()));
+    ev.details.insert(
+        "url".to_string(),
+        serde_json::Value::String(scrub_url(url)),
+    );
     ev.details.insert(
         "method".to_string(),
         serde_json::Value::String(method.to_string()),
