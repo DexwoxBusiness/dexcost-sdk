@@ -33,11 +33,18 @@ class CostConfidence(str, Enum):
 
 
 class PricingSource(str, Enum):
-    """Where the cost_usd figure was derived from."""
+    """Where the cost_usd figure was derived from.
+
+    Sprint 3 Theme F / §4.1.3 (P3): canonical 8-value set aligned
+    across all 4 SDKs. Adding new values requires a coordinated wire-
+    contract change — bump schema_version.
+    """
 
     LITELLM = "litellm"
     TOKENCOST = "tokencost"
     PROVIDER_RESPONSE = "provider_response"
     MANUAL = "manual"
     CUSTOM = "custom"
+    RATE_REGISTRY = "rate_registry"
+    SERVICE_CATALOG = "service_catalog"
     UNKNOWN = "unknown"

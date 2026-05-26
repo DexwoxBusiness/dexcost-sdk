@@ -254,6 +254,22 @@ export interface TrackerOptions {
    * Optional URL to refresh the HTTP service catalog from on init.
    */
   serviceCatalogUrl?: string;
+
+  /**
+   * Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+   * parity with Python `init(network_event_*)`. The HTTP adapter
+   * reads these to decide whether a captured call deserves an
+   * emitted `network` event (in addition to the always-emitted
+   * `external_cost`). Defaults match Python.
+   *
+   * Emit when combined request+response bytes exceed this.
+   * Default 102_400 (100 KiB). Set 0 to disable.
+   */
+  networkEventThresholdBytes?: number;
+  /** Emit on response status >= 400. Default true. */
+  networkEventOnError?: boolean;
+  /** Emit when call latency exceeds this many ms. Default 0 (off). */
+  networkEventLatencyMs?: number;
   /**
    * Per-billing-model dispatch overrides for the compute pricing engine.
    * Currently used to switch Cloud Run from request-based to instance-
@@ -1007,7 +1023,11 @@ export class CostTracker {
   constructor(options: TrackerOptions = {}) {
     this._options = {
       batchSize: 100,
-      flushIntervalMs: 30000,
+      // Sprint 3 Theme F / §4.1.3 P5: default flush 5 s, matching
+      // Python's `flush_interval=5.0`. Pre-fix the TS default was
+      // 30 s, leaving up to 6× more time for events to be lost on
+      // process exit (and inconsistent with Python's UX).
+      flushIntervalMs: 5000,
       ...options,
     };
 

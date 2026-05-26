@@ -60,6 +60,20 @@ pub struct Config {
     /// Opt-in K8s node-aware compute billing (Decision #11). When `false`
     /// (default), k8s pods bill at the per-vCPU-hour default rate.
     pub k8s_node_aware: bool,
+
+    // Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+    // parity with Python `init(network_event_*)`. The HTTP adapter
+    // reads these to decide whether a captured call deserves an
+    // emitted `network` event (in addition to the always-emitted
+    // `external_cost`). Defaults match Python.
+    /// Emit a `network` event when combined request+response bytes
+    /// exceed this. Default 102_400 (100 KiB). Set 0 to disable.
+    pub network_event_threshold_bytes: u64,
+    /// Emit a `network` event on response status >= 400. Default true.
+    pub network_event_on_error: bool,
+    /// Emit a `network` event when call latency exceeds this many ms.
+    /// Default 0 (latency trigger disabled).
+    pub network_event_latency_ms: u64,
 }
 
 impl Default for Config {
@@ -77,6 +91,10 @@ impl Default for Config {
             buffer_path: None,
             compute_billing_overrides: HashMap::new(),
             k8s_node_aware: false,
+            // P4 defaults — match Python init() values.
+            network_event_threshold_bytes: 102_400,
+            network_event_on_error: true,
+            network_event_latency_ms: 0,
         }
     }
 }

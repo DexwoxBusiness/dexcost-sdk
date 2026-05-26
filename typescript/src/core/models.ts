@@ -38,6 +38,11 @@ export type EventType =
 export type CostConfidence = "exact" | "computed" | "estimated" | "unknown";
 
 /** Where the costUsd figure was derived from. */
+/**
+ * Sprint 3 Theme F / §4.1.3 (P3): canonical 8-value set aligned
+ * across all 4 SDKs. Adding new values requires a coordinated wire-
+ * contract change — bump schema_version.
+ */
 export type PricingSource =
   | "litellm"
   | "tokencost"

@@ -58,12 +58,16 @@ const (
 // PricingSource indicates where the cost figure was derived from.
 type PricingSource string
 
+// Sprint 3 Theme F / §4.1.3 (P3): canonical 8-value set aligned
+// across all 4 SDKs.
 const (
 	PricingSourceLiteLLM          PricingSource = "litellm"
+	PricingSourceTokencost        PricingSource = "tokencost"
 	PricingSourceProviderResponse PricingSource = "provider_response"
 	PricingSourceManual           PricingSource = "manual"
 	PricingSourceCustom           PricingSource = "custom"
 	PricingSourceRateRegistry     PricingSource = "rate_registry"
+	PricingSourceServiceCatalog   PricingSource = "service_catalog"
 	PricingSourceUnknown          PricingSource = "unknown"
 )
 

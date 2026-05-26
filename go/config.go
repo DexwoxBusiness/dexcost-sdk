@@ -33,6 +33,21 @@ type Config struct {
 	// ServiceCatalogURL fetches an external service catalog on init.
 	ServiceCatalogURL string `json:"service_catalog_url,omitempty"`
 
+	// Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
+	// parity with Python `init(network_event_*)`. The HTTP adapter
+	// reads these to decide whether a captured call deserves an
+	// emitted `network` event (in addition to the always-emitted
+	// `external_cost`). Defaults match Python.
+	//
+	// NetworkEventThresholdBytes: emit when combined request+response
+	// bytes exceed this. Default 102_400 (100 KiB). Set 0 to disable.
+	NetworkEventThresholdBytes int `json:"network_event_threshold_bytes,omitempty"`
+	// NetworkEventOnError: emit on response status >= 400. Default true.
+	NetworkEventOnError bool `json:"network_event_on_error,omitempty"`
+	// NetworkEventLatencyMs: emit when call latency exceeds this many
+	// milliseconds. Default 0 (latency trigger disabled).
+	NetworkEventLatencyMs int `json:"network_event_latency_ms,omitempty"`
+
 	// EnableRetryHeuristics turns on the in-memory RetryHeuristicEngine for
 	// automatic retry detection. Off by default — without this the engine is
 	// unreachable through Init() and only manual MarkRetry tagging works.
