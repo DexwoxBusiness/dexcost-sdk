@@ -50,6 +50,10 @@ func TestLambdaEnvWins(t *testing.T) {
 func TestFargateEnvWins(t *testing.T) {
 	scrubRuntimeEnv(t)
 	t.Setenv("ECS_CONTAINER_METADATA_URI_V4", "http://169.254.170.2/v4/abc")
+	// §3.1.3 Fix 3: AWS_EXECUTION_ENV required to disambiguate Fargate
+	// from ECS-EC2; pre-fix the test (incorrectly) relied on the
+	// metadata URI alone.
+	t.Setenv("AWS_EXECUTION_ENV", "AWS_ECS_FARGATE")
 	if got := ResolveRuntime(); got != RuntimeFargate {
 		t.Fatalf("got %q, want %q", got, RuntimeFargate)
 	}
@@ -58,6 +62,7 @@ func TestFargateEnvWins(t *testing.T) {
 func TestFargateV3EnvAlsoWorks(t *testing.T) {
 	scrubRuntimeEnv(t)
 	t.Setenv("ECS_CONTAINER_METADATA_URI", "http://169.254.170.2/v3/abc")
+	t.Setenv("AWS_EXECUTION_ENV", "AWS_ECS_FARGATE")
 	if got := ResolveRuntime(); got != RuntimeFargate {
 		t.Fatalf("got %q, want %q", got, RuntimeFargate)
 	}
