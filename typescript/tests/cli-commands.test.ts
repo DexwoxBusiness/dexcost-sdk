@@ -7,18 +7,21 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { createCostEvent, createTask } from "../src/core/models.js";
 
-// When vitest is run from sdks/typescript/, process.cwd() is already that dir.
-// Avoid doubling the path by using cwd() directly if it ends in "sdks/typescript".
-const _cwd = process.cwd();
-const SDK_DIR = _cwd.endsWith("sdks/typescript") || _cwd.endsWith("sdks\\typescript")
-  ? _cwd
-  : join(_cwd, "sdks/typescript");
+// PR #4 CI fix: anchor SDK_DIR to this test file's location instead of
+// process.cwd(). The previous logic assumed an `sdks/typescript/` path
+// layout (the dexcost monorepo's earlier shape) and falsely appended
+// that suffix when run from the current `typescript/` root, producing
+// a non-existent `typescript/sdks/typescript/node_modules/vite-node/…`
+// path and ENOENT-ing every CLI spawn on CI. Using the test file's
+// own URL makes the resolution robust regardless of cwd or layout.
+const SDK_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**
  * Find the node.exe binary that matches the current process's Node.js version.
