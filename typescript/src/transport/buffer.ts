@@ -153,6 +153,11 @@ function rowToTask(row: TaskRow): Task {
     networkCallCount: 0,
     networkByHost: { hosts: [] },
     networkCostUsd: 0,
+    // Same legacy-row default as the other network/GPU fields: rows
+    // pre-dating the GPU columns read back as fresh zero. Matches
+    // Python's from_dict default and aligns with the post-Sprint-2
+    // 5-subsystem `Task` type.
+    gpuCostUsd: 0,
     schemaVersion: "1",
   };
 }
