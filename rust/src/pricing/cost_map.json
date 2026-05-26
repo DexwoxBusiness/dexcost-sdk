@@ -37661,18 +37661,5 @@
         "metadata": {
             "notes": "DuckDuckGo Instant Answer API is free and does not require an API key."
         }
-    },
-    "minimax/MiniMax-M2.7": {
-        "input_cost_per_token": 3e-07,
-        "output_cost_per_token": 1.2e-06,
-        "cache_read_input_token_cost": 6e-08,
-        "max_input_tokens": 204800,
-        "max_output_tokens": 8192,
-        "mode": "chat",
-        "litellm_provider": "minimax",
-        "supports_function_calling": true,
-        "supports_system_messages": true,
-        "supports_tool_choice": true,
-        "source": "https://platform.minimax.io/docs/guides/pricing"
     }
 }

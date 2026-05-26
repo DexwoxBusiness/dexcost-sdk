@@ -161,6 +161,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with: { workspaces: rust }
 
+      - name: P2 cost-map drift check (all SDKs)
+        if: matrix.sdk == 'python'
+        run: bash scripts/check_cost_map_drift.sh
+
       - name: Run cross-SDK parity (python)
         if: matrix.sdk == 'python'
         working-directory: python
