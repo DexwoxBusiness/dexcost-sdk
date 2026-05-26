@@ -35,6 +35,12 @@ _log = logging.getLogger(__name__)
 # Module-level event storage (same pattern as http.py adapter)
 # ---------------------------------------------------------------------------
 
+# Sprint 3 Theme F mediums / §4.3: hard cap to bound process memory.
+# Pre-fix this list grew without limit across the process lifetime,
+# leaking ~250 bytes per browser cost event. Long-running services
+# (Playwright-on-Lambda-with-warm-pool, CI runners) saw RSS climb
+# linearly. Capped via FIFO eviction at 10 000 entries.
+_RECORDED_EVENTS_CAP = 10_000
 _recorded_events: list[Event] = []
 
 # Storage backend wired by set_storage(). When set, recorded browser cost
@@ -73,6 +79,10 @@ def _persist_event(event: Event) -> None:
     :func:`set_storage`, also persisted durably so the SyncWorker ships it.
     """
     _recorded_events.append(event)
+    if len(_recorded_events) > _RECORDED_EVENTS_CAP:
+        # FIFO eviction — drop the oldest 10% in one batch so we don't
+        # pay O(n) `pop(0)` on every recording.
+        del _recorded_events[: _RECORDED_EVENTS_CAP // 10]
     if _storage is not None:
         try:
             _storage.insert_event(event)

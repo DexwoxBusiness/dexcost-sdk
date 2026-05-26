@@ -141,6 +141,14 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
     let pricing = Arc::new(Mutex::new(PricingEngine::new()));
     let rate_registry = Arc::new(Mutex::new(RateRegistry::new()));
 
+    // Sprint 3 Theme F mediums / §4.3: spawn cloud_detect background
+    // probe at init time, mirroring Python's `start_background_detection`
+    // wiring. Pre-fix the function existed and was unit-tested but no
+    // production code path actually invoked it — `get_cloud_env()`
+    // returned `none` forever and cloud-region attribution silently
+    // never fired.
+    crate::cloud_detect::start_background_detection(config.track_http);
+
     // HTTP tracking — when enabled, build a service catalog for non-LLM cost
     // extraction. Mirrors Python `__init__.py:108-185` (`track_http=True`).
     let service_catalog = if config.track_http {
