@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use rust_decimal::Decimal;
 use serde_json::Value;
 
-use dexcost::{CostEvent, PricingEngine, Task};
+use dexcost::{scrub_url, CostEvent, PricingEngine, Task};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("fixtures")
@@ -213,11 +213,39 @@ fn cross_sdk_llm_pricing_parity() {
 }
 
 #[test]
-#[ignore = "TODO(sprint-1, theme-a): security::scrub_url not implemented in Rust SDK"]
 fn cross_sdk_url_scrubber_parity() {
-    // Sprint 1 / Theme A. expected_outputs/security/url_with_*.v1.json defines
-    // the canonical algorithm. Remove #[ignore] once dexcost::security::scrub_url lands.
-    unreachable!("URL scrubber not implemented");
+    // Sprint 1 / Theme A. Asserts dexcost::scrub_url matches the canonical
+    // Python implementation byte-for-byte against the shared fixtures.
+    let url_fixtures = [
+        "events/edge_cases/url_with_basic_auth.v1.json",
+        "events/edge_cases/url_with_api_key_query.v1.json",
+        "events/edge_cases/url_with_signed_s3.v1.json",
+    ];
+    let mut failures = Vec::new();
+    for rel in &url_fixtures {
+        let input = read_json(&fixtures_dir().join(rel));
+        let raw_url = input["_test_input"]["url"]
+            .as_str()
+            .expect("missing _test_input.url");
+        let expected = read_json(
+            &fixtures_dir()
+                .join("expected_outputs/security")
+                .join(Path::new(rel).file_name().unwrap()),
+        );
+        let expected_raw = expected["raw_url"].as_str().unwrap();
+        let expected_scrubbed = expected["scrubbed_url"].as_str().unwrap();
+        if expected_raw != raw_url {
+            failures.push(format!("{rel}: raw_url mismatch"));
+            continue;
+        }
+        let actual = scrub_url(raw_url);
+        if actual != expected_scrubbed {
+            failures.push(format!(
+                "{rel}: drift\n  raw:      {raw_url}\n  expected: {expected_scrubbed}\n  actual:   {actual}"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 /// B3 invariant: summing 1.23E-8 ten thousand times must equal 0.0001230000 exactly.

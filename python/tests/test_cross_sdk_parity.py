@@ -261,65 +261,14 @@ def test_pricing_parity(fixture_path: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # 3. URL scrubber (security) — every edge_cases/url_*.json
+#
+# The canonical scrub_url() implementation now lives in dexcost.redaction.
+# Importing it here (rather than redefining) guarantees that what the
+# Python SDK ships is exactly what the cross-SDK parity test asserts
+# against, and prevents the test from drifting away from production code.
 # ---------------------------------------------------------------------------
 
-
-# Param names that always strip. Compared case-insensitively. Matches the
-# canonical scrubber semantics specified in the remediation plan.
-_SENSITIVE_QUERY_PARAMS = {
-    "api_key", "apikey", "access_token", "token", "auth", "password",
-    "secret", "signature", "x-amz-signature", "x-amz-credential",
-    "x-amz-security-token", "session",
-}
-
-
-def scrub_url(url: str) -> str:
-    """Canonical URL scrubber.
-
-    Strip:
-      - userinfo (`user:pass@`)
-      - query params whose name (case-insensitive) is in the sensitive list
-        OR matches `*-Signature` / `*-Credential` / `*-Security-Token` patterns
-    Preserve:
-      - scheme, host, port, path
-      - non-sensitive query params (page, limit, etc.)
-      - fragment
-
-    This function exists here to define the canonical algorithm; the SDK's
-    real scrubber implementation will live in
-    `dexcost/security/redaction.py` and must produce identical output.
-    """
-    # Find userinfo and strip
-    m = re.match(r"^(https?://)([^@/?#]+@)?(.+)$", url)
-    if m:
-        url = m.group(1) + m.group(3)
-
-    # Split into base + query + fragment
-    fragment = ""
-    if "#" in url:
-        url, fragment = url.split("#", 1)
-        fragment = "#" + fragment
-    if "?" not in url:
-        return url + fragment
-    base, query = url.split("?", 1)
-    kept = []
-    for part in query.split("&"):
-        if "=" in part:
-            name, _ = part.split("=", 1)
-        else:
-            name = part
-        lname = name.lower()
-        sensitive = (
-            lname in _SENSITIVE_QUERY_PARAMS
-            or lname.endswith("-signature")
-            or lname.endswith("-credential")
-            or lname.endswith("-security-token")
-        )
-        if sensitive:
-            kept.append(f"{name}=REDACTED")
-        else:
-            kept.append(part)
-    return f"{base}?{'&'.join(kept)}{fragment}"
+from dexcost.redaction import scrub_url
 
 
 @pytest.mark.parametrize(

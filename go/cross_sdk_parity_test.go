@@ -28,6 +28,7 @@ import (
 
 	"github.com/DexwoxBusiness/dexcost-go/core"
 	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-go/security"
 	"github.com/shopspring/decimal"
 )
 
@@ -220,9 +221,37 @@ func TestCrossSDKLLMPricingParity(t *testing.T) {
 }
 
 func TestCrossSDKURLScrubberParity(t *testing.T) {
-	// Sprint 1 / Theme A: Go SDK has no URL scrubber. Pin the gap.
-	t.Skip("TODO(sprint-1, theme-a): security.ScrubURL not implemented in Go SDK; " +
-		"expected_outputs/security/url_with_*.v1.json defines the canonical algorithm")
+	// Sprint 1 / Theme A. Compares security.ScrubURL byte-for-byte against
+	// expected_outputs/security/url_with_*.v1.json (Python-canonical).
+	urlFixtures := []string{
+		"events/edge_cases/url_with_basic_auth.v1.json",
+		"events/edge_cases/url_with_api_key_query.v1.json",
+		"events/edge_cases/url_with_signed_s3.v1.json",
+	}
+	for _, rel := range urlFixtures {
+		rel := rel
+		t.Run(rel, func(t *testing.T) {
+			input := readJSONFile(t, filepath.Join(fixturesRoot, rel))
+			testInput, ok := input["_test_input"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("%s: missing _test_input", rel)
+			}
+			rawURL, _ := testInput["url"].(string)
+			expected := readJSONFile(t, filepath.Join(fixturesRoot,
+				"expected_outputs", "security", filepath.Base(rel)))
+
+			actualScrubbed := security.ScrubURL(rawURL)
+			expectedScrubbed, _ := expected["scrubbed_url"].(string)
+			expectedRaw, _ := expected["raw_url"].(string)
+			if expectedRaw != rawURL {
+				t.Errorf("%s: raw_url mismatch fixture=%q expected=%q", rel, rawURL, expectedRaw)
+			}
+			if actualScrubbed != expectedScrubbed {
+				t.Errorf("%s: scrub drift\n  raw:      %s\n  expected: %s\n  actual:   %s",
+					rel, rawURL, expectedScrubbed, actualScrubbed)
+			}
+		})
+	}
 }
 
 // TestCrossSDKTinyDecimalAccumulation pins the B3 invariant:

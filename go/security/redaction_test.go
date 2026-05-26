@@ -140,3 +140,97 @@ func TestEnforceMetadataLimit_StubWhenOverLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubURL_Empty(t *testing.T) {
+	if got := ScrubURL(""); got != "" {
+		t.Errorf("empty: got %q want empty", got)
+	}
+}
+
+func TestScrubURL_NoCredentialsUnchanged(t *testing.T) {
+	in := "https://api.example.com/v1/chat?page=2&limit=50"
+	if got := ScrubURL(in); got != in {
+		t.Errorf("got %q want %q", got, in)
+	}
+}
+
+func TestScrubURL_StripsBasicAuth(t *testing.T) {
+	got := ScrubURL("https://alice:s3cr3t@api.example.com/v1/chat")
+	want := "https://api.example.com/v1/chat"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestScrubURL_StripsApiKeyQuery(t *testing.T) {
+	got := ScrubURL("https://api.example.com/v1?api_key=sk-proj-secret&page=2")
+	want := "https://api.example.com/v1?api_key=REDACTED&page=2"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestScrubURL_CaseInsensitiveNames(t *testing.T) {
+	got := ScrubURL("https://api.example.com/?ApiKey=abc&AUTH=xyz&keep=1")
+	if !strings.Contains(got, "ApiKey=REDACTED") ||
+		!strings.Contains(got, "AUTH=REDACTED") ||
+		!strings.Contains(got, "keep=1") {
+		t.Errorf("case-insensitive scrub failed: %q", got)
+	}
+}
+
+func TestScrubURL_AwsSigV4(t *testing.T) {
+	in := "https://my-bucket.s3.amazonaws.com/obj.json" +
+		"?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+		"&X-Amz-Credential=AKIA%2F20260526%2Fus-east-1%2Fs3%2Faws4_request" +
+		"&X-Amz-Date=20260526T123456Z" +
+		"&X-Amz-Signature=abcdef1234567890"
+	got := ScrubURL(in)
+	if !strings.Contains(got, "X-Amz-Credential=REDACTED") ||
+		!strings.Contains(got, "X-Amz-Signature=REDACTED") {
+		t.Errorf("aws sigv4 not scrubbed: %q", got)
+	}
+	if !strings.Contains(got, "X-Amz-Algorithm=AWS4-HMAC-SHA256") ||
+		!strings.Contains(got, "X-Amz-Date=20260526T123456Z") {
+		t.Errorf("aws non-secret params stripped: %q", got)
+	}
+}
+
+func TestScrubURL_PreservesFragment(t *testing.T) {
+	got := ScrubURL("https://docs.example.com/api?api_key=secret#installation")
+	want := "https://docs.example.com/api?api_key=REDACTED#installation"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestScrubURL_PreservesPathAndPort(t *testing.T) {
+	got := ScrubURL("https://api.example.com:8443/v2/agents/run?token=xyz")
+	want := "https://api.example.com:8443/v2/agents/run?token=REDACTED"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestScrubURL_NoQueryReturnsUnchanged(t *testing.T) {
+	in := "https://api.example.com/v1/path/segment"
+	if got := ScrubURL(in); got != in {
+		t.Errorf("got %q want %q", got, in)
+	}
+}
+
+func TestScrubURL_ValueWithEquals(t *testing.T) {
+	got := ScrubURL("https://api.example.com/?api_key=abc==pad&keep=ok")
+	want := "https://api.example.com/?api_key=REDACTED&keep=ok"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestScrubURL_SecurityTokenSuffix(t *testing.T) {
+	got := ScrubURL("https://api.aws.amazon.com/?X-Amz-Security-Token=FQoG&page=1")
+	if !strings.Contains(got, "X-Amz-Security-Token=REDACTED") ||
+		!strings.Contains(got, "page=1") {
+		t.Errorf("security-token suffix not scrubbed: %q", got)
+	}
+}

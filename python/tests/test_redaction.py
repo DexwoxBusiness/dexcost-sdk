@@ -1,7 +1,7 @@
 """Tests for PII redaction and metadata policy (US-018)."""
 from __future__ import annotations
 
-from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
+from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict, scrub_url
 
 
 class TestRedactDict:
@@ -82,3 +82,85 @@ class TestEnforceMetadataLimit:
         data = {"nested": {"big": "x" * 20000}}
         result = enforce_metadata_limit(data)
         assert result["_truncated"] is True
+
+
+class TestScrubUrl:
+    def test_empty_returns_empty(self) -> None:
+        assert scrub_url("") == ""
+
+    def test_no_credentials_unchanged(self) -> None:
+        url = "https://api.example.com/v1/chat?page=2&limit=50"
+        assert scrub_url(url) == url
+
+    def test_strips_basic_auth_userinfo(self) -> None:
+        assert (
+            scrub_url("https://alice:s3cr3t@api.example.com/v1/chat")
+            == "https://api.example.com/v1/chat"
+        )
+
+    def test_strips_username_only(self) -> None:
+        # userinfo without password still gets dropped
+        assert (
+            scrub_url("https://token123@api.example.com/path")
+            == "https://api.example.com/path"
+        )
+
+    def test_strips_api_key_query(self) -> None:
+        url = "https://api.example.com/v1?api_key=sk-proj-secret&page=2"
+        assert scrub_url(url) == "https://api.example.com/v1?api_key=REDACTED&page=2"
+
+    def test_strips_case_insensitive(self) -> None:
+        # ApiKey, API_KEY, AUTHORIZATION-type variations
+        url = "https://api.example.com/?ApiKey=abc&AUTH=xyz&keep=1"
+        out = scrub_url(url)
+        assert "ApiKey=REDACTED" in out
+        assert "AUTH=REDACTED" in out
+        assert "keep=1" in out
+
+    def test_strips_aws_sigv4_signature_and_credential(self) -> None:
+        url = (
+            "https://my-bucket.s3.amazonaws.com/obj.json"
+            "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+            "&X-Amz-Credential=AKIA%2F20260526%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Date=20260526T123456Z"
+            "&X-Amz-Signature=abcdef1234567890"
+        )
+        out = scrub_url(url)
+        assert "X-Amz-Credential=REDACTED" in out
+        assert "X-Amz-Signature=REDACTED" in out
+        # algorithm + date are not secrets, preserve them
+        assert "X-Amz-Algorithm=AWS4-HMAC-SHA256" in out
+        assert "X-Amz-Date=20260526T123456Z" in out
+
+    def test_strips_security_token_suffix(self) -> None:
+        url = "https://api.aws.amazon.com/?X-Amz-Security-Token=FQoG&page=1"
+        out = scrub_url(url)
+        assert "X-Amz-Security-Token=REDACTED" in out
+        assert "page=1" in out
+
+    def test_preserves_fragment(self) -> None:
+        url = "https://docs.example.com/api?api_key=secret#installation"
+        out = scrub_url(url)
+        assert out == "https://docs.example.com/api?api_key=REDACTED#installation"
+
+    def test_preserves_path_and_port(self) -> None:
+        url = "https://api.example.com:8443/v2/agents/run?token=xyz"
+        out = scrub_url(url)
+        assert out == "https://api.example.com:8443/v2/agents/run?token=REDACTED"
+
+    def test_no_query_returns_unchanged(self) -> None:
+        url = "https://api.example.com/v1/path/segment"
+        assert scrub_url(url) == url
+
+    def test_value_with_equals_sign_in_value(self) -> None:
+        # api_key value containing '=' should not split-and-leak
+        url = "https://api.example.com/?api_key=abc==pad&keep=ok"
+        out = scrub_url(url)
+        assert out == "https://api.example.com/?api_key=REDACTED&keep=ok"
+
+    def test_param_without_value(self) -> None:
+        # bare query param (no `=`) should be preserved if not sensitive
+        url = "https://api.example.com/?debug&token=secret"
+        out = scrub_url(url)
+        assert "debug" in out
+        assert "token=REDACTED" in out

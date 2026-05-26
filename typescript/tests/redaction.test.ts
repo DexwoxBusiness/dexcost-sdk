@@ -7,6 +7,7 @@ import {
   redactDict,
   hashValue,
   enforceMetadataLimit,
+  scrubUrl,
 } from "../src/security/redaction.js";
 import { eventToDict } from "../src/core/models.js";
 import { createCostEvent } from "../src/core/models.js";
@@ -164,5 +165,86 @@ describe("Event schema format", () => {
 
     // Verify cost is serialised as string (matching Python SDK behavior)
     expect(typeof dict.cost_usd).toBe("string");
+  });
+});
+
+describe("scrubUrl", () => {
+  it("returns empty input unchanged", () => {
+    expect(scrubUrl("")).toBe("");
+  });
+
+  it("leaves URLs without credentials unchanged", () => {
+    const u = "https://api.example.com/v1/chat?page=2&limit=50";
+    expect(scrubUrl(u)).toBe(u);
+  });
+
+  it("strips basic-auth userinfo", () => {
+    expect(scrubUrl("https://alice:s3cr3t@api.example.com/v1/chat")).toBe(
+      "https://api.example.com/v1/chat",
+    );
+  });
+
+  it("strips username-only userinfo", () => {
+    expect(scrubUrl("https://token123@api.example.com/path")).toBe(
+      "https://api.example.com/path",
+    );
+  });
+
+  it("redacts api_key while preserving other params", () => {
+    expect(scrubUrl("https://api.example.com/v1?api_key=sk-secret&page=2")).toBe(
+      "https://api.example.com/v1?api_key=REDACTED&page=2",
+    );
+  });
+
+  it("matches param names case-insensitively", () => {
+    const out = scrubUrl("https://api.example.com/?ApiKey=abc&AUTH=xyz&keep=1");
+    expect(out).toContain("ApiKey=REDACTED");
+    expect(out).toContain("AUTH=REDACTED");
+    expect(out).toContain("keep=1");
+  });
+
+  it("redacts AWS SigV4 credential and signature; preserves non-secret params", () => {
+    const u =
+      "https://my-bucket.s3.amazonaws.com/obj.json" +
+      "?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+      "&X-Amz-Credential=AKIA%2F20260526%2Fus-east-1%2Fs3%2Faws4_request" +
+      "&X-Amz-Date=20260526T123456Z" +
+      "&X-Amz-Signature=abcdef1234567890";
+    const out = scrubUrl(u);
+    expect(out).toContain("X-Amz-Credential=REDACTED");
+    expect(out).toContain("X-Amz-Signature=REDACTED");
+    expect(out).toContain("X-Amz-Algorithm=AWS4-HMAC-SHA256");
+    expect(out).toContain("X-Amz-Date=20260526T123456Z");
+  });
+
+  it("redacts *-security-token suffix params", () => {
+    const out = scrubUrl(
+      "https://api.aws.amazon.com/?X-Amz-Security-Token=FQoG&page=1",
+    );
+    expect(out).toContain("X-Amz-Security-Token=REDACTED");
+    expect(out).toContain("page=1");
+  });
+
+  it("preserves fragment", () => {
+    expect(
+      scrubUrl("https://docs.example.com/api?api_key=secret#installation"),
+    ).toBe("https://docs.example.com/api?api_key=REDACTED#installation");
+  });
+
+  it("preserves path and port", () => {
+    expect(scrubUrl("https://api.example.com:8443/v2/agents/run?token=xyz")).toBe(
+      "https://api.example.com:8443/v2/agents/run?token=REDACTED",
+    );
+  });
+
+  it("returns URLs without query unchanged", () => {
+    const u = "https://api.example.com/v1/path/segment";
+    expect(scrubUrl(u)).toBe(u);
+  });
+
+  it("does not split-and-leak when value contains '='", () => {
+    expect(scrubUrl("https://api.example.com/?api_key=abc==pad&keep=ok")).toBe(
+      "https://api.example.com/?api_key=REDACTED&keep=ok",
+    );
   });
 });

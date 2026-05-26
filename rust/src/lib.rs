@@ -70,7 +70,7 @@ pub use pricing::engine::{CostResult, PricingEngine};
 pub use pricing::rates::{RateEntry, RateRegistry};
 pub use pricing::service_catalog::ServiceCatalog;
 pub use schema::validate::validate;
-pub use security::redaction::{enforce_metadata_limit, hash_value, redact_map};
+pub use security::redaction::{enforce_metadata_limit, hash_value, redact_map, scrub_url};
 pub use transport::buffer::EventBuffer;
 pub use transport::pusher::EventPusher;
 

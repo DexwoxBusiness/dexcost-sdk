@@ -27,6 +27,7 @@ import {
   taskFromDict,
   taskToDict,
   PricingEngine,
+  scrubUrl,
 } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -139,10 +140,24 @@ describe("cross-SDK LLM pricing parity", () => {
   }
 });
 
-describe.skip("cross-SDK URL scrubber parity", () => {
-  // Sprint 1 / Theme A: TS SDK has no URL scrubber. Pin the gap.
-  // expected_outputs/security/url_with_*.v1.json defines the canonical algorithm.
-  it("TODO(sprint-1, theme-a): implement scrubUrl() in TS SDK security module", () => {});
+describe("cross-SDK URL scrubber parity", () => {
+  const URL_FIXTURES = [
+    "events/edge_cases/url_with_basic_auth.v1.json",
+    "events/edge_cases/url_with_api_key_query.v1.json",
+    "events/edge_cases/url_with_signed_s3.v1.json",
+  ];
+  for (const rel of URL_FIXTURES) {
+    it(rel, () => {
+      const input = readJson(join(FIXTURES_ROOT, rel));
+      const testInput = input._test_input as { url: string };
+      const rawUrl = testInput.url;
+      const expected = readJson(
+        join(FIXTURES_ROOT, "expected_outputs", "security", basename(rel)),
+      );
+      expect(expected.raw_url).toBe(rawUrl);
+      expect(scrubUrl(rawUrl)).toBe(expected.scrubbed_url);
+    });
+  }
 });
 
 describe("cross-SDK tiny-decimal accumulation invariant (B3)", () => {

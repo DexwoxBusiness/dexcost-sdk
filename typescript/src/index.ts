@@ -77,6 +77,7 @@ export {
   redactDict,
   hashValue,
   enforceMetadataLimit,
+  scrubUrl,
 } from "./security/redaction.js";
 
 // Pricing

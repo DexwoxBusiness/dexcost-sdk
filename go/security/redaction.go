@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
+	"strings"
 )
 
 // RedactMap returns a shallow copy of data with matching keys replaced by "[REDACTED]".
@@ -65,4 +67,81 @@ func EnforceMetadataLimit(details map[string]interface{}, maxBytes int) map[stri
 		"_truncated":           true,
 		"_original_size_bytes": len(encoded),
 	}
+}
+
+// sensitiveQueryParams is the canonical set of query parameter names
+// (compared case-insensitively) that ScrubURL strips. Must stay in sync
+// with the same set in Python (dexcost/redaction.py), TypeScript
+// (src/security/redaction.ts), and Rust (security/redaction.rs).
+var sensitiveQueryParams = map[string]struct{}{
+	"api_key":              {},
+	"apikey":               {},
+	"access_token":         {},
+	"token":                {},
+	"auth":                 {},
+	"password":             {},
+	"secret":               {},
+	"signature":            {},
+	"x-amz-signature":      {},
+	"x-amz-credential":     {},
+	"x-amz-security-token": {},
+	"session":              {},
+}
+
+var userinfoRegex = regexp.MustCompile(`^(https?://)([^@/?#]+@)?(.+)$`)
+
+// ScrubURL strips credentials from a URL before it is captured into an event.
+//
+// Removes:
+//   - userinfo (`user:pass@`) from the authority
+//   - query parameters whose name (case-insensitive) is in the canonical
+//     sensitive set OR ends with `-signature`, `-credential`, or
+//     `-security-token` (AWS SigV4 surface)
+//
+// Preserves scheme, host, port, path, non-sensitive query params, and
+// fragment. The shape of every removed query parameter is preserved as
+// `name=REDACTED` so downstream callers can still see which keys were
+// present without leaking the values.
+//
+// Canonical algorithm — Python/TS/Rust SDK implementations must produce
+// byte-identical output for the same input (enforced by
+// /fixtures/expected_outputs/security/).
+func ScrubURL(url string) string {
+	if url == "" {
+		return url
+	}
+	if m := userinfoRegex.FindStringSubmatch(url); m != nil {
+		url = m[1] + m[3]
+	}
+
+	fragment := ""
+	if i := strings.Index(url, "#"); i >= 0 {
+		fragment = url[i:]
+		url = url[:i]
+	}
+	qIdx := strings.Index(url, "?")
+	if qIdx < 0 {
+		return url + fragment
+	}
+	base := url[:qIdx]
+	query := url[qIdx+1:]
+	parts := strings.Split(query, "&")
+	for i, part := range parts {
+		var name string
+		if eq := strings.Index(part, "="); eq >= 0 {
+			name = part[:eq]
+		} else {
+			name = part
+		}
+		lname := strings.ToLower(name)
+		_, inSet := sensitiveQueryParams[lname]
+		sensitive := inSet ||
+			strings.HasSuffix(lname, "-signature") ||
+			strings.HasSuffix(lname, "-credential") ||
+			strings.HasSuffix(lname, "-security-token")
+		if sensitive {
+			parts[i] = name + "=REDACTED"
+		}
+	}
+	return base + "?" + strings.Join(parts, "&") + fragment
 }
