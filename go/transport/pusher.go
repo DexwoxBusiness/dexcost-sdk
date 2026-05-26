@@ -220,12 +220,19 @@ func (p *EventPusher) pushBatch() error {
 		}
 	}
 
-	// Push with adaptive splitting for oversized payloads.
+	// Push with adaptive splitting for oversized payloads. Sprint 2
+	// Theme D / §3.2.1 (B12): pushWithSplit now marks events / tasks
+	// synced INSIDE each leaf POST that succeeds, so a partial failure
+	// (first half OK, second half 5xx) doesn't cause the first half to
+	// be re-sent next tick → no duplicates at the control plane.
 	if err := p.pushWithSplit(eventDicts, taskDicts, 0); err != nil {
 		return err
 	}
 
-	// Mark events synced.
+	// Outer MarkSynced retained as a no-op safety net: if pushWithSplit
+	// reached the leaf and marked everything synced, this is a no-op;
+	// if a future code path returns nil without splitting, this still
+	// ensures the marker call fires. Idempotent.
 	if err := p.buffer.MarkSynced(eventIDs); err != nil {
 		return err
 	}
@@ -308,7 +315,32 @@ func (p *EventPusher) pushWithSplit(events []map[string]interface{}, tasks []map
 	}
 
 	if len(payload) <= maxPayloadBytes || depth >= maxSplitDepth {
-		return p.postRaw(payload)
+		if err := p.postRaw(payload); err != nil {
+			return err
+		}
+		// Sprint 2 Theme D / §3.2.1 (B12) — mark synced at the leaf so
+		// a sibling-half failure does not unwind work that succeeded.
+		ids := make([]string, 0, len(events))
+		for _, e := range events {
+			if id, ok := e["event_id"].(string); ok {
+				ids = append(ids, id)
+			}
+		}
+		if err := p.buffer.MarkSynced(ids); err != nil {
+			return err
+		}
+		if tsb, ok := p.buffer.(taskSyncBuffer); ok && len(tasks) > 0 {
+			tids := make([]string, 0, len(tasks))
+			for _, t := range tasks {
+				if id, ok := t["task_id"].(string); ok {
+					tids = append(tids, id)
+				}
+			}
+			if err := tsb.MarkTasksSynced(tids); err != nil {
+				log.Printf("[dexcost] failed to mark tasks synced at leaf: %v", err)
+			}
+		}
+		return nil
 	}
 
 	if len(events) <= 1 {
