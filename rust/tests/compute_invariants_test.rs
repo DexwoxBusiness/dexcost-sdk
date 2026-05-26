@@ -67,19 +67,19 @@ const ALL_MODELS: &[&str] = &[
     "cloud_functions",
     "azure_functions",
     "vercel_fluid",
-    "ec2_share",
-    "gce_share",
-    "azure_vm_share",
-    "k8s_pod_share",
+    "ec2",
+    "gce",
+    "azure_vm",
+    "k8s_pod",
 ];
 
 fn env_for_model(model: &str) -> CloudEnv {
     match model {
-        "lambda" | "fargate" | "ec2_share" => env_aws("us-east-1"),
-        "cloud_run_request" | "cloud_run_instance" | "cloud_functions" | "gce_share" => {
+        "lambda" | "fargate" | "ec2" => env_aws("us-east-1"),
+        "cloud_run_request" | "cloud_run_instance" | "cloud_functions" | "gce" => {
             env_gcp("us-central1")
         }
-        "azure_functions" | "azure_vm_share" => env_azure("eastus"),
+        "azure_functions" | "azure_vm" => env_azure("eastus"),
         "vercel_fluid" => CloudEnv {
             provider: Some("vercel".into()),
             region: Some("iad1".into()),
@@ -133,12 +133,12 @@ fn invariant_cost_confidence_in_computed_or_estimated() {
 #[test]
 fn invariant_duration_linearity_for_long_running() {
     let eng = ComputePricingEngine::new();
-    for model in ["fargate", "cloud_run_instance", "ec2_share", "k8s_pod_share"] {
+    for model in ["fargate", "cloud_run_instance", "ec2", "k8s_pod"] {
         let env = env_for_model(model);
         let mut d1 = base_details(model);
         let mut d2 = base_details(model);
         d2["duration_ms"] = json!("2000");
-        if model == "ec2_share" || model == "k8s_pod_share" {
+        if model == "ec2" || model == "k8s_pod" {
             d2["vcpu_seconds_used"] = json!("2");
         }
         let c1 = eng.resolve_compute_cost(&d1, &env, &HashMap::new(), None);
@@ -200,7 +200,7 @@ fn decision_9_ec2_idle_gap_is_invisible() {
     let eng = ComputePricingEngine::new();
     let env = env_aws("us-east-1");
     let d = json!({
-        "billing_model": "ec2_share",
+        "billing_model": "ec2",
         "duration_ms": "60000",       // 60s wall time
         "vcpu_seconds_used": "0",     // but nothing consumed
     });
@@ -330,7 +330,7 @@ fn matrix_vercel_fluid_iad1() {
 fn matrix_ec2_share_us_east_1_c7g_xlarge() {
     let eng = ComputePricingEngine::new();
     let c = eng.resolve_compute_cost(
-        &base_details("ec2_share"),
+        &base_details("ec2"),
         &env_aws("us-east-1"),
         &HashMap::new(),
         None,
@@ -343,7 +343,7 @@ fn matrix_ec2_share_us_east_1_c7g_xlarge() {
 fn matrix_gce_share_us_central1_n2_standard_2() {
     let eng = ComputePricingEngine::new();
     let c = eng.resolve_compute_cost(
-        &base_details("gce_share"),
+        &base_details("gce"),
         &env_gcp("us-central1"),
         &HashMap::new(),
         None,
@@ -355,7 +355,7 @@ fn matrix_gce_share_us_central1_n2_standard_2() {
 fn matrix_azure_vm_share_eastus() {
     let eng = ComputePricingEngine::new();
     let c = eng.resolve_compute_cost(
-        &base_details("azure_vm_share"),
+        &base_details("azure_vm"),
         &env_azure("eastus"),
         &HashMap::new(),
         None,
@@ -367,7 +367,7 @@ fn matrix_azure_vm_share_eastus() {
 fn matrix_k8s_pod_share() {
     let eng = ComputePricingEngine::new();
     let c = eng.resolve_compute_cost(
-        &base_details("k8s_pod_share"),
+        &base_details("k8s_pod"),
         &CloudEnv::none(),
         &HashMap::new(),
         None,

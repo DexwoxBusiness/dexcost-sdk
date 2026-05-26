@@ -33,7 +33,13 @@ const shouldRun = () => process.env.DEXCOST_E2E_LOCAL === "1";
 const ENDPOINT = process.env.DEXCOST_ENDPOINT ?? "http://localhost:3000";
 const API_KEY = process.env.DEXCOST_API_KEY ?? "dx_test_local";
 
-describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () => {
+// Sprint 3 §4.2 fix: `describe.skipIf` with a falsy condition leaves
+// vitest 1.6+ unable to discover any test suite in the file, which it
+// reports as a hard failure ("No test suite found in file"). Switch to
+// a regular `describe` and gate each `it` with `it.skipIf(!shouldRun())`
+// inside; vitest then sees the (skipped) tests and counts the file as
+// healthy.
+describe("E2E: TypeScript SDK vs Local Control Layer", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -96,7 +102,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
   // Tests
   // -------------------------------------------------------------------------
 
-  it(
+  it.skipIf(!shouldRun())(
     "ships LLM and external cost events to local control layer",
     async () => {
       // Use a unique customer each run to avoid collisions
@@ -154,7 +160,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
     { timeout: 30_000 },
   );
 
-  it(
+  it.skipIf(!shouldRun())(
     "records both llm_call and external_cost event types",
     async () => {
       const customerId = `e2e-ts-events-${randomUUID()}`;
@@ -205,7 +211,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
     { timeout: 15_000 },
   );
 
-  it(
+  it.skipIf(!shouldRun())(
     "Standard Event Schema v1 compliance",
     async () => {
       const customerId = `e2e-ts-schema-${randomUUID()}`;
@@ -261,7 +267,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
     { timeout: 15_000 },
   );
 
-  it(
+  it.skipIf(!shouldRun())(
     "retry semantics: is_retry, retry_reason, retry_of fields",
     async () => {
       const { CostTracker } = await import("../src/index.js");
@@ -300,7 +306,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
     { timeout: 15_000 },
   );
 
-  it(
+  it.skipIf(!shouldRun())(
     "SDK gracefully handles unreachable server",
     async () => {
       const { CostTracker } = await import("../src/index.js");
@@ -330,7 +336,7 @@ describe.skipIf(!shouldRun(), "E2E: TypeScript SDK vs Local Control Layer", () =
     { timeout: 15_000 },
   );
 
-  it(
+  it.skipIf(!shouldRun())(
     "experiment_id and variant propagate through to the server",
     async () => {
       const customerId = `e2e-ts-exp-${randomUUID()}`;

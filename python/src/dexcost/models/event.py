@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from dexcost.models._serde import iso_canonical
+from dexcost.models._serde import iso_canonical, parse_canonical
 
 
 @dataclass
@@ -95,7 +95,7 @@ class Event:
                 event_id=uuid.UUID(data["event_id"]),
                 task_id=uuid.UUID(data["task_id"]),
                 event_type=data["event_type"],
-                occurred_at=datetime.fromisoformat(data["occurred_at"]),
+                occurred_at=parse_canonical(data["occurred_at"]),
                 cost_usd=Decimal(data["cost_usd"]),
                 cost_confidence=data["cost_confidence"],
                 pricing_source=data.get("pricing_source"),
