@@ -82,11 +82,62 @@ import "../instruments/mcp.js";
 
 let _instance: CostTracker | null = null;
 
+/**
+ * Sprint 2 Theme E / §3.3.2 (B9) — exit-time flush handlers.
+ *
+ * Pre-fix events recorded just before `process.exit(0)` were lost:
+ * the buffered in-memory queue and the not-yet-flushed pusher batch
+ * both died with the process. These handlers run on process tear-
+ * down (graceful exit, SIGTERM, SIGINT) and synchronously close the
+ * tracker. closeAsync() flushes the pending push first.
+ *
+ * The handlers are stored so `close()` can unregister them — avoids
+ * cross-test listener-leak when init/close cycles repeatedly.
+ */
+let _exitHandlers: {
+  beforeExit?: (code: number) => void;
+  sigterm?: NodeJS.SignalsListener;
+  sigint?: NodeJS.SignalsListener;
+} | null = null;
+
+function _registerExitHandlers(): void {
+  if (_exitHandlers !== null) return;
+  const beforeExit = (_code: number): void => {
+    // Synchronous best-effort flush on graceful exit. Node will wait
+    // for any returned promise from `beforeExit` (unlike `exit`), so
+    // closeAsync's in-flight push has a chance to land.
+    void globalCloseAsync();
+  };
+  const sigterm: NodeJS.SignalsListener = () => {
+    // SIGTERM: containerized environments (k8s, docker stop) deliver
+    // this 30s before SIGKILL. Run closeAsync to flush, then let the
+    // default handler take over (re-emit so other listeners run).
+    void globalCloseAsync();
+  };
+  const sigint: NodeJS.SignalsListener = () => {
+    // SIGINT (Ctrl+C in dev): same flush guarantee.
+    void globalCloseAsync();
+  };
+  process.on("beforeExit", beforeExit);
+  process.on("SIGTERM", sigterm);
+  process.on("SIGINT", sigint);
+  _exitHandlers = { beforeExit, sigterm, sigint };
+}
+
+function _unregisterExitHandlers(): void {
+  if (_exitHandlers === null) return;
+  if (_exitHandlers.beforeExit) process.off("beforeExit", _exitHandlers.beforeExit);
+  if (_exitHandlers.sigterm) process.off("SIGTERM", _exitHandlers.sigterm);
+  if (_exitHandlers.sigint) process.off("SIGINT", _exitHandlers.sigint);
+  _exitHandlers = null;
+}
+
 export function init(options: TrackerOptions = {}): CostTracker {
   if (_instance !== null) {
     throw new Error("dexcost already initialized — call close() first to reset");
   }
   _instance = new CostTracker(options);
+  _registerExitHandlers();
   return _instance;
 }
 
@@ -135,6 +186,7 @@ export function globalClose(): void {
     _instance.close();
     _instance = null;
   }
+  _unregisterExitHandlers();
 }
 
 export async function globalCloseAsync(): Promise<void> {
@@ -142,6 +194,7 @@ export async function globalCloseAsync(): Promise<void> {
     await _instance.closeAsync();
     _instance = null;
   }
+  _unregisterExitHandlers();
 }
 
 /** Configuration options for a CostTracker instance. */
