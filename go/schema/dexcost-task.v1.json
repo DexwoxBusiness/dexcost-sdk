@@ -87,6 +87,16 @@
       "pattern": "^-?\\d+(\\.\\d+)?$",
       "description": "Aggregated compute cost in USD (Decimal as string)."
     },
+    "network_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated network cost in USD (Decimal as string)."
+    },
+    "gpu_cost_usd": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Aggregated GPU cost in USD (Decimal as string)."
+    },
     "total_cost_usd": {
       "type": "string",
       "pattern": "^-?\\d+(\\.\\d+)?$",
