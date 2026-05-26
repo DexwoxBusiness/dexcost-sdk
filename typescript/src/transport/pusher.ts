@@ -45,6 +45,22 @@ export class EventPusher {
   }
 
   /**
+   * Update the API key and clear any auth-failed state so the push
+   * loop can resume. Sprint 2 Theme D / §3.2.3 (B14). When the
+   * Control Layer returns 401/403 the pusher sets `_authFailed=true`
+   * and calls `stop()`. Without this method the only recovery is
+   * restarting the customer's process.
+   */
+  setApiKey(newKey: string): void {
+    this._options = { ...this._options, apiKey: newKey };
+    this._authFailed = false;
+    // If the loop was torn down by the prior auth failure, restart it.
+    if (!this._interval) {
+      this.start();
+    }
+  }
+
+  /**
    * Start the periodic background push loop.
    */
   start(): void {

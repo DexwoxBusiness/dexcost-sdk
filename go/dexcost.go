@@ -317,6 +317,23 @@ func Tracker() *core.Tracker {
 	return mustTracker()
 }
 
+// SetAPIKey updates the SDK's API key and resumes sync after auth
+// failure. Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer
+// returns 401/403 the EventPusher permanently stops; without this
+// function the only recovery is restarting the customer's process.
+// Returns true on success, false if Init has not been called.
+func SetAPIKey(newKey string) bool {
+	if globalConfig == nil || globalTracker == nil {
+		log.Println("dexcost: SetAPIKey called before Init(); ignoring.")
+		return false
+	}
+	globalConfig.APIKey = newKey
+	if globalPusher != nil {
+		globalPusher.SetAPIKey(newKey)
+	}
+	return true
+}
+
 // SetContext attaches customer and project attribution to the context without
 // starting an explicit task. Adapters (e.g. TrackHTTP) will automatically
 // create a task from this attribution when no explicit task is present.

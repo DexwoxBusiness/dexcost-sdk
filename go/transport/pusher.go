@@ -157,6 +157,18 @@ func (p *EventPusher) run() {
 
 // Start begins (or restarts) the background push loop.
 // It is a no-op if the pusher is already running.
+// SetAPIKey updates the pusher's API key and clears the stopped flag.
+// Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer returns
+// 401/403 the pusher sets stopped=true (pusher.go:355) and silently
+// skips every subsequent tick. This method is the only public path
+// back to a working push loop without restarting the process.
+func (p *EventPusher) SetAPIKey(newKey string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.apiKey = newKey
+	p.stopped = false
+}
+
 func (p *EventPusher) Start() {
 	p.mu.Lock()
 	defer p.mu.Unlock()

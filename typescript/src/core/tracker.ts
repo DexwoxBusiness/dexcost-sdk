@@ -97,6 +97,28 @@ export function getTracker(): CostTracker {
   return _instance;
 }
 
+/**
+ * Update the SDK's API key and resume sync after auth failure.
+ *
+ * Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer returns
+ * 401/403 the pusher sets `_authFailed=true` and stops; without this
+ * function the only recovery is restarting the customer's process.
+ *
+ * Returns `true` on success, `false` if `init()` has not been called
+ * (logs a console warning).
+ */
+export function setApiKey(newKey: string): boolean {
+  if (_instance === null) {
+    console.warn(
+      "dexcost: setApiKey called before init(); ignoring. " +
+        "Call dexcost.init({apiKey:...}) first.",
+    );
+    return false;
+  }
+  _instance.setApiKey(newKey);
+  return true;
+}
+
 export async function globalTrack<T>(
   opts: { taskType: string; customerId?: string; projectId?: string; metadata?: Record<string, unknown>; experimentId?: string; variant?: string },
   fn: (task: TrackedTask) => Promise<T>,
@@ -1160,6 +1182,18 @@ export class CostTracker {
   async flush(): Promise<void> {
     if (this._pusher) {
       await this._pusher.flush();
+    }
+  }
+
+  /**
+   * Update the API key on both pricing engine and pusher. Sprint 2
+   * Theme D / §3.2.3 (B14) — entry point for `dexcost.setApiKey`.
+   */
+  setApiKey(newKey: string): void {
+    this._config = { ...this._config, apiKey: newKey };
+    this._pricing.setApiKey(newKey);
+    if (this._pusher) {
+      this._pusher.setApiKey(newKey);
     }
   }
 

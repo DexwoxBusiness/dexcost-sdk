@@ -413,6 +413,51 @@ def record_cost(
     )
 
 
+def set_api_key(new_key: str) -> bool:
+    """Update the SDK's API key and resume sync after auth failure.
+
+    Sprint 2 Theme D / §3.2.3 (B14). When the Control Layer returns
+    401/403 the SyncWorker permanently stops (sync.py:366-369). Without
+    this function the only recovery is restarting the customer's
+    process. ``set_api_key`` updates the global config + clears the
+    worker's stop signal + restarts the worker thread if it has
+    already terminated.
+
+    Returns True on success, False if ``init()`` has not been called
+    (logs a warning).
+    """
+    global _global_config, _sync_worker, _global_tracker
+    if _global_config is None or _global_tracker is None:
+        _log.warning(
+            "dexcost.set_api_key() called before init(); ignoring. "
+            "Call dexcost.init(api_key=...) first."
+        )
+        return False
+    _global_config.api_key = new_key
+    if _sync_worker is None:
+        return True  # Local-only mode; nothing else to do.
+    # Clear the auth-failed signal so subsequent pushes proceed.
+    _sync_worker._stop_event.clear()
+    # Reset backoff so the next attempt isn't artificially delayed by
+    # the failure history that triggered the original auth issue.
+    _sync_worker._backoff = 1.0
+    # If the worker thread already terminated (auth-failure path
+    # `return`s from _run), spawn a fresh one. threading.Thread cannot
+    # be restarted, so we rebuild the SyncWorker with the same config
+    # and storage. The buffered events on disk persist across this
+    # transition.
+    if _sync_worker._thread is None or not _sync_worker._thread.is_alive():
+        from dexcost.storage.sqlite import SQLiteStorage
+        sync_storage = SQLiteStorage(db_path=_global_config.buffer_path)
+        _sync_worker = SyncWorker(
+            config=_global_config,
+            storage=sync_storage,
+            db_path=_global_config.buffer_path,
+        )
+        _sync_worker.start()
+    return True
+
+
 def close() -> None:
     """Shut down the global tracker and flush any pending events.
 

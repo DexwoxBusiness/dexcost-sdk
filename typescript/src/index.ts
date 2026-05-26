@@ -28,6 +28,7 @@ export {
   globalFlush as flush,
   globalClose as close,
   globalCloseAsync as closeAsync,
+  setApiKey,
 } from "./core/tracker.js";
 export {
   getCurrentTask,
