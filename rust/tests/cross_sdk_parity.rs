@@ -213,6 +213,96 @@ fn cross_sdk_llm_pricing_parity() {
 }
 
 #[test]
+fn cross_sdk_compute_dispatch_b5() {
+    // Sprint 1 / Theme F / §2.3.1 (B5) regression — discriminator only.
+    //
+    // Pre-fix Rust dispatched on "ec2_share" / "gce_share" /
+    // "azure_vm_share" / "k8s_pod_share" while Python + Go + the
+    // canonical Sprint 0 fixtures all use "ec2" / "gce" / "azure_vm" /
+    // "k8s_pod". Result: Rust silently hit the `_ => zero_unknown`
+    // fallback and reported $0 for any IaaS-share compute workload.
+    //
+    // This test asserts the dispatch now REACHES the IaaS / k8s share
+    // pricing path (pricing_source != "compute_catalog:unknown" AND
+    // cost > 0). It does NOT assert exact-cost parity yet — the
+    // cross-SDK fixture surfaced a SECOND, previously un-audited bug
+    // where Rust's Tier 4 IaaS fallback math diverges from Python by a
+    // factor of vcpu_count (Python uses share_factor × instance_hourly,
+    // Rust uses vcpu_seconds/3600 × per_vcpu). That math bug is a
+    // separate finding — tracked as B5b in PARITY-AUDIT.md; needs its
+    // own commit so the scope stays clean. Per plan §7 (fixture suite
+    // reveals new bugs → pause, audit, add to plan).
+    use dexcost::cloud_detect::CloudEnv;
+    let engine = dexcost::pricing::compute_pricing::ComputePricingEngine::new();
+    let cloud_env = CloudEnv::none();
+    let overrides = std::collections::HashMap::new();
+
+    for rel in &[
+        "pricing_inputs/compute/ec2_share_4vcpu_8gb_3600s.json",
+        "pricing_inputs/compute/k8s_pod_2vcpu_4gb_1800s.json",
+    ] {
+        let input = strip_underscored(read_json(&fixtures_dir().join(rel)));
+        let window_s = input.get("duration_ms").and_then(|v| v.as_f64()).map(|ms| {
+            Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO)
+        });
+
+        let actual = engine.resolve_compute_cost(&input, &cloud_env, &overrides, window_s);
+
+        assert_ne!(
+            actual.pricing_source, "compute_catalog:unknown",
+            "{}: dispatch did not reach IaaS/k8s pricing path \
+             (billing_model={}, pricing_source={})",
+            rel,
+            input["billing_model"],
+            actual.pricing_source,
+        );
+        assert!(
+            actual.cost_usd > Decimal::ZERO,
+            "{}: expected non-zero cost after B5 discriminator fix, got {}",
+            rel,
+            actual.cost_usd,
+        );
+    }
+}
+
+#[test]
+#[ignore = "B5b — Rust IaaS share-math diverges from Python by factor of vcpu_count; tracked as separate finding"]
+fn cross_sdk_compute_pricing_exact_parity_b5b() {
+    // The strict assertion the plan §2.3.1 originally asked for —
+    // exact cost parity vs Python across all four SDKs. Currently
+    // FAILS on Rust because price_iaas_share fallback math is wrong.
+    // Will GREEN once B5b math fix lands.
+    use dexcost::cloud_detect::CloudEnv;
+    let engine = dexcost::pricing::compute_pricing::ComputePricingEngine::new();
+    let cloud_env = CloudEnv::none();
+    let overrides = std::collections::HashMap::new();
+
+    for rel in &[
+        "pricing_inputs/compute/ec2_share_4vcpu_8gb_3600s.json",
+        "pricing_inputs/compute/k8s_pod_2vcpu_4gb_1800s.json",
+    ] {
+        let input = strip_underscored(read_json(&fixtures_dir().join(rel)));
+        let expected = read_json(&expected_path_for(rel, "pricing"));
+        let window_s = input.get("duration_ms").and_then(|v| v.as_f64()).map(|ms| {
+            Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO)
+        });
+
+        let actual = engine.resolve_compute_cost(&input, &cloud_env, &overrides, window_s);
+        let expected_cost: Decimal = expected["cost_usd"]
+            .as_str()
+            .expect("expected cost_usd")
+            .parse()
+            .expect("parse expected cost_usd");
+
+        assert_eq!(
+            actual.cost_usd, expected_cost,
+            "{}: compute cost drift\n  expected={}\n  actual={}",
+            rel, expected_cost, actual.cost_usd,
+        );
+    }
+}
+
+#[test]
 fn cross_sdk_url_scrubber_parity() {
     // Sprint 1 / Theme A. Asserts dexcost::scrub_url matches the canonical
     // Python implementation byte-for-byte against the shared fixtures.

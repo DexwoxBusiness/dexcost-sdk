@@ -24,14 +24,16 @@ fn billing_model_for(runtime: RuntimeKind) -> &'static str {
     match runtime {
         RuntimeKind::Lambda => "lambda",
         RuntimeKind::Fargate => "fargate",
-        RuntimeKind::Ec2 => "ec2_share",
-        RuntimeKind::Gce => "gce_share",
-        RuntimeKind::AzureVm => "azure_vm_share",
+        // Sprint 1 Theme F / §2.3.1 (B5): emit canonical no-`_share`
+        // discriminators to match Python + Go + cross-SDK fixtures.
+        RuntimeKind::Ec2 => "ec2",
+        RuntimeKind::Gce => "gce",
+        RuntimeKind::AzureVm => "azure_vm",
         RuntimeKind::CloudRun => "cloud_run_request",
         RuntimeKind::CloudFunctions => "cloud_functions",
         RuntimeKind::AzureFunctions => "azure_functions",
         RuntimeKind::Vercel => "vercel_fluid",
-        RuntimeKind::K8sPod => "k8s_pod_share",
+        RuntimeKind::K8sPod => "k8s_pod",
         RuntimeKind::Unknown => "unknown",
     }
 }
@@ -314,7 +316,7 @@ mod tests {
         let event = a.snapshot_end_and_build(2000).expect("event built");
         // (3000000 - 1000000) / 1_000_000 = 2.0 vcpu-seconds
         assert!((event["vcpu_seconds_used"].as_f64().unwrap() - 2.0).abs() < 1e-9);
-        assert_eq!(event["billing_model"], "ec2_share");
+        assert_eq!(event["billing_model"], "ec2");
         assert_eq!(event["memory_bytes_peak"], 1_073_741_824u64);
         assert_eq!(event["cost_pending"], true);
         assert_eq!(event["duration_ms"], 2000);
@@ -410,13 +412,13 @@ mod tests {
         // ComputePricingEngine dispatch in pricing/compute_pricing.rs.
         assert_eq!(billing_model_for(RuntimeKind::Lambda), "lambda");
         assert_eq!(billing_model_for(RuntimeKind::Fargate), "fargate");
-        assert_eq!(billing_model_for(RuntimeKind::Ec2), "ec2_share");
+        assert_eq!(billing_model_for(RuntimeKind::Ec2), "ec2");
         assert_eq!(billing_model_for(RuntimeKind::CloudRun), "cloud_run_request");
         assert_eq!(billing_model_for(RuntimeKind::CloudFunctions), "cloud_functions");
         assert_eq!(billing_model_for(RuntimeKind::AzureFunctions), "azure_functions");
-        assert_eq!(billing_model_for(RuntimeKind::AzureVm), "azure_vm_share");
-        assert_eq!(billing_model_for(RuntimeKind::Gce), "gce_share");
+        assert_eq!(billing_model_for(RuntimeKind::AzureVm), "azure_vm");
+        assert_eq!(billing_model_for(RuntimeKind::Gce), "gce");
         assert_eq!(billing_model_for(RuntimeKind::Vercel), "vercel_fluid");
-        assert_eq!(billing_model_for(RuntimeKind::K8sPod), "k8s_pod_share");
+        assert_eq!(billing_model_for(RuntimeKind::K8sPod), "k8s_pod");
     }
 }

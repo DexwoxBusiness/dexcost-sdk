@@ -13,9 +13,9 @@
 //!   - `cloud_functions`      → request+vcpu-second+gib-second (BINARY GiB)
 //!   - `azure_functions`      → execution+gb-second (DECIMAL GB)
 //!   - `vercel_fluid`         → cpu-hour+memory-gb-hour
-//!   - `ec2_share` / `gce_share` / `azure_vm_share`
+//!   - `ec2` / `gce` / `azure_vm` (IaaS share model — canonical, no `_share` suffix)
 //!                            → SKU hourly_usd / vcpu_count × duration share
-//!   - `k8s_pod_share`        → vcpu-hour × pod limits × duration share
+//!   - `k8s_pod`              → vcpu-hour × pod limits × duration share
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -202,10 +202,16 @@ impl ComputePricingEngine {
             "cloud_functions" => self.price_cloud_functions(details, cloud_env, overrides),
             "azure_functions" => self.price_azure_functions(details, cloud_env, overrides),
             "vercel_fluid" => self.price_vercel_fluid(details, cloud_env, overrides),
-            "ec2_share" => self.price_iaas_share(details, cloud_env, overrides, "aws", "ec2", window_s),
-            "gce_share" => self.price_iaas_share(details, cloud_env, overrides, "gcp", "gce", window_s),
-            "azure_vm_share" => self.price_iaas_share(details, cloud_env, overrides, "azure", "vm", window_s),
-            "k8s_pod_share" => self.price_k8s_pod_share(details, overrides, window_s),
+            // Sprint 1 Theme F / §2.3.1 (B5): canonical billing_model
+            // discriminators have no `_share` suffix — Python and Go both
+            // emit "ec2" / "gce" / "azure_vm" / "k8s_pod", and the cross-
+            // SDK fixtures use the same. Pre-fix Rust matched `_share`
+            // variants and silently fell through to zero_unknown for
+            // every canonical payload.
+            "ec2" => self.price_iaas_share(details, cloud_env, overrides, "aws", "ec2", window_s),
+            "gce" => self.price_iaas_share(details, cloud_env, overrides, "gcp", "gce", window_s),
+            "azure_vm" => self.price_iaas_share(details, cloud_env, overrides, "azure", "vm", window_s),
+            "k8s_pod" => self.price_k8s_pod_share(details, overrides, window_s),
             _ => ComputeCost::zero_unknown(),
         }
     }
@@ -1125,7 +1131,7 @@ mod tests {
             instance_type: Some("c7g.xlarge".into()),
         };
         let details = json!({
-            "billing_model": "ec2_share",
+            "billing_model": "ec2",
             "duration_ms": "60000",
             "vcpu_seconds_used": "30", // 30 vcpu-seconds
         });
@@ -1144,7 +1150,7 @@ mod tests {
             instance_type: None,
         };
         let details = json!({
-            "billing_model": "k8s_pod_share",
+            "billing_model": "k8s_pod",
             "duration_ms": "60000",
             "vcpu_seconds_used": "30",
         });

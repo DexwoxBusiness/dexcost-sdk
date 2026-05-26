@@ -202,6 +202,18 @@ Python and TS both fixed.)
 - [ ] 🟡 CLI `rates` has no persistent store.
 
 ### Rust
+- [ ] 🔴 **B5b — `price_iaas_share` Tier 4 math diverges from Python by a factor
+  of `vcpu_count`.** Surfaced by the B5 discriminator fix in Sprint 1 Theme F.
+  Python's `_iaas_share` (`compute_pricing.py:537`) treats
+  `default_ec2_vcpu_hour_usd` as an **instance-hourly** rate and multiplies by
+  `share_factor = vcpu_seconds / (vcpu_count × window_s)`. Rust's Tier 4
+  fallback at `compute_pricing.rs:677` treats the same meta value as
+  **per-vCPU-hourly** (`vcpu_seconds_used / 3600 × per_vcpu`), yielding 4× the
+  canonical cost for a 4-vCPU host. Regression pinned (and currently
+  `#[ignore]`d) at
+  `rust/tests/cross_sdk_parity.rs::cross_sdk_compute_pricing_exact_parity_b5b`.
+  Fix: mirror Python's formula — compute `share_factor` and apply to the
+  instance-hourly rate. Standalone commit so it doesn't ride along with B5.
 - [ ] 🟡 `start_task` never enters task-local scope → parent linking broken unless the
   caller manually uses `with_task` (which isn't exported).
 - [ ] 🟡 CLI `rates` uses flat JSON; library uses YAML — round-trip broken.
