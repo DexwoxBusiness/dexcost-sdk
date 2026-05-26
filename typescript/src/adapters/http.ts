@@ -130,8 +130,33 @@ export function clearDomainRates(): void {
  * Idempotent — calling multiple times without `untrackHttp()` in between is
  * safe; the second call is a no-op.
  */
+/**
+ * Symbol used to tag dexcost's wrapped fetch. Sprint 3 Theme E / §4.2.1.
+ * `Symbol.for(...)` returns the same symbol across realms / module
+ * instances, so two copies of the dexcost SDK (e.g. in a Yarn PnP
+ * setup where multiple versions are deduped poorly) will recognise
+ * each other's patches and refuse to double-wrap.
+ *
+ * Detect another patcher (Sentry, OpenTelemetry, Datadog) by reading
+ * their own marker properties; if found, store both pointers and
+ * chain through them so neither tool's interception is lost.
+ */
+const DEXCOST_PATCHED = Symbol.for("dexcost.patched");
+
 export function trackHttp(buffer?: EventBuffer): void {
   if (_patched) return;
+
+  // §4.2.1: refuse to wrap an already-dexcost-wrapped fetch.
+  const current = globalThis.fetch as unknown as Record<symbol, unknown>;
+  if (current && current[DEXCOST_PATCHED] === true) {
+    // Already patched — likely a duplicate SDK install. No-op + warn.
+    console.warn(
+      "dexcost: globalThis.fetch is already wrapped by dexcost. " +
+        "trackHttp() called twice (or two SDK copies). Skipping.",
+    );
+    _patched = true;
+    return;
+  }
 
   _originalFetch = globalThis.fetch;
   _patched = true;
@@ -228,6 +253,15 @@ export function trackHttp(buffer?: EventBuffer): void {
     return wrappedResponse;
   };
 
+  // §4.2.1: tag our wrapper so a second `trackHttp()` (or a duplicate
+  // SDK install across realms) doesn't double-wrap.
+  Object.defineProperty(globalThis.fetch, DEXCOST_PATCHED, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+
   // Also patch Node's low-level http/https transports — many SDKs
   // (AWS SDK v2, older clients, agents) use these directly rather than
   // the global fetch. Mirrors the Python adapter patching multiple
@@ -304,13 +338,37 @@ function _patchNodeHttp(): void {
       return req;
     };
 
+  // Sprint 3 Theme E / §4.2.2 — atomic patch. If `Object.freeze` has
+  // been applied to one of the modules (some serverless runtimes do
+  // this), a partial patch leaves the SDK in a half-installed state
+  // where request is wrapped but get is unrestored — and the originals
+  // are forgotten so untrackHttp() can't roll back. Try all 4
+  // assignments and on ANY failure restore everything we already
+  // wrote.
+  const wrappers = {
+    httpRequest: makeWrapper(_originalHttpRequest, false),
+    httpsRequest: makeWrapper(_originalHttpsRequest, true),
+    httpGet: makeWrapper(_originalHttpGet, false),
+    httpsGet: makeWrapper(_originalHttpsGet, true),
+  };
+  const installed: Array<() => void> = [];
   try {
-    nodeHttp.request = makeWrapper(_originalHttpRequest, false);
-    nodeHttps.request = makeWrapper(_originalHttpsRequest, true);
-    nodeHttp.get = makeWrapper(_originalHttpGet, false);
-    nodeHttps.get = makeWrapper(_originalHttpsGet, true);
+    nodeHttp.request = wrappers.httpRequest;
+    installed.push(() => { nodeHttp.request = _originalHttpRequest; });
+    nodeHttps.request = wrappers.httpsRequest;
+    installed.push(() => { nodeHttps.request = _originalHttpsRequest; });
+    nodeHttp.get = wrappers.httpGet;
+    installed.push(() => { nodeHttp.get = _originalHttpGet; });
+    nodeHttps.get = wrappers.httpsGet;
+    installed.push(() => { nodeHttps.get = _originalHttpsGet; });
   } catch {
-    // Some environments freeze these — best-effort, fetch patching still works.
+    // Roll back every wrapper we successfully installed BEFORE the
+    // failure, so the customer's http stack is exactly where it
+    // started. Best-effort: each restore may itself throw if the
+    // module is fully frozen — we swallow that.
+    for (const restore of installed) {
+      try { restore(); } catch { /* frozen, leave as-is */ }
+    }
     _originalHttpRequest = null;
     _originalHttpsRequest = null;
     _originalHttpGet = null;

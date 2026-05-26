@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { PricingSource } from "../core/models.js";
-import costMapData from "./cost_map.json" with { type: "json" };
+
+// Sprint 3 Theme E / §4.2.3 — Node 18 compat: runtime JSON load.
+const _thisDir = dirname(fileURLToPath(import.meta.url));
+const costMapData = JSON.parse(
+  readFileSync(join(_thisDir, "cost_map.json"), "utf-8"),
+);
 
 export interface CostResult {
   costUsd: number;
