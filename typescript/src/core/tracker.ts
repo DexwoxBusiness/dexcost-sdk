@@ -6,7 +6,23 @@
  */
 
 import { randomUUID } from "node:crypto";
+import Decimal from "decimal.js";
 import type { Task, CostEvent, EventType, CostConfidence, PricingSource } from "./models.js";
+
+/**
+ * Decimal-based addition to defeat floating-point drift in cost
+ * accumulation. Sprint 2 Theme E / §3.3.1 (B3).
+ *
+ * Native `a + b` on `number` accumulates ~2e-16 of error per add;
+ * over 10 000 events that adds up to a visible drift in the per-
+ * task total. decimal.js does exact decimal arithmetic; we convert
+ * back to `number` at the boundary so the customer-facing field
+ * type stays `number` (full `number → string` wire-format change
+ * is deferred to a major version per plan §0.7).
+ */
+function decAdd(a: number, b: number): number {
+  return new Decimal(a).plus(b).toNumber();
+}
 import { createTask, createCostEvent } from "./models.js";
 import { getCurrentTask, runWithTask } from "./context.js";
 import { EventBuffer } from "../transport/buffer.js";
@@ -23,7 +39,6 @@ import { GpuPricingEngine } from "../pricing/gpu-pricing.js";
 import { GpuAccountant } from "./gpu-accountant.js";
 import { GpuRuntimeKind } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
-import Decimal from "decimal.js";
 import { EventPusher } from "../transport/pusher.js";
 import { PricingEngine } from "../pricing/engine.js";
 import { RateRegistry } from "../pricing/rates.js";
@@ -373,7 +388,7 @@ export class TrackedTask {
         event.retryOf = match.matchedEventId;
         event.details = { ...event.details, retry_confidence: match.confidence };
         this._task.retryCount += 1;
-        this._task.retryCostUsd += costUsd;
+        this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
       }
     }
 
@@ -388,8 +403,8 @@ export class TrackedTask {
     }
 
     // Aggregate into task
-    this._task.llmCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.llmCostUsd = decAdd(this._task.llmCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
     this._task.totalInputTokens += inputTokens;
     this._task.totalOutputTokens += outputTokens;
     if (cachedTokens !== undefined) {
@@ -441,11 +456,11 @@ export class TrackedTask {
 
     // Aggregate into task
     if (eventType === "external_cost") {
-      this._task.externalCostUsd += costUsd;
+      this._task.externalCostUsd = decAdd(this._task.externalCostUsd, costUsd);
     } else if (eventType === "compute_cost") {
-      this._task.computeCostUsd += costUsd;
+      this._task.computeCostUsd = decAdd(this._task.computeCostUsd, costUsd);
     }
-    this._task.totalCostUsd += costUsd;
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
     this._buffer.upsertTask(this._task);
     return event;
@@ -477,8 +492,8 @@ export class TrackedTask {
 
     // Aggregate into task
     this._task.retryCount += 1;
-    this._task.retryCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
     this._buffer.upsertTask(this._task);
     return event;
@@ -681,8 +696,8 @@ export class TrackedTask {
     }
 
     const deltaNum = costDelta.toNumber();
-    task.computeCostUsd += deltaNum;
-    task.totalCostUsd += deltaNum;
+    task.computeCostUsd = decAdd(task.computeCostUsd, deltaNum);
+    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
   }
 
   /**
@@ -810,8 +825,8 @@ export class TrackedTask {
     }
 
     const deltaNum = costDelta.toNumber();
-    task.gpuCostUsd += deltaNum;
-    task.totalCostUsd += deltaNum;
+    task.gpuCostUsd = decAdd(task.gpuCostUsd, deltaNum);
+    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
   }
 
   /**
@@ -899,13 +914,13 @@ export class TrackedTask {
 
       // First-pass total_cost_usd summed this event at 0 (cost_pending);
       // add the back-filled cost.
-      this._task.totalCostUsd += evCost;
+      this._task.totalCostUsd = decAdd(this._task.totalCostUsd, evCost);
     }
 
     // Add network_cost_usd to total — captures every external byte
     // (cataloged + below-threshold un-cataloged calls included via the
     // accountant scalar even when they emitted no per-event row).
-    this._task.totalCostUsd += this._task.networkCostUsd;
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, this._task.networkCostUsd);
   }
 
   /**
@@ -934,8 +949,8 @@ export class TrackedTask {
     this._events.push(event);
     this._buffer.addEvent(event);
     logEvent(event, this._task.taskType);
-    this._task.externalCostUsd += costUsd;
-    this._task.totalCostUsd += costUsd;
+    this._task.externalCostUsd = decAdd(this._task.externalCostUsd, costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
     this._buffer.upsertTask(this._task);
     return event;
   }

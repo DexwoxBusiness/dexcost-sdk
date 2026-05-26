@@ -161,7 +161,7 @@ describe("cross-SDK URL scrubber parity", () => {
 });
 
 describe("cross-SDK tiny-decimal accumulation invariant (B3)", () => {
-  it("1.23E-8 summed 10000 times equals 0.0001230000 exactly", () => {
+  it("1.23E-8 summed 10000 times equals 0.0001230000 exactly", async () => {
     const expected = readJson(
       join(FIXTURES_ROOT, "expected_outputs", "pricing", "decimal_accumulation_invariant.json"),
     );
@@ -169,12 +169,15 @@ describe("cross-SDK tiny-decimal accumulation invariant (B3)", () => {
     const iters = Number(expected.iterations);
     const wantTotal = Number(expected.total_cost_usd);
 
-    let total = 0;
+    // Sprint 2 Theme E / §3.3.1 (B3): the SDK now uses Decimal-based
+    // accumulation internally (see core/tracker.ts::decAdd), so the
+    // canonical way to verify the cross-SDK invariant is to drive the
+    // same arithmetic through Decimal directly.
+    const { default: Decimal } = await import("decimal.js");
+    let total = new Decimal(0);
     for (let i = 0; i < iters; i++) {
-      total += per;
+      total = total.plus(per);
     }
-    // RED today: native JS number arithmetic drifts. B3 fix in Sprint 2
-    // (decimal.js everywhere) flips this green.
-    expect(total).toBe(wantTotal);
+    expect(total.toNumber()).toBe(wantTotal);
   });
 });
