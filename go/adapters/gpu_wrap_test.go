@@ -32,10 +32,10 @@ func setupGPUWrapTest(t *testing.T) (*gpuStubBuffer, context.Context, *core.Task
 		DeviceCount:  1,
 		ProductNames: map[int]string{0: "NVIDIA H100 80GB HBM3"},
 		Memory:       map[int]core.NVMLMemInfo{0: {TotalBytes: 80 * 1024 * 1024 * 1024}},
-		PerCallUtilization: map[int][]map[int]core.NVMLUtilSample{
+		PerCallUtilization: map[int][]map[int][]core.NVMLUtilSample{
 			0: {
-				{selfPID: {PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0}},
-				{selfPID: {PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000}},
+				{selfPID: {{PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0}}},
+				{selfPID: {{PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000}}},
 			},
 		},
 	}
