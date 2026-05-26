@@ -39,12 +39,7 @@ function stubHooks() {
   const samples = [
     {},
     {
-      [SELF]: {
-        pid: SELF,
-        smUtil: 50,
-        memUtil: 30,
-        timeStamp: 30_000_000,
-      },
+      [SELF]: [{ pid: SELF, smUtil: 50, memUtil: 30, timeStamp: 30_000_000 }],
     },
   ];
   return {

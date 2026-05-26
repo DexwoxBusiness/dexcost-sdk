@@ -261,10 +261,21 @@ export function getComputeRunningProcesses(index: number): ProcessInfo[] | null 
  *
  * Updates `lastSeenTimestamps` in place — callers persist across snapshots.
  */
+/**
+ * Returns multi-sample-per-PID utilization data.
+ *
+ * Sprint 2 Theme C / §3.1.1 (B2 TS port). Pre-fix the return type
+ * was `Record<number, UtilSample>` — single-latest-sample-per-PID,
+ * collapsing the integration data the accountant needs. Now returns
+ * `Record<number, UtilSample[]>` with samples sorted by `timeStamp`
+ * ascending. nvidia-smi pmon returns one snapshot per call, so the
+ * array length is 1 in practice; the type accommodates future
+ * sampling implementations that batch multiple observations.
+ */
 export function getProcessUtilization(
   index: number,
   lastSeenTimestamps: Record<number, number>,
-): Record<number, UtilSample> | null {
+): Record<number, UtilSample[]> | null {
   if (!_isNode()) return null;
   const r = _runSmi([
     `pmon`,
@@ -284,7 +295,7 @@ export function getProcessUtilization(
     );
     return null;
   }
-  const out: Record<number, UtilSample> = {};
+  const out: Record<number, UtilSample[]> = {};
   const nowMs = Date.now();
   for (const rawLine of r.stdout.split("\n")) {
     const line = rawLine.trim();
@@ -299,13 +310,20 @@ export function getProcessUtilization(
     const sm = parseInt(parts[3], 10);
     const mem = parseInt(parts[4], 10);
     if (Number.isNaN(sm) || Number.isNaN(mem)) continue;
-    out[pid] = {
-      pid,
-      smUtil: sm,
-      memUtil: mem,
-      timeStamp: nowMs,
-    };
-    lastSeenTimestamps[pid] = nowMs;
+    const sample: UtilSample = { pid, smUtil: sm, memUtil: mem, timeStamp: nowMs };
+    if (out[pid]) {
+      out[pid].push(sample);
+    } else {
+      out[pid] = [sample];
+    }
+    if (nowMs > (lastSeenTimestamps[pid] ?? 0)) {
+      lastSeenTimestamps[pid] = nowMs;
+    }
+  }
+  // Sort each PID's samples by timestamp ascending — the integrator
+  // assumes monotonic ordering.
+  for (const pid in out) {
+    out[pid].sort((a, b) => a.timeStamp - b.timeStamp);
   }
   return out;
 }
