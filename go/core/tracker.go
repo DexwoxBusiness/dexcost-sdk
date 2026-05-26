@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -83,7 +84,11 @@ func NewTracker(opts TrackerOptions) (*Tracker, error) {
 		if threshold == 0 {
 			threshold = 0.8
 		}
-		tracker.heuristics = NewRetryHeuristicEngine(window, threshold)
+		eng, err := NewRetryHeuristicEngine(window, threshold)
+		if err != nil {
+			return nil, fmt.Errorf("dexcost: invalid retry heuristic config: %w", err)
+		}
+		tracker.heuristics = eng
 	}
 	return tracker, nil
 }

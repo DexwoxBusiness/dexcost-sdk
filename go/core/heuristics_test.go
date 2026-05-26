@@ -15,6 +15,56 @@ func makeLLMEvent(taskID uuid.UUID, model string, occurredAt time.Time) Event {
 	return e
 }
 
+// helper: build an engine for tests with valid config, expecting no error.
+// Pre-fix (Sprint 1 Theme B / §2.2.2 1d) NewRetryHeuristicEngine returned
+// only `*RetryHeuristicEngine` and panicked on bad config; post-fix it
+// returns `(*RetryHeuristicEngine, error)`.
+func mustEngine(t *testing.T, window, threshold float64) *RetryHeuristicEngine {
+	t.Helper()
+	eng, err := NewRetryHeuristicEngine(window, threshold)
+	if err != nil {
+		t.Fatalf("NewRetryHeuristicEngine(%v,%v) returned unexpected error: %v",
+			window, threshold, err)
+	}
+	return eng
+}
+
+// B7-1d: bad config returns an error instead of panicking.
+func TestNewRetryHeuristicEngine_BadConfigReturnsError(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("NewRetryHeuristicEngine panicked instead of returning error: %v", r)
+		}
+	}()
+	cases := []struct {
+		name      string
+		window    float64
+		threshold float64
+	}{
+		{"zero window", 0, 0.8},
+		{"negative window", -1, 0.8},
+		{"zero threshold", 30, 0},
+		{"negative threshold", 30, -0.1},
+		{"threshold above 1", 30, 1.1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eng, err := NewRetryHeuristicEngine(tc.window, tc.threshold)
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil (engine=%v)", tc.name, eng)
+			}
+			if eng != nil {
+				t.Fatalf("expected nil engine on error, got %v", eng)
+			}
+		})
+	}
+
+	// Valid config still works.
+	if _, err := NewRetryHeuristicEngine(30, 0.8); err != nil {
+		t.Fatalf("valid config returned error: %v", err)
+	}
+}
+
 // helper: set error_type in Details and return the event.
 func withErrorType(e Event, errType string) Event {
 	e.Details["error_type"] = errType
@@ -24,7 +74,7 @@ func withErrorType(e Event, errType string) Event {
 // TestHeuristic_DetectsRetryAfterTransientError verifies that a second LLM call
 // on the same task + model within the window, after a transient error, is flagged.
 func TestHeuristic_DetectsRetryAfterTransientError(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -54,7 +104,7 @@ func TestHeuristic_DetectsRetryAfterTransientError(t *testing.T) {
 
 // TestHeuristic_NoFlagDifferentModel verifies no retry detection when model differs.
 func TestHeuristic_NoFlagDifferentModel(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -73,7 +123,7 @@ func TestHeuristic_NoFlagDifferentModel(t *testing.T) {
 
 // TestHeuristic_NoFlagDifferentTask verifies no retry detection when task differs.
 func TestHeuristic_NoFlagDifferentTask(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	now := time.Now().UTC()
 	taskA := uuid.New()
@@ -93,7 +143,7 @@ func TestHeuristic_NoFlagDifferentTask(t *testing.T) {
 
 // TestHeuristic_NoFlagSuccessfulPreviousCall verifies no retry when previous call had no error.
 func TestHeuristic_NoFlagSuccessfulPreviousCall(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -112,7 +162,7 @@ func TestHeuristic_NoFlagSuccessfulPreviousCall(t *testing.T) {
 
 // TestHeuristic_NoFlagOutsideWindow verifies no retry when gap exceeds windowSeconds.
 func TestHeuristic_NoFlagOutsideWindow(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -132,7 +182,7 @@ func TestHeuristic_NoFlagOutsideWindow(t *testing.T) {
 
 // TestHeuristic_ConfidenceDecaysWithTime verifies that confidence is lower for larger gaps.
 func TestHeuristic_ConfidenceDecaysWithTime(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.1) // low threshold so both pass
+	engine := mustEngine(t, 30, 0.1) // low threshold so both pass
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -145,7 +195,7 @@ func TestHeuristic_ConfidenceDecaysWithTime(t *testing.T) {
 	nearMatch := engine.Check(nearCandidate)
 
 	// Start fresh engine and use a far retry (25 second gap).
-	engine2 := NewRetryHeuristicEngine(30, 0.1)
+	engine2 := mustEngine(t, 30, 0.1)
 	taskID2 := uuid.New()
 	far := makeLLMEvent(taskID2, "claude-3", now.Add(-25*time.Second))
 	far = withErrorType(far, "rate_limit")
@@ -166,7 +216,7 @@ func TestHeuristic_ConfidenceDecaysWithTime(t *testing.T) {
 
 // TestHeuristic_PrunesOldEventsFromWindow verifies that Record prunes stale events.
 func TestHeuristic_PrunesOldEventsFromWindow(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.5)
+	engine := mustEngine(t, 30, 0.5)
 
 	taskID := uuid.New()
 	now := time.Now().UTC()
@@ -195,7 +245,7 @@ func TestHeuristic_PrunesOldEventsFromWindow(t *testing.T) {
 
 // TestHeuristic_DefaultWindowAndThreshold verifies default constructor values.
 func TestHeuristic_DefaultWindowAndThreshold(t *testing.T) {
-	engine := NewRetryHeuristicEngine(30, 0.8)
+	engine := mustEngine(t, 30, 0.8)
 
 	if engine.WindowSeconds() != 30 {
 		t.Errorf("expected WindowSeconds=30, got %f", engine.WindowSeconds())

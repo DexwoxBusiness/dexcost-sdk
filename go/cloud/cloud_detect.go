@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DexwoxBusiness/dexcost-go/internal/safego"
 )
 
 // probeTimeout bounds Phase 2 wall time per probe.
@@ -586,13 +588,20 @@ func runProbe(providerHint string) CloudEnv {
 		if fn == nil {
 			continue
 		}
-		go func(fn probeFunc) {
-			if env := fn(); env != nil {
+		// Each probe runs in a detached goroutine; safego.Go wraps a
+		// `defer recover()` so a panic in any per-provider probe
+		// (network teardown mid-IMDS, parse panic, etc.) cannot crash
+		// the customer's process. Sprint 1 Theme B / §2.2.5.
+		// Loop-var copy needed on Go 1.21 (closure capture by reference).
+		probeFn := fn
+		probeName := name
+		safego.Go("cloud-probe-"+probeName, func() {
+			if env := probeFn(); env != nil {
 				ch <- result{env: *env}
 			} else {
 				ch <- result{}
 			}
-		}(fn)
+		})
 	}
 	deadline := time.After(probeTimeout + 50*time.Millisecond)
 	pending := len(fanoutProbes)

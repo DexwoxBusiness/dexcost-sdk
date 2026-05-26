@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -252,6 +253,19 @@ func EventToDictJSON(e Event) ([]byte, error) {
 	return json.Marshal(e.ToDict())
 }
 
+// parseDecimalOrZero parses a decimal string from a wire payload. On parse
+// failure (corrupt input, forwards-incompat schema, partial write) logs a
+// warning and returns Decimal.Zero rather than panicking via
+// decimal.RequireFromString — Sprint 1 Theme B / §2.2.2 1c.
+func parseDecimalOrZero(s, field string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		log.Printf("dexcost: failed to parse %s=%q as decimal, defaulting to 0: %v", field, s, err)
+		return decimal.Zero
+	}
+	return d
+}
+
 // TaskFromDict deserializes a Task from a map matching the Standard Event Schema v1 wire format.
 func TaskFromDict(d map[string]interface{}) (Task, error) {
 	t := NewTask("")
@@ -303,22 +317,22 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 		t.Variant = v
 	}
 	if v, ok := d["llm_cost_usd"].(string); ok {
-		t.LLMCostUSD = decimal.RequireFromString(v)
+		t.LLMCostUSD = parseDecimalOrZero(v, "llm_cost_usd")
 	}
 	if v, ok := d["external_cost_usd"].(string); ok {
-		t.ExternalCostUSD = decimal.RequireFromString(v)
+		t.ExternalCostUSD = parseDecimalOrZero(v, "external_cost_usd")
 	}
 	if v, ok := d["compute_cost_usd"].(string); ok {
-		t.ComputeCostUSD = decimal.RequireFromString(v)
+		t.ComputeCostUSD = parseDecimalOrZero(v, "compute_cost_usd")
 	}
 	if v, ok := d["network_cost_usd"].(string); ok {
-		t.NetworkCostUSD = decimal.RequireFromString(v)
+		t.NetworkCostUSD = parseDecimalOrZero(v, "network_cost_usd")
 	}
 	if v, ok := d["gpu_cost_usd"].(string); ok {
-		t.GpuCostUSD = decimal.RequireFromString(v)
+		t.GpuCostUSD = parseDecimalOrZero(v, "gpu_cost_usd")
 	}
 	if v, ok := d["total_cost_usd"].(string); ok {
-		t.TotalCostUSD = decimal.RequireFromString(v)
+		t.TotalCostUSD = parseDecimalOrZero(v, "total_cost_usd")
 	}
 	if v := dictInt(d, "total_input_tokens"); v != nil {
 		t.TotalInputTokens = *v
@@ -333,7 +347,7 @@ func TaskFromDict(d map[string]interface{}) (Task, error) {
 		t.RetryCount = *v
 	}
 	if v, ok := d["retry_cost_usd"].(string); ok {
-		t.RetryCostUSD = decimal.RequireFromString(v)
+		t.RetryCostUSD = parseDecimalOrZero(v, "retry_cost_usd")
 	}
 	if v := dictInt(d, "failure_count"); v != nil {
 		t.FailureCount = *v
@@ -398,7 +412,7 @@ func EventFromDict(d map[string]interface{}) (Event, error) {
 		}
 	}
 	if v, ok := d["cost_usd"].(string); ok {
-		e.CostUSD = decimal.RequireFromString(v)
+		e.CostUSD = parseDecimalOrZero(v, "cost_usd")
 	}
 	if v, ok := d["cost_confidence"].(string); ok {
 		e.CostConfidence = CostConfidence(v)
