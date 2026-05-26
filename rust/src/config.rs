@@ -6,6 +6,24 @@ use crate::error::DexcostError;
 
 const DEFAULT_ENDPOINT: &str = "https://api.dexcost.io";
 
+/// Returns true if the given URL is an acceptable DEXCOST_ENDPOINT.
+///
+/// Production traffic must be `https://`. As a documented exception
+/// (matching standard browser security models for localhost),
+/// `http://localhost[:port]/...` and `http://127.0.0.1[:port]/...`
+/// are also accepted so that mock servers used in tests (wiremock,
+/// httpbin, etc.) don't trigger the allow-list fallback.
+/// Sprint 2 Theme D follow-on to A2 (commit 64bd3dd).
+fn is_allowed_endpoint(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    if url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1") {
+        return true;
+    }
+    false
+}
+
 /// SDK configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -77,11 +95,12 @@ impl Config {
     /// refuse and fall back to the production default.
     pub(crate) fn endpoint(&self) -> String {
         match env::var("DEXCOST_ENDPOINT") {
-            Ok(v) if v.starts_with("https://") => v,
+            Ok(v) if is_allowed_endpoint(&v) => v,
             Ok(v) => {
                 eprintln!(
                     "dexcost: DEXCOST_ENDPOINT={:?} rejected — only https:// \
-                     URLs are accepted. Falling back to {}.",
+                     (or http://localhost / http://127.0.0.1 for tests) URLs \
+                     are accepted. Falling back to {}.",
                     v, DEFAULT_ENDPOINT
                 );
                 DEFAULT_ENDPOINT.to_string()

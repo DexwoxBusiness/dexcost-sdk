@@ -302,10 +302,27 @@ impl EventPusher {
         let task_dicts: Vec<serde_json::Value> =
             tasks_to_send.iter().map(|t| t.to_dict()).collect();
 
-        // Push with adaptive splitting for oversized payloads.
-        // Tasks are only sent with the first chunk to avoid duplication.
-        Self::push_with_split(&event_dicts, &task_dicts, config, client, auth_failed, 0).await?;
+        // Push with adaptive splitting for oversized payloads. Sprint 2
+        // Theme D / §3.2.1 (B12): push_with_split marks events/tasks
+        // synced at each leaf POST that succeeds, so a sibling-half
+        // failure does not unwind work that already reached the
+        // control plane.
+        Self::push_with_split(
+            &event_dicts,
+            &task_dicts,
+            &event_ids,
+            &task_ids_sent,
+            buffer,
+            config,
+            client,
+            auth_failed,
+            0,
+        )
+        .await?;
 
+        // Outer mark_synced retained as a defensive idempotent
+        // no-op safety net for any future code path that returns Ok
+        // without recursing into the leaf.
         let mut buf = buffer.lock().await;
         buf.mark_synced(&event_ids);
         buf.mark_tasks_synced(&task_ids_sent);
@@ -316,9 +333,13 @@ impl EventPusher {
     /// MAX_PAYLOAD_BYTES. Tasks are only sent with the first half to avoid
     /// duplication. Uses `Box::pin` because recursive async fns require
     /// indirection to avoid infinitely-sized futures.
+    #[allow(clippy::too_many_arguments)]
     fn push_with_split<'a>(
         events: &'a [serde_json::Value],
         tasks: &'a [serde_json::Value],
+        event_ids: &'a [String],
+        task_ids: &'a [String],
+        buffer: &'a Arc<Mutex<EventBuffer>>,
         config: &'a Config,
         client: &'a reqwest::Client,
         auth_failed: &'a Arc<AtomicBool>,
@@ -332,7 +353,14 @@ impl EventPusher {
             }))?;
 
             if payload.len() <= MAX_PAYLOAD_BYTES || depth >= MAX_SPLIT_DEPTH {
-                return Self::post_raw(&payload, config, client, auth_failed).await;
+                Self::post_raw(&payload, config, client, auth_failed).await?;
+                // Sprint 2 Theme D / §3.2.1 (B12) — mark synced at the
+                // leaf so a sibling-half failure does not re-send
+                // already-POSTed events.
+                let mut buf = buffer.lock().await;
+                buf.mark_synced(event_ids);
+                buf.mark_tasks_synced(task_ids);
+                return Ok(());
             }
 
             if events.len() <= 1 {
@@ -344,15 +372,40 @@ impl EventPusher {
             }
 
             let mid = events.len() / 2;
+            let mid_id = event_ids.len() / 2;
             eprintln!(
                 "[dexcost] Batch too large ({} bytes, {} events), splitting",
                 payload.len(),
                 events.len()
             );
 
-            Self::push_with_split(&events[..mid], tasks, config, client, auth_failed, depth + 1)
-                .await?;
-            Self::push_with_split(&events[mid..], &[], config, client, auth_failed, depth + 1).await
+            // First half carries the tasks (Tasks are only sent with
+            // the first chunk to avoid duplication); second half: no
+            // tasks (so empty task_ids for the leaf mark).
+            Self::push_with_split(
+                &events[..mid],
+                tasks,
+                &event_ids[..mid_id],
+                task_ids,
+                buffer,
+                config,
+                client,
+                auth_failed,
+                depth + 1,
+            )
+            .await?;
+            Self::push_with_split(
+                &events[mid..],
+                &[],
+                &event_ids[mid_id..],
+                &[],
+                buffer,
+                config,
+                client,
+                auth_failed,
+                depth + 1,
+            )
+            .await
         })
     }
 
