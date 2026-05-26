@@ -41,8 +41,23 @@ import type { EventBuffer } from "../transport/buffer.js";
 /** Map of domain → { costUsd, per } registered rates (user overrides). */
 const _domainRates = new Map<string, { costUsd: number; per: string }>();
 
-/** Events recorded by the adapter. */
+/** Events recorded by the adapter.
+ *
+ * Sprint 4 §5.2 (A3) — hard FIFO cap matching Python (commit c1d87a7).
+ * Pre-fix this array grew unbounded across the process lifetime,
+ * leaking memory on long-running services with many HTTP-tracked
+ * tasks. Capped at 10 000 entries; oldest 10% dropped in one batch
+ * when over to avoid O(n) `shift()` per recording.
+ */
+const _RECORDED_EVENTS_CAP = 10_000;
 const _recordedEvents: CostEvent[] = [];
+
+function _pushRecordedEvent(event: CostEvent): void {
+  _recordedEvents.push(event);
+  if (_recordedEvents.length > _RECORDED_EVENTS_CAP) {
+    _recordedEvents.splice(0, _RECORDED_EVENTS_CAP / 10);
+  }
+}
 
 /**
  * Combined request + response bytes above which an un-cataloged call
@@ -807,7 +822,7 @@ async function _maybeRecordCost(
       details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
     });
 
-    _recordedEvents.push(event);
+    _pushRecordedEvent(event);
     if (_buffer) {
       _buffer.addEvent(event);
     }
@@ -851,7 +866,7 @@ async function _maybeRecordCost(
           },
         });
 
-        _recordedEvents.push(event);
+        _pushRecordedEvent(event);
         if (_buffer) {
           _buffer.addEvent(event);
         }
@@ -881,7 +896,7 @@ async function _maybeRecordCost(
     details: { url: urlStr, ...byteDetailsRequestOnly },
   });
 
-  _recordedEvents.push(event);
+  _pushRecordedEvent(event);
   if (_buffer) {
     _buffer.addEvent(event);
   }

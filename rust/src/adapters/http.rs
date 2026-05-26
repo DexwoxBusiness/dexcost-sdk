@@ -33,7 +33,25 @@ pub struct DomainRate {
 static DOMAIN_RATES: LazyLock<Mutex<HashMap<String, DomainRate>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Sprint 4 §5.2 (A3) — hard FIFO cap matching Python (c1d87a7) and
+/// the TS adapter. Long-running services would otherwise leak this
+/// vec across the process lifetime.
+const RECORDED_EVENTS_CAP: usize = 10_000;
 static RECORDED_EVENTS: LazyLock<Mutex<Vec<CostEvent>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Push helper that enforces the cap. Drops the oldest 10% in one
+/// `drain(..)` call when over to avoid O(n) `remove(0)` per push.
+fn push_recorded_event(event: CostEvent) {
+    let mut guard = RECORDED_EVENTS.lock().unwrap_or_else(|e| {
+        eprintln!("[dexcost] mutex poisoned, recovering: {}", e);
+        e.into_inner()
+    });
+    guard.push(event);
+    if guard.len() > RECORDED_EVENTS_CAP {
+        let drop_n = RECORDED_EVENTS_CAP / 10;
+        guard.drain(..drop_n);
+    }
+}
 
 /// Process-wide lock serialising every test that touches the global
 /// `DOMAIN_RATES` / `RECORDED_EVENTS` statics. Shared by the `http` and
@@ -212,13 +230,7 @@ pub fn record_http_cost_with_catalog(
     catalog: Option<&crate::pricing::service_catalog::ServiceCatalog>,
 ) {
     if let Some(event) = resolve_http_cost_event(url, task_id, catalog) {
-        RECORDED_EVENTS
-            .lock()
-            .unwrap_or_else(|e| {
-                eprintln!("[dexcost] mutex poisoned, recovering: {}", e);
-                e.into_inner()
-            })
-            .push(event);
+        push_recorded_event(event);
     }
 }
 

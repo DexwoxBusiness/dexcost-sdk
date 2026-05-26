@@ -110,6 +110,18 @@ impl RetryHeuristicEngine {
         });
 
         bucket.push(event);
+
+        // Sprint 4 §5.2 (A3) — hard cap at 1000 entries per task to
+        // bound memory on long-running tasks. The window-prune above
+        // already drops time-stale events, but a task that records
+        // many events INSIDE the window (e.g. a 30s task firing
+        // 1k LLM calls) would otherwise grow unbounded. FIFO drop the
+        // oldest 10% in one batch.
+        const PER_TASK_CAP: usize = 1000;
+        if bucket.len() > PER_TASK_CAP {
+            let drop_n = PER_TASK_CAP / 10;
+            bucket.drain(..drop_n);
+        }
     }
 
     /// Inspects recent events for the same task and model to determine whether

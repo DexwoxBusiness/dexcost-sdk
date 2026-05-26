@@ -31,6 +31,13 @@ import type { EventBuffer } from "../transport/buffer.js";
 const DEFAULT_RATE_PER_MINUTE = 0.01;
 
 /** Events recorded by the browser adapter. */
+/** Events recorded by the browser adapter.
+ *
+ * Sprint 4 §5.2 (A3) — hard FIFO cap matching Python (c1d87a7) and
+ * the TS http adapter. Long-running Playwright sessions otherwise
+ * leak ~250 bytes per recording.
+ */
+const _RECORDED_EVENTS_CAP = 10_000;
 const _recordedEvents: CostEvent[] = [];
 
 /**
@@ -135,6 +142,9 @@ function _recordBrowserEvent(
   task.computeCostUsd += costUsd;
   task.totalCostUsd += costUsd;
   _recordedEvents.push(event);
+  if (_recordedEvents.length > _RECORDED_EVENTS_CAP) {
+    _recordedEvents.splice(0, _RECORDED_EVENTS_CAP / 10);
+  }
 
   // Persist durably so the EventPusher ships the browser cost; the in-memory
   // list above is kept for tests and lightweight setups.

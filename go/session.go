@@ -162,6 +162,27 @@ func (sm *SessionManager) GetOrCreateSessionForIdentity(ctx context.Context, cal
 		}
 	}
 
+	// Sprint 4 §5.2 (A3) — hard count cap. The idleTimeout reaper
+	// already evicts time-stale sessions, but a flood of distinct
+	// identities (e.g. one anonymous user per request in a misconfigured
+	// app) could otherwise exhaust process memory faster than the
+	// reaper runs. Cap at 10 000 active sessions: when over, evict the
+	// least-recently-active entry to make room.
+	const sessionsCap = 10_000
+	if len(sm.sessions) >= sessionsCap {
+		var oldestID uint64
+		var oldestActivity time.Time
+		first := true
+		for id, e := range sm.sessions {
+			if first || e.lastActivity.Before(oldestActivity) {
+				oldestID = id
+				oldestActivity = e.lastActivity
+				first = false
+			}
+		}
+		delete(sm.sessions, oldestID)
+	}
+
 	sm.nextID++
 	sm.sessions[sm.nextID] = &sessionEntry{
 		task:         &task,
