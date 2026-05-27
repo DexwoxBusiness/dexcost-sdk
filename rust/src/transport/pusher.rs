@@ -452,6 +452,10 @@ impl EventPusher {
         let mut req = client
             .post(&url)
             .header("Content-Type", "application/json")
+            .header(
+                "User-Agent",
+                concat!("dexcost-rust/", env!("CARGO_PKG_VERSION")),
+            )
             .body(body.to_owned());
 
         // B14: prefer the runtime override populated by set_api_key,

@@ -17,7 +17,10 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dexcost import __version__ as _SDK_VERSION
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
+
+_USER_AGENT = f"dexcost-python/{_SDK_VERSION}"
 
 if TYPE_CHECKING:
     from dexcost.config import DexcostConfig
@@ -349,6 +352,7 @@ class SyncWorker:
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self._config.api_key}",
+                "User-Agent": _USER_AGENT,
             },
             method="POST",
         )

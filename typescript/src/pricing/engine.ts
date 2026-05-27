@@ -118,7 +118,7 @@ export class PricingEngine {
 
   async refreshFromServer(endpoint: string): Promise<void> {
     try {
-      const headers: Record<string, string> = { "User-Agent": "dexcost-sdk" };
+      const headers: Record<string, string> = { "User-Agent": "dexcost-typescript/0.1.0" };
       if (this._apiKey) {
         headers["Authorization"] = `Bearer ${this._apiKey}`;
       }

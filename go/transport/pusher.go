@@ -25,6 +25,12 @@ const (
 	maxPayloadBytes      = 200_000 // 200KB — well under SQS 256KB limit
 	maxSplitDepth        = 5
 	purgeRetention       = 7 * 24 * time.Hour
+
+	// sdkVersion mirrors dexcost.Version. Duplicated here to avoid
+	// importing the top-level package from a sub-package (would
+	// create a cycle). Bump both in lockstep.
+	sdkVersion = "0.1.0"
+	userAgent  = "dexcost-go/" + sdkVersion
 )
 
 // taskSyncBuffer extends core.Buffer with task-syncing and purge capabilities.
@@ -378,6 +384,7 @@ func (p *EventPusher) postRaw(body []byte) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := p.client.Do(req)
 	if err != nil {

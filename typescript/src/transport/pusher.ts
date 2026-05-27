@@ -14,6 +14,15 @@ import { redactDict, hashValue, enforceMetadataLimit } from "../security/redacti
 /** Hardcoded default endpoint; overridable only via DEXCOST_ENDPOINT env var. */
 const DEFAULT_ENDPOINT = "https://api.dexcost.io";
 
+/**
+ * SDK version pinned at build time. Mirrors `package.json#version`
+ * — bump both together. Sent as part of the User-Agent so the
+ * control plane can track which SDK versions are in the wild
+ * (admin gap item #8).
+ */
+const SDK_VERSION = "0.1.0";
+const USER_AGENT = `dexcost-typescript/${SDK_VERSION}`;
+
 /** Maximum backoff in milliseconds (5 minutes). */
 const MAX_BACKOFF_MS = 300_000;
 
@@ -323,6 +332,7 @@ export class EventPusher {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      "User-Agent": USER_AGENT,
     };
     if (this._options.apiKey) {
       headers["Authorization"] = `Bearer ${this._options.apiKey}`;

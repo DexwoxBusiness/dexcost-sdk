@@ -20,6 +20,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _user_agent() -> str:
+    """Build the SDK User-Agent string lazily to avoid import cycles."""
+    try:
+        from dexcost import __version__
+        return f"dexcost-python/{__version__}"
+    except Exception:
+        return "dexcost-python"
+
+
 @dataclass(frozen=True)
 class CostResult:
     """Result of a cost calculation.
@@ -313,7 +322,7 @@ class PricingEngine:
 
         url = f"{endpoint.rstrip('/')}/v1/api/pricing-data/latest"
         try:
-            headers: dict[str, str] = {"User-Agent": "dexcost-sdk"}
+            headers: dict[str, str] = {"User-Agent": _user_agent()}
             if self._api_key:
                 headers["Authorization"] = f"Bearer {self._api_key}"
             req = urllib.request.Request(url, headers=headers)
