@@ -1,6 +1,6 @@
 # dexcost
 
-Rust SDK for [dexcost](https://github.com/DexwoxBusiness/dexcost) -- Agent Unit Economics platform. Track LLM costs, non-LLM service fees, and retry waste attributed to customers, projects, and workflows.
+Rust SDK for [dexcost](https://github.com/DexwoxBusiness/dexcost-sdk) -- Agent Unit Economics platform. Track LLM costs, non-LLM service fees, and retry waste attributed to customers, projects, and workflows.
 
 ## Installation
 
