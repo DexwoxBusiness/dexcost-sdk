@@ -33,7 +33,7 @@ DexCost cloud if you want dashboards and cross-service rollups.
 ```python
 import dexcost
 
-dexcost.init()                      # local-only; no API key required
+dexcost.init(storage="local")       # force local-only; nothing leaves your machine
 dexcost.set_context(customer_id="acme-corp")
 
 with dexcost.task(task_type="summarise_doc") as t:
