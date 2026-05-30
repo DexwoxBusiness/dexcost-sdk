@@ -45,11 +45,11 @@ all = [
 dexcost = "dexcost.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/DexwoxBusiness/dexcost"
-Documentation = "https://github.com/DexwoxBusiness/dexcost#readme"
-Repository = "https://github.com/DexwoxBusiness/dexcost"
-Issues = "https://github.com/DexwoxBusiness/dexcost/issues"
-Changelog = "https://github.com/DexwoxBusiness/dexcost/blob/master/sdks/python/CHANGELOG.md"
+Homepage = "https://github.com/DexwoxBusiness/dexcost-sdk"
+Documentation = "https://github.com/DexwoxBusiness/dexcost-sdk/blob/main/python/README.md"
+Repository = "https://github.com/DexwoxBusiness/dexcost-sdk"
+Issues = "https://github.com/DexwoxBusiness/dexcost-sdk/issues"
+Changelog = "https://github.com/DexwoxBusiness/dexcost-sdk/blob/main/python/CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
 # Hatch build

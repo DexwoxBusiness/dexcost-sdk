@@ -1,0 +1,75 @@
+name: Release Python (TestPyPI dry-run)
+
+# Dry-run publish of the Python SDK to TestPyPI via Trusted Publishing (OIDC) —
+# no API token stored. Use this to validate the full release flow (build, metadata,
+# project page render, install) BEFORE the real PyPI release.
+#
+# Triggered by pushing a tag of the form `python-test/vX.Y.Z`, e.g.:
+#   git tag python-test/v0.1.0
+#   git push origin python-test/v0.1.0
+# (Re-runnable: bump to v0.1.0.dev1, v0.1.0.dev2, … since a version can't be
+#  uploaded twice, even on TestPyPI.)
+#
+# One-time setup on TestPyPI (https://test.pypi.org/manage/account/publishing/):
+#   Add a "pending publisher" with:
+#     PyPI Project Name: dexcost
+#     Owner:             DexwoxBusiness
+#     Repository:        dexcost-sdk
+#     Workflow name:     release-python-testpypi.yml
+#     Environment:       testpypi
+#
+# After a successful run, install (deps resolved from real PyPI) with:
+#   pip install --index-url https://test.pypi.org/simple/ \
+#               --extra-index-url https://pypi.org/simple/ dexcost
+
+on:
+  push:
+    tags:
+      - "python-test/v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        working-directory: python
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-testpypi
+          path: python/dist/
+
+  publish:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write   # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist-testpypi
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
