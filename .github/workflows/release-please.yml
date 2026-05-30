@@ -8,12 +8,14 @@ name: release-please
 #        fix: ...                   -> patch bump
 #        feat!: / BREAKING CHANGE:  -> major bump (minor while < 1.0.0)
 #        chore:/docs:/refactor: ... -> no release
-#   2. release-please keeps an open "Release PR" that bumps the version in
-#      python/pyproject.toml AND regenerates python/CHANGELOG.md from those commits.
-#   3. Merging that Release PR makes release-please create the git tag
-#      (python/vX.Y.Z) and a GitHub Release with the generated notes.
-#   4. In the SAME run, if a Python release was created, the publish job below
-#      builds the sdist+wheel and publishes to PyPI via Trusted Publishing (OIDC).
+#   2. release-please keeps an open "Release PR" per package that bumps the
+#      version (python/pyproject.toml, typescript/package.json) AND regenerates
+#      that package's CHANGELOG.md from those commits.
+#   3. Merging a Release PR makes release-please create the git tag
+#      (python/vX.Y.Z or typescript/vX.Y.Z) and a GitHub Release.
+#   4. In the SAME run, the matching publish job below runs only for the package
+#      that was released: Python -> PyPI (OIDC Trusted Publishing), TypeScript ->
+#      npm (token for the first publish, then OIDC — see publish-typescript-npm).
 #
 # NOTE: the publish is intentionally folded INTO this workflow rather than living
 # in a separate tag-triggered workflow. A tag pushed by the built-in GITHUB_TOKEN
@@ -38,6 +40,8 @@ jobs:
       # True only when a release was actually cut (Release PR merged).
       python_released: ${{ steps.release.outputs['python--release_created'] }}
       python_tag: ${{ steps.release.outputs['python--tag_name'] }}
+      typescript_released: ${{ steps.release.outputs['typescript--release_created'] }}
+      typescript_tag: ${{ steps.release.outputs['typescript--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -76,3 +80,45 @@ jobs:
         with:
           packages-dir: python/dist/
         # No username/password/token — OIDC Trusted Publishing handles auth.
+
+  publish-typescript-npm:
+    name: Publish TypeScript to npm
+    needs: release-please
+    # Only run when the TypeScript package was actually released this push.
+    if: ${{ needs.release-please.outputs.typescript_released == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # signs npm provenance attestations (and enables OIDC later)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        working-directory: typescript
+        run: npm ci
+
+      - name: Build (tsc + bundle JSON assets)
+        working-directory: typescript
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: typescript
+        # FIRST PUBLISH uses an automation token (npm requires a package to exist
+        # before OIDC Trusted Publishing can be configured). publishConfig in
+        # package.json sets access=public + provenance=true, so this publish is
+        # still signed (needs id-token: write above).
+        #
+        # TO MIGRATE TO TOKENLESS OIDC after the first successful publish:
+        #   1. Configure the Trusted Publisher for @dexcost/sdk on npmjs.com
+        #      (workflow: release-please.yml, this repo).
+        #   2. Add a step to upgrade npm to >= 11.5.1:  npm install -g npm@latest
+        #   3. Delete the `env:` block below and the NPM_TOKEN secret.
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

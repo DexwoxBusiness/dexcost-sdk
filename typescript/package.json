@@ -1,5 +1,5 @@
 {
-  "name": "dexcost",
+  "name": "@dexcost/sdk",
   "version": "0.1.0",
   "description": "Agent Unit Economics SDK for Node.js",
   "type": "module",
@@ -12,12 +12,23 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -70,13 +81,13 @@
     "observability"
   ],
   "license": "MIT",
-  "homepage": "https://dexcost.io",
+  "homepage": "https://docs.dexcost.io/docs/sdks/typescript",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dexwoxbusiness/dexcost",
-    "directory": "sdks/typescript"
+    "url": "git+https://github.com/DexwoxBusiness/dexcost-sdk.git",
+    "directory": "typescript"
   },
   "bugs": {
-    "url": "https://github.com/dexwoxbusiness/dexcost/issues"
+    "url": "https://github.com/DexwoxBusiness/dexcost-sdk/issues"
   }
 }
