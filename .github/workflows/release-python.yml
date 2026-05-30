@@ -77,3 +77,6 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # No username/password/token — OIDC Trusted Publishing handles auth.
+        # Note: GitHub Releases, version bumps, and CHANGELOG.md are handled
+        # automatically by release-please (.github/workflows/release-please.yml),
+        # which creates the python/vX.Y.Z tag that triggers THIS publish workflow.

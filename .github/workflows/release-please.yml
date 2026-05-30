@@ -1,0 +1,38 @@
+name: release-please
+
+# Fully automated release management for the DexCost SDKs.
+#
+# How it works (no hand-written changelogs or version bumps):
+#   1. Merge PRs to `main` using Conventional Commits:
+#        feat: ...        -> minor bump (0.x: patch, see bump-minor-pre-major)
+#        fix: ...         -> patch bump
+#        feat!: / BREAKING CHANGE: -> major bump (minor while < 1.0.0)
+#        chore:/docs:/refactor: ... -> no release
+#   2. release-please keeps an open "Release PR" that bumps the version in
+#      python/pyproject.toml AND regenerates python/CHANGELOG.md from those
+#      commits.
+#   3. Merging that Release PR makes release-please create the git tag
+#      `python/vX.Y.Z` and a GitHub Release with the generated notes.
+#   4. That tag triggers release-python.yml, which builds + publishes to PyPI
+#      via Trusted Publishing (OIDC).
+#
+# Config lives in release-please-config.json + .release-please-manifest.json.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write        # create release commits, tags, and GitHub Releases
+  pull-requests: write   # open/update the Release PR
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # Uses release-please-config.json + .release-please-manifest.json.
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: main
