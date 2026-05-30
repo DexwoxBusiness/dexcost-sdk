@@ -1,24 +1,23 @@
-name: Release Python (PyPI)
+name: Release Python (PyPI) [manual backfill]
 
-# Publishes the Python SDK to PyPI via Trusted Publishing (OIDC) — no API token
-# is stored in the repo. Triggered by pushing a tag of the form `python/vX.Y.Z`,
-# e.g.:
-#   git tag python/v0.1.0
-#   git push origin python/v0.1.0
+# MANUAL backfill / re-publish only. Normal releases are fully automated by
+# release-please.yml (it builds + publishes to PyPI in the same run when a
+# Release PR is merged). This workflow exists ONLY for the rare case where you
+# need to (re)publish a specific already-existing tag by hand — e.g. a transient
+# PyPI outage, or re-running a failed publish.
 #
-# One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
-#   Add a "pending publisher" (or, after first manual upload, a publisher) with:
-#     PyPI project name: dexcost
-#     Owner:             DexwoxBusiness
-#     Repository:        dexcost-sdk
-#     Workflow name:     release-python.yml
-#     Environment:       pypi
-# The `environment: pypi` below must match what you register on PyPI.
+# It is NOT triggered by pushing tags: a tag pushed by release-please uses the
+# built-in GITHUB_TOKEN, which (by GitHub's recursive-run guard) cannot trigger
+# other workflows. So this is dispatch-only.
+#
+# Usage: Actions tab -> "Release Python (PyPI) [manual backfill]" -> Run workflow,
+# choosing the tag/ref to publish from.
+#
+# Requires the PyPI Trusted Publisher registered for workflow `release-python.yml`,
+# environment `pypi` (https://pypi.org/manage/account/publishing/).
 
 on:
-  push:
-    tags:
-      - "python/v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
