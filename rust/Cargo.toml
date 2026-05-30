@@ -2,9 +2,16 @@
 name = "dexcost"
 version = "0.1.0"
 edition = "2021"
-description = "Agent Unit Economics SDK for Rust"
+description = "Agent Unit Economics SDK for Rust — track end-to-end business-task costs for AI agents."
 license = "MIT"
-repository = "https://github.com/DexwoxBusiness/dexcost"
+authors = ["Dexwox Innovations"]
+readme = "README.md"
+repository = "https://github.com/DexwoxBusiness/dexcost-sdk"
+homepage = "https://github.com/DexwoxBusiness/dexcost-sdk"
+documentation = "https://docs.dexcost.io/docs/sdks/rust"
+keywords = ["ai", "agents", "llm", "cost-tracking", "observability"]
+categories = ["development-tools", "api-bindings"]
+exclude = ["PARITY.md", "/target", "/tests", "/examples"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
