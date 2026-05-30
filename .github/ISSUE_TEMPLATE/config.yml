@@ -1,0 +1,22 @@
+# Controls the "New issue" chooser.
+# blank_issues_enabled: false → contributors must pick a template or a contact
+# link below, instead of opening an unstructured (and possibly security-sensitive)
+# blank issue.
+blank_issues_enabled: false
+
+contact_links:
+  - name: 🔒 Report a security vulnerability (private)
+    url: https://github.com/DexwoxBusiness/dexcost-sdk/security/advisories/new
+    about: >-
+      Do NOT open a public issue for security problems. Use GitHub's private
+      vulnerability reporting (or email security@dexcost.io). See SECURITY.md.
+
+  - name: 💬 Support & general questions
+    url: https://github.com/DexwoxBusiness/dexcost-sdk/blob/main/SUPPORT.md
+    about: >-
+      Integration help, product questions, billing/GST, and sales — see SUPPORT.md
+      for the right channel. Please don't use the bug tracker for these.
+
+  - name: 📖 Documentation
+    url: https://github.com/DexwoxBusiness/dexcost-sdk#readme
+    about: Read the SDK docs and the per-language guides (Python, TypeScript, Rust, Go).
