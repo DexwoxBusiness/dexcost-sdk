@@ -201,6 +201,7 @@ dexcost-sdk/
 
 Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) and our
 [Code of Conduct](CODE_OF_CONDUCT.md). For security issues, see [SECURITY.md](SECURITY.md).
+For support and contact channels, see [SUPPORT.md](SUPPORT.md).
 
 ## License
 
