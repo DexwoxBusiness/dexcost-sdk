@@ -9,7 +9,7 @@ your customers, projects, and workflows — across **Python, TypeScript, Rust, a
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/dexcost?label=pypi)](https://pypi.org/project/dexcost/)
-[![npm](https://img.shields.io/npm/v/dexcost?label=npm)](https://www.npmjs.com/package/dexcost)
+[![npm](https://img.shields.io/npm/v/%40dexcost%2Fsdk?label=npm)](https://www.npmjs.com/package/@dexcost/sdk)
 [![crates.io](https://img.shields.io/crates/v/dexcost?label=crates.io)](https://crates.io/crates/dexcost)
 [![Go Reference](https://pkg.go.dev/badge/github.com/DexwoxBusiness/dexcost-go.svg)](https://pkg.go.dev/github.com/DexwoxBusiness/dexcost-go)
 
@@ -66,7 +66,7 @@ with dexcost.task(task_type="summarise_doc") as t:
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
 | **Python** | [`dexcost`](https://pypi.org/project/dexcost/) (PyPI) | `pip install dexcost` | [python/README.md](python/README.md) |
-| **TypeScript / Node** | [`dexcost`](https://www.npmjs.com/package/dexcost) (npm) | `npm install dexcost` | [typescript/README.md](typescript/README.md) |
+| **TypeScript / Node** | [`@dexcost/sdk`](https://www.npmjs.com/package/@dexcost/sdk) (npm) | `npm install @dexcost/sdk` | [typescript/README.md](typescript/README.md) |
 | **Rust** | [`dexcost`](https://crates.io/crates/dexcost) (crates.io) | `cargo add dexcost` | [rust/README.md](rust/README.md) |
 | **Go** | `github.com/DexwoxBusiness/dexcost-go` | `go get github.com/DexwoxBusiness/dexcost-go` | [go/README.md](go/README.md) |
 
@@ -97,10 +97,10 @@ with dexcost.task(task_type="resolve_ticket") as t:
 <summary><b>TypeScript / Node</b></summary>
 
 ```bash
-npm install dexcost            # LLM SDKs are peer deps: npm install dexcost openai
+npm install @dexcost/sdk       # LLM SDKs are peer deps: npm install @dexcost/sdk openai
 ```
 ```typescript
-import { init, track, close } from 'dexcost';
+import { init, track, close } from '@dexcost/sdk';
 
 init();
 await track({ taskType: 'summarise', customerId: 'acme' }, async (task) => {

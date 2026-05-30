@@ -11,6 +11,14 @@
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
       "include-v-in-tag": true
+    },
+    "typescript": {
+      "release-type": "node",
+      "package-name": "@dexcost/sdk",
+      "component": "typescript",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "include-v-in-tag": true
     }
   }
 }

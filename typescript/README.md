@@ -5,19 +5,19 @@
 ## Install
 
 ```bash
-npm install dexcost
+npm install @dexcost/sdk
 ```
 
 With LLM provider SDKs (peer dependencies):
 
 ```bash
-npm install dexcost openai @anthropic-ai/sdk
+npm install @dexcost/sdk openai @anthropic-ai/sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { init, track, close } from 'dexcost';
+import { init, track, close } from '@dexcost/sdk';
 
 init({ apiKey: 'dx_live_...' });  // or set DEXCOST_API_KEY env var
 
@@ -97,7 +97,7 @@ init({ autoInstrument: [] });
 dexcost uses a singleton. Call `init()` once at app startup:
 
 ```typescript
-import { init, getTracker, track, flush, close } from 'dexcost';
+import { init, getTracker, track, flush, close } from '@dexcost/sdk';
 
 init({ apiKey: 'dx_live_...' });
 
@@ -137,7 +137,7 @@ await track({ taskType: '...' }, async (task) => {
 ### Customer Attribution
 
 ```typescript
-import { setContext, track } from 'dexcost';
+import { setContext, track } from '@dexcost/sdk';
 
 setContext({ customerId: 'acme-corp', projectId: 'proj-alpha' });
 
@@ -152,7 +152,7 @@ await track({ taskType: 'resolve_ticket' }, async (task) => {
 dexcost uses `AsyncLocalStorage` — task context propagates across `await`, `Promise.all`, `setTimeout`, and any async operation without manual threading.
 
 ```typescript
-import { getCurrentTask } from 'dexcost';
+import { getCurrentTask } from '@dexcost/sdk';
 
 // Inside any async function within a tracked task:
 const task = getCurrentTask();  // Returns the active Task or undefined
@@ -177,7 +177,7 @@ Set `DEXCOST_ENV=development` or pass `environment: "development"` to `init()`. 
 ## Express Middleware
 
 ```typescript
-import { createExpressMiddleware } from 'dexcost';
+import { createExpressMiddleware } from '@dexcost/sdk';
 
 app.use(createExpressMiddleware({
   taskType: 'api_request',
