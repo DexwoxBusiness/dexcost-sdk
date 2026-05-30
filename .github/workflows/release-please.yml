@@ -1,20 +1,24 @@
 name: release-please
 
-# Fully automated release management for the DexCost SDKs.
+# Fully automated, end-to-end release management for the DexCost SDKs.
 #
-# How it works (no hand-written changelogs or version bumps):
+# How it works (no hand-written changelogs, version bumps, or manual tags):
 #   1. Merge PRs to `main` using Conventional Commits:
-#        feat: ...        -> minor bump (0.x: patch, see bump-minor-pre-major)
-#        fix: ...         -> patch bump
-#        feat!: / BREAKING CHANGE: -> major bump (minor while < 1.0.0)
+#        feat: ...                  -> minor bump (0.x: patch, see bump-minor-pre-major)
+#        fix: ...                   -> patch bump
+#        feat!: / BREAKING CHANGE:  -> major bump (minor while < 1.0.0)
 #        chore:/docs:/refactor: ... -> no release
 #   2. release-please keeps an open "Release PR" that bumps the version in
-#      python/pyproject.toml AND regenerates python/CHANGELOG.md from those
-#      commits.
+#      python/pyproject.toml AND regenerates python/CHANGELOG.md from those commits.
 #   3. Merging that Release PR makes release-please create the git tag
-#      `python/vX.Y.Z` and a GitHub Release with the generated notes.
-#   4. That tag triggers release-python.yml, which builds + publishes to PyPI
-#      via Trusted Publishing (OIDC).
+#      (python/vX.Y.Z) and a GitHub Release with the generated notes.
+#   4. In the SAME run, if a Python release was created, the publish job below
+#      builds the sdist+wheel and publishes to PyPI via Trusted Publishing (OIDC).
+#
+# NOTE: the publish is intentionally folded INTO this workflow rather than living
+# in a separate tag-triggered workflow. A tag pushed by the built-in GITHUB_TOKEN
+# does NOT trigger other workflows (GitHub's recursive-run guard), so a standalone
+# `on: push: tags` publish workflow would never fire from a release-please tag.
 #
 # Config lives in release-please-config.json + .release-please-manifest.json.
 
@@ -30,9 +34,45 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      # True only when a release was actually cut (Release PR merged).
+      python_released: ${{ steps.release.outputs['python--release_created'] }}
+      python_tag: ${{ steps.release.outputs['python--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           # Uses release-please-config.json + .release-please-manifest.json.
           token: ${{ secrets.GITHUB_TOKEN }}
           target-branch: main
+
+  publish-python-pypi:
+    name: Publish Python to PyPI
+    needs: release-please
+    # Only run when the Python package was actually released this push.
+    if: ${{ needs.release-please.outputs.python_released == 'true' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # required for Trusted Publishing (OIDC)
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        working-directory: python
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/
+        # No username/password/token — OIDC Trusted Publishing handles auth.
