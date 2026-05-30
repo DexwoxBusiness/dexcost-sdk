@@ -2,6 +2,14 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.1.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.1.0...python/v0.1.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **python:** point Documentation URL to docs.dexcost.io ([b7ca0ab](https://github.com/DexwoxBusiness/dexcost-sdk/commit/b7ca0ab56e57d813f347a03e75e9b073310aa3d7))
+* **python:** point Documentation URL to docs.dexcost.io ([abc6d38](https://github.com/DexwoxBusiness/dexcost-sdk/commit/abc6d38ed07a51f2ebbaa88c7d8debe9135030d5))
+
 ## 0.1.0 (2026-05-30)
 
 

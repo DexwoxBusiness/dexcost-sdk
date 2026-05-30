@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from collections.abc import Generator
 from decimal import Decimal
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from dexcost.clients import TrackedAnthropic, TrackedOpenAI
 from dexcost.compute_wrap import (
