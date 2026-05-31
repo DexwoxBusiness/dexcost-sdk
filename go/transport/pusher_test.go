@@ -11,7 +11,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 func setupPusherTest(t *testing.T, handler http.HandlerFunc) (*SQLiteBuffer, *EventPusher, *httptest.Server) {

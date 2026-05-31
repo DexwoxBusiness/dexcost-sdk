@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/transport"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 )
 
 func newTestTracker(t *testing.T) *core.Tracker {

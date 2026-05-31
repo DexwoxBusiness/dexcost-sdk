@@ -7,7 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 func TestEchoMiddleware_Success(t *testing.T) {

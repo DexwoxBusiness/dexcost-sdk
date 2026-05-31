@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//	import "github.com/DexwoxBusiness/dexcost-go"
+//	import "github.com/DexwoxBusiness/dexcost-sdk/go"
 //
 //	func main() {
 //	    dexcost.Init(dexcost.Config{Storage: "local"})
@@ -30,14 +30,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/adapters"
-	"github.com/DexwoxBusiness/dexcost-go/clients"
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/integrations"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
-	"github.com/DexwoxBusiness/dexcost-go/schema"
-	"github.com/DexwoxBusiness/dexcost-go/security"
-	"github.com/DexwoxBusiness/dexcost-go/transport"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/integrations"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/schema"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/security"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 )
 
 var (

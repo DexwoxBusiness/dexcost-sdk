@@ -28,7 +28,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 //go:embed data/compute_prices.json

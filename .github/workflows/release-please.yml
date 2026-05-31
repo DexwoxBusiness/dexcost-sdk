@@ -44,6 +44,8 @@ jobs:
       typescript_tag: ${{ steps.release.outputs['typescript--tag_name'] }}
       rust_released: ${{ steps.release.outputs['rust--release_created'] }}
       rust_tag: ${{ steps.release.outputs['rust--tag_name'] }}
+      go_released: ${{ steps.release.outputs['go--release_created'] }}
+      go_tag: ${{ steps.release.outputs['go--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -159,3 +161,45 @@ jobs:
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-go-proxy:
+    name: Publish Go (index on pkg.go.dev)
+    needs: release-please
+    # Only run when the Go module was actually released this push.
+    if: ${{ needs.release-please.outputs.go_released == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Go has no upload registry. release-please already created the tag
+      # (go/vX.Y.Z) which IS the published version for the subdirectory module
+      # github.com/DexwoxBusiness/dexcost-sdk/go. This job verifies the tagged
+      # code builds, then warms the module proxy so pkg.go.dev indexes it.
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Verify the tagged module builds
+        working-directory: go
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Warm module proxy so pkg.go.dev indexes the release
+        # go_tag is "go/vX.Y.Z"; the module version is the part after "go/".
+        run: |
+          set -euo pipefail
+          VERSION="${GO_TAG#go/}"
+          echo "Requesting proxy for github.com/DexwoxBusiness/dexcost-sdk/go@${VERSION}"
+          # Go module proxy path: uppercase letters are escaped as !<lower>.
+          PROXY="https://proxy.golang.org/github.com/!dexwox!business/dexcost-sdk/go/@v/${VERSION}.info"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$PROXY"; then echo; echo "indexed on proxy"; exit 0; fi
+            echo "proxy not ready yet (attempt $i), waiting..."; sleep 20
+          done
+          echo "::warning::proxy did not return the version in time; it will index on first 'go get'."
+        env:
+          GO_TAG: ${{ needs.release-please.outputs.go_tag }}

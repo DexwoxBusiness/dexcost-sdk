@@ -14,7 +14,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 func TestEC2TaskEmitsAndPrices(t *testing.T) {

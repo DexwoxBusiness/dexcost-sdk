@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // ---------------------------------------------------------------------------

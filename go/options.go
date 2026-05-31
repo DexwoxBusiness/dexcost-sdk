@@ -1,7 +1,7 @@
 package dexcost
 
 import (
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // TaskStatus re-exports core.TaskStatus for the public API.

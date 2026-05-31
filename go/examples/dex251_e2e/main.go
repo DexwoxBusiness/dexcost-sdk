@@ -37,8 +37,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	dexcost "github.com/DexwoxBusiness/dexcost-go"
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 func main() {

@@ -24,8 +24,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
 )
 
 // finalizeGPU back-fills gpu_cost events at task finalize.

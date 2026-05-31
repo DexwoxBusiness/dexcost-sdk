@@ -1,9 +1,9 @@
-module github.com/DexwoxBusiness/dexcost-go/examples/dex251_e2e
+module github.com/DexwoxBusiness/dexcost-sdk/go/examples/dex251_e2e
 
 go 1.26
 
 require (
-	github.com/DexwoxBusiness/dexcost-go v0.0.0
+	github.com/DexwoxBusiness/dexcost-sdk/go v0.0.0
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
 	github.com/google/uuid v1.6.0
@@ -34,4 +34,4 @@ require (
 	modernc.org/token v1.1.0 // indirect
 )
 
-replace github.com/DexwoxBusiness/dexcost-go => ../../
+replace github.com/DexwoxBusiness/dexcost-sdk/go => ../../

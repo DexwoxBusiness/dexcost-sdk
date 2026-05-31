@@ -6,8 +6,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/security"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/security"
 )
 
 // DefaultBrowserRatePerMinute is the fallback cost per minute of browser usage

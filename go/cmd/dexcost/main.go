@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
-	"github.com/DexwoxBusiness/dexcost-go/scanner"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/scanner"
 
 	// Pure-Go SQLite driver (no CGO required).
 	_ "modernc.org/sqlite"

@@ -10,7 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // withGpuMockOneDevice sets up NVML to report 1 H100 with self-PID samples.

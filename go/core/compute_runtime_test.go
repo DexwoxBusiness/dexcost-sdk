@@ -14,7 +14,7 @@ package core
 import (
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // serverlessEnvVars are scrubbed before every subtest so a leaking env var

@@ -11,7 +11,7 @@ your customers, projects, and workflows — across **Python, TypeScript, Rust, a
 [![PyPI](https://img.shields.io/pypi/v/dexcost?label=pypi)](https://pypi.org/project/dexcost/)
 [![npm](https://img.shields.io/npm/v/%40dexcost%2Fsdk?label=npm)](https://www.npmjs.com/package/@dexcost/sdk)
 [![crates.io](https://img.shields.io/crates/v/dexcost?label=crates.io)](https://crates.io/crates/dexcost)
-[![Go Reference](https://pkg.go.dev/badge/github.com/DexwoxBusiness/dexcost-go.svg)](https://pkg.go.dev/github.com/DexwoxBusiness/dexcost-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/DexwoxBusiness/dexcost-sdk/go.svg)](https://pkg.go.dev/github.com/DexwoxBusiness/dexcost-sdk/go)
 
 </div>
 
@@ -68,7 +68,7 @@ with dexcost.task(task_type="summarise_doc") as t:
 | **Python** | [`dexcost`](https://pypi.org/project/dexcost/) (PyPI) | `pip install dexcost` | [python/README.md](python/README.md) |
 | **TypeScript / Node** | [`@dexcost/sdk`](https://www.npmjs.com/package/@dexcost/sdk) (npm) | `npm install @dexcost/sdk` | [typescript/README.md](typescript/README.md) |
 | **Rust** | [`dexcost`](https://crates.io/crates/dexcost) (crates.io) | `cargo add dexcost` | [rust/README.md](rust/README.md) |
-| **Go** | `github.com/DexwoxBusiness/dexcost-go` | `go get github.com/DexwoxBusiness/dexcost-go` | [go/README.md](go/README.md) |
+| **Go** | `github.com/DexwoxBusiness/dexcost-sdk/go` | `go get github.com/DexwoxBusiness/dexcost-sdk/go` | [go/README.md](go/README.md) |
 
 Each SDK's README has the full, language-idiomatic API, configuration, and examples.
 
@@ -141,10 +141,10 @@ async fn main() {
 <summary><b>Go</b></summary>
 
 ```bash
-go get github.com/DexwoxBusiness/dexcost-go
+go get github.com/DexwoxBusiness/dexcost-sdk/go
 ```
 ```go
-import dexcost "github.com/DexwoxBusiness/dexcost-go"
+import dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
 
 dexcost.Init(dexcost.Config{Storage: "local"})
 defer dexcost.Close()

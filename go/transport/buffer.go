@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 
 	// Pure-Go SQLite driver (no CGO required).
 	_ "modernc.org/sqlite"

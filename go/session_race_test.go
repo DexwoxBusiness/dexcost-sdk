@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // TestGetOrCreateSessionForIdentity_Race must be run under `go test -race`

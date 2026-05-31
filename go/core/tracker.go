@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
 )
 
 // ErrTaskAlreadyEnded is returned when End is called on an already-ended task.

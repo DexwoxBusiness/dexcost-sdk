@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/internal/safego"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/internal/safego"
 )
 
 // probeTimeout bounds Phase 2 wall time per probe.

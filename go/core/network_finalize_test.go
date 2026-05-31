@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 	"github.com/shopspring/decimal"
 )
 

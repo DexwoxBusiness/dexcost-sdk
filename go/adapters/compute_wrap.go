@@ -26,7 +26,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/google/uuid"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // EventBuffer is the minimal subset of core.Buffer that the compute wraps

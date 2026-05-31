@@ -27,7 +27,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // billingModelForGpuRuntime maps a GpuRuntimeKind → billing_model discriminator.

@@ -1,11 +1,11 @@
 # dexcost-go
 
-Go SDK for [dexcost](https://github.com/DexwoxBusiness/dexcost) -- Agent Unit Economics platform. Track LLM costs, non-LLM service fees, and retry waste attributed to customers, projects, and workflows.
+Go SDK for [dexcost](https://github.com/DexwoxBusiness/dexcost-sdk) -- Agent Unit Economics platform. Track LLM costs, non-LLM service fees, and retry waste attributed to customers, projects, and workflows.
 
 ## Installation
 
 ```bash
-go get github.com/DexwoxBusiness/dexcost-go
+go get github.com/DexwoxBusiness/dexcost-sdk/go
 ```
 
 Requires Go 1.21+.
@@ -21,7 +21,7 @@ import (
 
     "github.com/shopspring/decimal"
 
-    dexcost "github.com/DexwoxBusiness/dexcost-go"
+    dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
 )
 
 func main() {
@@ -73,7 +73,7 @@ Events are buffered locally in SQLite and pushed in batches every 5 seconds.
 ### net/http
 
 ```go
-import "github.com/DexwoxBusiness/dexcost-go/middleware"
+import "github.com/DexwoxBusiness/dexcost-sdk/go/middleware"
 
 tracker := dexcost.Tracker()
 mux := http.NewServeMux()
@@ -83,7 +83,7 @@ mux.Handle("/api/", middleware.HTTPMiddleware(tracker, "api_request")(yourHandle
 ### Gin
 
 ```go
-import "github.com/DexwoxBusiness/dexcost-go/middleware"
+import "github.com/DexwoxBusiness/dexcost-sdk/go/middleware"
 
 r := gin.Default()
 r.Use(middleware.GinMiddleware(dexcost.Tracker(), "api_request"))
@@ -92,7 +92,7 @@ r.Use(middleware.GinMiddleware(dexcost.Tracker(), "api_request"))
 ### Echo
 
 ```go
-import "github.com/DexwoxBusiness/dexcost-go/middleware"
+import "github.com/DexwoxBusiness/dexcost-sdk/go/middleware"
 
 e := echo.New()
 e.Use(middleware.EchoMiddleware(dexcost.Tracker(), "api_request"))

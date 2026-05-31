@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	dexcost "github.com/DexwoxBusiness/dexcost-go"
+	dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
 )
 
 // ingest chunks all runbooks, embeds them via Voyage, and loads the vector store.

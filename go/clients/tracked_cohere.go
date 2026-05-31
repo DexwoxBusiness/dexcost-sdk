@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
 )
 
 // TrackedCohere wraps a Cohere chat-completion client to automatically record

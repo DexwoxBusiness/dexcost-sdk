@@ -25,8 +25,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/google/uuid"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // GPUEventBuffer is the minimal subset of core.Buffer that GPU wraps need.

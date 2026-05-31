@@ -20,7 +20,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	dexcost "github.com/DexwoxBusiness/dexcost-go"
+	dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
 )
 
 // simulateLLMCall mimics a local LLM invocation.

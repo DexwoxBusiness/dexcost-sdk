@@ -7,9 +7,9 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
-	"github.com/DexwoxBusiness/dexcost-go/transport"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 )
 
 // newTestTracker creates a Tracker backed by a temporary SQLiteBuffer.

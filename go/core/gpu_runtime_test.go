@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // withNVMLMock sets up a mock NVML backend with N devices and restores

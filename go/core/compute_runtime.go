@@ -21,7 +21,7 @@ package core
 import (
 	"os"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // RuntimeKind is the active compute-runtime discriminator. String values

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
-	"github.com/DexwoxBusiness/dexcost-go/security"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/security"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )

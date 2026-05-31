@@ -14,7 +14,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 func TestGpuSecondsUsed_IsIntegratedSmTimeNotWallTime(t *testing.T) {
