@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )

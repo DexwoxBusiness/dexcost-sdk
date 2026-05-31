@@ -4,10 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/clients"
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
-	"github.com/DexwoxBusiness/dexcost-go/transport"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 	"github.com/google/uuid"
 )
 

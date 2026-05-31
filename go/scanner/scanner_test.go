@@ -293,7 +293,7 @@ func TestGenerateStubs_AutoOnlyOmitsDecimalImport(t *testing.T) {
 	if contains(stubs, "shopspring/decimal") {
 		t.Error("auto-only stubs should not import shopspring/decimal")
 	}
-	if !contains(stubs, "dexcost \"github.com/DexwoxBusiness/dexcost-go\"") {
+	if !contains(stubs, "dexcost \"github.com/DexwoxBusiness/dexcost-sdk/go\"") {
 		t.Error("stubs must import dexcost")
 	}
 	if !contains(stubs, "Auto-instrumented") {

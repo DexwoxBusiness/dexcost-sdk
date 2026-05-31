@@ -427,7 +427,7 @@ func GenerateStubs(result ScanResult) string {
 	sb.WriteString("// --- Step 1: Initialize dexcost ---\n")
 	sb.WriteString("import (\n")
 	sb.WriteString("    \"context\"\n\n")
-	sb.WriteString("    dexcost \"github.com/DexwoxBusiness/dexcost-go\"\n")
+	sb.WriteString("    dexcost \"github.com/DexwoxBusiness/dexcost-sdk/go\"\n")
 	if len(manual) > 0 {
 		sb.WriteString("    \"github.com/shopspring/decimal\"\n")
 	}

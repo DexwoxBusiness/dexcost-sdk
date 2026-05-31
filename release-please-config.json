@@ -27,6 +27,14 @@
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
       "include-v-in-tag": true
+    },
+    "go": {
+      "release-type": "go",
+      "package-name": "dexcost-sdk/go",
+      "component": "go",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "include-v-in-tag": true
     }
   }
 }

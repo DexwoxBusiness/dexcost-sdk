@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/internal/safego"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/internal/safego"
 	"github.com/shopspring/decimal"
 )
 

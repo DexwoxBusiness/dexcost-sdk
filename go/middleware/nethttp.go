@@ -5,7 +5,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 )
 
 // statusCapture wraps http.ResponseWriter to capture the status code.

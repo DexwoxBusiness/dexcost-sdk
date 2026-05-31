@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/adapters"
-	"github.com/DexwoxBusiness/dexcost-go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/shopspring/decimal"
 )
 

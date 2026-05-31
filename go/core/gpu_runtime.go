@@ -21,7 +21,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // GpuRuntimeKind is the active GPU runtime discriminator. String values

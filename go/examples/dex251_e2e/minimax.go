@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/clients"
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/pricing"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )

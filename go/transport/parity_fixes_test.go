@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DexwoxBusiness/dexcost-go/core"
-	"github.com/DexwoxBusiness/dexcost-go/security"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/security"
 )
 
 // TestSQLiteBuffer_TaskMetadataPersisted is the regression test for the 🔴 bug

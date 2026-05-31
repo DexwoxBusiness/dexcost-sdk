@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
 	"github.com/shopspring/decimal"
 )
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	dexcost "github.com/DexwoxBusiness/dexcost-go"
+	dexcost "github.com/DexwoxBusiness/dexcost-sdk/go"
 )
 
 // TestE2E_LocalControlLayer exercises the SDK against a local control-layer stack.

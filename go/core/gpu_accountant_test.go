@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DexwoxBusiness/dexcost-go/cloud"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
 
 // gpuMockWithDevices returns a ready-to-use mock NVML backend with N
