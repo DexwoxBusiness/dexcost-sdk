@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.2.0...typescript/v0.2.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **ts-sdk,security:** route telemetry pusher through the HTTPS allow-list (was reading DEXCOST_ENDPOINT raw, leaking the Bearer key over http) ([facc1b2](https://github.com/DexwoxBusiness/dexcost-sdk/commit/facc1b2544d3cda78ace57708cda1e88ae26bd2a))
+
 ## [0.2.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.1.0...typescript/v0.2.0) (2026-05-30)
 
 
