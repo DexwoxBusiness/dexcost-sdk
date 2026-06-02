@@ -10,9 +10,7 @@ import type { TrackerOptions } from "../core/tracker.js";
 import type { EventBuffer } from "./buffer.js";
 import { eventToDict, taskToDict } from "../core/models.js";
 import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
-
-/** Hardcoded default endpoint; overridable only via DEXCOST_ENDPOINT env var. */
-const DEFAULT_ENDPOINT = "https://api.dexcost.io";
+import { resolveEndpoint } from "../core/endpoint.js";
 
 /** Maximum backoff in milliseconds (5 minutes). */
 const MAX_BACKOFF_MS = 300_000;
@@ -319,7 +317,9 @@ export class EventPusher {
    * Returns `true` on 2xx, `false` otherwise.
    */
   private async postRaw(body: string): Promise<boolean> {
-    const endpoint = process.env.DEXCOST_ENDPOINT ?? DEFAULT_ENDPOINT;
+    // Route through the shared https:// allow-list (src/core/endpoint.ts) so a
+    // hostile DEXCOST_ENDPOINT=http://... can't exfiltrate the Bearer API key.
+    const endpoint = resolveEndpoint();
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
