@@ -45,39 +45,18 @@ import { RateRegistry } from "../pricing/rates.js";
 import { RetryHeuristicEngine } from "./heuristics.js";
 import { resolveConfig } from "./config.js";
 import type { ResolvedConfig } from "./config.js";
+import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
 import {
   ALL_SUPPORTED_INSTRUMENTS,
   instrumentProvider,
   uninstrumentProvider,
 } from "../instruments/index.js";
 
-export const DEFAULT_ENDPOINT = "https://api.dexcost.io";
-
-/**
- * Resolves the Control Layer endpoint from the DEXCOST_ENDPOINT env
- * var. Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted.
- * An attacker who controls the env (misconfigured CI runner, hostile
- * container) could otherwise silently exfiltrate cost telemetry to an
- * HTTP collector — we refuse and fall back to the production default
- * with a console.warn.
- *
- * Exported for testability; the CostTracker constructor is the only
- * production caller.
- */
-export function resolveEndpoint(): string {
-  const env = process.env.DEXCOST_ENDPOINT;
-  if (env === undefined || env === "") {
-    return DEFAULT_ENDPOINT;
-  }
-  if (!env.startsWith("https://")) {
-    console.warn(
-      `dexcost: DEXCOST_ENDPOINT=${JSON.stringify(env)} rejected — only ` +
-        `https:// URLs are accepted. Falling back to ${DEFAULT_ENDPOINT}.`,
-    );
-    return DEFAULT_ENDPOINT;
-  }
-  return env;
-}
+// Endpoint resolution lives in ./endpoint.js (single source of truth) so that
+// both the pricing refresher here and the telemetry pusher route through the
+// same https:// allow-list. Re-exported so external consumers (and existing
+// tests that import from ../src/core/tracker.js) keep resolving these names.
+export { DEFAULT_ENDPOINT, resolveEndpoint };
 
 /** Event types accepted by `recordCost` (non-LLM cost events). */
 const NON_LLM_EVENT_TYPES = new Set<EventType>(["external_cost", "compute_cost"]);
