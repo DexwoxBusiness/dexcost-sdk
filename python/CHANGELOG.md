@@ -2,6 +2,23 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.2.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.1.1...python/v0.2.0) (2026-06-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** DEXCOST_ENDPOINT is no longer read. Configure a non-default endpoint via the in-code option instead. Pre-launch; no external consumers.
+
+### Bug Fixes
+
+* **python-sdk:** assert __version__ format, not a hardcoded literal ([105e587](https://github.com/DexwoxBusiness/dexcost-sdk/commit/105e587c2f63c7119a2205bf9cf8312cd81b9229))
+* **python-sdk:** assert __version__ format, not a hardcoded literal ([b4e68c7](https://github.com/DexwoxBusiness/dexcost-sdk/commit/b4e68c738f51761bc7c6692e86d7f53273cb9708))
+
+
+### Code Refactoring
+
+* **sdk:** endpoint via explicit in-code config; drop DEXCOST_ENDPOINT env read ([0f4b397](https://github.com/DexwoxBusiness/dexcost-sdk/commit/0f4b39733320f3bd9848d83720a811a0a60467b0))
+
 ## [0.1.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.1.0...python/v0.1.1) (2026-05-30)
 
 
