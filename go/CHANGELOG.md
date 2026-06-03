@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.1.0...go/v0.2.0) (2026-06-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** DEXCOST_ENDPOINT is no longer read. Configure a non-default endpoint via the in-code option instead. Pre-launch; no external consumers.
+
+### Code Refactoring
+
+* **sdk:** endpoint via explicit in-code config; drop DEXCOST_ENDPOINT env read ([0f4b397](https://github.com/DexwoxBusiness/dexcost-sdk/commit/0f4b39733320f3bd9848d83720a811a0a60467b0))
+
 ## [0.1.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.1.0...go/v0.1.0) (2026-06-03)
 
 
