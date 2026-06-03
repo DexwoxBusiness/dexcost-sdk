@@ -6,7 +6,10 @@
 //!
 //! Prerequisites (set these env vars before running):
 //!   DEXCOST_API_KEY=dx_test_local   — test API key
-//!   DEXCOST_ENDPOINT=http://localhost:8080  — local Hono server address
+//!   DEXCOST_ENDPOINT=http://localhost:8080  — local Hono server address.
+//!       NOTE: this is read by the TEST only to pick the target server; the
+//!       SDK no longer reads it. The test passes it to the SDK explicitly via
+//!       `Config.endpoint`.
 //!   RUST_LOG=dexcost=debug           — optional: enable SDK debug logging
 //!
 //! The local stack must include:
@@ -31,7 +34,8 @@ use tokio::time::sleep;
 #[tokio::test]
 #[ignore] // Requires local control-layer stack to be running
 async fn test_e2e_event_visibility() {
-    // Verify required env vars
+    // The test still reads the env to pick its target server, but the SDK no
+    // longer reads it — the endpoint is passed explicitly via `Config.endpoint`.
     let api_key = env::var("DEXCOST_API_KEY").unwrap_or_else(|_| "dx_test_local".to_string());
     let endpoint =
         env::var("DEXCOST_ENDPOINT").unwrap_or_else(|_| "http://localhost:8080".to_string());
@@ -39,6 +43,7 @@ async fn test_e2e_event_visibility() {
     // Initialize SDK in cloud mode (pusher active)
     let config = Config {
         api_key: Some(api_key.clone()),
+        endpoint: Some(endpoint.clone()),
         ..Default::default()
     };
     init(config).expect("SDK init must succeed");
@@ -273,15 +278,14 @@ fn test_api_key_validation() {
 }
 
 /// Tests that SDK handles control-layer unavailability gracefully.
-/// When DEXCOST_ENDPOINT points to a non-running host, flush() should
+/// When `Config.endpoint` points to a non-running host, flush() should
 /// not panic but should return an error.
 #[tokio::test]
 async fn test_graceful_degradation_on_unavailable_server() {
-    // Point to a host that will refuse connection
-    env::set_var("DEXCOST_ENDPOINT", "http://localhost:9999");
-
+    // Point to a host that will refuse connection, via explicit config.
     let config = Config {
         api_key: Some("dx_test_graceful".to_string()),
+        endpoint: Some("http://localhost:9999".to_string()),
         ..Default::default()
     };
 
@@ -314,5 +318,4 @@ async fn test_graceful_degradation_on_unavailable_server() {
     // Both are acceptable — SDK must not panic
 
     close();
-    env::remove_var("DEXCOST_ENDPOINT");
 }

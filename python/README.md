@@ -109,6 +109,7 @@ dexcost.init(track_http=False)
 | `hash_customer_id` | `bool` | `False` | SHA-256 hash customer_id before storage |
 | `environment` | `str` | `None` | Set to `"development"` for dev console mode |
 | `storage` | `str` | `None` | Storage mode (`"local"` or auto-detect) |
+| `endpoint` | `str` | `https://api.dexcost.io` | Control Layer URL. Must start with `http://` or `https://`. The **only** way to override the endpoint — it is not read from the environment. |
 | `buffer_path` | `str` | `~/.dexcost/buffer.db` | Path to local SQLite buffer |
 
 ### Environment Variables
@@ -116,8 +117,13 @@ dexcost.init(track_http=False)
 | Variable | Description |
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
-| `DEXCOST_ENDPOINT` | Control Layer URL (default: `https://api.dexcost.io`) |
 | `DEXCOST_ENV` | Set to `development` for dev console output |
+
+> **Note:** `DEXCOST_ENDPOINT` is **no longer read**. The Control Layer URL is
+> configured only via `init(endpoint="https://...")` (default
+> `https://api.dexcost.io`). This prevents an attacker who controls the process
+> environment from redirecting telemetry and the Bearer API key to a hostile
+> collector.
 
 ## Task Tracking
 

@@ -1,11 +1,15 @@
 /**
- * A2 regression — Sprint 1 Theme A / plan §2.1.
+ * Endpoint resolution — explicit-config-only (security hardening).
  *
- * `DEXCOST_ENDPOINT` env var must be rejected if it doesn't start with
- * `https://`. An attacker who controls the env (misconfigured CI
- * runner, hostile container) could otherwise silently exfiltrate cost
- * telemetry to an HTTP collector — we refuse and fall back to the
- * production default with a warning.
+ * The endpoint is sourced ONLY from explicit in-code config (`resolveEndpoint`
+ * arg), never from the process environment. An attacker who controls the env
+ * (misconfigured CI runner, hostile container) can no longer set
+ * `DEXCOST_ENDPOINT=http://attacker/` to exfiltrate cost telemetry or the
+ * Bearer API key, because the SDK never reads that var.
+ *
+ * The explicit value is developer-supplied/trusted: it is honoured if it starts
+ * with http:// or https:// (http:// is allowed for local/e2e since it is not
+ * env-controllable); otherwise we fall back to the default with a warning.
  */
 
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -14,7 +18,7 @@ import { resolveEndpoint, DEFAULT_ENDPOINT } from "../src/core/tracker.js";
 
 const ORIGINAL_ENV = process.env.DEXCOST_ENDPOINT;
 
-describe("DEXCOST_ENDPOINT allow-list", () => {
+describe("endpoint resolution (explicit config only)", () => {
   afterEach(() => {
     if (ORIGINAL_ENV === undefined) {
       delete process.env.DEXCOST_ENDPOINT;
@@ -24,27 +28,37 @@ describe("DEXCOST_ENDPOINT allow-list", () => {
     vi.restoreAllMocks();
   });
 
-  test("accepts https:// values", () => {
-    process.env.DEXCOST_ENDPOINT = "https://custom.example.com";
-    expect(resolveEndpoint()).toBe("https://custom.example.com");
+  test("returns the default when no explicit value is given", () => {
+    expect(resolveEndpoint()).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint(DEFAULT_ENDPOINT)).toBe("https://api.dexcost.io");
   });
 
-  test("rejects http:// and falls back to default with warning", () => {
+  test("treats an empty explicit value as unset", () => {
+    expect(resolveEndpoint("")).toBe(DEFAULT_ENDPOINT);
+  });
+
+  test("honours an explicit https:// value", () => {
+    expect(resolveEndpoint("https://custom.example")).toBe("https://custom.example");
+  });
+
+  test("honours an explicit http:// value (trusted, not env-controllable)", () => {
+    // http:// is intentionally accepted for the explicit option (e.g.
+    // http://localhost for e2e) — safe because it cannot come from the env.
+    expect(resolveEndpoint("http://localhost:3000")).toBe("http://localhost:3000");
+  });
+
+  test("falls back to the default for a non-http(s) value with a warning", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    process.env.DEXCOST_ENDPOINT = "http://attacker.example/";
-    expect(resolveEndpoint()).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint("javascript:alert(1)")).toBe(DEFAULT_ENDPOINT);
     expect(warnSpy).toHaveBeenCalled();
-    expect(warnSpy.mock.calls[0]?.[0]).toContain("DEXCOST_ENDPOINT");
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("endpoint");
   });
 
-  test("rejects arbitrary non-https schemes", () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    process.env.DEXCOST_ENDPOINT = "javascript:alert(1)";
+  test("IGNORES the DEXCOST_ENDPOINT env var entirely", () => {
+    // Even a malicious env value must have zero effect on resolution.
+    process.env.DEXCOST_ENDPOINT = "http://evil.example";
     expect(resolveEndpoint()).toBe(DEFAULT_ENDPOINT);
-  });
-
-  test("returns default when env var unset", () => {
-    delete process.env.DEXCOST_ENDPOINT;
-    expect(resolveEndpoint()).toBe(DEFAULT_ENDPOINT);
+    // And it never gets honoured implicitly via the explicit path either.
+    expect(resolveEndpoint(undefined)).toBe(DEFAULT_ENDPOINT);
   });
 });

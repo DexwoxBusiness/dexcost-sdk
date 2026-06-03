@@ -68,6 +68,25 @@ defer dexcost.Close()
 
 Events are buffered locally in SQLite and pushed in batches every 5 seconds.
 
+### Endpoint
+
+The Control Layer endpoint defaults to `https://api.dexcost.io`. To override it
+(e.g. for local end-to-end testing), set `Config.Endpoint` explicitly:
+
+```go
+dexcost.Init(dexcost.Config{
+    APIKey:   "dx_test_your_key_here",
+    Endpoint: "http://localhost:3001", // explicit, trusted; http:// is allowed
+})
+```
+
+The endpoint comes ONLY from this in-code field. The `DEXCOST_ENDPOINT`
+environment variable is no longer read — this prevents a hostile process
+environment (e.g. a compromised CI runner or container) from redirecting
+telemetry and the Bearer API key to an attacker-controlled host. A non-empty
+`Endpoint` must start with `http://` or `https://`; otherwise it is ignored and
+the production default is used.
+
 ## HTTP Middleware
 
 ### net/http

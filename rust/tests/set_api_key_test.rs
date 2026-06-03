@@ -59,8 +59,7 @@ async fn set_api_key_recovers_after_simulated_auth_failure() {
         .mount(&good)
         .await;
 
-    // Point endpoint at the 401 server first.
-    std::env::set_var("DEXCOST_ENDPOINT", &bad.uri());
+    // Point endpoint at the 401 server first, via explicit config.
     let buffer = Arc::new(AsyncMutex::new(EventBuffer::new().expect("buf")));
     {
         let mut b = buffer.lock().await;
@@ -74,6 +73,7 @@ async fn set_api_key_recovers_after_simulated_auth_failure() {
     }
     let config = Config {
         api_key: Some("dx_test_old".into()),
+        endpoint: Some(bad.uri()),
         ..Config::default()
     };
     let pusher = EventPusher::new(buffer, config);
@@ -86,6 +86,5 @@ async fn set_api_key_recovers_after_simulated_auth_failure() {
     pusher.set_api_key("dx_live_new".to_string());
     assert!(!pusher.is_auth_failed(), "set_api_key did not clear flag");
 
-    std::env::remove_var("DEXCOST_ENDPOINT");
     drop(good); // keep the good mock alive across the block
 }

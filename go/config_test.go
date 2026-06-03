@@ -82,12 +82,22 @@ func TestConfig_ResolvedEndpoint_Default(t *testing.T) {
 	}
 }
 
-func TestConfig_ResolvedEndpoint_EnvOverride(t *testing.T) {
-	os.Setenv("DEXCOST_ENDPOINT", "https://custom.api.dev")
-	defer os.Unsetenv("DEXCOST_ENDPOINT")
-	cfg := Config{}
+func TestConfig_ResolvedEndpoint_ExplicitOption(t *testing.T) {
+	cfg := Config{Endpoint: "https://custom.api.dev"}
 	if cfg.resolvedEndpoint() != "https://custom.api.dev" {
 		t.Errorf("unexpected endpoint: %s", cfg.resolvedEndpoint())
+	}
+}
+
+// TestConfig_ResolvedEndpoint_EnvIgnored proves the DEXCOST_ENDPOINT env var
+// is no longer read: even when set, an empty Config.Endpoint resolves to the
+// hardcoded default. This is the core threat-closing assertion.
+func TestConfig_ResolvedEndpoint_EnvIgnored(t *testing.T) {
+	os.Setenv("DEXCOST_ENDPOINT", "http://evil.example")
+	defer os.Unsetenv("DEXCOST_ENDPOINT")
+	cfg := Config{}
+	if cfg.resolvedEndpoint() != defaultEndpoint {
+		t.Errorf("env var must be ignored; expected %s, got %s", defaultEndpoint, cfg.resolvedEndpoint())
 	}
 }
 

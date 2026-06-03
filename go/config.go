@@ -30,6 +30,16 @@ type Config struct {
 	Environment string `json:"environment,omitempty"`
 	// TrackHTTP enables automatic HTTP cost tracking via the service catalog.
 	TrackHTTP bool `json:"track_http,omitempty"`
+
+	// Endpoint overrides the Control Layer base URL the SDK pushes telemetry
+	// to. Leave empty to use the hardcoded production default
+	// (defaultEndpoint). This is the ONLY way to redirect the endpoint — the
+	// SDK no longer reads the DEXCOST_ENDPOINT env var, so a hostile process
+	// environment cannot exfiltrate telemetry + the Bearer API key. Because
+	// the value is developer-supplied and trusted, http:// is accepted here
+	// (e.g. http://localhost:3001 for local e2e). Values without an
+	// http://|https:// scheme are rejected and fall back to the default.
+	Endpoint string `json:"endpoint,omitempty"`
 	// ServiceCatalogURL fetches an external service catalog on init.
 	ServiceCatalogURL string `json:"service_catalog_url,omitempty"`
 
@@ -94,24 +104,31 @@ func ValidateAPIKey(key string) (string, error) {
 }
 
 // resolvedEndpoint returns the Control Layer endpoint URL.
-// Hardcoded default, overridable only via DEXCOST_ENDPOINT env var.
 //
-// Sprint 1 Theme A / §2.1 (A2): only https:// URLs are accepted. An
-// attacker who controls the env (misconfigured CI runner, hostile
-// container) could otherwise silently exfiltrate cost telemetry to
-// an HTTP collector — we refuse and fall back to the production
-// default with a warning.
+// The endpoint comes ONLY from explicit in-code configuration via
+// Config.Endpoint, defaulting to the hardcoded production URL
+// (defaultEndpoint). The SDK deliberately does NOT read the
+// DEXCOST_ENDPOINT env var (or any env var) for the endpoint: an attacker
+// controlling the process environment (misconfigured CI runner, hostile
+// container) could otherwise point it at an HTTP collector and silently
+// exfiltrate cost telemetry together with the Bearer API key. Removing the
+// env read closes that vector entirely.
+//
+// Validation is minimal because Config.Endpoint is developer-supplied and
+// trusted: a non-empty value must carry an http:// or https:// scheme. The
+// explicit field intentionally accepts http:// (e.g. http://localhost for
+// e2e) — safe because it is not env-controllable. Anything else is rejected
+// with a warning and falls back to the production default.
 func (c *Config) resolvedEndpoint() string {
-	env := os.Getenv("DEXCOST_ENDPOINT")
-	if env == "" {
+	if c.Endpoint == "" {
 		return defaultEndpoint
 	}
-	if !strings.HasPrefix(env, "https://") {
-		log.Printf("dexcost: DEXCOST_ENDPOINT=%q rejected — only https:// "+
-			"URLs are accepted. Falling back to %s.", env, defaultEndpoint)
+	if !strings.HasPrefix(c.Endpoint, "http://") && !strings.HasPrefix(c.Endpoint, "https://") {
+		log.Printf("dexcost: Config.Endpoint=%q rejected — must start with "+
+			"http:// or https://. Falling back to %s.", c.Endpoint, defaultEndpoint)
 		return defaultEndpoint
 	}
-	return env
+	return c.Endpoint
 }
 
 func (c *Config) applyDefaults() {

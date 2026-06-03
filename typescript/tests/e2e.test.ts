@@ -13,7 +13,10 @@
  * Environment variables:
  *   DEXCOST_E2E_LOCAL    Set to "1" to run these tests (skipped by default)
  *   DEXCOST_API_KEY      API key for auth (default: dx_test_local)
- *   DEXCOST_ENDPOINT     Local server URL (default: http://localhost:3000)
+ *   DEXCOST_ENDPOINT     Local server URL (default: http://localhost:3000).
+ *                        Read HERE in the test to pick the target; the SDK no
+ *                        longer reads it — it is passed via the `endpoint`
+ *                        option to the tracker.
  *
  * Run with:
  *   npm --prefix sdks/typescript test -- tests/e2e.test.ts
@@ -30,6 +33,8 @@ const SKIP_REASON = "Set DEXCOST_E2E_LOCAL=1 to run E2E tests against local stac
 
 const shouldRun = () => process.env.DEXCOST_E2E_LOCAL === "1";
 
+// The test reads the env to pick the local target, but the SDK no longer reads
+// it — we pass it explicitly via the `endpoint` option on every tracker below.
 const ENDPOINT = process.env.DEXCOST_ENDPOINT ?? "http://localhost:3000";
 const API_KEY = process.env.DEXCOST_API_KEY ?? "dx_test_local";
 
@@ -115,6 +120,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const dbPath = join(tmpDir, "e2e.db");
       const tracker = new CostTracker({
         apiKey: API_KEY,
+        endpoint: ENDPOINT,
         dbPath,
         // Short flush interval so events are pushed quickly
         flushIntervalMs: 1_000,
@@ -169,6 +175,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const dbPath = join(tmpDir, "e2e-events.db");
       const tracker = new CostTracker({
         apiKey: API_KEY,
+        endpoint: ENDPOINT,
         dbPath,
       });
 
@@ -220,7 +227,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const { eventToDict } = await import("../src/core/models.js");
 
       const dbPath = join(tmpDir, "schema-v1.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, dbPath });
+      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
 
       await tracker.track(
         { taskType: "schema_compliance", customerId },
@@ -272,7 +279,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
     async () => {
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "retry-semantics.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, dbPath });
+      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
 
       await tracker.track({ taskType: "retry_test" }, async (task) => {
         // Explicit retry marker
@@ -312,12 +319,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "graceful.db");
 
-      // Point to a host that will refuse connection
+      // Dev mode disables cloud push, so no endpoint is contacted here.
       const tracker = new CostTracker({
         apiKey: "dx_test_graceful",
         dbPath,
-        // @ts-expect-error — allow overriding endpoint via env for this test
-        environment: "development", // dev mode disables cloud push
+        environment: "development",
       });
 
       await tracker.track({ taskType: "offline_test" }, async (task) => {
@@ -343,7 +349,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
 
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "experiment.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, dbPath });
+      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
 
       await tracker.track(
         {

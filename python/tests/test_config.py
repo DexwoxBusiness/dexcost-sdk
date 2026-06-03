@@ -7,7 +7,12 @@ from unittest import mock
 
 import pytest
 
-from dexcost.config import DexcostConfig, InvalidAPIKeyError, validate_api_key
+from dexcost.config import (
+    _DEFAULT_ENDPOINT,
+    DexcostConfig,
+    InvalidAPIKeyError,
+    validate_api_key,
+)
 
 
 class TestValidateAPIKey:
@@ -72,10 +77,16 @@ class TestDexcostConfig:
         cfg = DexcostConfig(api_key="dx_live_abc")
         assert cfg.endpoint == "https://api.dexcost.io"
 
-    def test_endpoint_env_override(self) -> None:
-        with mock.patch.dict(os.environ, {"DEXCOST_ENDPOINT": "https://custom.api.dev"}):
+    def test_endpoint_explicit_override_honored(self) -> None:
+        cfg = DexcostConfig(api_key="dx_live_abc", endpoint_override="https://custom.api.dev")
+        assert cfg.endpoint == "https://custom.api.dev"
+
+    def test_endpoint_env_var_is_ignored(self) -> None:
+        # The endpoint must come ONLY from explicit in-code config. An
+        # attacker-controlled DEXCOST_ENDPOINT must never be honored.
+        with mock.patch.dict(os.environ, {"DEXCOST_ENDPOINT": "http://evil.example"}):
             cfg = DexcostConfig(api_key="dx_live_abc")
-            assert cfg.endpoint == "https://custom.api.dev"
+            assert cfg.endpoint == _DEFAULT_ENDPOINT
 
     def test_batch_size_default(self) -> None:
         cfg = DexcostConfig()

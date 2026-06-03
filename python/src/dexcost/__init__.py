@@ -172,6 +172,7 @@ def set_context(
 def init(
     api_key: str | None = None,
     storage: str | None = None,
+    endpoint: str | None = None,
     buffer_path: str | None = None,
     batch_size: int = 100,
     flush_interval: float = 5.0,
@@ -198,6 +199,12 @@ def init(
     to the Control Layer (US-016).
 
     Args:
+        endpoint: Explicit Control Layer URL (e.g. ``http://localhost:3000``
+            for e2e). Defaults to the production endpoint
+            ``https://api.dexcost.io``. Must start with ``http://`` or
+            ``https://``; otherwise the production default is used. The
+            endpoint is NOT read from the environment — this is the only
+            way to override it.
         enable_retry_heuristics: Opt in to the advanced
             :class:`~dexcost.heuristics.RetryHeuristicEngine` (US-036).
             Off by default.
@@ -232,6 +239,7 @@ def init(
     _global_config = DexcostConfig(
         api_key=api_key,
         storage=storage,
+        endpoint_override=endpoint,
         buffer_path=buffer_path,
         batch_size=batch_size,
         flush_interval_seconds=flush_interval,

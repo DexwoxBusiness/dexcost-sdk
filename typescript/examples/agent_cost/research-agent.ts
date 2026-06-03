@@ -328,11 +328,11 @@ async function run(): Promise<void> {
     throw new Error("DEXCOST_API_KEY not set");
   }
 
-  // Set DEXCOST_ENDPOINT so the SDK pusher targets the local control layer
-  process.env.DEXCOST_ENDPOINT = DEXCOST_API_URL;
-
+  // Pass the endpoint explicitly so the SDK pusher targets the local control
+  // layer. The SDK no longer reads DEXCOST_ENDPOINT from the env.
   init({
     apiKey: DEXCOST_API_KEY,
+    endpoint: DEXCOST_API_URL,
     autoInstrument: [],
     flushIntervalMs: 5000,
     batchSize: 50,
