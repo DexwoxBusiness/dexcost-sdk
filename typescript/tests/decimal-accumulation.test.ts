@@ -58,8 +58,10 @@ describe("decimal accumulation (B3)", () => {
 
     // The native-float baseline: 10 000 × 1.23e-8 += per drifts to
     // 0.00012299999999999998 (~2e-16 error). Decimal accumulation
-    // yields exactly 0.000123.
-    expect(task.totalCostUsd).toBe(want);
+    // yields exactly 0.000123 — the task field is now an exact Decimal, so
+    // assert BOTH the exact string and the numeric round-trip.
+    expect(task.totalCostUsd.toString()).toBe("0.000123");
+    expect(task.totalCostUsd.toNumber()).toBe(want);
   });
 
   test("native float baseline drifts (proves the test isn't trivially green)", () => {

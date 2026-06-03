@@ -39,7 +39,7 @@ export function logEvent(event: CostEvent, taskType: string = ""): void {
     );
   } else if (event.eventType === "external_cost" || event.eventType === "compute_cost") {
     const service = event.serviceName ?? "unknown";
-    if (event.costConfidence === "unknown" || cost === 0) {
+    if (event.costConfidence === "unknown" || cost.isZero()) {
       print(
         `\x1b[33m⚠\x1b[0m ${event.eventType}  ${service}  ` +
         `$0.00 \x1b[33m(no rate configured)\x1b[0m${taskTag}`

@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "exact",
-  "cost_usd": "0.0070",
+  "cost_usd": "0.007",
   "details": {},
   "event_id": "22222222-000a-0000-0000-000000000001",
   "event_type": "retry_marker",

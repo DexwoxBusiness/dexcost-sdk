@@ -45,8 +45,8 @@ describe("trackBrowser", () => {
     expect(events[0].taskId).toBe(task.taskId);
     expect(events[0].details["page_url"]).toBe("https://example.com/page");
     // Cost is non-negative and the task aggregate was updated.
-    expect(events[0].costUsd).toBeGreaterThanOrEqual(0);
-    expect(task.computeCostUsd).toBe(events[0].costUsd);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThanOrEqual(0);
+    expect(task.computeCostUsd.toString()).toBe(events[0].costUsd.toString());
   });
 
   it("is a silent pass-through when there is no active task", async () => {

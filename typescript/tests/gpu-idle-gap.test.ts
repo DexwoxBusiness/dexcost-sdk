@@ -135,7 +135,7 @@ describe("Decision #6 — idle gap invisibility", () => {
       (tt.task as any)._gpu = accountant;
       tt.task.startedAt = new Date(Date.now() - durationS * 1000);
       tt.end("success");
-      return tt.task.gpuCostUsd;
+      return tt.task.gpuCostUsd.toNumber();
     }
 
     const costA = runTask(60, 1.0);

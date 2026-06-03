@@ -94,7 +94,7 @@ describe("wrapLambdaHandler", () => {
     expect(details.region).toBe("us-east-1");
     expect(["x86_64", "arm64"]).toContain(details.architecture);
     expect(details.cost_pending).toBe(true);
-    expect(compute[0].costUsd).toBe(0); // back-fills at task finalize
+    expect(compute[0].costUsd.toNumber()).toBe(0); // back-fills at task finalize
   });
 
   test("no active task → pass-through (capture spec §6 case 2)", async () => {

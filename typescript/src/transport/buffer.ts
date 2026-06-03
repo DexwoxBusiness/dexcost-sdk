@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { Decimal } from "../core/models.js";
 import type { CostEvent, Task } from "../core/models.js";
 
 // ---------------------------------------------------------------------------
@@ -80,6 +81,20 @@ interface CountRow {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Re-hydrate a cost column (TEXT, canonical decimal string) into an exact
+ * `Decimal`. Falls back to `Decimal(0)` for null / malformed values so a
+ * corrupt row never crashes the buffer read path.
+ */
+function _rowDecimal(value: string | number | null | undefined): Decimal {
+  if (value == null) return new Decimal(0);
+  try {
+    return new Decimal(typeof value === "number" ? String(value) : value);
+  } catch {
+    return new Decimal(0);
+  }
+}
+
 function rowToEvent(row: EventRow): CostEvent {
   return {
     eventId: row.event_id,
@@ -91,7 +106,7 @@ function rowToEvent(row: EventRow): CostEvent {
     outputTokens: row.output_tokens ?? undefined,
     cachedTokens: row.cached_tokens ?? undefined,
     serviceName: row.service_name ?? undefined,
-    costUsd: Number(row.cost_usd),
+    costUsd: _rowDecimal(row.cost_usd),
     latencyMs: row.latency_ms ?? undefined,
     costConfidence: row.cost_confidence as CostEvent["costConfidence"],
     pricingSource: row.pricing_source as CostEvent["pricingSource"] ?? undefined,
@@ -129,15 +144,15 @@ function rowToTask(row: TaskRow): Task {
       }
       return m;
     })(),
-    llmCostUsd: Number(row.llm_cost_usd ?? "0"),
-    externalCostUsd: Number(row.external_cost_usd ?? "0"),
-    computeCostUsd: Number(row.compute_cost_usd ?? "0"),
-    totalCostUsd: Number(row.total_cost_usd ?? "0"),
+    llmCostUsd: _rowDecimal(row.llm_cost_usd),
+    externalCostUsd: _rowDecimal(row.external_cost_usd),
+    computeCostUsd: _rowDecimal(row.compute_cost_usd),
+    totalCostUsd: _rowDecimal(row.total_cost_usd),
     totalInputTokens: row.total_input_tokens ?? 0,
     totalOutputTokens: row.total_output_tokens ?? 0,
     totalCachedTokens: row.total_cached_tokens ?? 0,
     retryCount: row.retry_count ?? 0,
-    retryCostUsd: Number(row.retry_cost_usd ?? "0"),
+    retryCostUsd: _rowDecimal(row.retry_cost_usd),
     failureCount: row.failure_count ?? 0,
     customerId: row.customer_id ?? undefined,
     projectId: row.project_id ?? undefined,
@@ -152,12 +167,12 @@ function rowToTask(row: TaskRow): Task {
     networkBytesOut: 0,
     networkCallCount: 0,
     networkByHost: { hosts: [] },
-    networkCostUsd: 0,
+    networkCostUsd: new Decimal(0),
     // Same legacy-row default as the other network/GPU fields: rows
     // pre-dating the GPU columns read back as fresh zero. Matches
     // Python's from_dict default and aligns with the post-Sprint-2
     // 5-subsystem `Task` type.
-    gpuCostUsd: 0,
+    gpuCostUsd: new Decimal(0),
     schemaVersion: "1",
   };
 }

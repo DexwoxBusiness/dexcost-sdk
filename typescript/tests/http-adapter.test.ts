@@ -87,7 +87,7 @@ describe("trackHttp / fetch interception", () => {
     const event = events[0];
     expect(event.eventType).toBe("external_cost");
     expect(event.serviceName).toBe("api.example.com");
-    expect(event.costUsd).toBe(0.005);
+    expect(event.costUsd.toNumber()).toBe(0.005);
     expect(event.costConfidence).toBe("exact");
     expect(event.pricingSource).toBe("rate_registry");
     expect(event.taskId).toBe(task.taskId);
@@ -132,7 +132,7 @@ describe("trackHttp / fetch interception", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("unknown");
     expect(events[0].serviceName).toBe("api.example.com");
   });

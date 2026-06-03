@@ -15,6 +15,7 @@ import {
   eventToDict,
   taskFromDict,
   taskToDict,
+  Decimal,
   type EventType,
 } from "../src/core/models.js";
 import { validate } from "../src/schema/validate.js";
@@ -59,23 +60,23 @@ describe("EventType GPU values", () => {
 describe("Task.gpuCostUsd", () => {
   it("defaults to 0", () => {
     const t = createTask({ taskId: VALID_UUID });
-    expect(t.gpuCostUsd).toBe(0);
+    expect(t.gpuCostUsd.toString()).toBe("0");
   });
 
   it("round-trips through taskToDict / taskFromDict", () => {
     const t = createTask({ taskId: VALID_UUID });
-    t.gpuCostUsd = 3.99;
+    t.gpuCostUsd = new Decimal("3.99");
     const d = taskToDict(t);
     expect(d["gpu_cost_usd"]).toBe("3.99");
     const t2 = taskFromDict(d);
-    expect(t2.gpuCostUsd).toBe(3.99);
+    expect(t2.gpuCostUsd.toString()).toBe("3.99");
   });
 
   it("taskFromDict defaults gpuCostUsd to 0 for old payloads (no gpu_cost_usd key)", () => {
     const d = taskToDict(createTask({ taskId: VALID_UUID }));
     delete (d as Record<string, unknown>)["gpu_cost_usd"];
     const t = taskFromDict(d);
-    expect(t.gpuCostUsd).toBe(0);
+    expect(t.gpuCostUsd.toString()).toBe("0");
   });
 
   it("task payload with gpu_cost_usd validates against the task schema", () => {
@@ -83,7 +84,7 @@ describe("Task.gpuCostUsd", () => {
       taskId: VALID_UUID,
       taskType: "test",
     });
-    t.gpuCostUsd = 1.23;
+    t.gpuCostUsd = new Decimal("1.23");
     const errors = validate(taskToDict(t));
     expect(errors).toEqual([]);
   });

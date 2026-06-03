@@ -117,8 +117,8 @@ export class DexcostCallbackHandler {
     this._buffer.addEvent(event);
 
     // Update task aggregates
-    task.llmCostUsd += costResult.costUsd;
-    task.totalCostUsd += costResult.costUsd;
+    task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+    task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
     task.totalInputTokens += promptTokens;
     task.totalOutputTokens += completionTokens;
 

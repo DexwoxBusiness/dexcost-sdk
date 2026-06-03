@@ -21,7 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "../core/context.js";
-import { createCostEvent, type CostEvent } from "../core/models.js";
+import { createCostEvent, Decimal, type CostEvent } from "../core/models.js";
 import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
 
@@ -111,8 +111,12 @@ function _recordBrowserEvent(
     return;
   }
 
-  const elapsedMinutes = elapsedSeconds / 60;
-  const costUsd = elapsedMinutes * ratePerMinute;
+  // Exact decimal: wall-clock minutes × rate. Inputs are routed through
+  // String() so a float64 elapsedSeconds / ratePerMinute never poisons it
+  // (matches Python's Decimal(str(x))).
+  const costUsd = new Decimal(String(elapsedSeconds))
+    .dividedBy(60)
+    .times(new Decimal(String(ratePerMinute)));
 
   let pageUrl = "";
   try {
@@ -139,8 +143,8 @@ function _recordBrowserEvent(
     },
   });
 
-  task.computeCostUsd += costUsd;
-  task.totalCostUsd += costUsd;
+  task.computeCostUsd = task.computeCostUsd.plus(costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(costUsd);
   _recordedEvents.push(event);
   if (_recordedEvents.length > _RECORDED_EVENTS_CAP) {
     _recordedEvents.splice(0, _RECORDED_EVENTS_CAP / 10);

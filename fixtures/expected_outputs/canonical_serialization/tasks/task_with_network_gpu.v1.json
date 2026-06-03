@@ -2,12 +2,16 @@
   "compute_cost_usd": "0.02",
   "customer_id": "cust_acme_corp",
   "ended_at": "2026-05-26T12:40:00.000000Z",
+  "experiment_id": null,
   "external_cost_usd": "0.05",
   "failure_count": 0,
-  "gpu_cost_usd": "1.80",
-  "llm_cost_usd": "0.10",
+  "gpu_cost_usd": "1.8",
+  "llm_cost_usd": "0.1",
   "metadata": {
     "agent": "research_agent_v2"
+  },
+  "network_by_host": {
+    "hosts": []
   },
   "network_bytes_in": 10485760,
   "network_bytes_out": 1024,
@@ -23,7 +27,8 @@
   "task_id": "11111111-0005-0000-0000-000000000001",
   "task_type": "rag_query",
   "total_cached_tokens": 512,
-  "total_cost_usd": "2.00",
+  "total_cost_usd": "2",
   "total_input_tokens": 2150,
-  "total_output_tokens": 520
+  "total_output_tokens": 520,
+  "variant": null
 }

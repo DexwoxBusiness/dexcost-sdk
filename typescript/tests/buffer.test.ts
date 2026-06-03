@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventBuffer } from "../src/transport/buffer.js";
-import { createCostEvent, createTask } from "../src/core/models.js";
+import { createCostEvent, createTask, Decimal } from "../src/core/models.js";
 import { randomUUID } from "node:crypto";
 
 let tmpDir: string;
@@ -122,12 +122,12 @@ describe("EventBuffer (SQLite)", () => {
     expect(retrieved!.customerId).toBe("customer-1");
 
     // Update the task
-    const updated = { ...task, taskType: "updated-task", totalCostUsd: 1.23 };
+    const updated = { ...task, taskType: "updated-task", totalCostUsd: new Decimal("1.23") };
     buffer.upsertTask(updated);
 
     const retrieved2 = buffer.getTask(taskId);
     expect(retrieved2!.taskType).toBe("updated-task");
-    expect(retrieved2!.totalCostUsd).toBeCloseTo(1.23);
+    expect(retrieved2!.totalCostUsd.toString()).toBe("1.23");
 
     buffer.close();
   });
@@ -177,7 +177,7 @@ describe("EventBuffer (SQLite)", () => {
     const pending = buffer2.getPendingEvents();
     expect(pending).toHaveLength(1);
     expect(pending[0].eventId).toBe(eventId);
-    expect(pending[0].costUsd).toBeCloseTo(0.99);
+    expect(pending[0].costUsd.toString()).toBe("0.99");
 
     buffer2.close();
   });

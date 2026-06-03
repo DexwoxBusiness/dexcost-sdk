@@ -81,11 +81,11 @@ describe("compute auto-emission (long-running)", () => {
     const computeEvents = events.filter((e) => e.eventType === "compute_cost");
     expect(computeEvents.length).toBe(1);
     const ev = computeEvents[0];
-    expect(ev.costUsd).toBeGreaterThan(0);
+    expect(ev.costUsd.toNumber()).toBeGreaterThan(0);
     expect(ev.pricingSource).toMatch(/^compute_catalog:aws:ec2:/);
     expect(ev.costConfidence).toBe("computed");
     expect((ev.details as Record<string, unknown>).cost_pending).toBeUndefined();
-    expect(trackedTask.task.computeCostUsd).toBeCloseTo(ev.costUsd, 10);
+    expect(trackedTask.task.computeCostUsd.toNumber()).toBeCloseTo(ev.costUsd.toNumber(), 10);
   });
 
   test("unknown runtime (no _compute) emits no event", async () => {
@@ -98,6 +98,6 @@ describe("compute auto-emission (long-running)", () => {
     const events = tracker.buffer.queryEvents(trackedTask.task.taskId);
     const compute = events.filter((e) => e.eventType === "compute_cost");
     expect(compute.length).toBe(0);
-    expect(trackedTask.task.computeCostUsd).toBe(0);
+    expect(trackedTask.task.computeCostUsd.toNumber()).toBe(0);
   });
 });

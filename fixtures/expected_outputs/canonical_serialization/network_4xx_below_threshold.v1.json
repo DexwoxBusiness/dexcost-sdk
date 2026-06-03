@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "computed",
-  "cost_usd": "0.000000",
+  "cost_usd": "0",
   "details": {
     "cost_pending": false,
     "is_internal_traffic": false,

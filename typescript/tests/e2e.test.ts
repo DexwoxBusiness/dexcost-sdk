@@ -206,12 +206,12 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(llmEvent.model).toBe("claude-3-5-sonnet");
       expect(llmEvent.inputTokens).toBe(1000);
       expect(llmEvent.outputTokens).toBe(500);
-      expect(llmEvent.costUsd).toBeCloseTo(0.015, 4);
+      expect(llmEvent.costUsd.toNumber()).toBeCloseTo(0.015, 4);
 
       // Verify external_cost event
       const extEvent = events.find((e) => e.eventType === "external_cost")!;
       expect(extEvent.serviceName).toBe("search_api");
-      expect(extEvent.costUsd).toBeCloseTo(0.003, 4);
+      expect(extEvent.costUsd.toNumber()).toBeCloseTo(0.003, 4);
 
       tracker.close();
     },

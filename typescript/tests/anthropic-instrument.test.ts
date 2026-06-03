@@ -87,7 +87,7 @@ describe("Anthropic instrumentation", () => {
     expect(events[0].inputTokens).toBe(500);
     expect(events[0].outputTokens).toBe(100);
     expect(events[0].cachedTokens).toBe(50);
-    expect(events[0].costUsd).toBeGreaterThan(0);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThan(0);
     expect(events[0].costConfidence).toBe("computed");
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
@@ -187,7 +187,7 @@ describe("Anthropic instrumentation", () => {
 
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("estimated");
     expect(events[0].inputTokens).toBe(0);
     expect(events[0].outputTokens).toBe(0);
@@ -222,8 +222,8 @@ describe("Anthropic instrumentation", () => {
       });
     });
 
-    expect(task.llmCostUsd).toBeGreaterThan(0);
-    expect(task.totalCostUsd).toBeGreaterThan(0);
+    expect(task.llmCostUsd.toNumber()).toBeGreaterThan(0);
+    expect(task.totalCostUsd.toNumber()).toBeGreaterThan(0);
     expect(task.totalInputTokens).toBe(500);
     expect(task.totalOutputTokens).toBe(100);
     expect(task.totalCachedTokens).toBe(50);

@@ -48,6 +48,8 @@ from dexcost.cloud_detect import CloudEnv
 from dexcost.compute_pricing import ComputePricingEngine
 from dexcost.egress_pricing import EgressPricingEngine
 from dexcost.gpu_pricing import GpuPricingEngine
+from dexcost.models.event import Event
+from dexcost.models.task import Task
 from dexcost.pricing import PricingEngine
 
 # Resolve the top-level fixtures/ dir relative to this test file.
@@ -128,7 +130,9 @@ def test_event_canonical_serialization(fixture_path: Path) -> None:
         pytest.skip("URL edge cases use _test_input shape, not event shape")
 
     raw = _load_json(fixture_path)
-    canonical = _strip_underscored(raw)
+    # Round-trip through the SDK model so the canonical reflects the actual
+    # serializer (from_dict -> to_dict), not just the hand-authored input.
+    canonical = Event.from_dict(_strip_underscored(raw)).to_dict()
     expected_path = (
         EXPECTED
         / "canonical_serialization"
@@ -143,7 +147,9 @@ def test_event_canonical_serialization(fixture_path: Path) -> None:
 )
 def test_task_canonical_serialization(fixture_path: Path) -> None:
     raw = _load_json(fixture_path)
-    canonical = _strip_underscored(raw)
+    # Round-trip through the SDK model (from_dict -> to_dict) so the canonical
+    # reflects the real serializer, not just the hand-authored input fixture.
+    canonical = Task.from_dict(_strip_underscored(raw)).to_dict()
     expected_path = (
         EXPECTED
         / "canonical_serialization"

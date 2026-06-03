@@ -242,7 +242,6 @@ func (e Event) ToDict() map[string]interface{} {
 		"service_name":    nilIfEmpty(e.ServiceName),
 		"provider":        nilIfEmpty(e.Provider),
 		"model":           nilIfEmpty(e.Model),
-		"error_type":      nilIfEmpty(e.ErrorType),
 		"input_tokens":    e.InputTokens,
 		"output_tokens":   e.OutputTokens,
 		"cached_tokens":   e.CachedTokens,

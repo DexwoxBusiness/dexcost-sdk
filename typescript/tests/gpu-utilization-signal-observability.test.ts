@@ -109,7 +109,7 @@ describe("gpu_utilization_signal observability carve-out (Decision #3)", () => {
     );
     expect(sigs.length).toBeGreaterThanOrEqual(1);
     for (const sig of sigs) {
-      expect(sig.costUsd).toBe(0);
+      expect(sig.costUsd.toNumber()).toBe(0);
       expect((sig.details as Record<string, unknown>).cost_pending).toBeUndefined();
     }
   });
@@ -119,12 +119,12 @@ describe("gpu_utilization_signal observability carve-out (Decision #3)", () => {
     const events = tracker.buffer.queryEvents(task.taskId);
     const gpuCostSum = events
       .filter((e: any) => e.eventType === "gpu_cost")
-      .reduce((acc: number, e: any) => acc + e.costUsd, 0);
+      .reduce((acc: number, e: any) => acc + e.costUsd.toNumber(), 0);
     const signalCount = events.filter(
       (e: any) => e.eventType === "gpu_utilization_signal",
     ).length;
     expect(signalCount).toBeGreaterThanOrEqual(1);
-    expect(task.gpuCostUsd).toBe(gpuCostSum);
+    expect(task.gpuCostUsd.toNumber()).toBe(gpuCostSum);
   });
 
   test("signal events carry the load-bearing observability fields", () => {

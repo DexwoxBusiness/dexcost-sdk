@@ -67,7 +67,7 @@ describe("Error handling", () => {
       const engine = new PricingEngine();
       const result = engine.getCost("nonexistent-model-xyz", 100, 50);
       expect(result.costConfidence).toBe("unknown");
-      expect(result.costUsd).toBe(0);
+      expect(result.costUsd.toNumber()).toBe(0);
     });
   });
 });

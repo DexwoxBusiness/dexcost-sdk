@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "./core/context.js";
-import { createCostEvent } from "./core/models.js";
+import { createCostEvent, Decimal } from "./core/models.js";
 import { createAutoTask } from "./core/auto-task.js";
 import type { Task, CostConfidence, PricingSource } from "./core/models.js";
 import { PricingEngine } from "./pricing/engine.js";
@@ -117,7 +117,7 @@ function recordOpenAIEvent(
   const promptDetails = usage?.["prompt_tokens_details"] as Record<string, unknown> | undefined;
   const cachedTokens: number = (promptDetails?.["cached_tokens"] as number | undefined) ?? 0;
 
-  let costUsd = 0;
+  let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
 
@@ -239,7 +239,7 @@ function recordAnthropicEvent(
   // cachedTokens tracks cache_read (for aggregation); cache_creation stored in details
   const cachedTokens: number = cacheReadTokens;
 
-  let costUsd = 0;
+  let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
 
@@ -279,7 +279,7 @@ interface EventSpec {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
-  costUsd: number;
+  costUsd: Decimal;
   costConfidence: CostConfidence;
   pricingSource: PricingSource;
   details?: Record<string, unknown>;
@@ -308,8 +308,8 @@ function _addEventAndUpdateTask(
 
   buffer.addEvent(event);
 
-  task.llmCostUsd += spec.costUsd;
-  task.totalCostUsd += spec.costUsd;
+  task.llmCostUsd = task.llmCostUsd.plus(spec.costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(spec.costUsd);
   task.totalInputTokens += spec.inputTokens;
   task.totalOutputTokens += spec.outputTokens;
   task.totalCachedTokens += spec.cachedTokens;

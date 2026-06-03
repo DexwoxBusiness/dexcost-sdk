@@ -45,6 +45,10 @@ export {
   eventToDict,
   taskFromDict,
   eventFromDict,
+  Decimal,
+  toDecimal,
+  canonicalDecimal,
+  addCost,
 } from "./core/models.js";
 export type {
   Task,
@@ -53,6 +57,7 @@ export type {
   EventType,
   CostConfidence,
   PricingSource,
+  DecimalLike,
 } from "./core/models.js";
 
 // Configuration / API-key validation

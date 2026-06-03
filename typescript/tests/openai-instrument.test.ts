@@ -78,7 +78,7 @@ describe("OpenAI instrumentation", () => {
     expect(events[0].inputTokens).toBe(800);
     expect(events[0].outputTokens).toBe(150);
     expect(events[0].cachedTokens).toBe(50);
-    expect(events[0].costUsd).toBeGreaterThan(0);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThan(0);
     expect(events[0].costConfidence).toBe("computed");
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
@@ -122,8 +122,8 @@ describe("OpenAI instrumentation", () => {
       await fake.create({ model: "gpt-4o", messages: [] });
     });
 
-    expect(task.llmCostUsd).toBeGreaterThan(0);
-    expect(task.totalCostUsd).toBeGreaterThan(0);
+    expect(task.llmCostUsd.toNumber()).toBeGreaterThan(0);
+    expect(task.totalCostUsd.toNumber()).toBeGreaterThan(0);
     expect(task.totalInputTokens).toBe(800);
     expect(task.totalOutputTokens).toBe(150);
     expect(task.totalCachedTokens).toBe(50);
@@ -146,7 +146,7 @@ describe("OpenAI instrumentation", () => {
 
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("estimated");
     expect(events[0].inputTokens).toBe(0);
     expect(events[0].outputTokens).toBe(0);

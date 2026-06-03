@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from dexcost.models._serde import iso_canonical, parse_canonical
+from dexcost.models._serde import canonical_decimal, iso_canonical, parse_canonical
 from dexcost.network_accountant import NetworkAccountant
 
 
@@ -110,17 +110,17 @@ class Task:
             "parent_task_id": str(self.parent_task_id) if self.parent_task_id else None,
             "experiment_id": self.experiment_id,
             "variant": self.variant,
-            "llm_cost_usd": str(self.llm_cost_usd),
-            "external_cost_usd": str(self.external_cost_usd),
-            "compute_cost_usd": str(self.compute_cost_usd),
-            "network_cost_usd": str(self.network_cost_usd),
-            "gpu_cost_usd": str(self.gpu_cost_usd),
-            "total_cost_usd": str(self.total_cost_usd),
+            "llm_cost_usd": canonical_decimal(self.llm_cost_usd),
+            "external_cost_usd": canonical_decimal(self.external_cost_usd),
+            "compute_cost_usd": canonical_decimal(self.compute_cost_usd),
+            "network_cost_usd": canonical_decimal(self.network_cost_usd),
+            "gpu_cost_usd": canonical_decimal(self.gpu_cost_usd),
+            "total_cost_usd": canonical_decimal(self.total_cost_usd),
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
             "total_cached_tokens": self.total_cached_tokens,
             "retry_count": self.retry_count,
-            "retry_cost_usd": str(self.retry_cost_usd),
+            "retry_cost_usd": canonical_decimal(self.retry_cost_usd),
             "failure_count": self.failure_count,
             "network_bytes_in": self.network_bytes_in,
             "network_bytes_out": self.network_bytes_out,

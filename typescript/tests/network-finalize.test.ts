@@ -13,7 +13,7 @@ import {
   getAccountant,
 } from "../src/adapters/network-accountant.js";
 import { _setResultForTests, _resetCloudDetectForTests } from "../src/cloud-detect.js";
-import { createCostEvent } from "../src/core/models.js";
+import { createCostEvent, Decimal } from "../src/core/models.js";
 import { randomUUID } from "node:crypto";
 
 let tracker: CostTracker;
@@ -51,7 +51,7 @@ describe("Phase D Task 10 — task finalize", () => {
     // 1 GB external = $0.09 at aws/us-east-1.
     acct!.record("api.example.com", 0, 1_000_000_000, false);
     tt.end("success");
-    expect(tt.task.networkCostUsd).toBeCloseTo(0.09, 6);
+    expect(tt.task.networkCostUsd.toNumber()).toBeCloseTo(0.09, 6);
     expect(tt.task.networkBytesOut).toBe(1_000_000_000);
     expect(tt.task.networkCallCount).toBe(1);
   });
@@ -79,7 +79,7 @@ describe("Phase D Task 10 — task finalize", () => {
     // 999 MB to private IP → 0 external bytes → $0 cost.
     acct.record("10.0.0.5", 0, 999_999_999, true);
     tt.end("success");
-    expect(tt.task.networkCostUsd).toBe(0);
+    expect(tt.task.networkCostUsd.toNumber()).toBe(0);
   });
 
   it("back-fills cost_pending network events", () => {
@@ -114,7 +114,7 @@ describe("Phase D Task 10 — task finalize", () => {
     const stored = tracker.buffer.queryEvents(tt.task.taskId);
     const net = stored.find((e) => e.eventType === "network")!;
     expect(net).toBeDefined();
-    expect(net.costUsd).toBeCloseTo(0.09, 6);
+    expect(net.costUsd.toNumber()).toBeCloseTo(0.09, 6);
     expect(net.details?.cost_pending).toBeUndefined();
     expect(net.details?.egress_pricing_source).toBe(
       "egress_catalog:aws:us-east-1",
@@ -129,14 +129,14 @@ describe("Phase D Task 10 — task finalize", () => {
     acct.record("api.example.com", 0, 1_000_000_000, false);
     tt.end("success");
     // Universal default $0.09/GB → 1 GB → $0.09.
-    expect(tt.task.networkCostUsd).toBeCloseTo(0.09, 6);
+    expect(tt.task.networkCostUsd.toNumber()).toBeCloseTo(0.09, 6);
   });
 
   it("zero bytes yields zero network_cost_usd", () => {
     pinCloudEnv("aws", "us-east-1");
     const tt = startTask();
     tt.end("success");
-    expect(tt.task.networkCostUsd).toBe(0);
+    expect(tt.task.networkCostUsd.toNumber()).toBe(0);
     expect(tt.task.networkCallCount).toBe(0);
   });
 
@@ -175,8 +175,8 @@ describe("Phase D Task 10 — task finalize", () => {
     // Aggregate the vendor charge into externalCostUsd (mirrors what
     // tt.recordCost would have done; this synthetic test focuses on
     // the egress half).
-    tt.task.externalCostUsd = 0.01;
-    tt.task.totalCostUsd += 0.01;
+    tt.task.externalCostUsd = new Decimal("0.01");
+    tt.task.totalCostUsd = tt.task.totalCostUsd.plus("0.01");
 
     // Same bytes → accountant → external_bytes_out.
     const acct = getAccountant(tt.task.taskId)!;
@@ -190,19 +190,19 @@ describe("Phase D Task 10 — task finalize", () => {
     expect(stored[0].eventType).toBe("external_cost");
 
     // (2) Vendor's per-request invoice is intact.
-    expect(tt.task.externalCostUsd).toBe(0.01);
+    expect(tt.task.externalCostUsd.toString()).toBe("0.01");
 
     // (3) Cloud's egress invoice on those same bytes is captured IN ADDITION.
     //     0.5 GB * 0.09 = 0.045
-    expect(tt.task.networkCostUsd).toBeCloseTo(0.045, 6);
+    expect(tt.task.networkCostUsd.toNumber()).toBeCloseTo(0.045, 6);
 
     // (4) Total = vendor + egress, no double-count, no silent drop.
-    expect(tt.task.totalCostUsd).toBeCloseTo(0.055, 6);
+    expect(tt.task.totalCostUsd.toNumber()).toBeCloseTo(0.055, 6);
 
     // (5) The external_cost event's own costUsd is UNCHANGED — no egress
     //     dollars stamped onto it. Events carry measurement; task carries
     //     derived attribution (v2 §3.3).
-    expect(stored[0].costUsd).toBe(0.01);
+    expect(stored[0].costUsd.toString()).toBe("0.01");
   });
 
   /**
@@ -232,8 +232,9 @@ describe("Phase D Task 10 — task finalize", () => {
       for (const h of hosts) {
         sum += parseFloat((h.egress_cost_usd as string) ?? "0");
       }
-      // Allow small floating-point error since TS uses number, not Decimal.
-      expect(sum).toBeCloseTo(tt.task.networkCostUsd, 6);
+      // Per-host egress sums to the task-level network cost (now exact
+      // Decimal; compare via toNumber within float tolerance).
+      expect(sum).toBeCloseTo(tt.task.networkCostUsd.toNumber(), 6);
     });
   });
 });

@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createCostEvent } from "../core/models.js";
+import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
@@ -128,7 +128,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   const outputTokens: number = usage?.completion_tokens ?? 0;
   const cachedTokens: number = usage?.prompt_tokens_details?.cached_tokens ?? 0;
 
-  let costUsd = 0;
+  let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
 
@@ -157,8 +157,8 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
 
   _buffer.addEvent(event);
 
-  task.llmCostUsd += costUsd;
-  task.totalCostUsd += costUsd;
+  task.llmCostUsd = task.llmCostUsd.plus(costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(costUsd);
   task.totalInputTokens += inputTokens;
   task.totalOutputTokens += outputTokens;
   task.totalCachedTokens += cachedTokens;
@@ -202,8 +202,8 @@ function wrapStream(rawStream: any, task: Task, startTime: number): AsyncIterabl
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
-                task.llmCostUsd += costResult.costUsd;
-                task.totalCostUsd += costResult.costUsd;
+                task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+                task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
                 task.totalInputTokens += inputTokens;
                 task.totalOutputTokens += outputTokens;
                 task.totalCachedTokens += cachedTokens;
