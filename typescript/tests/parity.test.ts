@@ -113,7 +113,7 @@ describe("Event/Task serialisation (gaps 5 & 10)", () => {
     });
     const restored = eventFromDict(eventToDict(event));
     expect(restored.eventId).toBe(event.eventId);
-    expect(restored.costUsd).toBe(0.42);
+    expect(restored.costUsd.toNumber()).toBe(0.42);
     expect(restored.model).toBe("gpt-4o");
     expect(restored.pricingVersion).toBe("v-9");
   });
@@ -130,7 +130,7 @@ describe("Event/Task serialisation (gaps 5 & 10)", () => {
     expect(restored.taskId).toBe(task.taskId);
     expect(restored.taskType).toBe("resolve_ticket");
     expect(restored.customerId).toBe("acme");
-    expect(restored.totalCostUsd).toBe(1.23);
+    expect(restored.totalCostUsd.toNumber()).toBe(1.23);
     expect(restored.retryCount).toBe(2);
   });
 });
@@ -147,7 +147,7 @@ describe("recordLlmCall (gap 6)", () => {
     await tracker.track({ taskType: "t" }, async (task) => {
       const event = task.recordLlmCall("openai", "gpt-4o", 1000, 500);
       // gpt-4o is in the bundled cost map — cost must be computed, not 0.
-      expect(event.costUsd).toBeGreaterThan(0);
+      expect(event.costUsd.toNumber()).toBeGreaterThan(0);
       expect(event.costConfidence).toBe("computed");
       expect(event.pricingVersion).toBeTruthy();
     });
@@ -276,7 +276,7 @@ describe("LangChain handleLLMError (gap 8)", () => {
     const events = tracker.buffer.getAllEvents();
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe("llm_call");
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].details["error_type"]).toBe("TypeError");
     tracker.close();
   });

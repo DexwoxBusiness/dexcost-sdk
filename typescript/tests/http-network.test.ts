@@ -100,7 +100,7 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     const events = getRecordedEvents();
     const netEvents = events.filter((e) => e.eventType === "network");
     expect(netEvents.length).toBe(1);
-    expect(netEvents[0].costUsd).toBe(0);
+    expect(netEvents[0].costUsd.toNumber()).toBe(0);
     expect(netEvents[0].details?.cost_pending).toBe(true);
     expect(typeof netEvents[0].details?.request_bytes).toBe("number");
     expect(typeof netEvents[0].details?.response_bytes).toBe("number");
@@ -183,7 +183,7 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     const ext = events.filter((e) => e.eventType === "external_cost");
     expect(ext.length).toBeGreaterThan(0);
     const ev = ext[ext.length - 1];
-    expect(ev.costUsd).toBe(0.01);
+    expect(ev.costUsd.toNumber()).toBe(0.01);
     expect(ev.details?.protocol).toBe("http");
     expect(typeof ev.details?.request_bytes).toBe("number");
     expect(ev.details?.is_internal_traffic).toBe(true); // 127.0.0.1 → loopback

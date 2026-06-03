@@ -5,6 +5,56 @@
  * and mirror the Python SDK's Task and Event dataclasses.
  */
 
+import { Decimal } from "decimal.js";
+
+// Money fields are stored as exact decimals (decimal.js), never float64.
+// Configure the module-level Decimal so `.toString()` NEVER emits
+// exponential notation — `toExpNeg`/`toExpPos` are pushed to the extremes
+// so a plain decimal string is always produced. This is the canonical wire
+// form: trailing zeros stripped, `"0"` for zero, full precision, no `e`.
+//
+//   new Decimal("0.0000000123").toString() === "0.0000000123"   (not 1.23e-8)
+//   new Decimal("0.00").toString()         === "0"
+//   new Decimal("2.00").toString()         === "2"
+//
+// `Decimal.set` mutates the global constructor config; every `new Decimal`
+// across the SDK (pricing engines, tracker, buffer) shares it, so the
+// no-exp guarantee holds everywhere a cost is serialized.
+Decimal.set({ toExpNeg: -9e15, toExpPos: 9e15 });
+
+export { Decimal };
+
+/** Anything that can be coerced to an exact decimal cost. */
+export type DecimalLike = number | string | Decimal;
+
+/**
+ * Coerce a number / string / Decimal into an exact `Decimal`.
+ *
+ * Numbers are routed through `String(...)` first so we never inherit a
+ * float64 artifact (mirrors Python's `Decimal(str(x))`). This is the single
+ * chokepoint user-supplied costs pass through before the SDK stores or sums
+ * them.
+ */
+export function toDecimal(value: DecimalLike): Decimal {
+  if (value instanceof Decimal) return value;
+  if (typeof value === "number") return new Decimal(String(value));
+  return new Decimal(value);
+}
+
+/**
+ * Render a `Decimal` as the canonical plain-decimal wire string: trailing
+ * zeros stripped, `"0"` for zero, never scientific notation, full precision.
+ * Single serialization chokepoint — `toDict` uses this instead of `String(...)`.
+ */
+export function canonicalDecimal(d: Decimal): string {
+  return d.toString();
+}
+
+/** Decimal addition helper for cost accumulation (`a + b` with exactness). */
+export function addCost(a: Decimal, b: DecimalLike): Decimal {
+  return a.plus(toDecimal(b));
+}
+
 /**
  * Serialise a Date to the canonical wire format. Sprint 3 Theme F /
  * §4.1.1 (P1): RFC3339 with microsecond precision (6 fractional
@@ -71,29 +121,29 @@ export interface Task {
   parentTaskId?: string;
   experimentId?: string;
   variant?: string;
-  // Aggregated costs
-  llmCostUsd: number;
-  externalCostUsd: number;
-  computeCostUsd: number;
+  // Aggregated costs (exact decimals — never float64)
+  llmCostUsd: Decimal;
+  externalCostUsd: Decimal;
+  computeCostUsd: Decimal;
   /**
    * v2 cloud-egress cost in USD, computed at task finalize from the
    * accountant's canonical external_bytes_out scalar. Distinct from
    * externalCostUsd (vendor API charges) — see Decision #7.
    */
-  networkCostUsd: number;
+  networkCostUsd: Decimal;
   /**
    * v2 GPU cost in USD, computed at task finalize from the GpuAccountant's
    * NVML diff (per-PID SM-time) + cgroup-walk PID filter. Distinct from
    * computeCostUsd (CPU/memory rollup) — GPU billing is a separate dimension.
    * Mirrors the Python SDK's Task.gpu_cost_usd field.
    */
-  gpuCostUsd: number;
-  totalCostUsd: number;
+  gpuCostUsd: Decimal;
+  totalCostUsd: Decimal;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCachedTokens: number;
   retryCount: number;
-  retryCostUsd: number;
+  retryCostUsd: Decimal;
   failureCount: number;
   // Network capture aggregates (v1 — bytes only).
   networkBytesIn: number;
@@ -135,7 +185,7 @@ export interface CostEvent {
   taskId: string;
   eventType: EventType;
   occurredAt: Date;
-  costUsd: number;
+  costUsd: Decimal;
   costConfidence: CostConfidence;
   pricingSource?: PricingSource;
   pricingVersion?: string;
@@ -153,47 +203,89 @@ export interface CostEvent {
   schemaVersion: string;
 }
 
+/**
+ * Override map for `createTask`. Cost fields accept any `DecimalLike`
+ * (`number | string | Decimal`) for caller ergonomics; they are coerced to
+ * `Decimal` below so the resulting `Task` always holds exact decimals.
+ */
+type TaskOverrides = Partial<Omit<Task, TaskCostField>> &
+  Partial<Record<TaskCostField, DecimalLike>> & { taskId: string };
+
+type TaskCostField =
+  | "llmCostUsd"
+  | "externalCostUsd"
+  | "computeCostUsd"
+  | "networkCostUsd"
+  | "gpuCostUsd"
+  | "totalCostUsd"
+  | "retryCostUsd";
+
+const TASK_COST_FIELDS: readonly TaskCostField[] = [
+  "llmCostUsd",
+  "externalCostUsd",
+  "computeCostUsd",
+  "networkCostUsd",
+  "gpuCostUsd",
+  "totalCostUsd",
+  "retryCostUsd",
+];
+
 /** Create a default Task with required fields. */
-export function createTask(overrides: Partial<Task> & { taskId: string }): Task {
-  return {
+export function createTask(overrides: TaskOverrides): Task {
+  const task: Task = {
     taskType: "",
     status: "pending",
     startedAt: new Date(),
     metadata: {},
-    llmCostUsd: 0,
-    externalCostUsd: 0,
-    computeCostUsd: 0,
-    networkCostUsd: 0,
-    gpuCostUsd: 0,
-    totalCostUsd: 0,
+    llmCostUsd: new Decimal(0),
+    externalCostUsd: new Decimal(0),
+    computeCostUsd: new Decimal(0),
+    networkCostUsd: new Decimal(0),
+    gpuCostUsd: new Decimal(0),
+    totalCostUsd: new Decimal(0),
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalCachedTokens: 0,
     retryCount: 0,
-    retryCostUsd: 0,
+    retryCostUsd: new Decimal(0),
     failureCount: 0,
     networkBytesIn: 0,
     networkBytesOut: 0,
     networkCallCount: 0,
     networkByHost: { hosts: [] },
     schemaVersion: "1",
-    ...overrides,
+    ...(overrides as Partial<Task> & { taskId: string }),
   };
+  // Coerce any caller-supplied DecimalLike cost overrides to Decimal.
+  for (const field of TASK_COST_FIELDS) {
+    const raw = (overrides as Record<string, unknown>)[field];
+    if (raw !== undefined) task[field] = toDecimal(raw as DecimalLike);
+  }
+  return task;
 }
 
+/**
+ * Override map for `createCostEvent`. `costUsd` accepts any `DecimalLike`
+ * for ergonomics and is coerced to `Decimal`.
+ */
+type CostEventOverrides = Partial<Omit<CostEvent, "costUsd">> & {
+  eventId: string;
+  taskId: string;
+  costUsd?: DecimalLike;
+};
+
 /** Create a default CostEvent with required fields. */
-export function createCostEvent(
-  overrides: Partial<CostEvent> & { eventId: string; taskId: string }
-): CostEvent {
+export function createCostEvent(overrides: CostEventOverrides): CostEvent {
+  const { costUsd, ...rest } = overrides;
   return {
     eventType: "llm_call",
     occurredAt: new Date(),
-    costUsd: 0,
+    costUsd: costUsd === undefined ? new Decimal(0) : toDecimal(costUsd),
     costConfidence: "exact",
     isRetry: false,
     details: {},
     schemaVersion: "1",
-    ...overrides,
+    ...(rest as Partial<CostEvent> & { eventId: string; taskId: string }),
   };
 }
 
@@ -214,17 +306,17 @@ export function taskToDict(task: Task): Record<string, unknown> {
     parent_task_id: task.parentTaskId ?? null,
     experiment_id: task.experimentId ?? null,
     variant: task.variant ?? null,
-    llm_cost_usd: String(task.llmCostUsd),
-    external_cost_usd: String(task.externalCostUsd),
-    compute_cost_usd: String(task.computeCostUsd),
-    network_cost_usd: String(task.networkCostUsd),
-    gpu_cost_usd: String(task.gpuCostUsd),
-    total_cost_usd: String(task.totalCostUsd),
+    llm_cost_usd: canonicalDecimal(task.llmCostUsd),
+    external_cost_usd: canonicalDecimal(task.externalCostUsd),
+    compute_cost_usd: canonicalDecimal(task.computeCostUsd),
+    network_cost_usd: canonicalDecimal(task.networkCostUsd),
+    gpu_cost_usd: canonicalDecimal(task.gpuCostUsd),
+    total_cost_usd: canonicalDecimal(task.totalCostUsd),
     total_input_tokens: task.totalInputTokens,
     total_output_tokens: task.totalOutputTokens,
     total_cached_tokens: task.totalCachedTokens,
     retry_count: task.retryCount,
-    retry_cost_usd: String(task.retryCostUsd),
+    retry_cost_usd: canonicalDecimal(task.retryCostUsd),
     failure_count: task.failureCount,
     network_bytes_in: task.networkBytesIn,
     network_bytes_out: task.networkBytesOut,
@@ -244,7 +336,7 @@ export function eventToDict(event: CostEvent): Record<string, unknown> {
     task_id: event.taskId,
     event_type: event.eventType,
     occurred_at: isoCanonical(event.occurredAt),
-    cost_usd: String(event.costUsd),
+    cost_usd: canonicalDecimal(event.costUsd),
     cost_confidence: event.costConfidence,
     pricing_source: event.pricingSource ?? null,
     pricing_version: event.pricingVersion ?? null,
@@ -289,6 +381,27 @@ function _toNumber(value: unknown, fallback = 0): number {
 }
 
 /**
+ * Parse a serialized cost field (canonical decimal string, or legacy
+ * number) into an exact `Decimal`. Inverse of `canonicalDecimal`. Falls back
+ * to `Decimal(0)` for missing / malformed input, matching the old
+ * `_toNumber(...)` defaulting behaviour.
+ */
+function _toDecimal(value: unknown): Decimal {
+  if (value instanceof Decimal) return value;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? new Decimal(String(value)) : new Decimal(0);
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    try {
+      return new Decimal(value);
+    } catch {
+      return new Decimal(0);
+    }
+  }
+  return new Decimal(0);
+}
+
+/**
  * Deserialise a Task from a JSON-safe dictionary (inverse of `taskToDict`).
  *
  * Mirrors the Python SDK's `Task.from_dict`. Throws an Error when required
@@ -312,17 +425,17 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     parentTaskId: _optString(data["parent_task_id"]),
     experimentId: _optString(data["experiment_id"]),
     variant: _optString(data["variant"]),
-    llmCostUsd: _toNumber(data["llm_cost_usd"]),
-    externalCostUsd: _toNumber(data["external_cost_usd"]),
-    computeCostUsd: _toNumber(data["compute_cost_usd"]),
-    networkCostUsd: _toNumber(data["network_cost_usd"]),
-    gpuCostUsd: _toNumber(data["gpu_cost_usd"]),
-    totalCostUsd: _toNumber(data["total_cost_usd"]),
+    llmCostUsd: _toDecimal(data["llm_cost_usd"]),
+    externalCostUsd: _toDecimal(data["external_cost_usd"]),
+    computeCostUsd: _toDecimal(data["compute_cost_usd"]),
+    networkCostUsd: _toDecimal(data["network_cost_usd"]),
+    gpuCostUsd: _toDecimal(data["gpu_cost_usd"]),
+    totalCostUsd: _toDecimal(data["total_cost_usd"]),
     totalInputTokens: _toNumber(data["total_input_tokens"]),
     totalOutputTokens: _toNumber(data["total_output_tokens"]),
     totalCachedTokens: _toNumber(data["total_cached_tokens"]),
     retryCount: _toNumber(data["retry_count"]),
-    retryCostUsd: _toNumber(data["retry_cost_usd"]),
+    retryCostUsd: _toDecimal(data["retry_cost_usd"]),
     failureCount: _toNumber(data["failure_count"]),
     networkBytesIn: _toNumber(data["network_bytes_in"]),
     networkBytesOut: _toNumber(data["network_bytes_out"]),
@@ -348,7 +461,7 @@ export function eventFromDict(data: Record<string, unknown>): CostEvent {
     taskId: _requireString(data, "task_id"),
     eventType: _requireString(data, "event_type") as EventType,
     occurredAt: new Date(occurredAtRaw),
-    costUsd: _toNumber(data["cost_usd"]),
+    costUsd: _toDecimal(data["cost_usd"]),
     costConfidence: _requireString(data, "cost_confidence") as CostConfidence,
     pricingSource: _optString(data["pricing_source"]) as PricingSource | undefined,
     pricingVersion: _optString(data["pricing_version"]),

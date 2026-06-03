@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "computed",
-  "cost_usd": "1.8000000000",
+  "cost_usd": "1.8",
   "details": {
     "billing_model": "per_instance_hour",
     "cost_pending": false,

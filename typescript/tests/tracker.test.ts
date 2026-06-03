@@ -33,8 +33,8 @@ describe("CostTracker", () => {
         expect(task.status).toBe("pending");
         expect(task.startedAt).toBeInstanceOf(Date);
         expect(task.schemaVersion).toBe("1");
-        expect(task.llmCostUsd).toBe(0);
-        expect(task.totalCostUsd).toBe(0);
+        expect(task.llmCostUsd.toNumber()).toBe(0);
+        expect(task.totalCostUsd.toNumber()).toBe(0);
       }
     );
 
@@ -54,7 +54,7 @@ describe("CostTracker", () => {
       expect(event.model).toBe("gpt-4o");
       expect(event.inputTokens).toBe(800);
       expect(event.outputTokens).toBe(150);
-      expect(event.costUsd).toBe(0.05);
+      expect(event.costUsd.toNumber()).toBe(0.05);
       expect(event.isRetry).toBe(false);
       expect(event.schemaVersion).toBe("1");
     });
@@ -72,7 +72,7 @@ describe("CostTracker", () => {
 
       expect(event.eventType).toBe("external_cost");
       expect(event.serviceName).toBe("pdf_parser");
-      expect(event.costUsd).toBe(0.002);
+      expect(event.costUsd.toNumber()).toBe(0.002);
       expect(event.details).toEqual({ pages: 12 });
       expect(event.isRetry).toBe(false);
     });
@@ -89,7 +89,7 @@ describe("CostTracker", () => {
       expect(event.eventType).toBe("retry_marker");
       expect(event.isRetry).toBe(true);
       expect(event.retryReason).toBe("rate_limit");
-      expect(event.costUsd).toBe(0.01);
+      expect(event.costUsd.toNumber()).toBe(0.01);
     });
 
     tracker.close();
@@ -105,13 +105,13 @@ describe("CostTracker", () => {
       tracked.markRetry("timeout", 0.01);
 
       const task = tracked.task;
-      expect(task.llmCostUsd).toBeCloseTo(0.05, 10);
-      expect(task.externalCostUsd).toBeCloseTo(0.005, 10);
-      expect(task.totalCostUsd).toBeCloseTo(0.065, 10);
+      expect(task.llmCostUsd.toNumber()).toBeCloseTo(0.05, 10);
+      expect(task.externalCostUsd.toNumber()).toBeCloseTo(0.005, 10);
+      expect(task.totalCostUsd.toNumber()).toBeCloseTo(0.065, 10);
       expect(task.totalInputTokens).toBe(800);
       expect(task.totalOutputTokens).toBe(300);
       expect(task.retryCount).toBe(1);
-      expect(task.retryCostUsd).toBeCloseTo(0.01, 10);
+      expect(task.retryCostUsd.toNumber()).toBeCloseTo(0.01, 10);
     });
 
     tracker.close();
@@ -214,15 +214,15 @@ describe("TrackedTask.recordUsage", () => {
       const event = tracked.recordUsage("ocr_service", 10);
 
       expect(event.eventType).toBe("external_cost");
-      expect(event.costUsd).toBeCloseTo(0.05, 10);
+      expect(event.costUsd.toNumber()).toBeCloseTo(0.05, 10);
       expect(event.serviceName).toBe("ocr_service");
       expect(event.costConfidence).toBe("computed");
       expect(event.pricingSource).toBe("rate_registry");
       expect(event.isRetry).toBe(false);
 
       const task = tracked.task;
-      expect(task.externalCostUsd).toBeCloseTo(0.05, 10);
-      expect(task.totalCostUsd).toBeCloseTo(0.05, 10);
+      expect(task.externalCostUsd.toNumber()).toBeCloseTo(0.05, 10);
+      expect(task.totalCostUsd.toNumber()).toBeCloseTo(0.05, 10);
     });
 
     tracker.close();
@@ -235,7 +235,7 @@ describe("TrackedTask.recordUsage", () => {
     await tracker.track({ taskType: "notify" }, async (tracked) => {
       const event = tracked.recordUsage("sms_service");
 
-      expect(event.costUsd).toBeCloseTo(0.012, 10);
+      expect(event.costUsd.toNumber()).toBeCloseTo(0.012, 10);
     });
 
     tracker.close();
@@ -270,7 +270,7 @@ describe("TrackedTask.markNotRetry", () => {
       expect(undone!.isRetry).toBe(false);
       expect(undone!.retryReason).toBeUndefined();
       expect(tracked.task.retryCount).toBe(1);
-      expect(tracked.task.retryCostUsd).toBeCloseTo(0.01, 10);
+      expect(tracked.task.retryCostUsd.toNumber()).toBeCloseTo(0.01, 10);
     });
 
     tracker.close();
@@ -289,7 +289,7 @@ describe("TrackedTask.markNotRetry", () => {
       expect(undone!.eventId).toBe(first.eventId);
       expect(undone!.isRetry).toBe(false);
       expect(tracked.task.retryCount).toBe(1);
-      expect(tracked.task.retryCostUsd).toBeCloseTo(0.02, 10);
+      expect(tracked.task.retryCostUsd.toNumber()).toBeCloseTo(0.02, 10);
     });
 
     tracker.close();

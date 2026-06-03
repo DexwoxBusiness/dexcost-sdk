@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "exact",
-  "cost_usd": "0.0000000000",
+  "cost_usd": "0",
   "details": {
     "gpu_index": 0,
     "gpu_sku": "a100-40gb",

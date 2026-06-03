@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { CostTracker } from "../src/core/tracker.js";
+import { Decimal } from "../src/core/models.js";
 import { DexcostCallbackHandler } from "../src/integrations/langchain.js";
 
 let tmpDir: string;
@@ -54,7 +55,9 @@ describe("DexcostCallbackHandler", () => {
     expect(events[0].model).toBe("gpt-4o");
     expect(events[0].inputTokens).toBe(200);
     expect(events[0].outputTokens).toBe(50);
-    expect(typeof events[0].costUsd).toBe("number");
+    // Costs are now exact Decimals (decimal.js), not float64 numbers.
+    expect(events[0].costUsd).toBeInstanceOf(Decimal);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThanOrEqual(0);
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
 
     tracker.close();

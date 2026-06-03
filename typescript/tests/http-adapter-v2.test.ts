@@ -67,7 +67,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(events).toHaveLength(1);
     expect(events[0].serviceName).toBe("Tavily Search");
     // 2 credits * $0.008 = $0.016
-    expect(events[0].costUsd).toBeCloseTo(0.016, 6);
+    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.016, 6);
     expect(events[0].costConfidence).toBe("exact");
   });
 
@@ -94,7 +94,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(events).toHaveLength(1);
     expect(events[0].serviceName).toBe("ScrapingBee");
     // 3 * $0.000327 = $0.000981
-    expect(events[0].costUsd).toBeCloseTo(0.000981, 6);
+    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.000981, 6);
     expect(events[0].costConfidence).toBe("exact");
   });
 
@@ -116,7 +116,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
     expect(events[0].serviceName).toBe("Google Maps Geocoding");
-    expect(events[0].costUsd).toBe(0.005);
+    expect(events[0].costUsd.toNumber()).toBe(0.005);
     expect(events[0].costConfidence).toBe("computed");
   });
 
@@ -137,7 +137,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("unknown");
     expect(events[0].serviceName).toBe("api.unknown-service.com");
   });
@@ -205,7 +205,7 @@ describe("HTTP adapter v2 — override precedence", () => {
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
     // Should use the registered rate, NOT catalog extraction
-    expect(events[0].costUsd).toBe(0.05);
+    expect(events[0].costUsd.toNumber()).toBe(0.05);
     expect(events[0].pricingSource).toBe("rate_registry");
     expect(events[0].serviceName).toBe("api.tavily.com");
   });
@@ -231,7 +231,7 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
     // Should still get the fixed cost even without JSON body
-    expect(events[0].costUsd).toBe(0.007);
+    expect(events[0].costUsd.toNumber()).toBe(0.007);
     expect(events[0].serviceName).toBe("Exa Search");
   });
 
@@ -257,7 +257,7 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
     // Should fall back to estimated cost (fallback_credits=1 * $0.008)
-    expect(events[0].costUsd).toBeCloseTo(0.008, 6);
+    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.008, 6);
     expect(events[0].costConfidence).toBe("estimated");
   });
 

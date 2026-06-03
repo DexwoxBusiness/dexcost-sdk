@@ -476,8 +476,8 @@ function recordMcpEvent(
 
   _buffer.addEvent(event);
 
-  task.externalCostUsd += costUsd;
-  task.totalCostUsd += costUsd;
+  task.externalCostUsd = task.externalCostUsd.plus(costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(costUsd);
   _buffer.upsertTask(task);
 }
 

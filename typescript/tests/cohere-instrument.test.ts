@@ -152,7 +152,7 @@ describe("Cohere instrumentation", () => {
 
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("estimated");
     expect(events[0].inputTokens).toBe(0);
     expect(events[0].outputTokens).toBe(0);

@@ -111,9 +111,9 @@ describe("wrapModalHandler", () => {
     const det = cost[0].details as Record<string, any>;
     expect(det.billing_model).toBe("per_gpu_second_active");
     expect(det.cost_pending).toBe(true);
-    expect(cost[0].costUsd).toBe(0); // back-filled at task finalize
+    expect(cost[0].costUsd.toNumber()).toBe(0); // back-filled at task finalize
     // gpu_utilization_signal has cost_usd=0 (Decision #3 observability carve-out)
-    expect(sig[0].costUsd).toBe(0);
+    expect(sig[0].costUsd.toNumber()).toBe(0);
     expect(sig[0].pricingSource).toBeUndefined();
     const sigDet = sig[0].details as Record<string, any>;
     expect(sigDet).toHaveProperty("sm_util_pct");

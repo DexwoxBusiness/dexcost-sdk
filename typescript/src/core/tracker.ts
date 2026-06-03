@@ -6,22 +6,29 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Decimal } from "decimal.js";
-import type { Task, CostEvent, EventType, CostConfidence, PricingSource } from "./models.js";
+import { Decimal, toDecimal } from "./models.js";
+import type {
+  Task,
+  CostEvent,
+  EventType,
+  CostConfidence,
+  PricingSource,
+  DecimalLike,
+} from "./models.js";
 
 /**
  * Decimal-based addition to defeat floating-point drift in cost
  * accumulation. Sprint 2 Theme E / §3.3.1 (B3).
  *
- * Native `a + b` on `number` accumulates ~2e-16 of error per add;
- * over 10 000 events that adds up to a visible drift in the per-
- * task total. decimal.js does exact decimal arithmetic; we convert
- * back to `number` at the boundary so the customer-facing field
- * type stays `number` (full `number → string` wire-format change
- * is deferred to a major version per plan §0.7).
+ * Native `a + b` on `number` accumulates ~2e-16 of error per add; over
+ * 10 000 events that adds up to a visible drift in the per-task total.
+ * Money fields are now `Decimal` end-to-end, so this stays entirely in the
+ * Decimal domain (`a.plus(toDecimal(b))`) — no float round-trip. The
+ * tiny-decimal accumulation invariant (1.23e-8 × 10000 == 0.000123 exactly)
+ * is the regression this guards.
  */
-function decAdd(a: number, b: number): number {
-  return new Decimal(a).plus(b).toNumber();
+function decAdd(a: Decimal, b: DecimalLike): Decimal {
+  return a.plus(toDecimal(b));
 }
 import { createTask, createCostEvent } from "./models.js";
 import { getCurrentTask, runWithTask } from "./context.js";
@@ -60,6 +67,9 @@ export { DEFAULT_ENDPOINT, resolveEndpoint };
 
 /** Event types accepted by `recordCost` (non-LLM cost events). */
 const NON_LLM_EVENT_TYPES = new Set<EventType>(["external_cost", "compute_cost"]);
+
+/** 1 GB = 10^9 bytes (decimal, per spec §6.3 — NOT 2^30). */
+const GB_BYTES = new Decimal("1000000000");
 import { isDevMode, enableDevMode, logEvent, logTaskComplete } from "../dev-console.js";
 // Side-effect imports to register instruments
 import "../instruments/openai.js";
@@ -323,7 +333,7 @@ export class TrackedTask {
     model: string,
     inputTokens: number,
     outputTokens: number,
-    cost?: number,
+    cost?: DecimalLike,
     cachedTokens?: number,
     latencyMs?: number,
     options: {
@@ -334,7 +344,7 @@ export class TrackedTask {
       errorType?: string;
     } = {}
   ): CostEvent {
-    let costUsd: number;
+    let costUsd: Decimal;
     let costConfidence: CostConfidence;
     let pricingSource: PricingSource | undefined;
     let pricingVersion: string | undefined = options.pricingVersion;
@@ -352,7 +362,7 @@ export class TrackedTask {
       pricingSource = options.pricingSource ?? result.pricingSource;
       pricingVersion = pricingVersion ?? result.pricingVersion;
     } else {
-      costUsd = cost;
+      costUsd = toDecimal(cost);
       costConfidence = options.costConfidence ?? "exact";
       pricingSource = options.pricingSource ?? "manual";
     }
@@ -430,7 +440,7 @@ export class TrackedTask {
    */
   recordCost(
     service: string,
-    costUsd: number,
+    cost: DecimalLike,
     details?: Record<string, unknown>,
     eventType: EventType = "external_cost",
     costConfidence: CostConfidence = "exact",
@@ -443,6 +453,7 @@ export class TrackedTask {
           `got "${eventType}"`,
       );
     }
+    const costUsd = toDecimal(cost);
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: this._task.taskId,
@@ -477,16 +488,16 @@ export class TrackedTask {
    */
   markRetry(
     reason: string,
-    cost?: number,
+    cost?: DecimalLike,
     retryOf?: string
   ): CostEvent {
-    const costUsd = cost ?? 0;
+    const costUsd = cost === undefined ? new Decimal(0) : toDecimal(cost);
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: this._task.taskId,
       eventType: "retry_marker",
       costUsd,
-      costConfidence: costUsd > 0 ? "exact" : "unknown",
+      costConfidence: costUsd.gt(0) ? "exact" : "unknown",
       isRetry: true,
       retryReason: reason,
       retryOf,
@@ -565,7 +576,7 @@ export class TrackedTask {
         `[dexcost] egress cost computation failed for task ${this._task.taskId}:`,
         err,
       );
-      this._task.networkCostUsd = 0;
+      this._task.networkCostUsd = new Decimal(0);
     }
 
     // ── Compute capture (v1 + v2 cost) ───────────────────────────────────
@@ -673,14 +684,14 @@ export class TrackedTask {
       if (ev.eventType !== "compute_cost") continue;
       const details = ev.details || {};
       if ((details as Record<string, unknown>).cost_pending !== true) continue;
-      const oldCost = new Decimal(ev.costUsd);
+      const oldCost = ev.costUsd;
       const priced = engine.resolveComputeCost(
         details as Record<string, any>,
         cloudEnv,
         overrides,
         windowS,
       );
-      ev.costUsd = priced.costUsd.toNumber();
+      ev.costUsd = priced.costUsd;
       ev.pricingSource = priced.pricingSource as PricingSource;
       ev.costConfidence = priced.costConfidence;
       ev.pricingVersion = `compute:${engine.catalogVersion}`;
@@ -701,9 +712,8 @@ export class TrackedTask {
       }
     }
 
-    const deltaNum = costDelta.toNumber();
-    task.computeCostUsd = decAdd(task.computeCostUsd, deltaNum);
-    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
+    task.computeCostUsd = decAdd(task.computeCostUsd, costDelta);
+    task.totalCostUsd = decAdd(task.totalCostUsd, costDelta);
   }
 
   /**
@@ -800,13 +810,13 @@ export class TrackedTask {
       if (ev.eventType !== "gpu_cost") continue;
       const details = (ev.details || {}) as Record<string, unknown>;
       if (details.cost_pending !== true) continue;
-      const oldCost = new Decimal(ev.costUsd);
+      const oldCost = ev.costUsd;
       const priced = engine.resolveGpuCost(
         details as Record<string, any>,
         cloudEnv,
         windowS,
       );
-      ev.costUsd = priced.costUsd.toNumber();
+      ev.costUsd = priced.costUsd;
       ev.pricingSource = priced.pricingSource as any;
       ev.costConfidence = priced.costConfidence;
       ev.pricingVersion = `gpu:${engine.catalogVersion}`;
@@ -830,9 +840,8 @@ export class TrackedTask {
       }
     }
 
-    const deltaNum = costDelta.toNumber();
-    task.gpuCostUsd = decAdd(task.gpuCostUsd, deltaNum);
-    task.totalCostUsd = decAdd(task.totalCostUsd, deltaNum);
+    task.gpuCostUsd = decAdd(task.gpuCostUsd, costDelta);
+    task.totalCostUsd = decAdd(task.totalCostUsd, costDelta);
   }
 
   /**
@@ -865,13 +874,13 @@ export class TrackedTask {
     const pricingVersion = `egress:${engine.catalogVersion}`;
 
     // Convert external_bytes_out (number) to GB. Per spec §6.3 — 1 GB
-    // = 10^9 bytes, NOT 2^30. We use plain `number` here because the TS
-    // SDK uses number throughout for cost fields (a pre-existing design
-    // choice); the catalog stores rates as strings (preserved exactness
-    // at rest) and we parseFloat only at the boundary.
-    const ratePerGb = parseFloat(rate.ratePerGb);
-    const networkCostUsd =
-      (snapshot.externalBytesOut / 1_000_000_000) * ratePerGb;
+    // = 10^9 bytes, NOT 2^30. Exact decimal math: the catalog stores rates
+    // as strings (exactness at rest), bytes are integers, and the GB divisor
+    // is exact — so every egress dollar is an exact Decimal (mirrors Python).
+    const ratePerGb = new Decimal(rate.ratePerGb);
+    const networkCostUsd = new Decimal(snapshot.externalBytesOut)
+      .dividedBy(GB_BYTES)
+      .times(ratePerGb);
     this._task.networkCostUsd = networkCostUsd;
 
     // Stamp per-host egress_cost_usd into network_by_host[].hosts. The
@@ -884,8 +893,10 @@ export class TrackedTask {
     if (Array.isArray(byHost.hosts)) {
       for (const host of byHost.hosts) {
         const hostExternal = (host["external_bytes_out"] as number) ?? 0;
-        const hostCost = (hostExternal / 1_000_000_000) * ratePerGb;
-        host["egress_cost_usd"] = String(hostCost);
+        const hostCost = new Decimal(hostExternal)
+          .dividedBy(GB_BYTES)
+          .times(ratePerGb);
+        host["egress_cost_usd"] = hostCost.toString();
       }
     }
 
@@ -901,7 +912,7 @@ export class TrackedTask {
       const reqBytes = (ev.details?.request_bytes as number) ?? 0;
       const isInternal = ev.details?.is_internal_traffic === true;
       const billable = isInternal ? 0 : respBytes + reqBytes;
-      const evCost = (billable / 1_000_000_000) * ratePerGb;
+      const evCost = new Decimal(billable).dividedBy(GB_BYTES).times(ratePerGb);
 
       ev.costUsd = evCost;
       ev.costConfidence = isInternal
@@ -939,7 +950,7 @@ export class TrackedTask {
         `No rate registered for service "${service}". Use tracker.registerRate("${service}", per, costUsd) first.`
       );
     }
-    const costUsd = rate * units;
+    const costUsd = toDecimal(rate).times(units);
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: this._task.taskId,
@@ -983,7 +994,8 @@ export class TrackedTask {
     target.retryReason = undefined;
     target.retryOf = undefined;
     this._task.retryCount = Math.max(0, this._task.retryCount - 1);
-    this._task.retryCostUsd = Math.max(0, this._task.retryCostUsd - target.costUsd);
+    const reversed = this._task.retryCostUsd.minus(target.costUsd);
+    this._task.retryCostUsd = reversed.lt(0) ? new Decimal(0) : reversed;
     this._buffer.upsertTask(this._task);
     return target;
   }

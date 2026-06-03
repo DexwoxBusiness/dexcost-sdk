@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createCostEvent } from "../core/models.js";
+import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
@@ -66,7 +66,7 @@ function recordEvent(
 
   const hasUsage = inputTokens > 0 || outputTokens > 0;
 
-  let costUsd = 0;
+  let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
 
@@ -94,8 +94,8 @@ function recordEvent(
 
   _buffer.addEvent(event);
 
-  task.llmCostUsd += costUsd;
-  task.totalCostUsd += costUsd;
+  task.llmCostUsd = task.llmCostUsd.plus(costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(costUsd);
   task.totalInputTokens += inputTokens;
   task.totalOutputTokens += outputTokens;
   _buffer.upsertTask(task);

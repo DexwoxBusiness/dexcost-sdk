@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as dexcost from "../src/index.js";
+import { Decimal } from "../src/core/models.js";
 import { GpuAccountant } from "../src/core/gpu-accountant.js";
 import { GpuRuntimeKind } from "../src/core/gpu-runtime.js";
 import {
@@ -107,7 +108,7 @@ describe("EC2 GPU task emits dual events and back-fills cost", () => {
     );
     expect(costEvs.length).toBe(1);
     const ev = costEvs[0];
-    expect(ev.costUsd).toBeGreaterThan(0);
+    expect(ev.costUsd.toNumber()).toBeGreaterThan(0);
     expect(ev.pricingSource).toContain("gpu_catalog:aws:ec2_gpu:");
     expect(ev.costConfidence).toBe("computed");
     expect(ev.pricingVersion).toMatch(/^gpu:/);
@@ -115,18 +116,17 @@ describe("EC2 GPU task emits dual events and back-fills cost", () => {
 
     expect(sigEvs.length).toBeGreaterThanOrEqual(1);
     for (const sig of sigEvs) {
-      expect(sig.costUsd).toBe(0); // NEVER back-filled per Decision #3
+      expect(sig.costUsd.toNumber()).toBe(0); // NEVER back-filled per Decision #3
     }
 
-    expect(tt.task.gpuCostUsd).toBe(ev.costUsd);
-    const expectedTotal =
-      tt.task.llmCostUsd +
-      tt.task.externalCostUsd +
-      tt.task.computeCostUsd +
-      tt.task.networkCostUsd +
-      tt.task.gpuCostUsd;
-    // floating-point tolerance
-    expect(Math.abs(tt.task.totalCostUsd - expectedTotal)).toBeLessThan(1e-9);
+    expect(tt.task.gpuCostUsd.toString()).toBe(ev.costUsd.toString());
+    const expectedTotal = tt.task.llmCostUsd
+      .plus(tt.task.externalCostUsd)
+      .plus(tt.task.computeCostUsd)
+      .plus(tt.task.networkCostUsd)
+      .plus(tt.task.gpuCostUsd);
+    // Decimal arithmetic — exact equality of the rolled-up total.
+    expect(tt.task.totalCostUsd.minus(expectedTotal).abs().toNumber()).toBeLessThan(1e-9);
   });
 });
 
@@ -153,7 +153,7 @@ describe("Unknown GPU runtime emits nothing", () => {
         e.eventType === "gpu_utilization_signal",
     );
     expect(gpuEvs.length).toBe(0);
-    expect(tt.task.gpuCostUsd).toBe(0);
+    expect(tt.task.gpuCostUsd.toNumber()).toBe(0);
   });
 });
 
@@ -181,13 +181,13 @@ describe("Decision #3 carve-out: signal events NEVER aggregated into gpuCostUsd"
     const events = tracker.buffer.queryEvents(tt.task.taskId);
     const gpuCostSum = events
       .filter((e) => e.eventType === "gpu_cost")
-      .reduce((acc, e) => acc + e.costUsd, 0);
+      .reduce((acc, e) => acc.plus(e.costUsd), new Decimal(0));
     const signalCount = events.filter(
       (e) => e.eventType === "gpu_utilization_signal",
     ).length;
     expect(signalCount).toBeGreaterThanOrEqual(1);
     // The Decision #3 convention §1 carve-out: task.gpuCostUsd is the sum
     // of gpu_cost events ONLY; signals contribute zero.
-    expect(tt.task.gpuCostUsd).toBe(gpuCostSum);
+    expect(tt.task.gpuCostUsd.toString()).toBe(gpuCostSum.toString());
   });
 });

@@ -56,7 +56,7 @@ describe("CostTracker auto-instrumentation integration", () => {
       await fake.create();
 
       // Event should be auto-recorded
-      expect(task.task.llmCostUsd).toBeGreaterThan(0);
+      expect(task.task.llmCostUsd.toNumber()).toBeGreaterThan(0);
       expect(task.task.totalInputTokens).toBe(500);
       expect(task.task.totalOutputTokens).toBe(100);
     });
@@ -100,7 +100,7 @@ describe("CostTracker auto-instrumentation integration", () => {
       const fake = new FakeMessages();
       await fake.create();
 
-      expect(task.task.llmCostUsd).toBeGreaterThan(0);
+      expect(task.task.llmCostUsd.toNumber()).toBeGreaterThan(0);
       expect(task.task.totalInputTokens).toBe(300);
       expect(task.task.totalOutputTokens).toBe(80);
     });
@@ -131,9 +131,9 @@ describe("CostTracker auto-instrumentation integration", () => {
       task.recordLlmCall("openai", "gpt-4o", 500, 100, 0.03);
       task.recordCost("pdf_parser", 0.002);
 
-      expect(task.task.llmCostUsd).toBeCloseTo(0.03);
-      expect(task.task.externalCostUsd).toBeCloseTo(0.002);
-      expect(task.task.totalCostUsd).toBeCloseTo(0.032);
+      expect(task.task.llmCostUsd.toNumber()).toBeCloseTo(0.03);
+      expect(task.task.externalCostUsd.toNumber()).toBeCloseTo(0.002);
+      expect(task.task.totalCostUsd.toNumber()).toBeCloseTo(0.032);
     });
 
     expect(tracker.buffer.getAllEvents()).toHaveLength(2);

@@ -72,7 +72,7 @@ describe("MCP instrumentation", () => {
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe("external_cost");
     expect(events[0].serviceName).toBe("mcp:tavily_search");
-    expect(events[0].costUsd).toBeGreaterThanOrEqual(0);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThanOrEqual(0);
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
 
@@ -179,7 +179,7 @@ describe("MCP instrumentation", () => {
 
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("unknown");
   });
 

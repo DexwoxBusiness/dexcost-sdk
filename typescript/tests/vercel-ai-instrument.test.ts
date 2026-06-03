@@ -106,7 +106,7 @@ describe("Vercel AI SDK instrumentation", () => {
     expect(events[0].model).toBe("gpt-4o");
     expect(events[0].inputTokens).toBe(600);
     expect(events[0].outputTokens).toBe(120);
-    expect(events[0].costUsd).toBeGreaterThanOrEqual(0);
+    expect(events[0].costUsd.toNumber()).toBeGreaterThanOrEqual(0);
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
 
@@ -180,7 +180,7 @@ describe("Vercel AI SDK instrumentation", () => {
 
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].costUsd).toBe(0);
+    expect(events[0].costUsd.toNumber()).toBe(0);
     expect(events[0].costConfidence).toBe("estimated");
     expect(events[0].inputTokens).toBe(0);
     expect(events[0].outputTokens).toBe(0);

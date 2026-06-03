@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "exact",
-  "cost_usd": "0.0050",
+  "cost_usd": "0.005",
   "details": {
     "endpoint": "/search",
     "requests_count": 1,

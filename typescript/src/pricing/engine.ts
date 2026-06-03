@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { Decimal } from "../core/models.js";
 import type { PricingSource } from "../core/models.js";
 
 // Sprint 3 Theme E / §4.2.3 — Node 18 compat: runtime JSON load.
@@ -11,7 +12,8 @@ const costMapData = JSON.parse(
 );
 
 export interface CostResult {
-  costUsd: number;
+  /** Exact decimal cost. Trailing-zero-stripped, never float64. */
+  costUsd: Decimal;
   pricingSource: PricingSource;
   costConfidence: "computed" | "unknown";
   pricingVersion: string;
@@ -27,6 +29,15 @@ interface ModelPricing {
 interface CustomPricing {
   inputPer1k: number;
   outputPer1k: number;
+}
+
+/**
+ * Coerce a numeric rate/literal to Decimal via String() so a float64 rate
+ * from the JSON cost map never poisons the product. Mirrors Python's
+ * `Decimal(str(rate))`.
+ */
+function dec(v: number): Decimal {
+  return new Decimal(String(v));
 }
 
 export class PricingEngine {
@@ -61,9 +72,12 @@ export class PricingEngine {
   ): CostResult {
     const custom = this._customPricing.get(model);
     if (custom) {
-      const cost =
-        (custom.inputPer1k * inputTokens) / 1000 +
-        (custom.outputPer1k * outputTokens) / 1000;
+      // Decimal math throughout — rates routed through String() so a float64
+      // rate literal never poisons the product (matches Python Decimal(str)).
+      const cost = dec(custom.inputPer1k)
+        .times(inputTokens)
+        .dividedBy(1000)
+        .plus(dec(custom.outputPer1k).times(outputTokens).dividedBy(1000));
       return {
         costUsd: cost,
         costConfidence: "computed",
@@ -75,28 +89,28 @@ export class PricingEngine {
     const info = this._resolveModel(model);
     if (!info) {
       return {
-        costUsd: 0,
+        costUsd: new Decimal(0),
         costConfidence: "unknown",
         pricingSource: "unknown",
         pricingVersion: this._pricingVersion,
       };
     }
 
-    const inputRate = info.input_cost_per_token;
-    const outputRate = info.output_cost_per_token;
-    const cacheReadRate = info.cache_read_input_token_cost ?? 0;
-    const cacheCreationRate = info.cache_creation_input_token_cost ?? 0;
+    const inputRate = dec(info.input_cost_per_token);
+    const outputRate = dec(info.output_cost_per_token);
+    const cacheReadRate = dec(info.cache_read_input_token_cost ?? 0);
+    const cacheCreationRate = dec(info.cache_creation_input_token_cost ?? 0);
 
     const effectiveCached = Math.min(cachedTokens, inputTokens);
     const remaining = inputTokens - effectiveCached;
     const effectiveCreation = Math.min(cacheCreationTokens, remaining);
     const nonCachedInput = remaining - effectiveCreation;
 
-    const cost =
-      inputRate * nonCachedInput +
-      cacheReadRate * effectiveCached +
-      cacheCreationRate * effectiveCreation +
-      outputRate * outputTokens;
+    const cost = inputRate
+      .times(nonCachedInput)
+      .plus(cacheReadRate.times(effectiveCached))
+      .plus(cacheCreationRate.times(effectiveCreation))
+      .plus(outputRate.times(outputTokens));
 
     return {
       costUsd: cost,

@@ -205,8 +205,14 @@ func TestEvent_ToDict_RoundTrip(t *testing.T) {
 	if restored.Model != event.Model {
 		t.Errorf("model mismatch")
 	}
-	if restored.ErrorType != event.ErrorType {
-		t.Errorf("error_type mismatch")
+	// error_type is intentionally NOT emitted on the wire (canonical contract:
+	// Python's event has no error_type field and the canonical fixtures omit it).
+	// ToDict drops it, so it does not survive a ToDict->FromDict round-trip.
+	if _, present := d["error_type"]; present {
+		t.Errorf("error_type must not appear in ToDict output (canonical contract)")
+	}
+	if restored.ErrorType != "" {
+		t.Errorf("error_type should not round-trip through the wire, got %q", restored.ErrorType)
 	}
 	if restored.InputTokens == nil || *restored.InputTokens != 1000 {
 		t.Errorf("input_tokens mismatch")

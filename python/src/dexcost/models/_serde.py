@@ -17,6 +17,29 @@ boundary.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
+
+
+def canonical_decimal(value: Decimal) -> str:
+    """Serialise a Decimal to the canonical normalized-plain string.
+
+    Cross-SDK money format (Python/Go/TS/Rust must agree byte-for-byte):
+      - never scientific notation (``1.23E-8`` -> ``0.0000000123``)
+      - trailing zeros stripped (``2.00`` -> ``2``, ``0.00`` -> ``0``)
+      - ``"0"`` for any zero value
+      - full precision otherwise preserved
+
+    ``str(Decimal)`` is unsuitable: it preserves the construction scale
+    (so ``Decimal("2.00")`` -> ``"2.00"``) and uses scientific notation for
+    small magnitudes — neither is deterministic/portable.
+    """
+    if value == 0:
+        return "0"
+    # format(..., "f") forces fixed-point (no exponent) at the value's scale.
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 
 def iso_canonical(dt: datetime) -> str:

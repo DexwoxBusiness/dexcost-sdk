@@ -736,7 +736,7 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
     const ev = _recordedEvents[i];
     if (
       ev.eventType === "external_cost" &&
-      ev.costUsd === 0 &&
+      ev.costUsd.isZero() &&
       ev.costConfidence === "unknown" &&
       ev.details?.url === ctx.urlStr &&
       !ev.details?._reTyped
