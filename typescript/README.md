@@ -73,6 +73,7 @@ init({ autoInstrument: [] });
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `apiKey` | `string` | `DEXCOST_API_KEY` env | API key for cloud push |
+| `endpoint` | `string` | `https://api.dexcost.io` | Control Layer URL. Set explicitly in code (e.g. `http://localhost:3000` for local). Must start with `http://` or `https://`. **Never read from the environment** — see note below. |
 | `autoInstrument` | `string[]` | All 6 providers | Which LLM SDKs to patch |
 | `batchSize` | `number` | `100` | Events per sync batch |
 | `flushIntervalMs` | `number` | `30000` | Milliseconds between sync pushes |
@@ -87,8 +88,13 @@ init({ autoInstrument: [] });
 | Variable | Description |
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
-| `DEXCOST_ENDPOINT` | Control Layer URL (default: `https://api.dexcost.io`) |
 | `DEXCOST_ENV` | Set to `development` for dev console output |
+
+> **Note:** `DEXCOST_ENDPOINT` is no longer read. The endpoint is sourced
+> **only** from the explicit `endpoint` option in code (defaulting to
+> `https://api.dexcost.io`). This is a deliberate security measure: an attacker
+> who controls the process environment cannot redirect telemetry or the Bearer
+> API key by setting `DEXCOST_ENDPOINT=http://attacker/`.
 
 ## API
 

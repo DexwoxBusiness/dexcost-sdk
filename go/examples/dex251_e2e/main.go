@@ -15,7 +15,7 @@
 //	export MINIMAX_API_KEY=...
 //	export VOYAGE_API_KEY=...
 //	export DEXCOST_API_KEY=dx_test_...          # MUST belong to the same workspace as the dashboard user below
-//	export DEXCOST_ENDPOINT=http://localhost:3000        # control-layer API (login + ingest)
+//	export DEXCOST_ENDPOINT=http://localhost:3000        # read by THIS example, passed via Config.Endpoint (the SDK no longer reads it)
 //	export DEXCOST_DASHBOARD_URL=http://localhost:3001   # Next.js dashboard for screenshots
 //	export DEXCOST_DASHBOARD_EMAIL=admin@dexcost.io
 //	export DEXCOST_DASHBOARD_PASSWORD=dexcost123
@@ -84,8 +84,11 @@ func run() error {
 	// ------------------------------------------------------------------
 	// Init Dexcost SDK (cloud mode pushes to Control Layer)
 	// ------------------------------------------------------------------
+	// The SDK no longer reads DEXCOST_ENDPOINT from the env; the target is read
+	// here in the example (above) and passed explicitly via Config.Endpoint.
 	if err := dexcost.Init(dexcost.Config{
 		APIKey:               dexcostKey,
+		Endpoint:             dexcostEndpoint,
 		BatchSize:            50,
 		FlushIntervalSeconds: 3,
 	}); err != nil {

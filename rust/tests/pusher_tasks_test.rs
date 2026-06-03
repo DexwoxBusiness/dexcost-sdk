@@ -3,12 +3,11 @@
 //! propagate to the server and populate `/dashboard/tasks`.
 //!
 //! These tests intercept the real HTTP request via wiremock and assert on
-//! the JSON body the SDK actually sends. They share one test binary, so we
-//! serialize them via a process-level mutex to avoid cross-test interference
-//! on the `DEXCOST_ENDPOINT` environment variable.
+//! the JSON body the SDK actually sends. The target mock server is passed to
+//! the SDK via the explicit `Config.endpoint` field (the SDK no longer reads
+//! `DEXCOST_ENDPOINT` from the environment).
 
 use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
 
 use dexcost::config::Config;
 use dexcost::core::models::{CostEvent, EventType, Task};
@@ -18,42 +17,10 @@ use tokio::sync::Mutex as AsyncMutex;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-/// RAII guard that sets `DEXCOST_ENDPOINT` for the duration of a test and
-/// restores the previous value on drop. Holds the process-level mutex.
-struct EnvGuard {
-    _lock: std::sync::MutexGuard<'static, ()>,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn new(endpoint: &str) -> Self {
-        let lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let previous = std::env::var("DEXCOST_ENDPOINT").ok();
-        std::env::set_var("DEXCOST_ENDPOINT", endpoint);
-        Self {
-            _lock: lock,
-            previous,
-        }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match self.previous.take() {
-            Some(v) => std::env::set_var("DEXCOST_ENDPOINT", v),
-            None => std::env::remove_var("DEXCOST_ENDPOINT"),
-        }
-    }
-}
-
-fn fast_flush_config() -> Config {
+fn fast_flush_config(endpoint: &str) -> Config {
     Config {
         api_key: Some("dx_test_abc".into()),
+        endpoint: Some(endpoint.to_string()),
         flush_interval_secs: 60,
         batch_size: 100,
         ..Config::default()
@@ -68,7 +35,6 @@ async fn flush_includes_non_empty_tasks_array_when_task_pending() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
     let task = Task::new("resolve_ticket");
@@ -77,7 +43,7 @@ async fn flush_includes_non_empty_tasks_array_when_task_pending() {
     buf.add_event(event);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
     pusher.flush().await.expect("flush should succeed");
 
     let received = server.received_requests().await.expect("requests recorded");
@@ -107,7 +73,6 @@ async fn flush_includes_pending_tasks_even_with_no_pending_events() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
     // Only a pending task — no events at all.
@@ -115,7 +80,7 @@ async fn flush_includes_pending_tasks_even_with_no_pending_events() {
     buf.upsert_task(task);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
     pusher.flush().await.expect("flush should succeed");
 
     let received = server.received_requests().await.expect("requests recorded");
@@ -156,11 +121,10 @@ async fn flush_skips_when_both_events_and_tasks_empty() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let buf = EventBuffer::new().unwrap();
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer, fast_flush_config());
+    let pusher = EventPusher::new(buffer, fast_flush_config(&server.uri()));
     pusher
         .flush()
         .await
@@ -182,7 +146,6 @@ async fn second_flush_after_task_update_resends_task() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
     let mut task = Task::new("workflow");
@@ -190,7 +153,7 @@ async fn second_flush_after_task_update_resends_task() {
     buf.upsert_task(task.clone());
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
 
     // First flush — task gets sent and marked synced.
     pusher.flush().await.expect("first flush");
@@ -243,7 +206,6 @@ async fn flush_redacts_and_hashes_task_metadata_before_post() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
 
@@ -270,6 +232,7 @@ async fn flush_redacts_and_hashes_task_metadata_before_post() {
 
     let config = Config {
         api_key: Some("dx_test_abc".into()),
+        endpoint: Some(server.uri()),
         flush_interval_secs: 60,
         batch_size: 100,
         redact_fields: vec!["email".to_string()],
@@ -345,7 +308,6 @@ async fn flush_leaves_task_metadata_intact_when_unconfigured() {
         .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
     let mut task = Task::new("resolve_ticket");
@@ -358,7 +320,7 @@ async fn flush_leaves_task_metadata_intact_when_unconfigured() {
 
     let buffer = Arc::new(AsyncMutex::new(buf));
     // fast_flush_config has no redact_fields and hash_customer_id = false.
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
     pusher.flush().await.expect("flush should succeed");
 
     let received = server.received_requests().await.expect("requests recorded");
@@ -387,7 +349,6 @@ async fn flush_stops_pusher_permanently_on_401() {
         .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().unwrap();
     let task = Task::new("resolve_ticket");
@@ -396,7 +357,7 @@ async fn flush_stops_pusher_permanently_on_401() {
     buf.add_event(event);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
 
     // First flush hits the server and is rejected with 401.
     let first = pusher.flush().await;

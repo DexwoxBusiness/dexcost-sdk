@@ -73,11 +73,14 @@ class TestE2ELocal:
 
         db_file = tmp_path / "e2e.db"
 
-        # Configure SDK to point at local server with a test API key
+        # Configure SDK to point at local server with a test API key.
+        # The endpoint is read from the env HERE (test-side) but passed
+        # EXPLICITLY to the SDK below — the SDK itself no longer reads
+        # DEXCOST_ENDPOINT from the environment.
+        endpoint = os.environ.get("DEXCOST_ENDPOINT", "http://localhost:3000")
         env = {
             **_TEST_ENV,
             "DEXCOST_API_KEY": "dx_test_e2e_abc123",
-            "DEXCOST_ENDPOINT": "http://localhost:3000",
         }
 
         # Build an inline script that exercises the SDK's HTTP sync path
@@ -99,6 +102,7 @@ storage = SQLiteStorage(db_path=db_path)
 
 config = DexcostConfig(
     api_key='dx_test_e2e_abc123',
+    endpoint_override='{endpoint}',
     flush_interval_seconds=1.0,
 )
 worker = SyncWorker(config=config, storage=storage, db_path=str(db_path))

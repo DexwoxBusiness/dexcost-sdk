@@ -195,6 +195,17 @@ export async function globalCloseAsync(): Promise<void> {
 export interface TrackerOptions {
   /** API key for authenticating with the remote endpoint. */
   apiKey?: string;
+  /**
+   * Control Layer endpoint, supplied explicitly in code. Defaults to the
+   * hardcoded production URL (`https://api.dexcost.io`). This is the ONLY way
+   * to override the endpoint — it is never read from the process environment,
+   * so a hostile env (`DEXCOST_ENDPOINT=http://attacker/`) cannot redirect
+   * telemetry or the Bearer API key. Must start with `http://` or `https://`
+   * (otherwise it is ignored with a warning and the default is used). `http://`
+   * is accepted (e.g. `http://localhost` for e2e) since it is not
+   * env-controllable.
+   */
+  endpoint?: string;
   /** Maximum number of events per batch push. Defaults to 100. */
   batchSize?: number;
   /** Interval in milliseconds between background flushes. Defaults to 30000. */
@@ -1024,12 +1035,15 @@ export class CostTracker {
       enableDevMode();
     }
 
-    const endpoint = resolveEndpoint();
+    // Endpoint comes ONLY from the explicit in-code option (or the hardcoded
+    // default) — never from the process env. Threaded to both consumers below:
+    // the pusher (telemetry POST) and the pricing refresher.
+    const endpoint = resolveEndpoint(this._options.endpoint);
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
 
     if (cloudMode) {
-      this._pusher = new EventPusher(this._buffer, this._options);
+      this._pusher = new EventPusher(this._buffer, this._options, endpoint);
       this._pusher.start();
     }
 

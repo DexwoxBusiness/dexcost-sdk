@@ -6,30 +6,20 @@ use crate::error::DexcostError;
 
 const DEFAULT_ENDPOINT: &str = "https://api.dexcost.io";
 
-/// Returns true if the given URL is an acceptable DEXCOST_ENDPOINT.
-///
-/// Production traffic must be `https://`. As a documented exception
-/// (matching standard browser security models for localhost),
-/// `http://localhost[:port]/...` and `http://127.0.0.1[:port]/...`
-/// are also accepted so that mock servers used in tests (wiremock,
-/// httpbin, etc.) don't trigger the allow-list fallback.
-/// Sprint 2 Theme D follow-on to A2 (commit 64bd3dd).
-fn is_allowed_endpoint(url: &str) -> bool {
-    if url.starts_with("https://") {
-        return true;
-    }
-    if url.starts_with("http://localhost") || url.starts_with("http://127.0.0.1") {
-        return true;
-    }
-    false
-}
-
 /// SDK configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// API key for the control layer. Must start with `dx_live_` or `dx_test_`.
     /// Falls back to `DEXCOST_API_KEY` environment variable.
     pub api_key: Option<String>,
+    /// Control Layer endpoint. Explicit, in-code configuration only — the SDK
+    /// never reads this from the process environment (closing the env-injection
+    /// exfiltration vector). When `None` or empty, the hardcoded production
+    /// `DEFAULT_ENDPOINT` is used. A set value must start with `http://` or
+    /// `https://`, otherwise the default is used. `http://` is intentionally
+    /// accepted here (e.g. `http://localhost` for e2e) because this field is
+    /// developer-supplied and not attacker-controllable.
+    pub endpoint: Option<String>,
     /// Maximum number of events per flush batch.
     pub batch_size: usize,
     /// Interval in seconds between automatic flushes.
@@ -80,6 +70,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             api_key: None,
+            endpoint: None,
             batch_size: 100,
             flush_interval_secs: 5,
             redact_fields: Vec::new(),
@@ -105,25 +96,31 @@ impl Config {
         Self::default()
     }
 
-    /// Control Layer endpoint. Hardcoded default, overridable via
-    /// DEXCOST_ENDPOINT env var. Sprint 1 Theme A / §2.1 (A2): only
-    /// `https://` URLs are accepted. An attacker who controls the env
-    /// (misconfigured CI runner, hostile container) could otherwise
-    /// silently exfiltrate cost telemetry to an HTTP collector — we
-    /// refuse and fall back to the production default.
+    /// Control Layer endpoint. Resolved ONLY from the explicit, in-code
+    /// `endpoint` field — never from the process environment. This removes the
+    /// env-injection vector where an attacker controlling the process env (CI
+    /// runner, hostile container) could set the endpoint to an HTTP collector
+    /// and exfiltrate cost telemetry plus the Bearer API key.
+    ///
+    /// When the field is unset/empty, the hardcoded production `DEFAULT_ENDPOINT`
+    /// is used. A set value must start with `http://` or `https://`; otherwise we
+    /// warn and fall back to the default. `http://` is accepted because this
+    /// field is developer-supplied and trusted (e.g. `http://localhost` for e2e).
     pub(crate) fn endpoint(&self) -> String {
-        match env::var("DEXCOST_ENDPOINT") {
-            Ok(v) if is_allowed_endpoint(&v) => v,
-            Ok(v) => {
-                eprintln!(
-                    "dexcost: DEXCOST_ENDPOINT={:?} rejected — only https:// \
-                     (or http://localhost / http://127.0.0.1 for tests) URLs \
-                     are accepted. Falling back to {}.",
-                    v, DEFAULT_ENDPOINT
-                );
-                DEFAULT_ENDPOINT.to_string()
+        match self.endpoint.as_deref() {
+            Some(v) if !v.is_empty() => {
+                if v.starts_with("http://") || v.starts_with("https://") {
+                    v.to_string()
+                } else {
+                    eprintln!(
+                        "dexcost: Config.endpoint={:?} is not a valid URL — it must \
+                         start with http:// or https://. Falling back to {}.",
+                        v, DEFAULT_ENDPOINT
+                    );
+                    DEFAULT_ENDPOINT.to_string()
+                }
             }
-            Err(_) => DEFAULT_ENDPOINT.to_string(),
+            _ => DEFAULT_ENDPOINT.to_string(),
         }
     }
 
@@ -236,37 +233,51 @@ mod tests {
 
     #[test]
     fn test_endpoint_default() {
-        std::env::remove_var("DEXCOST_ENDPOINT");
         let config = Config::default();
         assert_eq!(config.endpoint(), "https://api.dexcost.io");
     }
 
+    /// The endpoint comes from the explicit in-code `Config.endpoint` field.
     #[test]
-    fn test_endpoint_env_override() {
-        std::env::set_var("DEXCOST_ENDPOINT", "https://custom.api.dev");
-        let config = Config::default();
+    fn test_endpoint_explicit_option() {
+        let config = Config {
+            endpoint: Some("https://custom.api.dev".into()),
+            ..Default::default()
+        };
         assert_eq!(config.endpoint(), "https://custom.api.dev");
+    }
+
+    /// Threat closed: the SDK must NOT read the endpoint from the process env.
+    /// Even with a hostile `DEXCOST_ENDPOINT` set, a default `Config` resolves
+    /// to the hardcoded production endpoint — the env value is ignored entirely.
+    #[test]
+    fn test_endpoint_env_ignored() {
+        std::env::set_var("DEXCOST_ENDPOINT", "http://evil.example");
+        let config = Config::default();
+        assert_eq!(config.endpoint(), DEFAULT_ENDPOINT);
         std::env::remove_var("DEXCOST_ENDPOINT");
     }
 
-    /// A2 regression — Sprint 1 Theme A / §2.1. Non-https endpoint values
-    /// are rejected (warn + fall back to production default) so a hostile
-    /// env (misconfigured CI runner, compromised container) cannot
-    /// exfiltrate telemetry to an HTTP collector.
+    /// Explicit `http://localhost` is developer-supplied and trusted (e.g. for
+    /// e2e against a local server), so it is returned as-is.
     #[test]
-    fn test_endpoint_rejects_http_falls_back_to_default() {
-        std::env::set_var("DEXCOST_ENDPOINT", "http://attacker.example/");
-        let config = Config::default();
-        assert_eq!(config.endpoint(), "https://api.dexcost.io");
-        std::env::remove_var("DEXCOST_ENDPOINT");
+    fn test_endpoint_explicit_http_localhost_accepted() {
+        let config = Config {
+            endpoint: Some("http://localhost:8080".into()),
+            ..Default::default()
+        };
+        assert_eq!(config.endpoint(), "http://localhost:8080");
     }
 
+    /// In-code validation: an explicit value with a non-http(s) scheme falls
+    /// back to the production default.
     #[test]
-    fn test_endpoint_rejects_arbitrary_scheme() {
-        std::env::set_var("DEXCOST_ENDPOINT", "javascript:alert(1)");
-        let config = Config::default();
-        assert_eq!(config.endpoint(), "https://api.dexcost.io");
-        std::env::remove_var("DEXCOST_ENDPOINT");
+    fn test_endpoint_explicit_bad_scheme_falls_back() {
+        let config = Config {
+            endpoint: Some("javascript:alert(1)".into()),
+            ..Default::default()
+        };
+        assert_eq!(config.endpoint(), DEFAULT_ENDPOINT);
     }
 
     #[test]

@@ -43,6 +43,7 @@ class DexcostConfig:
 
     api_key: str | None = None
     storage: str | None = None  # "local" or None (auto-detect)
+    endpoint_override: str | None = None  # explicit, in-code Control Layer URL
     batch_size: int = 100
     flush_interval_seconds: float = 5.0
     buffer_path: str | None = None
@@ -86,24 +87,35 @@ class DexcostConfig:
 
     @property
     def endpoint(self) -> str:
-        """Control Layer endpoint. Hardcoded default, overridable via
-        DEXCOST_ENDPOINT env var. Sprint 1 Theme A / §2.1 (A2): only
-        ``https://`` URLs are accepted. An attacker who controls the
-        env (misconfigured CI runner, hostile container) could
-        otherwise silently exfiltrate cost telemetry to an HTTP
-        collector — we refuse and fall back to the production default.
+        """Control Layer endpoint. Resolved ONLY from explicit, in-code
+        configuration (``init(endpoint=...)`` / ``DexcostConfig
+        (endpoint_override=...)``), defaulting to ``_DEFAULT_ENDPOINT``.
+
+        The endpoint is intentionally NOT read from the process
+        environment: an attacker who controls the env (misconfigured CI
+        runner, hostile container) could otherwise set
+        ``DEXCOST_ENDPOINT=http://attacker/`` and silently exfiltrate
+        cost telemetry plus the Bearer API key. With no env read, that
+        vector is closed.
+
+        Validation is minimal because the value is developer-supplied
+        and trusted: if it does not start with ``http://`` or
+        ``https://`` we log a warning and fall back to the production
+        default. ``http://`` is intentionally accepted (e.g.
+        ``http://localhost`` for e2e) — safe precisely because it is not
+        env-controllable.
         """
-        env_value = os.environ.get("DEXCOST_ENDPOINT")
-        if env_value is None:
+        override = self.endpoint_override
+        if not override:
             return _DEFAULT_ENDPOINT
-        if not env_value.startswith("https://"):
+        if not override.startswith(("http://", "https://")):
             _log.warning(
-                "dexcost: DEXCOST_ENDPOINT=%r rejected — only https:// "
-                "URLs are accepted. Falling back to %s.",
-                env_value, _DEFAULT_ENDPOINT,
+                "dexcost: endpoint=%r rejected — must start with http:// "
+                "or https://. Falling back to %s.",
+                override, _DEFAULT_ENDPOINT,
             )
             return _DEFAULT_ENDPOINT
-        return env_value
+        return override
 
     @property
     def is_dev(self) -> bool:

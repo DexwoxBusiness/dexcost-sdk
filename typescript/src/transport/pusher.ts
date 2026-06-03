@@ -10,7 +10,7 @@ import type { TrackerOptions } from "../core/tracker.js";
 import type { EventBuffer } from "./buffer.js";
 import { eventToDict, taskToDict } from "../core/models.js";
 import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
-import { resolveEndpoint } from "../core/endpoint.js";
+import { DEFAULT_ENDPOINT } from "../core/endpoint.js";
 
 /** Maximum backoff in milliseconds (5 minutes). */
 const MAX_BACKOFF_MS = 300_000;
@@ -32,14 +32,28 @@ export class EventPusher {
   private _backoffMs = 1000;
   private _buffer: EventBuffer;
   private _options: TrackerOptions;
+  /**
+   * Control Layer endpoint, resolved by the tracker from explicit in-code
+   * config and passed in here. The pusher never reads the env or calls
+   * `resolveEndpoint()` itself — the endpoint is fully determined upstream so a
+   * hostile env cannot redirect the ingest POST (and the Bearer API key).
+   * Defaults to the production endpoint when not supplied (the production
+   * tracker always passes the resolved value explicitly).
+   */
+  private _endpoint: string;
   private _pushing = false;
   private _lastPurgeMs = 0;
   /** Set permanently when the API key is rejected (HTTP 401/403). */
   private _authFailed = false;
 
-  constructor(buffer: EventBuffer, options: TrackerOptions) {
+  constructor(
+    buffer: EventBuffer,
+    options: TrackerOptions,
+    endpoint: string = DEFAULT_ENDPOINT,
+  ) {
     this._buffer = buffer;
     this._options = options;
+    this._endpoint = endpoint;
   }
 
   /**
@@ -317,10 +331,9 @@ export class EventPusher {
    * Returns `true` on 2xx, `false` otherwise.
    */
   private async postRaw(body: string): Promise<boolean> {
-    // Route through the shared https:// allow-list (src/core/endpoint.ts) so a
-    // hostile DEXCOST_ENDPOINT=http://... can't exfiltrate the Bearer API key.
-    const endpoint = resolveEndpoint();
-
+    // Endpoint is the one the tracker resolved from explicit in-code config and
+    // passed to the constructor — never the env. A hostile env cannot redirect
+    // this POST (and the Bearer API key) to an attacker host.
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -328,7 +341,7 @@ export class EventPusher {
       headers["Authorization"] = `Bearer ${this._options.apiKey}`;
     }
 
-    const url = `${endpoint}/v1/ingest`;
+    const url = `${this._endpoint}/v1/ingest`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
     let response: Response;

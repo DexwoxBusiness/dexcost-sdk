@@ -17,7 +17,10 @@ import (
 // TestE2E_LocalControlLayer exercises the SDK against a local control-layer stack.
 // It requires the Docker Compose stack from infra/docker-compose.yml to be running.
 // Environment variables used:
-//   DEXCOST_ENDPOINT - defaults to http://localhost:3001
+//   DEXCOST_ENDPOINT - read HERE in the test to pick the target (defaults to
+//                      http://localhost:3001) and passed explicitly via
+//                      Config.Endpoint. The SDK itself no longer reads this
+//                      env var.
 //   DEXCOST_API_KEY   - required for cloud mode (use dx_test_* for test key)
 func TestE2E_LocalControlLayer(t *testing.T) {
 	// Skip if not running against local stack — check for explicit opt-in.
@@ -34,9 +37,11 @@ func TestE2E_LocalControlLayer(t *testing.T) {
 		t.Fatal("DEXCOST_API_KEY must be set for E2E (use dx_test_*)")
 	}
 
-	// Initialize SDK in cloud mode with the local endpoint.
+	// Initialize SDK in cloud mode with the local endpoint. The SDK no longer
+	// reads DEXCOST_ENDPOINT from the env, so the target is passed explicitly.
 	if err := dexcost.Init(dexcost.Config{
 		APIKey:    apiKey,
+		Endpoint:  endpoint,
 		Storage:   "", // auto-detect: cloud because API key is set
 		BatchSize: 10,
 	}); err != nil {

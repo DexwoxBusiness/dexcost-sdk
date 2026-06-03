@@ -69,6 +69,22 @@ init(Config {
 
 Events are buffered in memory and pushed in batches every 5 seconds.
 
+The Control Layer endpoint defaults to `https://api.dexcost.io`. To target a
+different endpoint (e.g. a local server for testing), set `Config::endpoint`
+explicitly in code:
+
+```rust
+init(Config {
+    api_key: Some("dx_test_local".into()),
+    endpoint: Some("http://localhost:8080".into()),
+    ..Config::default()
+}).unwrap();
+```
+
+The endpoint is read **only** from this in-code field — the SDK no longer reads
+a `DEXCOST_ENDPOINT` environment variable, so a hostile process environment
+cannot redirect telemetry or the API key.
+
 ## Features
 
 - **LLM Cost Tracking** -- Record costs for any LLM provider with auto-pricing from bundled model data

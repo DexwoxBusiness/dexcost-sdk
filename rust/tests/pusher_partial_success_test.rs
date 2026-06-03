@@ -10,7 +10,6 @@
 //! immediately, so a sibling failure cannot unwind successful work.
 
 use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
 
 use dexcost::config::Config;
 use dexcost::core::models::{CostEvent, EventType, Task};
@@ -20,40 +19,10 @@ use tokio::sync::Mutex as AsyncMutex;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct EnvGuard {
-    _lock: std::sync::MutexGuard<'static, ()>,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn new(endpoint: &str) -> Self {
-        let lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let previous = std::env::var("DEXCOST_ENDPOINT").ok();
-        std::env::set_var("DEXCOST_ENDPOINT", endpoint);
-        Self {
-            _lock: lock,
-            previous,
-        }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(p) => std::env::set_var("DEXCOST_ENDPOINT", p),
-            None => std::env::remove_var("DEXCOST_ENDPOINT"),
-        }
-    }
-}
-
-fn fast_flush_config() -> Config {
+fn fast_flush_config(endpoint: &str) -> Config {
     Config {
         api_key: Some("dx_test_abc".into()),
+        endpoint: Some(endpoint.to_string()),
         flush_interval_secs: 60,
         batch_size: 1000,
         ..Config::default()
@@ -79,7 +48,6 @@ async fn first_half_events_marked_synced_when_second_half_fails() {
         .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
         .mount(&server)
         .await;
-    let _guard = EnvGuard::new(&server.uri());
 
     let mut buf = EventBuffer::new().expect("buffer");
     let task = Task::new("partial-fail");
@@ -101,7 +69,7 @@ async fn first_half_events_marked_synced_when_second_half_fails() {
     assert_eq!(initial_pending, 200);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config());
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
 
     // flush returns Err because the second half failed — that's
     // expected. The KEY invariant: not all events should still be
