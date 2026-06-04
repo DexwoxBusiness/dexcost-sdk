@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.0...rust/v0.3.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **sdk:** cross-SDK canonical serialization parity (decimals, fields, round-trip) ([ae2e40c](https://github.com/DexwoxBusiness/dexcost-sdk/commit/ae2e40c95d1be0034c752f9b5b9ff35b17f78996))
+* **sdk:** cross-SDK canonical serialization parity (decimals, fields,… ([f7e156b](https://github.com/DexwoxBusiness/dexcost-sdk/commit/f7e156bd080dd9b363e2cd1eb74134e8c5b39be7))
+
 ## [0.3.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.2.0...rust/v0.3.0) (2026-06-03)
 
 
