@@ -5,24 +5,25 @@
  * and mirror the Python SDK's Task and Event dataclasses.
  */
 
-import { Decimal } from "decimal.js";
+import { Decimal as DecimalBase } from "decimal.js";
 
 // Money fields are stored as exact decimals (decimal.js), never float64.
-// Configure the module-level Decimal so `.toString()` NEVER emits
-// exponential notation — `toExpNeg`/`toExpPos` are pushed to the extremes
-// so a plain decimal string is always produced. This is the canonical wire
-// form: trailing zeros stripped, `"0"` for zero, full precision, no `e`.
+// We use a CLONED Decimal constructor — NOT `DecimalBase.set(...)` on the
+// global — so the SDK's no-exponential config can never alter a consumer
+// app that also depends on decimal.js. `toExpNeg`/`toExpPos` are pushed to
+// the extremes so `.toString()` ALWAYS produces a plain decimal string —
+// the canonical wire form: trailing zeros stripped, `"0"` for zero, full
+// precision, no `e`.
 //
 //   new Decimal("0.0000000123").toString() === "0.0000000123"   (not 1.23e-8)
 //   new Decimal("0.00").toString()         === "0"
 //   new Decimal("2.00").toString()         === "2"
 //
-// `Decimal.set` mutates the global constructor config; every `new Decimal`
-// across the SDK (pricing engines, tracker, buffer) shares it, so the
-// no-exp guarantee holds everywhere a cost is serialized.
-Decimal.set({ toExpNeg: -9e15, toExpPos: 9e15 });
-
-export { Decimal };
+// Every `new Decimal` across the SDK (pricing engines, tracker, buffer)
+// imports THIS constructor, so the no-exp guarantee holds everywhere a cost
+// is serialized — without mutating any global state.
+export const Decimal = DecimalBase.clone({ toExpNeg: -9e15, toExpPos: 9e15 });
+export type Decimal = InstanceType<typeof Decimal>;
 
 /** Anything that can be coerced to an exact decimal cost. */
 export type DecimalLike = number | string | Decimal;
@@ -37,8 +38,21 @@ export type DecimalLike = number | string | Decimal;
  */
 export function toDecimal(value: DecimalLike): Decimal {
   if (value instanceof Decimal) return value;
-  if (typeof value === "number") return new Decimal(String(value));
-  return new Decimal(value);
+  let d: Decimal;
+  try {
+    // Route numbers through String(...) so we never inherit a float64 artifact.
+    d = typeof value === "number" ? new Decimal(String(value)) : new Decimal(value);
+  } catch {
+    // Unparseable input (e.g. "abc") — never throw from the cost-ingest path.
+    console.warn(`dexcost: invalid cost value ${String(value)} — coercing to 0`);
+    return new Decimal(0);
+  }
+  if (!d.isFinite()) {
+    // NaN / Infinity must never reach the wire as "NaN"/"Infinity".
+    console.warn(`dexcost: non-finite cost value ${String(value)} — coercing to 0`);
+    return new Decimal(0);
+  }
+  return d;
 }
 
 /**
