@@ -16,7 +16,7 @@
  * Mirrors python/src/dexcost/compute_pricing.py.
  */
 
-import { Decimal } from "decimal.js";
+import { Decimal } from "../core/models.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type { CloudEnv } from "../cloud-detect.js";
