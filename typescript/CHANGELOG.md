@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.3.1...typescript/v0.3.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **ts-sdk:** clone Decimal config instead of mutating global; guard toDecimal ([7c77c40](https://github.com/DexwoxBusiness/dexcost-sdk/commit/7c77c400596d0163004abe82de6bae23b8f110ab))
+
 ## [0.3.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.3.0...typescript/v0.3.1) (2026-06-03)
 
 
