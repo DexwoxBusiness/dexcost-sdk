@@ -65,7 +65,7 @@ dexcost auto-instruments **6 LLM providers** and **5 HTTP libraries**.
 | LiteLLM | `litellm` | `completion` / `acompletion` |
 | Google Gemini | `google-genai` | `models.generate_content` |
 | AWS Bedrock | `boto3` (botocore) | `invoke_model` |
-| Cohere | `cohere` | `chat` / `generate` |
+| Cohere | `cohere` | `chat` / `chat_stream` (sync + async) |
 
 Every LLM call inside a tracked task is captured automatically — cost, tokens, latency, model, provider. No manual `record_llm_call` needed.
 
