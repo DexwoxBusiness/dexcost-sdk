@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.1...go/v0.2.2) (2026-06-28)
+
+
+### Bug Fixes
+
+* **go:** honor NetworkEventLatencyMs in the HTTP adapter ([96e1692](https://github.com/DexwoxBusiness/dexcost-sdk/commit/96e1692987501fe01e30763f7cde6313b5c8a5f0))
+* **go:** honor NetworkEventLatencyMs in the HTTP adapter ([8bf0e22](https://github.com/DexwoxBusiness/dexcost-sdk/commit/8bf0e22919375ad4013081a9e5909f3112786095))
+
 ## [0.2.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.0...go/v0.2.1) (2026-06-03)
 
 
