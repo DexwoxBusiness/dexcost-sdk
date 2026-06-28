@@ -32,10 +32,11 @@ type DomainRate struct {
 // (`adapters/http.py:_MAX_BODY_SIZE`).
 const maxResponseBodySize = 1_000_000
 
-// networkEventThresholdBytes — combined request + response bytes above which
-// an un-cataloged call emits a `network` event. Mirrors Python config
-// `network_event_threshold_bytes = 102_400` (100 KiB).
-const networkEventThresholdBytes = 102_400
+// defaultNetworkEventThresholdBytes — combined request + response bytes above
+// which an un-cataloged call emits a `network` event. Mirrors Python config
+// `network_event_threshold_bytes = 102_400` (100 KiB). Overridable at Init via
+// SetNetworkEventThreshold (wired from Config.NetworkEventThresholdBytes).
+const defaultNetworkEventThresholdBytes = 102_400
 
 // maxRecordedEvents bounds the in-memory event recording buffer. Long-lived
 // processes that never call ClearRecordedEvents would otherwise leak. When
@@ -55,7 +56,26 @@ var (
 
 	eventBufferMu sync.RWMutex
 	eventBuffer   core.Buffer
+
+	networkEventMu        sync.RWMutex
+	networkEventThreshold = defaultNetworkEventThresholdBytes
 )
+
+// SetNetworkEventThreshold overrides the combined-bytes threshold above which
+// un-cataloged HTTP calls emit a `network` event. Called once by Init() from
+// Config.NetworkEventThresholdBytes; mirrors Python's network-event wiring.
+func SetNetworkEventThreshold(thresholdBytes int) {
+	networkEventMu.Lock()
+	defer networkEventMu.Unlock()
+	networkEventThreshold = thresholdBytes
+}
+
+// networkEventThresholdValue returns the active threshold under a read lock.
+func networkEventThresholdValue() int {
+	networkEventMu.RLock()
+	defer networkEventMu.RUnlock()
+	return networkEventThreshold
+}
 
 // SetEventBuffer registers (or clears, with nil) the durable storage buffer the
 // HTTP adapter persists external_cost events into. The top-level dexcost
@@ -719,7 +739,7 @@ func (s *bodyRecorder) finalize(responseBodyBytes int64) {
 		return
 	}
 	combined := s.requestBytes + responseBytes
-	if combined <= networkEventThresholdBytes && s.statusCode < 400 {
+	if combined <= int64(networkEventThresholdValue()) && s.statusCode < 400 {
 		return // not notable — counters-only
 	}
 	event := core.NewEvent(s.taskID, core.EventTypeNetwork)
