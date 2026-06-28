@@ -141,6 +141,11 @@ func doInit(cfg *Config) error {
 // cfg.TrackHTTP is set, enables process-wide HTTP cost tracking
 // (Python parity: init(track_http=True) + SessionManager grouping).
 func wireHTTPAdapters(cfg *Config) {
+	// Honor the configured network-event byte threshold (defaults applied by
+	// cfg.applyDefaults). Without this the adapter would ignore the Config
+	// field and always use the built-in default.
+	adapters.SetNetworkEventThreshold(cfg.NetworkEventThresholdBytes)
+
 	// Anonymous HTTP calls roll up into one session task per attribution
 	// identity. Python groups by thread; Go has no goroutine identity, so it
 	// groups by customer/project/agent instead.
@@ -221,8 +226,8 @@ func StartTask(ctx context.Context, taskType string, opts ...TaskOption) (contex
 		// tracker. Sprint 1 Theme B / §2.2.2 1a.
 		return ctx, &core.TrackedTask{}
 	}
-	coreOpts := toTrackerOpts(opts)
-	return tr.StartTask(ctx, taskType, coreOpts...)
+	// TaskOption aliases core.TaskOption, so options pass straight through.
+	return tr.StartTask(ctx, taskType, opts...)
 }
 
 // EndTask ends the task found in the given context.

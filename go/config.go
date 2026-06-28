@@ -50,9 +50,13 @@ type Config struct {
 	// `external_cost`). Defaults match Python.
 	//
 	// NetworkEventThresholdBytes: emit when combined request+response
-	// bytes exceed this. Default 102_400 (100 KiB). Set 0 to disable.
+	// bytes exceed this. Default 102_400 (100 KiB), applied by
+	// applyDefaults when left at the zero value.
 	NetworkEventThresholdBytes int `json:"network_event_threshold_bytes,omitempty"`
-	// NetworkEventOnError: emit on response status >= 400. Default true.
+	// NetworkEventOnError: emit on response status >= 400. Default true,
+	// applied by applyDefaults. (A plain bool can't distinguish an explicit
+	// false from the unset zero value, so on-error emission is always on —
+	// matching the previous always-on adapter behaviour and Python's default.)
 	NetworkEventOnError bool `json:"network_event_on_error,omitempty"`
 	// NetworkEventLatencyMs: emit when call latency exceeds this many
 	// milliseconds. Default 0 (latency trigger disabled).
@@ -138,6 +142,17 @@ func (c *Config) applyDefaults() {
 	if c.FlushIntervalSeconds <= 0 {
 		c.FlushIntervalSeconds = 5.0
 	}
+	// Network-event emission knobs mirror Python's init() defaults. The
+	// struct's zero values can't be told apart from "explicitly set", so the
+	// documented defaults are applied when the field is left at its zero value
+	// (same convention as BatchSize / FlushIntervalSeconds above).
+	if c.NetworkEventThresholdBytes <= 0 {
+		c.NetworkEventThresholdBytes = 102_400
+	}
+	// Python parity: network_event_on_error defaults to true. Without this a
+	// bare Config{} would leave it false, contradicting the documented default
+	// and the struct comment.
+	c.NetworkEventOnError = true
 }
 
 func (c *Config) init() error {

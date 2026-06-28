@@ -110,6 +110,23 @@ func TestConfig_Defaults(t *testing.T) {
 	if cfg.FlushIntervalSeconds != 5.0 {
 		t.Errorf("unexpected flush_interval: %f", cfg.FlushIntervalSeconds)
 	}
+	// Network-event knobs mirror Python's init() defaults.
+	if cfg.NetworkEventThresholdBytes != 102_400 {
+		t.Errorf("unexpected network_event_threshold_bytes: %d", cfg.NetworkEventThresholdBytes)
+	}
+	if !cfg.NetworkEventOnError {
+		t.Error("network_event_on_error must default to true")
+	}
+}
+
+// TestConfig_NetworkEventThreshold_Custom proves an explicit threshold survives
+// applyDefaults (only a zero value is replaced with the default).
+func TestConfig_NetworkEventThreshold_Custom(t *testing.T) {
+	cfg := Config{NetworkEventThresholdBytes: 4096}
+	cfg.applyDefaults()
+	if cfg.NetworkEventThresholdBytes != 4096 {
+		t.Errorf("explicit threshold clobbered: %d", cfg.NetworkEventThresholdBytes)
+	}
 }
 
 func TestConfig_EnvFallback(t *testing.T) {
