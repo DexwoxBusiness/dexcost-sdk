@@ -75,72 +75,23 @@ var (
 )
 
 // TaskOption is a functional option for StartTask.
-type TaskOption func(*taskConfig)
+//
+// It is a type alias for core.TaskOption (not a distinct named type) so that
+// options produced by the constructors below interoperate directly with the
+// middleware package, whose handlers accept ...core.TaskOption (e.g.
+// GinMiddleware, EchoMiddleware, HTTPMiddleware). Defining a separate
+// dexcost.TaskOption would make dexcost.WithCustomer("acme") a compile error
+// when passed to those middlewares.
+type TaskOption = core.TaskOption
 
-type taskConfig struct {
-	customerID   string
-	projectID    string
-	experimentID string
-	variant      string
-	metadata     map[string]interface{}
-}
-
-// WithCustomer sets the customer_id on the task.
-func WithCustomer(id string) TaskOption {
-	return func(c *taskConfig) {
-		c.customerID = id
-	}
-}
-
-// WithProject sets the project_id on the task.
-func WithProject(id string) TaskOption {
-	return func(c *taskConfig) {
-		c.projectID = id
-	}
-}
-
-// WithMetadata sets additional metadata on the task.
-func WithMetadata(m map[string]interface{}) TaskOption {
-	return func(c *taskConfig) {
-		c.metadata = m
-	}
-}
-
-// WithExperiment sets the experiment_id on the task.
-func WithExperiment(id string) TaskOption {
-	return func(c *taskConfig) {
-		c.experimentID = id
-	}
-}
-
-// WithVariant sets the variant label on the task.
-func WithVariant(v string) TaskOption {
-	return func(c *taskConfig) {
-		c.variant = v
-	}
-}
-
-// toTrackerOpts converts public TaskOptions to core.TaskOptions.
-func toTrackerOpts(opts []TaskOption) []core.TaskOption {
-	cfg := &taskConfig{}
-	for _, o := range opts {
-		o(cfg)
-	}
-	var coreOpts []core.TaskOption
-	if cfg.customerID != "" {
-		coreOpts = append(coreOpts, core.WithCustomer(cfg.customerID))
-	}
-	if cfg.projectID != "" {
-		coreOpts = append(coreOpts, core.WithProject(cfg.projectID))
-	}
-	if cfg.metadata != nil {
-		coreOpts = append(coreOpts, core.WithMetadata(cfg.metadata))
-	}
-	if cfg.experimentID != "" {
-		coreOpts = append(coreOpts, core.WithExperiment(cfg.experimentID))
-	}
-	if cfg.variant != "" {
-		coreOpts = append(coreOpts, core.WithVariant(cfg.variant))
-	}
-	return coreOpts
-}
+// Task attribution option constructors, re-exported from core so callers
+// don't need to import core directly. Because TaskOption aliases
+// core.TaskOption, the values returned here are accepted everywhere a
+// core.TaskOption is expected.
+var (
+	WithCustomer   = core.WithCustomer
+	WithProject    = core.WithProject
+	WithMetadata   = core.WithMetadata
+	WithExperiment = core.WithExperiment
+	WithVariant    = core.WithVariant
+)
