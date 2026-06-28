@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
@@ -59,6 +60,10 @@ var (
 
 	networkEventMu        sync.RWMutex
 	networkEventThreshold = defaultNetworkEventThresholdBytes
+	// networkEventLatencyMs — emit when call latency exceeds this many
+	// milliseconds. 0 disables the latency trigger (the default). Mirrors
+	// Python config `network_event_latency_ms`.
+	networkEventLatencyMs = 0
 )
 
 // SetNetworkEventThreshold overrides the combined-bytes threshold above which
@@ -70,11 +75,22 @@ func SetNetworkEventThreshold(thresholdBytes int) {
 	networkEventThreshold = thresholdBytes
 }
 
-// networkEventThresholdValue returns the active threshold under a read lock.
-func networkEventThresholdValue() int {
+// SetNetworkEventLatency overrides the per-call latency (in milliseconds) above
+// which un-cataloged HTTP calls emit a `network` event. 0 disables the trigger.
+// Called once by Init() from Config.NetworkEventLatencyMs; mirrors Python's
+// `network_event_latency_ms` wiring.
+func SetNetworkEventLatency(latencyMs int) {
+	networkEventMu.Lock()
+	defer networkEventMu.Unlock()
+	networkEventLatencyMs = latencyMs
+}
+
+// networkEventTriggers returns the active byte threshold and latency trigger
+// (ms) under a single read lock.
+func networkEventTriggers() (thresholdBytes, latencyMs int) {
 	networkEventMu.RLock()
 	defer networkEventMu.RUnlock()
-	return networkEventThreshold
+	return networkEventThreshold, networkEventLatencyMs
 }
 
 // SetEventBuffer registers (or clears, with nil) the durable storage buffer the
@@ -190,10 +206,14 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	isInternal := ClassifyDestination(host)
 	suppress := core.IsNetworkEventSuppressed(req.Context())
 
+	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		return resp, err
 	}
+	// Latency of the underlying call, measured request-send → response-headers
+	// (parity with Python's `latency_ms` around the wrapped call).
+	latencyMs := int(time.Since(start).Milliseconds())
 
 	// Resolve task + accountant. resolveTaskID never returns the accountant
 	// directly because it's a core helper; we look it up from the registry.
@@ -274,6 +294,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		protocol:            protocol,
 		method:              req.Method,
 		statusCode:          statusCode,
+		latencyMs:           latencyMs,
 		url:                 security.ScrubURL(req.URL.String()),
 	})
 	return resp, nil
@@ -680,6 +701,7 @@ type bodyRecorder struct {
 	protocol         string
 	method           string
 	statusCode       int
+	latencyMs        int
 	url              string
 }
 
@@ -739,7 +761,11 @@ func (s *bodyRecorder) finalize(responseBodyBytes int64) {
 		return
 	}
 	combined := s.requestBytes + responseBytes
-	if combined <= int64(networkEventThresholdValue()) && s.statusCode < 400 {
+	thresholdBytes, latencyTrigger := networkEventTriggers()
+	notable := combined > int64(thresholdBytes) ||
+		s.statusCode >= 400 ||
+		(latencyTrigger > 0 && s.latencyMs > latencyTrigger)
+	if !notable {
 		return // not notable — counters-only
 	}
 	event := core.NewEvent(s.taskID, core.EventTypeNetwork)
@@ -755,5 +781,6 @@ func (s *bodyRecorder) finalize(responseBodyBytes int64) {
 	event.Details["request_bytes"] = s.requestBytes
 	event.Details["response_bytes"] = responseBytes
 	event.Details["is_internal_traffic"] = isInternalToValue(s.isInternal)
+	event.Details["latency_ms"] = s.latencyMs
 	persistEvent(event, s.autoTask)
 }

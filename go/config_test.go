@@ -117,6 +117,9 @@ func TestConfig_Defaults(t *testing.T) {
 	if !cfg.NetworkEventOnError {
 		t.Error("network_event_on_error must default to true")
 	}
+	if cfg.NetworkEventLatencyMs != 0 {
+		t.Errorf("network_event_latency_ms must default to 0 (disabled): %d", cfg.NetworkEventLatencyMs)
+	}
 }
 
 // TestConfig_NetworkEventThreshold_Custom proves an explicit threshold survives

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/google/uuid"
@@ -170,6 +171,77 @@ func TestHTTPAdapter_UncatalogedStatus500EmitsNetworkEvent(t *testing.T) {
 	}
 	if !got {
 		t.Fatal("5xx error must emit network event even below byte threshold")
+	}
+}
+
+func TestHTTPAdapter_UncatalogedSlowCallEmitsNetworkEvent(t *testing.T) {
+	ClearDomainRates()
+	ClearRecordedEvents()
+	core.ResetAccountantRegistryForTests()
+
+	// Enable the latency trigger for this test only; restore the default
+	// (disabled) afterwards so other tests are unaffected.
+	SetNetworkEventLatency(20)
+	defer SetNetworkEventLatency(0)
+
+	// Tiny body + 200 status: below the byte threshold and not an error, so
+	// only the latency trigger can cause emission.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(60 * time.Millisecond)
+		_, _ = w.Write([]byte("slow"))
+	}))
+	defer server.Close()
+
+	taskID := uuid.New()
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
+	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/slow", nil)
+	resp, err := newClientWithTracking().Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	got := false
+	for _, ev := range GetRecordedEvents() {
+		if ev.EventType == core.EventTypeNetwork {
+			got = true
+			if lat, _ := ev.Details["latency_ms"].(int); lat <= 0 {
+				t.Fatalf("network event missing positive latency_ms: %v", ev.Details["latency_ms"])
+			}
+		}
+	}
+	if !got {
+		t.Fatal("slow call above the latency trigger must emit a network event")
+	}
+}
+
+func TestHTTPAdapter_UncatalogedFastCallNoLatencyEvent(t *testing.T) {
+	ClearDomainRates()
+	ClearRecordedEvents()
+	core.ResetAccountantRegistryForTests()
+
+	// High latency trigger that a fast local call won't reach; small body,
+	// 200 status ⇒ nothing should emit.
+	SetNetworkEventLatency(10_000)
+	defer SetNetworkEventLatency(0)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("fast"))
+	}))
+	defer server.Close()
+
+	taskID := uuid.New()
+	core.RegisterAccountant(taskID.String(), core.NewNetworkAccountant())
+	req, _ := http.NewRequestWithContext(newTaskContext(taskID), "GET", server.URL+"/fast", nil)
+	resp, _ := newClientWithTracking().Do(req)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	for _, ev := range GetRecordedEvents() {
+		if ev.EventType == core.EventTypeNetwork {
+			t.Fatalf("fast sub-threshold call must not emit network event; got %v", ev.Details)
+		}
 	}
 }
 

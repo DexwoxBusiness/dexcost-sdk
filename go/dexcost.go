@@ -141,10 +141,11 @@ func doInit(cfg *Config) error {
 // cfg.TrackHTTP is set, enables process-wide HTTP cost tracking
 // (Python parity: init(track_http=True) + SessionManager grouping).
 func wireHTTPAdapters(cfg *Config) {
-	// Honor the configured network-event byte threshold (defaults applied by
+	// Honor the configured network-event triggers (defaults applied by
 	// cfg.applyDefaults). Without this the adapter would ignore the Config
-	// field and always use the built-in default.
+	// fields and always use the built-in defaults.
 	adapters.SetNetworkEventThreshold(cfg.NetworkEventThresholdBytes)
+	adapters.SetNetworkEventLatency(cfg.NetworkEventLatencyMs)
 
 	// Anonymous HTTP calls roll up into one session task per attribution
 	// identity. Python groups by thread; Go has no goroutine identity, so it
