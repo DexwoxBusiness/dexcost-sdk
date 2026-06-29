@@ -3,15 +3,17 @@
   "version": "0.3.2",
   "description": "Agent Unit Economics SDK for Node.js",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
     "dexcost": "dist/cli/index.js"
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/cjs/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -25,7 +27,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.mjs",
+    "build": "tsc && node scripts/copy-assets.mjs && node scripts/build-cjs.mjs",
     "test": "vitest run",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
@@ -70,6 +72,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
+    "esbuild": "^0.21.5",
     "typescript": "^5.3.0",
     "vitest": "^1.2.0"
   },
