@@ -35,27 +35,74 @@ export function registerInstrument(
 }
 
 /**
+ * True when `err` indicates the provider package is simply not installed
+ * (the common, expected case — the SDK tries every supported provider by
+ * default and most apps only use one or two).
+ *
+ * Node/bundlers phrase this several ways depending on loader and module
+ * system: ESM throws `ERR_MODULE_NOT_FOUND` ("Cannot find package 'openai'
+ * imported from ..."), CJS throws "Cannot find module 'openai'", and esbuild
+ * /vitest add their own phrasings. We match all of them so a missing
+ * optional provider never produces a scary warning.
+ */
+function isModuleNotInstalled(msg: string): boolean {
+  return (
+    msg.includes("Cannot find package") ||
+    msg.includes("Cannot find module") ||
+    msg.includes("Could not resolve") ||
+    msg.includes("Failed to load url") ||
+    msg.includes("not found") ||
+    msg.includes("not installed") ||
+    msg.includes("ERR_MODULE_NOT_FOUND")
+  );
+}
+
+/**
  * Activate the named instrument, monkey-patching the provider library.
  *
  * Returns `true` if the instrument was found and activated successfully,
  * `false` if the name is unknown or activation threw.
+ *
+ * `explicit` controls log noise (issue: noisy warnings for uninstalled
+ * providers). When the SDK auto-instruments the full default provider set,
+ * a missing package is expected and stays silent. When the user explicitly
+ * listed the provider via `autoInstrument`, a failure is surfaced as a
+ * warning — they asked for it, so they should know it didn't load.
  */
 export async function instrumentProvider(
   name: string,
   pricing: PricingEngine,
   buffer: EventBuffer,
+  explicit: boolean = false,
 ): Promise<boolean> {
   const entry = registry.get(name);
-  if (!entry) return false;
+  if (!entry) {
+    if (explicit) {
+      console.warn(
+        `[dexcost] Cannot instrument unknown provider '${name}'. ` +
+          `Supported providers: ${ALL_SUPPORTED_INSTRUMENTS.join(", ")}.`,
+      );
+    }
+    return false;
+  }
   try {
     await entry.instrument(pricing, buffer);
     return true;
   } catch (err) {
-    // Log the actual error so users can debug instrumentation failures
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("not found") || msg.includes("Could not resolve") || msg.includes("Cannot find module") || msg.includes("Failed to load url") || msg.includes("not installed")) {
-      // Module not installed — expected, debug level
+    if (isModuleNotInstalled(msg)) {
+      // Provider package not installed. Expected during default
+      // auto-instrumentation — only surface it when the user explicitly
+      // asked for this provider, and then with an actionable hint.
+      if (explicit) {
+        console.warn(
+          `[dexcost] Provider '${name}' was requested via autoInstrument but its ` +
+            `package is not installed. Install it to enable auto-instrumentation.`,
+        );
+      }
     } else {
+      // The package IS present but patching threw — a real problem worth
+      // surfacing regardless of explicit/default.
       console.warn(`[dexcost] Failed to instrument ${name}: ${msg}`);
     }
     return false;
