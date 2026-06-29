@@ -15,7 +15,13 @@ export function isDevMode(): boolean {
 
 export function enableDevMode(): void {
   _devMode = true;
-  print("\x1b[36m[dexcost]\x1b[0m dev mode — cloud sync disabled");
+  // `print()` already prefixes "[dexcost]" — don't repeat it here.
+  // Wording is explicit that local printing is ON and cloud sync is OFF,
+  // and *why*, so it's never mistaken for an unexpected/error state.
+  print(
+    "development mode active (environment=\"development\") — cost events are " +
+      "printed below; cloud sync is intentionally disabled in this mode",
+  );
 }
 
 export function logEvent(event: CostEvent, taskType: string = ""): void {

@@ -1079,9 +1079,13 @@ export class CostTracker {
       ? new RetryHeuristicEngine(options.retryHeuristicWindow, options.retryHeuristicThreshold)
       : null;
 
+    // `explicit` is true only when the user listed providers themselves;
+    // failures for the default full set stay quiet (issue: noisy warnings for
+    // uninstalled providers), while failures for user-requested providers warn.
+    const explicitInstruments = options.autoInstrument !== undefined;
     const instruments = options.autoInstrument ?? [...ALL_SUPPORTED_INSTRUMENTS];
     for (const name of instruments) {
-      void this.instrument(name);
+      void this.instrument(name, explicitInstruments);
     }
 
     // Auto-track outgoing HTTP calls (default on, matches Python).
@@ -1176,9 +1180,9 @@ export class CostTracker {
   /**
    * Activate the named instrument, monkey-patching the provider library.
    */
-  async instrument(name: string): Promise<void> {
+  async instrument(name: string, explicit: boolean = true): Promise<void> {
     if (this._instrumented.has(name)) return;
-    const success = await instrumentProvider(name, this._pricing, this._buffer);
+    const success = await instrumentProvider(name, this._pricing, this._buffer, explicit);
     if (success) this._instrumented.add(name);
   }
 

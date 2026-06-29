@@ -14,6 +14,57 @@ With LLM provider SDKs (peer dependencies):
 npm install @dexcost/sdk openai @anthropic-ai/sdk
 ```
 
+### Module formats (ESM **and** CommonJS)
+
+The package ships **both** an ES module and a CommonJS build, so it works in
+either project type with no async-import workarounds:
+
+```typescript
+// ESM / TypeScript with "module": "ESNext" | "NodeNext"
+import { init, track, close } from '@dexcost/sdk';
+```
+
+```javascript
+// CommonJS (NestJS and most production Node.js apps compiled to CommonJS)
+const { init, track, close } = require('@dexcost/sdk');
+```
+
+Because the CJS entry is synchronous, `init()` can run as a plain side-effect
+import **before** any LLM SDK loads — which is required for
+auto-instrumentation to patch the providers. Put it first in your entry point:
+
+```javascript
+// instrument.js — imported at the very top of main.ts/main.js
+const { init } = require('@dexcost/sdk');
+init({ apiKey: process.env.DEXCOST_API_KEY });
+// ...then import your app, which imports openai/@anthropic-ai/sdk
+```
+
+### Native dependency: `better-sqlite3`
+
+The local event buffer uses [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3),
+a **native** module that compiles on install (needs `python3`, `make`, and a
+C/C++ compiler such as `g++`). It is an **optional dependency**:
+
+- **If it builds**, events are persisted to `~/.dexcost/buffer.db` and survive
+  process restarts.
+- **If it is missing or fails to compile**, the SDK does **not** crash — it
+  automatically falls back to a bounded in-memory buffer (10k-entry cap, events
+  do not survive a restart) and logs a one-line warning telling you how to
+  restore durable buffering.
+
+In Docker multi-stage builds, the native binding can be installed but not
+compiled for the runtime stage's Node ABI (the "Could not locate the bindings
+file" error). Rebuild it in the stage that runs your app:
+
+```dockerfile
+RUN npm rebuild better-sqlite3
+```
+
+Or, if you need a fully pure-JS deployment (Vercel Edge, Cloudflare Workers,
+distroless images), simply omit `better-sqlite3` and rely on the in-memory
+fallback.
+
 ## Quick Start
 
 ```typescript
@@ -174,11 +225,27 @@ await track({ taskType: 'pipeline' }, async (parent) => {
 });
 ```
 
+## Storage modes (cloud vs local)
+
+The SDK decides whether to sync to the Dexcost Control Layer from **two**
+independent signals, so it is always clear why data is or isn't being sent:
+
+| Condition | Result |
+|-----------|--------|
+| Valid API key present (`apiKey` option or `DEXCOST_API_KEY`) **and** not in dev mode | **cloud** — events buffered locally and pushed in the background |
+| No API key, or `storage: "local"` | **local** — events buffered locally, never pushed (no warning; this is normal) |
+| `environment: "development"` / `DEXCOST_ENV=development` | **dev mode** — events printed to the console, cloud sync disabled regardless of API key |
+
+`environment: undefined` does **not** trigger dev mode — only the literal
+string `"development"` does. So passing `environment: undefined` in production
+leaves cloud sync enabled (assuming a valid API key); you will **not** see the
+"development mode active" message in that case.
+
 ## Dev Mode
 
 Set `DEXCOST_ENV=development` or pass `environment: "development"` to `init()`. In dev mode:
 - Cost events are printed to the console
-- No data is pushed to the cloud
+- No data is pushed to the cloud (this is intentional and logged once at startup)
 
 ## Express Middleware
 
@@ -193,7 +260,9 @@ app.use(createExpressMiddleware({
 
 ## Runtime Dependencies
 
-- `better-sqlite3` — local event buffer
+- `better-sqlite3` — local event buffer (**optional, native** — see
+  [Native dependency](#native-dependency-better-sqlite3) above; the SDK falls
+  back to an in-memory buffer when it is unavailable)
 - `ajv` — JSON Schema validation
 - `js-yaml` — rate file parsing
 

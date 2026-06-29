@@ -480,12 +480,30 @@ export class EventBuffer {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       DatabaseCtor = require("better-sqlite3") as typeof Database;
     } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      // `better-sqlite3` is a native module — it must be compiled for the
+      // running Node version/platform. Two distinct failure modes land here:
+      //   1. Not installed at all (optional dependency skipped).
+      //   2. Installed but the native .node binding is missing/mismatched
+      //      ("Could not locate the bindings file"), common in Docker
+      //      multi-stage builds where the postinstall compile step was
+      //      skipped or run against a different Node ABI.
+      // Either way the SDK stays alive on the in-memory fallback; the message
+      // tells the user exactly how to restore durable buffering.
+      const bindingsIssue = cause.includes("bindings") || cause.includes(".node");
+      const remedy = bindingsIssue
+        ? "Rebuild the native binding with `npm rebuild better-sqlite3` " +
+          "(ensure python3, make and a C++ compiler are available during install — " +
+          "in Docker, run the rebuild in the same stage that runs your app)."
+        : "Install it for durable buffering: `npm install better-sqlite3` " +
+          "(requires python3, make and a C++ compiler to build the native binding).";
       console.warn(
-        "dexcost: better-sqlite3 not available in this runtime; falling " +
-          "back to in-memory buffer (events do not survive process " +
-          "restart, hard cap 10k entries). Install better-sqlite3 as a " +
-          "peer dependency for durable buffering. Cause: " +
-          (err instanceof Error ? err.message : String(err)),
+        "dexcost: better-sqlite3 is unavailable — cost tracking continues on an " +
+          "in-memory buffer (events are NOT persisted across process restarts; " +
+          "hard cap 10k entries). " +
+          remedy +
+          " Cause: " +
+          cause,
       );
       this._db = null;
       this._mem = new MemoryBufferStore();
