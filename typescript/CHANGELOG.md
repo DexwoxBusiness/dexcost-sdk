@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.3.2...typescript/v0.4.0) (2026-06-29)
+
+
+### Features
+
+* **typescript:** ship dual ESM + CommonJS build ([3c7820d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/3c7820d6da83882924182d353cc996210ffbf04e))
+
+
+### Bug Fixes
+
+* **typescript:** clearer dev-mode and better-sqlite3 fallback messages ([5b89226](https://github.com/DexwoxBusiness/dexcost-sdk/commit/5b892266dc3d08dfcc761be5e08ca23205e5ee2a))
+* **typescript:** silence instrument warnings for default providers ([1ad70c8](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1ad70c83bb2dd24c3cea96bf3f5153a42bbbff68))
+
 ## [0.3.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.3.1...typescript/v0.3.2) (2026-06-04)
 
 
