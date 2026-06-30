@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -202,8 +202,11 @@ export async function instrumentVercelAi(
     }
 
     const startTime = performance.now();
+    const self = this;
     try {
-      const result = await _originalGenerateText!.call(this, opts);
+      const result = await runWithTask(task, () =>
+        _originalGenerateText!.call(self, opts),
+      );
       const latencyMs = Math.round(performance.now() - startTime);
 
       const model = extractModel(opts);
@@ -243,7 +246,10 @@ export async function instrumentVercelAi(
     }
 
     const startTime = performance.now();
-    const streamResult = _originalStreamText!.call(this, opts);
+    const self = this;
+    const streamResult = runWithTask(task, () =>
+      _originalStreamText!.call(self, opts),
+    );
 
     // Wrap the stream to capture usage after iteration completes.
     // The Vercel AI SDK streamText returns an object with an async iterator
@@ -372,6 +378,5 @@ function wrapStream(
 
   return wrapped;
 }
-
-// Self-register so importing this module is enough to make the instrument available.
+// Self-register so importing this module is enough to make the instrument available.
 registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi);

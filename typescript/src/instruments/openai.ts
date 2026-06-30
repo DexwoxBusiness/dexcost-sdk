@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -80,14 +80,19 @@ export async function instrumentOpenai(
     }
 
     const startTime = performance.now();
+    const self = this;
 
     if (body?.stream) {
-      const rawStream = await _original!.call(this, body, options);
+      const rawStream = await runWithTask(task, () =>
+        _original!.call(self, body, options),
+      );
       return wrapStream(rawStream, task, startTime, autoCreated);
     }
 
     try {
-      const response = await _original!.call(this, body, options);
+      const response = await runWithTask(task, () =>
+        _original!.call(self, body, options),
+      );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
         recordEvent(response, task, latencyMs);

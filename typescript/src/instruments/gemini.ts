@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -86,11 +86,14 @@ export async function instrumentGemini(
     }
 
     const startTime = performance.now();
+    const self = this;
     try {
-      const response = await _originalGenerateContent!.apply(this, args);
+      const response = await runWithTask(task, () =>
+        _originalGenerateContent!.apply(self, args),
+      );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
-        const model: string = this.model ?? this._modelParams?.model ?? "unknown";
+        const model: string = self.model ?? self._modelParams?.model ?? "unknown";
         recordEvent(response?.response ?? response, model, task, latencyMs);
       } catch {
         // dexcost errors must never crash user code
@@ -125,8 +128,11 @@ export async function instrumentGemini(
     }
 
     const startTime = performance.now();
-    const streamResult = await _originalGenerateContentStream!.apply(this, args);
-    const model: string = this.model ?? this._modelParams?.model ?? "unknown";
+    const self = this;
+    const streamResult = await runWithTask(task, () =>
+      _originalGenerateContentStream!.apply(self, args),
+    );
+    const model: string = self.model ?? self._modelParams?.model ?? "unknown";
     return wrapStream(streamResult, model, task, startTime, autoCreated);
   };
 
@@ -317,6 +323,5 @@ function wrapStream(
     response: rawStream.response,
   };
 }
-
-// Self-register so importing this module is enough to make the instrument available.
+// Self-register so importing this module is enough to make the instrument available.
 registerInstrument("gemini", instrumentGemini, uninstrumentGemini);

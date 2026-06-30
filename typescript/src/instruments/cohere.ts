@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -86,8 +86,11 @@ export async function instrumentCohere(
     }
 
     const startTime = performance.now();
+    const self = this;
     try {
-      const response = await _originalChat!.call(this, body, options);
+      const response = await runWithTask(task, () =>
+        _originalChat!.call(self, body, options),
+      );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
         const model: string = body?.model ?? response?.model ?? "command-r-plus";
@@ -127,7 +130,10 @@ export async function instrumentCohere(
       }
 
       const startTime = performance.now();
-      const rawStream = await _originalChatStream!.call(this, body, options);
+      const self = this;
+      const rawStream = await runWithTask(task, () =>
+        _originalChatStream!.call(self, body, options),
+      );
       const model: string = body?.model ?? "command-r-plus";
       return wrapStream(rawStream, model, task, startTime, autoCreated);
     };
