@@ -2,7 +2,7 @@
   "_meta": {
     "version": "3.0.0",
     "last_updated": "2026-05-11",
-    "service_count": 163,
+    "service_count": 167,
     "description": "Dexcost Service Catalog \u2014 per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -1666,6 +1666,67 @@
     },
     "source": "https://fireworks.ai/pricing",
     "last_verified": "2026-05-11"
+  },
+  "deepseek": {
+    "display_name": "DeepSeek",
+    "domains": [
+      "api.deepseek.com"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "OpenAI-compatible. V4 Flash: $0.14/$0.28 per 1M tokens. V4 Pro: $0.435/$0.87 per 1M tokens. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://api-docs.deepseek.com/quick_start/pricing",
+    "last_verified": "2026-07-01"
+  },
+  "mistral_ai": {
+    "display_name": "Mistral AI",
+    "domains": [
+      "api.mistral.ai"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "OpenAI-compatible. Large 2: $2/$6 per 1M tokens. Small 3: $0.10/$0.30 per 1M tokens. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://mistral.ai/pricing/",
+    "last_verified": "2026-07-01"
+  },
+  "moonshot_kimi": {
+    "display_name": "Moonshot (Kimi)",
+    "domains": [
+      "api.moonshot.ai",
+      "api.moonshot.cn"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "OpenAI-compatible. Kimi K2.6: $0.95/$4.00 per 1M tokens. K2.5: $0.60/$3.00 per 1M tokens. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://platform.moonshot.ai/",
+    "last_verified": "2026-07-01"
+  },
+  "xai_grok": {
+    "display_name": "xAI (Grok)",
+    "domains": [
+      "api.x.ai"
+    ],
+    "category": "ai_ml_platform",
+    "pricing_model": "per_token",
+    "cost_per_request_usd": "0",
+    "note": "OpenAI-compatible. Grok 4.3: $1.25/$2.50 per 1M tokens. Grok 4.1 Fast: $0.20/$0.50 per 1M tokens. Tracked for call counting.",
+    "cost_extraction": {
+      "type": "fixed"
+    },
+    "source": "https://x.ai/api",
+    "last_verified": "2026-07-01"
   },
   "zapier": {
     "display_name": "Zapier",

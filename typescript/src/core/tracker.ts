@@ -1021,6 +1021,7 @@ export class CostTracker {
   private _instrumented: Set<string> = new Set();
   private _config: ResolvedConfig;
   private _httpTracked = false;
+  private _sessionTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: TrackerOptions = {}) {
     this._options = {
@@ -1113,9 +1114,28 @@ export class CostTracker {
    */
   private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
     try {
-      const { trackHttp, getServiceCatalog } = await import("../adapters/http.js");
+      const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
       trackHttp(this._buffer);
       this._httpTracked = true;
+
+      // Safety-net timer: finalize idle sessions every 30s so auto-created
+      // session tasks don't stay "pending" forever if an instrument or
+      // stream fails to end them (e.g. unhandled exception, aborted stream).
+      const buffer = this._buffer;
+      this._sessionTimer = setInterval(() => {
+        try {
+          const sm = getSessionManager();
+          if (sm) {
+            sm.finalizeIdleSessions(buffer);
+          }
+        } catch {
+          // Safety net must never crash the process
+        }
+      }, 30_000);
+      if (this._sessionTimer.unref) {
+        this._sessionTimer.unref();
+      }
+
       if (serviceCatalogUrl) {
         const catalog = getServiceCatalog();
         if (catalog) {
@@ -1303,6 +1323,10 @@ export class CostTracker {
     }
     this._instrumented.clear();
     this._disableHttpTracking();
+    if (this._sessionTimer) {
+      clearInterval(this._sessionTimer);
+      this._sessionTimer = null;
+    }
     if (this._pusher) {
       // Note: flush() is async but close() is sync by contract.
       // We call stop() which clears the interval; any in-flight push
@@ -1334,6 +1358,10 @@ export class CostTracker {
     }
     this._instrumented.clear();
     this._disableHttpTracking();
+    if (this._sessionTimer) {
+      clearInterval(this._sessionTimer);
+      this._sessionTimer = null;
+    }
     if (this._pusher) {
       await this._pusher.flush();
       this._pusher.stop();

@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { Task } from "./models.js";
 import { createTask } from "./models.js";
-import { getCurrentTask, runWithTask, setCurrentTask, getContext } from "./context.js";
+import { getCurrentTask, runWithTask, getContext } from "./context.js";
 import type { EventBuffer } from "../transport/buffer.js";
 
 // ---------------------------------------------------------------------------
@@ -73,9 +73,10 @@ export class SessionManager {
       lastActivityAt: Date.now(),
     });
 
-    // Bind the task to the current async context so subsequent calls
-    // to getCurrentTask() within this async chain return this task.
-    setCurrentTask(task);
+    // NOTE: intentionally NOT calling setCurrentTask(task) here.
+    // enterWith() leaks the task into the remainder of the async chain,
+    // causing subsequent unwrapped calls to inherit a stale session task.
+    // Callers should use runInSession() (which scopes via runWithTask).
 
     return task;
   }
@@ -121,9 +122,10 @@ export class SessionManager {
    * Finalize sessions that have been idle for longer than 30 seconds.
    *
    * Sets their status to "success" and endedAt timestamp. Removes them
-   * from the active session map.
+   * from the active session map. When a `buffer` is provided, re-persists
+   * each finalized task so the updated status reaches the push cycle.
    */
-  finalizeIdleSessions(): void {
+  finalizeIdleSessions(buffer?: EventBuffer): void {
     const now = Date.now();
     const toRemove: string[] = [];
 
@@ -132,6 +134,9 @@ export class SessionManager {
         if (session.task.status === "pending") {
           session.task.status = "success";
           session.task.endedAt = new Date();
+          if (buffer) {
+            buffer.upsertTask(session.task);
+          }
         }
         toRemove.push(taskId);
       }

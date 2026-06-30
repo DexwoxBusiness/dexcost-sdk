@@ -23,15 +23,23 @@ export function needsAutoTask(): boolean {
  * Reads `customerId`, `projectId`, `metadata`, and `agent` from the
  * ambient context (set via `setContext`). When `agent` is set in the
  * context it overrides the provided `taskType`.
+ *
+ * The returned task is NOT bound to AsyncLocalStorage. Callers must
+ * either pass it explicitly or scope it with `runWithTask()`. The
+ * previous design used `setCurrentTask(task)` (enterWith), which
+ * leaked the completed task into subsequent calls in the same async
+ * chain — a second unwrapped LLM call would inherit the stale task
+ * instead of creating its own auto-task.
  */
 export function createAutoTask(taskType: string): Task {
   const ctx = getContext();
   const effectiveTaskType = ctx?.agent ? ctx.agent : taskType;
-  return createTask({
+  const task = createTask({
     taskId: randomUUID(),
     taskType: effectiveTaskType,
     customerId: ctx?.customerId,
     projectId: ctx?.projectId,
     metadata: ctx?.metadata ? { ...ctx.metadata } : {},
   });
+  return task;
 }

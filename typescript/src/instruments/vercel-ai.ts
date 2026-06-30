@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -191,50 +191,97 @@ export async function instrumentVercelAi(
     opts: any,
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("vercel-ai.generateText");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const result = await _originalGenerateText!.call(this, opts);
-    const latencyMs = Math.round(performance.now() - startTime);
+    const self = this;
+    try {
+      const result = await suppressNetworkEvent(() =>
+        runWithTask(task, () => _originalGenerateText!.call(self, opts)),
+      );
+      const latencyMs = Math.round(performance.now() - startTime);
 
-    const model = extractModel(opts);
-    const inputTokens: number = result?.usage?.promptTokens ?? 0;
-    const outputTokens: number = result?.usage?.completionTokens ?? 0;
+      const model = extractModel(opts);
+      const inputTokens: number = result?.usage?.promptTokens ?? 0;
+      const outputTokens: number = result?.usage?.completionTokens ?? 0;
 
-    recordEvent(model, inputTokens, outputTokens, task, latencyMs);
-    return result;
+      recordEvent(model, inputTokens, outputTokens, task, latencyMs);
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return result;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
+    }
   };
 
+  // NOTE: streamText is SYNCHRONOUS in the Vercel AI SDK — it returns a
+  // StreamTextResult immediately (unlike generateText, which is async). The
+  // wrapper must preserve that contract and return the (wrapped) stream
+  // synchronously; making it async would return a Promise and break callers
+  // that do `const result = streamText(...)` without awaiting.
   const patchedStreamText = function patchedStreamText(
     this: any,
     opts: any,
   ): any {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("vercel-ai.streamText");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const streamResult = _originalStreamText!.call(this, opts);
+    const self = this;
+    try {
+      const streamResult = suppressNetworkEvent(() =>
+        runWithTask(task, () => _originalStreamText!.call(self, opts)),
+      );
 
-    // Wrap the stream to capture usage after iteration completes.
-    // The Vercel AI SDK streamText returns an object with an async iterator
-    // for text chunks and a `usage` promise that resolves when done.
-    if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
-      return wrapStream(streamResult, opts, task, startTime);
+      // Wrap the stream to capture usage after iteration completes.
+      // The Vercel AI SDK streamText returns an object with an async iterator
+      // for text chunks and a `usage` promise that resolves when done.
+      if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
+        return wrapStream(streamResult, opts, task, startTime, autoCreated);
+      }
+
+      // Non-stream fallback: the underlying streamText returned a result that
+      // is not async-iterable, so there is nothing to wrap or iterate. Finalize
+      // the auto-created task here so it is not left "pending" forever. Guard
+      // matches wrapStream's finalizeTask (autoCreated && _buffer).
+      if (autoCreated && _buffer) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer.upsertTask(task);
+      }
+      return streamResult;
+    } catch (err) {
+      if (autoCreated && _buffer) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer.upsertTask(task);
+      }
+      throw err;
     }
-
-    return streamResult;
   };
 
   // Apply patches to ALL resolved module objects (CJS + ESM).
@@ -298,6 +345,7 @@ function wrapStream(
   opts: any,
   task: Task,
   startTime: number,
+  autoCreated: boolean = false,
 ): AsyncIterable<any> & Record<string, any> {
   let recorded = false;
 
@@ -306,9 +354,24 @@ function wrapStream(
 
   wrapped[Symbol.asyncIterator] = function () {
     const iter = rawStream[Symbol.asyncIterator]();
+    const finalizeTask = (status: "success" | "failed") => {
+      if (recorded) return;
+      recorded = true;
+      if (autoCreated && _buffer) {
+        task.status = status;
+        task.endedAt = new Date();
+        _buffer.upsertTask(task);
+      }
+    };
     return {
       async next(): Promise<IteratorResult<any>> {
-        const result = await iter.next();
+        let result: IteratorResult<any>;
+        try {
+          result = await iter.next();
+        } catch (err) {
+          finalizeTask("failed");
+          throw err;
+        }
         if (result.done && !recorded) {
           recorded = true;
           const latencyMs = Math.round(performance.now() - startTime);
@@ -330,14 +393,27 @@ function wrapStream(
 
           const model = extractModel(opts);
           recordEvent(model, inputTokens, outputTokens, task, latencyMs);
+          if (autoCreated && _buffer) {
+            task.status = "success";
+            task.endedAt = new Date();
+            _buffer.upsertTask(task);
+          }
         }
         return result;
+      },
+      async return(value?: any): Promise<IteratorResult<any>> {
+        finalizeTask("success");
+        return iter.return ? await iter.return(value) : { done: true as const, value };
+      },
+      async throw(error?: any): Promise<IteratorResult<any>> {
+        finalizeTask("failed");
+        if (iter.throw) return await iter.throw(error);
+        throw error;
       },
     };
   };
 
   return wrapped;
 }
-
-// Self-register so importing this module is enough to make the instrument available.
+// Self-register so importing this module is enough to make the instrument available.
 registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi);

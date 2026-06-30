@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -75,24 +75,43 @@ export async function instrumentCohere(
     options?: any,
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("cohere.chat");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const response = await _originalChat!.call(this, body, options);
+    const self = this;
     try {
-      const latencyMs = Math.round(performance.now() - startTime);
-      const model: string = body?.model ?? response?.model ?? "command-r-plus";
-      recordEvent(response, model, task, latencyMs);
-    } catch {
-      // dexcost errors must never crash user code
+      const response = await suppressNetworkEvent(() =>
+        runWithTask(task, () => _originalChat!.call(self, body, options)),
+      );
+      try {
+        const latencyMs = Math.round(performance.now() - startTime);
+        const model: string = body?.model ?? response?.model ?? "command-r-plus";
+        recordEvent(response, model, task, latencyMs);
+      } catch {
+        // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return response;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-    return response;
   };
 
   if (_originalChatStream) {
@@ -102,16 +121,30 @@ export async function instrumentCohere(
       options?: any,
     ): Promise<any> {
       let task = getCurrentTask();
+      let autoCreated = false;
 
       if (!task) {
         task = createAutoTask("cohere.chatStream");
         _buffer?.upsertTask(task);
+        autoCreated = true;
       }
 
       const startTime = performance.now();
-      const rawStream = await _originalChatStream!.call(this, body, options);
+      const self = this;
       const model: string = body?.model ?? "command-r-plus";
-      return wrapStream(rawStream, model, task, startTime);
+      try {
+        const rawStream = await suppressNetworkEvent(() =>
+          runWithTask(task, () => _originalChatStream!.call(self, body, options)),
+        );
+        return wrapStream(rawStream, model, task, startTime, autoCreated);
+      } catch (err) {
+        if (autoCreated) {
+          task.status = "failed";
+          task.endedAt = new Date();
+          _buffer?.upsertTask(task);
+        }
+        throw err;
+      }
     };
   }
 
@@ -191,6 +224,7 @@ function wrapStream(
   model: string,
   task: Task,
   startTime: number,
+  autoCreated: boolean = false,
 ): AsyncIterable<any> {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -200,9 +234,24 @@ function wrapStream(
   return {
     [Symbol.asyncIterator]() {
       const iter = rawStream[Symbol.asyncIterator]();
+      const finalizeTask = (status: "success" | "failed") => {
+        if (finalized) return;
+        finalized = true;
+        if (autoCreated && _buffer) {
+          task.status = status;
+          task.endedAt = new Date();
+          _buffer.upsertTask(task);
+        }
+      };
       return {
         async next(): Promise<IteratorResult<any>> {
-          const result = await iter.next();
+          let result: IteratorResult<any>;
+          try {
+            result = await iter.next();
+          } catch (err) {
+            finalizeTask("failed");
+            throw err;
+          }
           if (result.done) {
             if (finalized) return result;
             finalized = true;
@@ -251,6 +300,11 @@ function wrapStream(
             } catch {
               // dexcost errors must never crash user code
             }
+            if (autoCreated && _buffer) {
+              task.status = "success";
+              task.endedAt = new Date();
+              _buffer.upsertTask(task);
+            }
             return result;
           }
 
@@ -268,6 +322,15 @@ function wrapStream(
             outputTokens = chunk.meta.billedUnits.outputTokens ?? outputTokens;
           }
           return result;
+        },
+        async return(value?: any): Promise<IteratorResult<any>> {
+          finalizeTask("success");
+          return iter.return ? await iter.return(value) : { done: true as const, value };
+        },
+        async throw(error?: any): Promise<IteratorResult<any>> {
+          finalizeTask("failed");
+          if (iter.throw) return await iter.throw(error);
+          throw error;
         },
       };
     },

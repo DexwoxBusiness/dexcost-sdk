@@ -385,10 +385,12 @@ export async function instrumentMcp(
     ...rest: any[]
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     if (!task) {
       task = createAutoTask("mcp.tool_call");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const toolName: string = params?.name ?? "unknown";
@@ -409,6 +411,11 @@ export async function instrumentMcp(
       } catch {
         // dexcost errors must never crash user code
       }
+      if (autoCreated) {
+        task.status = isError ? "failed" : "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
       return result;
     } catch (err) {
       isError = true;
@@ -417,6 +424,11 @@ export async function instrumentMcp(
         recordMcpEvent(toolName, task, latencyMs, isError, this);
       } catch {
         // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
       }
       throw err;
     }

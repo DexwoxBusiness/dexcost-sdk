@@ -78,24 +78,40 @@ export async function instrumentBedrock(
     }
 
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("bedrock.invokeModel");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const response = await _original!.call(this, command, ...rest);
     try {
-      const latencyMs = Math.round(performance.now() - startTime);
-      const modelId: string = command?.input?.modelId ?? "unknown";
-      recordEvent(response, modelId, task, latencyMs);
-    } catch {
-      // dexcost errors must never crash user code
+      const response = await _original!.call(this, command, ...rest);
+      try {
+        const latencyMs = Math.round(performance.now() - startTime);
+        const modelId: string = command?.input?.modelId ?? "unknown";
+        recordEvent(response, modelId, task, latencyMs);
+      } catch {
+        // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return response;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-    return response;
   };
 
   _patched = true;
