@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.4.0...typescript/v0.4.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **instruments:** patch both CJS and ESM module objects for vercel-ai ([c3b5462](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c3b5462061f6f621305463840f6976980c5a774e))
+* **instruments:** patch both CJS and ESM module objects for vercel-ai ([8a0b9fc](https://github.com/DexwoxBusiness/dexcost-sdk/commit/8a0b9fc1c02d2d1c890021f61294b31e1b40f421))
+* **instruments:** patch both CJS and ESM module objects for vercel-ai ([9e586c5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/9e586c5d91abab8e301ee603f9babc1eecfa0633))
+
 ## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.3.2...typescript/v0.4.0) (2026-06-29)
 
 
