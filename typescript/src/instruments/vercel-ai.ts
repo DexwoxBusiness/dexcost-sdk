@@ -230,10 +230,10 @@ export async function instrumentVercelAi(
     }
   };
 
-  const patchedStreamText = function patchedStreamText(
+  const patchedStreamText = async function patchedStreamText(
     this: any,
     opts: any,
-  ): any {
+  ): Promise<any> {
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -247,18 +247,27 @@ export async function instrumentVercelAi(
 
     const startTime = performance.now();
     const self = this;
-    const streamResult = suppressNetworkEvent(() =>
-      runWithTask(task, () => _originalStreamText!.call(self, opts)),
-    );
+    try {
+      const streamResult = await suppressNetworkEvent(() =>
+        runWithTask(task, () => _originalStreamText!.call(self, opts)),
+      );
 
-    // Wrap the stream to capture usage after iteration completes.
-    // The Vercel AI SDK streamText returns an object with an async iterator
-    // for text chunks and a `usage` promise that resolves when done.
-    if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
-      return wrapStream(streamResult, opts, task, startTime, autoCreated);
+      // Wrap the stream to capture usage after iteration completes.
+      // The Vercel AI SDK streamText returns an object with an async iterator
+      // for text chunks and a `usage` promise that resolves when done.
+      if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
+        return wrapStream(streamResult, opts, task, startTime, autoCreated);
+      }
+
+      return streamResult;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-
-    return streamResult;
   };
 
   // Apply patches to ALL resolved module objects (CJS + ESM).
@@ -346,11 +355,7 @@ function wrapStream(
         try {
           result = await iter.next();
         } catch (err) {
-          if (autoCreated && _buffer) {
-            task.status = "failed";
-            task.endedAt = new Date();
-            _buffer.upsertTask(task);
-          }
+          finalizeTask("failed");
           throw err;
         }
         if (result.done && !recorded) {

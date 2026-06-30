@@ -249,11 +249,7 @@ function wrapStream(
           try {
             result = await iter.next();
           } catch (err) {
-            if (autoCreated && _buffer) {
-              task.status = "failed";
-              task.endedAt = new Date();
-              _buffer.upsertTask(task);
-            }
+            finalizeTask("failed");
             throw err;
           }
           if (result.done) {
