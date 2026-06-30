@@ -230,10 +230,15 @@ export async function instrumentVercelAi(
     }
   };
 
-  const patchedStreamText = async function patchedStreamText(
+  // NOTE: streamText is SYNCHRONOUS in the Vercel AI SDK — it returns a
+  // StreamTextResult immediately (unlike generateText, which is async). The
+  // wrapper must preserve that contract and return the (wrapped) stream
+  // synchronously; making it async would return a Promise and break callers
+  // that do `const result = streamText(...)` without awaiting.
+  const patchedStreamText = function patchedStreamText(
     this: any,
     opts: any,
-  ): Promise<any> {
+  ): any {
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -248,7 +253,7 @@ export async function instrumentVercelAi(
     const startTime = performance.now();
     const self = this;
     try {
-      const streamResult = await suppressNetworkEvent(() =>
+      const streamResult = suppressNetworkEvent(() =>
         runWithTask(task, () => _originalStreamText!.call(self, opts)),
       );
 
@@ -259,12 +264,21 @@ export async function instrumentVercelAi(
         return wrapStream(streamResult, opts, task, startTime, autoCreated);
       }
 
+      // Non-stream fallback: the underlying streamText returned a result that
+      // is not async-iterable, so there is nothing to wrap or iterate. Finalize
+      // the auto-created task here so it is not left "pending" forever. Guard
+      // matches wrapStream's finalizeTask (autoCreated && _buffer).
+      if (autoCreated && _buffer) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer.upsertTask(task);
+      }
       return streamResult;
     } catch (err) {
-      if (autoCreated) {
+      if (autoCreated && _buffer) {
         task.status = "failed";
         task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        _buffer.upsertTask(task);
       }
       throw err;
     }

@@ -342,4 +342,32 @@ describe("Vercel AI SDK streaming instrumentation", () => {
     expect(task.totalInputTokens).toBe(400);
     expect(task.totalOutputTokens).toBe(80);
   });
+
+  it("finalizes the auto-task when streamText returns a non-iterable result", async () => {
+    // Regression: when the underlying streamText returns a result that is
+    // NOT async-iterable, patchedStreamText takes a fallback path that
+    // returns the result directly. Previously it skipped finalization,
+    // leaking the auto-created task as "pending" forever.
+    const nonIterableAi = {
+      generateText: async (): Promise<unknown> => makeMockGenerateTextResult(),
+      streamText: function (_opts: unknown): unknown {
+        return { text: "no stream here" };
+      },
+    };
+    _setAiModule(nonIterableAi);
+    await instrumentVercelAi(pricing, buffer);
+
+    const result = (await nonIterableAi.streamText({
+      model: { modelId: "gpt-4o" },
+      prompt: "Hello",
+    })) as Record<string, unknown>;
+    expect(result.text).toBe("no stream here");
+
+    const autoTask = buffer
+      .getAllTasks()
+      .find((t) => t.taskType === "vercel-ai.streamText");
+    expect(autoTask).toBeDefined();
+    expect(autoTask!.status).toBe("success");
+    expect(autoTask!.endedAt).not.toBeNull();
+  });
 });
