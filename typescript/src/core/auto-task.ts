@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { createTask } from "./models.js";
 import type { Task } from "./models.js";
-import { getCurrentTask, getContext } from "./context.js";
+import { getCurrentTask, setCurrentTask, getContext } from "./context.js";
 
 /** Return true if there is no active explicit task. */
 export function needsAutoTask(): boolean {
@@ -23,15 +23,22 @@ export function needsAutoTask(): boolean {
  * Reads `customerId`, `projectId`, `metadata`, and `agent` from the
  * ambient context (set via `setContext`). When `agent` is set in the
  * context it overrides the provided `taskType`.
+ *
+ * The task is bound to the current async context via `setCurrentTask`
+ * so that downstream code (e.g. the HTTP adapter's `_resolveHttpTask`)
+ * can find it via `getCurrentTask()` without creating a duplicate
+ * session task.
  */
 export function createAutoTask(taskType: string): Task {
   const ctx = getContext();
   const effectiveTaskType = ctx?.agent ? ctx.agent : taskType;
-  return createTask({
+  const task = createTask({
     taskId: randomUUID(),
     taskType: effectiveTaskType,
     customerId: ctx?.customerId,
     projectId: ctx?.projectId,
     metadata: ctx?.metadata ? { ...ctx.metadata } : {},
   });
+  setCurrentTask(task);
+  return task;
 }

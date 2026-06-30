@@ -69,29 +69,45 @@ export async function instrumentOpenai(
     options?: any,
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("openai.chat");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
 
     if (body?.stream) {
       const rawStream = await _original!.call(this, body, options);
-      return wrapStream(rawStream, task, startTime);
+      return wrapStream(rawStream, task, startTime, autoCreated);
     }
 
-    const response = await _original!.call(this, body, options);
     try {
-      const latencyMs = Math.round(performance.now() - startTime);
-      recordEvent(response, task, latencyMs);
-    } catch {
-      // dexcost errors must never crash user code
+      const response = await _original!.call(this, body, options);
+      try {
+        const latencyMs = Math.round(performance.now() - startTime);
+        recordEvent(response, task, latencyMs);
+      } catch {
+        // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return response;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-    return response;
   };
 
   _patched = true;
@@ -165,7 +181,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   _buffer.upsertTask(task);
 }
 
-function wrapStream(rawStream: any, task: Task, startTime: number): AsyncIterable<any> {
+function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: boolean = false): AsyncIterable<any> {
   let model = "unknown";
   let inputTokens = 0;
   let outputTokens = 0;
@@ -228,6 +244,11 @@ function wrapStream(rawStream: any, task: Task, startTime: number): AsyncIterabl
               }
             } catch {
               // dexcost errors must never crash user code
+            }
+            if (autoCreated && _buffer) {
+              task.status = "success";
+              task.endedAt = new Date();
+              _buffer.upsertTask(task);
             }
             return result;
           }

@@ -755,14 +755,17 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
           is_internal_traffic: _isInternalToValue(ctx.isInternal),
           _reTyped: true,
         };
+        // Persist to durable buffer now that the final classification is
+        // known. The placeholder was intentionally NOT persisted in
+        // _maybeRecordCost to avoid phantom $0 external_cost events.
+        if (_buffer) {
+          _buffer.addEvent(ev);
+        }
       } else {
         // Below threshold and no error → counters-only. Drop the
         // placeholder external_cost-zero event from the in-memory list.
-        // The durable EventBuffer doesn't expose removeEvent today, so a
-        // placeholder may still be persisted there; this matches Python's
-        // behaviour where the placeholder pattern was removed by re-typing
-        // un-cataloged calls instead of by deletion. For tests reading
-        // _recordedEvents directly this is the visible behaviour.
+        // The placeholder was never persisted to _buffer (deferred
+        // persistence), so no phantom event leaks to the durable store.
         _recordedEvents.splice(i, 1);
       }
       break;
@@ -883,6 +886,12 @@ async function _maybeRecordCost(
   // threshold and there's no error, the placeholder is dropped instead
   // — counters-only path (v1 §4.4). If suppressed (LLM-host call),
   // no event is emitted at all.
+  //
+  // The placeholder is stored ONLY in the in-memory _recordedEvents
+  // array — NOT persisted to _buffer yet. _finaliseHttpCall will
+  // persist it to _buffer only when it re-types to `network` (above
+  // threshold). Events that get dropped never reach the buffer, so
+  // phantom $0 external_cost events are eliminated.
   if (ctx?.suppressed) {
     return; // bytes still flow into the accountant via finalise
   }
@@ -897,7 +906,6 @@ async function _maybeRecordCost(
   });
 
   _pushRecordedEvent(event);
-  if (_buffer) {
-    _buffer.addEvent(event);
-  }
+  // Intentionally NOT calling _buffer.addEvent(event) here — deferred
+  // to _finaliseHttpCall where the final classification is known.
 }

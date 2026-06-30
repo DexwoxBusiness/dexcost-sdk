@@ -75,24 +75,40 @@ export async function instrumentCohere(
     options?: any,
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("cohere.chat");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const response = await _originalChat!.call(this, body, options);
     try {
-      const latencyMs = Math.round(performance.now() - startTime);
-      const model: string = body?.model ?? response?.model ?? "command-r-plus";
-      recordEvent(response, model, task, latencyMs);
-    } catch {
-      // dexcost errors must never crash user code
+      const response = await _originalChat!.call(this, body, options);
+      try {
+        const latencyMs = Math.round(performance.now() - startTime);
+        const model: string = body?.model ?? response?.model ?? "command-r-plus";
+        recordEvent(response, model, task, latencyMs);
+      } catch {
+        // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return response;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-    return response;
   };
 
   if (_originalChatStream) {
@@ -102,16 +118,18 @@ export async function instrumentCohere(
       options?: any,
     ): Promise<any> {
       let task = getCurrentTask();
+      let autoCreated = false;
 
       if (!task) {
         task = createAutoTask("cohere.chatStream");
         _buffer?.upsertTask(task);
+        autoCreated = true;
       }
 
       const startTime = performance.now();
       const rawStream = await _originalChatStream!.call(this, body, options);
       const model: string = body?.model ?? "command-r-plus";
-      return wrapStream(rawStream, model, task, startTime);
+      return wrapStream(rawStream, model, task, startTime, autoCreated);
     };
   }
 
@@ -191,6 +209,7 @@ function wrapStream(
   model: string,
   task: Task,
   startTime: number,
+  autoCreated: boolean = false,
 ): AsyncIterable<any> {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -250,6 +269,11 @@ function wrapStream(
               }
             } catch {
               // dexcost errors must never crash user code
+            }
+            if (autoCreated && _buffer) {
+              task.status = "success";
+              task.endedAt = new Date();
+              _buffer.upsertTask(task);
             }
             return result;
           }

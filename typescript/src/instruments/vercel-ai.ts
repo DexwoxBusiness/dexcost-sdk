@@ -191,24 +191,40 @@ export async function instrumentVercelAi(
     opts: any,
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("vercel-ai.generateText");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const result = await _originalGenerateText!.call(this, opts);
-    const latencyMs = Math.round(performance.now() - startTime);
+    try {
+      const result = await _originalGenerateText!.call(this, opts);
+      const latencyMs = Math.round(performance.now() - startTime);
 
-    const model = extractModel(opts);
-    const inputTokens: number = result?.usage?.promptTokens ?? 0;
-    const outputTokens: number = result?.usage?.completionTokens ?? 0;
+      const model = extractModel(opts);
+      const inputTokens: number = result?.usage?.promptTokens ?? 0;
+      const outputTokens: number = result?.usage?.completionTokens ?? 0;
 
-    recordEvent(model, inputTokens, outputTokens, task, latencyMs);
-    return result;
+      recordEvent(model, inputTokens, outputTokens, task, latencyMs);
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return result;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
+    }
   };
 
   const patchedStreamText = function patchedStreamText(
@@ -216,12 +232,14 @@ export async function instrumentVercelAi(
     opts: any,
   ): any {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("vercel-ai.streamText");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
@@ -231,7 +249,7 @@ export async function instrumentVercelAi(
     // The Vercel AI SDK streamText returns an object with an async iterator
     // for text chunks and a `usage` promise that resolves when done.
     if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
-      return wrapStream(streamResult, opts, task, startTime);
+      return wrapStream(streamResult, opts, task, startTime, autoCreated);
     }
 
     return streamResult;
@@ -298,6 +316,7 @@ function wrapStream(
   opts: any,
   task: Task,
   startTime: number,
+  autoCreated: boolean = false,
 ): AsyncIterable<any> & Record<string, any> {
   let recorded = false;
 
@@ -330,6 +349,11 @@ function wrapStream(
 
           const model = extractModel(opts);
           recordEvent(model, inputTokens, outputTokens, task, latencyMs);
+          if (autoCreated && _buffer) {
+            task.status = "success";
+            task.endedAt = new Date();
+            _buffer.upsertTask(task);
+          }
         }
         return result;
       },

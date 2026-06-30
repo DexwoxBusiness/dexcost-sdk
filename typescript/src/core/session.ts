@@ -121,9 +121,10 @@ export class SessionManager {
    * Finalize sessions that have been idle for longer than 30 seconds.
    *
    * Sets their status to "success" and endedAt timestamp. Removes them
-   * from the active session map.
+   * from the active session map. When a `buffer` is provided, re-persists
+   * each finalized task so the updated status reaches the push cycle.
    */
-  finalizeIdleSessions(): void {
+  finalizeIdleSessions(buffer?: EventBuffer): void {
     const now = Date.now();
     const toRemove: string[] = [];
 
@@ -132,6 +133,9 @@ export class SessionManager {
         if (session.task.status === "pending") {
           session.task.status = "success";
           session.task.endedAt = new Date();
+          if (buffer) {
+            buffer.upsertTask(session.task);
+          }
         }
         toRemove.push(taskId);
       }

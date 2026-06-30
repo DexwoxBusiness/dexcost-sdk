@@ -75,24 +75,40 @@ export async function instrumentGemini(
     ...args: any[]
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
       task = createAutoTask("gemini.generateContent");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
-    const response = await _originalGenerateContent!.apply(this, args);
     try {
-      const latencyMs = Math.round(performance.now() - startTime);
-      const model: string = this.model ?? this._modelParams?.model ?? "unknown";
-      recordEvent(response?.response ?? response, model, task, latencyMs);
-    } catch {
-      // dexcost errors must never crash user code
+      const response = await _originalGenerateContent!.apply(this, args);
+      try {
+        const latencyMs = Math.round(performance.now() - startTime);
+        const model: string = this.model ?? this._modelParams?.model ?? "unknown";
+        recordEvent(response?.response ?? response, model, task, latencyMs);
+      } catch {
+        // dexcost errors must never crash user code
+      }
+      if (autoCreated) {
+        task.status = "success";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      return response;
+    } catch (err) {
+      if (autoCreated) {
+        task.status = "failed";
+        task.endedAt = new Date();
+        _buffer?.upsertTask(task);
+      }
+      throw err;
     }
-    return response;
   };
 
   GenerativeModelProto.generateContentStream = async function (
@@ -100,16 +116,18 @@ export async function instrumentGemini(
     ...args: any[]
   ): Promise<any> {
     let task = getCurrentTask();
+    let autoCreated = false;
 
     if (!task) {
       task = createAutoTask("gemini.generateContentStream");
       _buffer?.upsertTask(task);
+      autoCreated = true;
     }
 
     const startTime = performance.now();
     const streamResult = await _originalGenerateContentStream!.apply(this, args);
     const model: string = this.model ?? this._modelParams?.model ?? "unknown";
-    return wrapStream(streamResult, model, task, startTime);
+    return wrapStream(streamResult, model, task, startTime, autoCreated);
   };
 
   _patched = true;
@@ -191,6 +209,7 @@ function wrapStream(
   model: string,
   task: Task,
   startTime: number,
+  autoCreated: boolean = false,
 ): any {
   // Gemini streaming returns an object with a `stream` async iterable
   // and a `response` promise. We wrap the stream to capture usage at the end.
@@ -260,6 +279,11 @@ function wrapStream(
               }
             } catch {
               // dexcost errors must never crash user code
+            }
+            if (autoCreated && _buffer) {
+              task.status = "success";
+              task.endedAt = new Date();
+              _buffer.upsertTask(task);
             }
             return result;
           }
