@@ -26,6 +26,16 @@ let _originalGenerateText: Function | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 let _originalStreamText: Function | null = null;
 let _aiModule: any = null;
+/**
+ * All distinct module objects that were patched (CJS and/or ESM).
+ *
+ * Unlike class-based SDKs (OpenAI, Anthropic, …) where patching a shared
+ * prototype covers both module systems, the `ai` package exports standalone
+ * functions.  `require("ai")` and `import("ai")` may return *different*
+ * objects when the package ships dual CJS/ESM builds, so we must patch every
+ * resolved module object to cover all consumers.
+ */
+let _patchedModules: any[] = [];
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
 
@@ -37,6 +47,7 @@ export function _setAiModule(mod: any): void {
 /** Test helper: reset to real module resolution. */
 export function _resetAiModule(): void {
   _aiModule = null;
+  _patchedModules = [];
 }
 
 /**
@@ -106,6 +117,19 @@ function recordEvent(
  *
  * If `ai` is not installed and no mock module is injected, the dynamic
  * import will throw and the function will reject.
+ *
+ * ## CJS / ESM dual-patch
+ *
+ * The `ai` package exports standalone functions (not class prototypes), so
+ * monkey-patching is done on the module namespace object.  In Node.js,
+ * `require("ai")` (CJS) and `import("ai")` (ESM) can return *different*
+ * objects when the package ships dual builds.  If we only patch the ESM
+ * namespace, CJS consumers (NestJS, tsc-compiled apps, NX workspaces) call
+ * the **original** unpatched function — silently losing all cost data.
+ *
+ * Fix: resolve the module via both CJS `require` and ESM `import`, then
+ * patch every distinct object so both consumer types hit the instrumented
+ * wrappers.
  */
 export async function instrumentVercelAi(
   pricing: PricingEngine,
@@ -114,10 +138,46 @@ export async function instrumentVercelAi(
   if (_patched) return;
 
   if (!_aiModule) {
-    // ai is an optional peer dependency; the dynamic import only
-    // succeeds at runtime if the user has installed it.
-    // @ts-ignore -- ai is an optional peer dependency
-    _aiModule = await import("ai");
+    // Collect every distinct module object we can resolve.
+    const modules: any[] = [];
+
+    // 1. CJS path — covers NestJS, tsc-compiled, and other CJS apps.
+    //    `typeof require` is safe on undeclared identifiers and evaluates
+    //    to "undefined" in pure ESM contexts without throwing.
+    // @ts-ignore -- require is only available in CJS context
+    if (typeof require === "function") {
+      try {
+        // @ts-ignore -- require is only available in CJS context
+        modules.push(require("ai"));
+      } catch {
+        // CJS resolution failed (ESM-only package, or not installed)
+      }
+    }
+
+    // 2. ESM path — covers native ESM apps.
+    try {
+      // @ts-ignore -- ai is an optional peer dependency
+      const esmMod = await import("ai");
+      // Only add if it is a genuinely different object (same package
+      // may resolve to the same object in some bundler setups).
+      if (!modules.includes(esmMod)) modules.push(esmMod);
+    } catch {
+      // ESM resolution failed (not installed)
+    }
+
+    if (modules.length === 0) {
+      throw new Error(
+        "Cannot find package 'ai' — install it to enable Vercel AI SDK instrumentation",
+      );
+    }
+
+    // Use the first (preferred CJS) module as canonical reference for
+    // saving originals and for the test helpers.
+    _aiModule = modules[0];
+    _patchedModules = modules;
+  } else {
+    // Test-injected mock — treat as the only module.
+    _patchedModules = [_aiModule];
   }
 
   _originalGenerateText = _aiModule.generateText;
@@ -125,7 +185,8 @@ export async function instrumentVercelAi(
   _buffer = buffer;
   _pricing = pricing;
 
-  _aiModule.generateText = async function patchedGenerateText(
+  // Build the patched functions once, then assign to all module objects.
+  const patchedGenerateText = async function patchedGenerateText(
     this: any,
     opts: any,
   ): Promise<any> {
@@ -150,7 +211,7 @@ export async function instrumentVercelAi(
     return result;
   };
 
-  _aiModule.streamText = function patchedStreamText(
+  const patchedStreamText = function patchedStreamText(
     this: any,
     opts: any,
   ): any {
@@ -176,20 +237,30 @@ export async function instrumentVercelAi(
     return streamResult;
   };
 
+  // Apply patches to ALL resolved module objects (CJS + ESM).
+  for (const mod of _patchedModules) {
+    mod.generateText = patchedGenerateText;
+    mod.streamText = patchedStreamText;
+  }
+
   _patched = true;
 }
 
 /**
- * Remove the monkey-patches and restore the original functions.
+ * Remove the monkey-patches and restore the original functions on ALL
+ * module objects that were patched (CJS and/or ESM).
  */
 export function uninstrumentVercelAi(): void {
-  if (!_patched || !_aiModule) return;
+  if (!_patched) return;
 
-  if (_originalGenerateText) _aiModule.generateText = _originalGenerateText;
-  if (_originalStreamText) _aiModule.streamText = _originalStreamText;
+  for (const mod of _patchedModules) {
+    if (_originalGenerateText) mod.generateText = _originalGenerateText;
+    if (_originalStreamText) mod.streamText = _originalStreamText;
+  }
 
   _originalGenerateText = null;
   _originalStreamText = null;
+  _patchedModules = [];
   _buffer = null;
   _pricing = null;
   _patched = false;
