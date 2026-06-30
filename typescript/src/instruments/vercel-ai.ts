@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask, runWithTask } from "../core/context.js";
+import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -204,8 +204,8 @@ export async function instrumentVercelAi(
     const startTime = performance.now();
     const self = this;
     try {
-      const result = await runWithTask(task, () =>
-        _originalGenerateText!.call(self, opts),
+      const result = await suppressNetworkEvent(() =>
+        runWithTask(task, () => _originalGenerateText!.call(self, opts)),
       );
       const latencyMs = Math.round(performance.now() - startTime);
 
@@ -247,8 +247,8 @@ export async function instrumentVercelAi(
 
     const startTime = performance.now();
     const self = this;
-    const streamResult = runWithTask(task, () =>
-      _originalStreamText!.call(self, opts),
+    const streamResult = suppressNetworkEvent(() =>
+      runWithTask(task, () => _originalStreamText!.call(self, opts)),
     );
 
     // Wrap the stream to capture usage after iteration completes.
@@ -331,6 +331,15 @@ function wrapStream(
 
   wrapped[Symbol.asyncIterator] = function () {
     const iter = rawStream[Symbol.asyncIterator]();
+    const finalizeTask = (status: "success" | "failed") => {
+      if (recorded) return;
+      recorded = true;
+      if (autoCreated && _buffer) {
+        task.status = status;
+        task.endedAt = new Date();
+        _buffer.upsertTask(task);
+      }
+    };
     return {
       async next(): Promise<IteratorResult<any>> {
         let result: IteratorResult<any>;
@@ -372,6 +381,15 @@ function wrapStream(
           }
         }
         return result;
+      },
+      async return(value?: any): Promise<IteratorResult<any>> {
+        finalizeTask("success");
+        return iter.return ? await iter.return(value) : { done: true as const, value };
+      },
+      async throw(error?: any): Promise<IteratorResult<any>> {
+        finalizeTask("failed");
+        if (iter.throw) return await iter.throw(error);
+        throw error;
       },
     };
   };

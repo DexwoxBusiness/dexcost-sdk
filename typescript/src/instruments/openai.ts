@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask, runWithTask } from "../core/context.js";
+import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -83,15 +83,24 @@ export async function instrumentOpenai(
     const self = this;
 
     if (body?.stream) {
-      const rawStream = await runWithTask(task, () =>
-        _original!.call(self, body, options),
-      );
-      return wrapStream(rawStream, task, startTime, autoCreated);
+      try {
+        const rawStream = await suppressNetworkEvent(() =>
+          runWithTask(task, () => _original!.call(self, body, options)),
+        );
+        return wrapStream(rawStream, task, startTime, autoCreated);
+      } catch (err) {
+        if (autoCreated) {
+          task.status = "failed";
+          task.endedAt = new Date();
+          _buffer?.upsertTask(task);
+        }
+        throw err;
+      }
     }
 
     try {
-      const response = await runWithTask(task, () =>
-        _original!.call(self, body, options),
+      const response = await suppressNetworkEvent(() =>
+        runWithTask(task, () => _original!.call(self, body, options)),
       );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
@@ -197,6 +206,15 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
   return {
     [Symbol.asyncIterator]() {
       const iter = rawStream[Symbol.asyncIterator]();
+      const finalizeTask = (status: "success" | "failed") => {
+        if (finalized) return;
+        finalized = true;
+        if (autoCreated && _buffer) {
+          task.status = status;
+          task.endedAt = new Date();
+          _buffer.upsertTask(task);
+        }
+      };
       return {
         async next(): Promise<IteratorResult<any>> {
           let result: IteratorResult<any>;
@@ -277,6 +295,15 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
             cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? cachedTokens;
           }
           return result;
+        },
+        async return(value?: any): Promise<IteratorResult<any>> {
+          finalizeTask("success");
+          return iter.return ? await iter.return(value) : { done: true as const, value };
+        },
+        async throw(error?: any): Promise<IteratorResult<any>> {
+          finalizeTask("failed");
+          if (iter.throw) return await iter.throw(error);
+          throw error;
         },
       };
     },
