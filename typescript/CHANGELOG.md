@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.4.1...typescript/v0.4.2) (2026-06-30)
+
+
+### Bug Fixes
+
+* proper session lifecycle with explicit task.end() in all LLM instruments ([973a16e](https://github.com/DexwoxBusiness/dexcost-sdk/commit/973a16ed7ecb9aa3138c461217455db457fd67ff))
+
 ## [0.4.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.4.0...typescript/v0.4.1) (2026-06-30)
 
 
