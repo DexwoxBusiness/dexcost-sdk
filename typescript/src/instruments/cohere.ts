@@ -221,7 +221,17 @@ function wrapStream(
       const iter = rawStream[Symbol.asyncIterator]();
       return {
         async next(): Promise<IteratorResult<any>> {
-          const result = await iter.next();
+          let result: IteratorResult<any>;
+          try {
+            result = await iter.next();
+          } catch (err) {
+            if (autoCreated && _buffer) {
+              task.status = "failed";
+              task.endedAt = new Date();
+              _buffer.upsertTask(task);
+            }
+            throw err;
+          }
           if (result.done) {
             if (finalized) return result;
             finalized = true;

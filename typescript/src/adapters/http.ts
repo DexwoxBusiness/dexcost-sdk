@@ -566,6 +566,14 @@ interface _HttpCallContext {
   responseHeaderBytes: number;
   isInternal: boolean | null;
   suppressed: boolean;
+  /** Task resolved once in _maybeRecordCost, reused in _finaliseHttpCall.
+   *  Avoids a second getCurrentTask() lookup which would either create a
+   *  duplicate auto-task or (before the auto-task leak fix) find a stale one. */
+  resolvedTask?: Task;
+  /** Placeholder event stored here so _finaliseHttpCall can find it without
+   *  a fragile O(n) backward scan of _recordedEvents that is vulnerable to
+   *  FIFO eviction under high concurrency. */
+  placeholderEvent?: CostEvent;
 }
 
 function _resolveUrlStr(input: string | URL | Request): string {
@@ -714,7 +722,10 @@ function _wrapResponseForByteCounting(
  */
 function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): void {
   const responseBytes = ctx.responseHeaderBytes + responseBodyBytes;
-  const task = _resolveHttpTask();
+  // Reuse the task resolved in _maybeRecordCost — avoids a second
+  // getCurrentTask() lookup which would create a duplicate auto-task
+  // now that createAutoTask no longer pollutes AsyncLocalStorage.
+  const task = ctx.resolvedTask ?? _resolveHttpTask();
   const accountant: NetworkAccountant | undefined = getAccountant(task.taskId);
   if (accountant) {
     accountant.record(ctx.hostname, responseBytes, ctx.requestBytes, ctx.isInternal);
@@ -727,48 +738,40 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   if (ctx._matchedCatalog || ctx.suppressed) return;
 
   const combined = ctx.requestBytes + responseBytes;
-  // Find the most recent un-cataloged external_cost-zero event for this
-  // URL — that's the one we want to REPLACE with a network event (the
-  // current behaviour records an external_cost-zero; v1 §4.4 wants a
-  // network event instead). Match by url to avoid race with concurrent
-  // calls.
-  for (let i = _recordedEvents.length - 1; i >= 0; i--) {
-    const ev = _recordedEvents[i];
-    if (
-      ev.eventType === "external_cost" &&
-      ev.costUsd.isZero() &&
-      ev.costConfidence === "unknown" &&
-      ev.details?.url === ctx.urlStr &&
-      !ev.details?._reTyped
-    ) {
-      // Mark and re-type or drop based on threshold.
-      if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
-        ev.eventType = "network";
-        ev.serviceName = ctx.hostname;
-        ev.details = {
-          ...ev.details,
-          method: ctx.method,
-          cost_pending: true,
-          protocol: ctx.protocol,
-          request_bytes: ctx.requestBytes,
-          response_bytes: responseBytes,
-          is_internal_traffic: _isInternalToValue(ctx.isInternal),
-          _reTyped: true,
-        };
-        // Persist to durable buffer now that the final classification is
-        // known. The placeholder was intentionally NOT persisted in
-        // _maybeRecordCost to avoid phantom $0 external_cost events.
-        if (_buffer) {
-          _buffer.addEvent(ev);
-        }
-      } else {
-        // Below threshold and no error → counters-only. Drop the
-        // placeholder external_cost-zero event from the in-memory list.
-        // The placeholder was never persisted to _buffer (deferred
-        // persistence), so no phantom event leaks to the durable store.
-        _recordedEvents.splice(i, 1);
-      }
-      break;
+  // Use the placeholder event stored directly on ctx (set in
+  // _maybeRecordCost). This replaces the old O(n) backward scan of
+  // _recordedEvents which was fragile under FIFO eviction when
+  // concurrent calls exceeded _RECORDED_EVENTS_CAP.
+  const ev = ctx.placeholderEvent;
+  if (!ev) return;
+
+  if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
+    ev.eventType = "network";
+    ev.serviceName = ctx.hostname;
+    ev.details = {
+      ...ev.details,
+      method: ctx.method,
+      cost_pending: true,
+      protocol: ctx.protocol,
+      request_bytes: ctx.requestBytes,
+      response_bytes: responseBytes,
+      is_internal_traffic: _isInternalToValue(ctx.isInternal),
+      _reTyped: true,
+    };
+    // Persist to durable buffer now that the final classification is
+    // known. The placeholder was intentionally NOT persisted in
+    // _maybeRecordCost to avoid phantom $0 external_cost events.
+    if (_buffer) {
+      _buffer.addEvent(ev);
+    }
+  } else {
+    // Below threshold and no error → counters-only. Drop the
+    // placeholder external_cost-zero event from the in-memory list.
+    // The placeholder was never persisted to _buffer (deferred
+    // persistence), so no phantom event leaks to the durable store.
+    const idx = _recordedEvents.indexOf(ev);
+    if (idx !== -1) {
+      _recordedEvents.splice(idx, 1);
     }
   }
 }
@@ -797,8 +800,10 @@ async function _maybeRecordCost(
 
   // Resolve the task to attribute this cost to. An auto-task is created
   // when none is active so HTTP costs are never silently lost (mirrors
-  // the Python adapter's session auto-creation).
+  // the Python adapter's session auto-creation). Store on ctx so
+  // _finaliseHttpCall reuses the same task without a second lookup.
   const task = _resolveHttpTask();
+  if (ctx) ctx.resolvedTask = task;
 
   // v1 §4.3 byte_details — stamped into every event below. Response_bytes
   // are deferred to the TransformStream finalisation; for now only the
@@ -906,6 +911,10 @@ async function _maybeRecordCost(
   });
 
   _pushRecordedEvent(event);
+  // Store the placeholder on ctx so _finaliseHttpCall can find it
+  // directly — survives FIFO eviction and eliminates the fragile
+  // backward scan.
+  if (ctx) ctx.placeholderEvent = event;
   // Intentionally NOT calling _buffer.addEvent(event) here — deferred
   // to _finaliseHttpCall where the final classification is known.
 }

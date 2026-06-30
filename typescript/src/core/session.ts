@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { Task } from "./models.js";
 import { createTask } from "./models.js";
-import { getCurrentTask, runWithTask, setCurrentTask, getContext } from "./context.js";
+import { getCurrentTask, runWithTask, getContext } from "./context.js";
 import type { EventBuffer } from "../transport/buffer.js";
 
 // ---------------------------------------------------------------------------
@@ -73,9 +73,10 @@ export class SessionManager {
       lastActivityAt: Date.now(),
     });
 
-    // Bind the task to the current async context so subsequent calls
-    // to getCurrentTask() within this async chain return this task.
-    setCurrentTask(task);
+    // NOTE: intentionally NOT calling setCurrentTask(task) here.
+    // enterWith() leaks the task into the remainder of the async chain,
+    // causing subsequent unwrapped calls to inherit a stale session task.
+    // Callers should use runInSession() (which scopes via runWithTask).
 
     return task;
   }
