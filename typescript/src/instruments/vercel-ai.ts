@@ -238,11 +238,33 @@ export async function instrumentVercelAi(
   };
 
   // Apply patches to ALL resolved module objects (CJS + ESM).
+  // ESM module namespace objects have read-only properties (per spec), so
+  // assigning to them throws in strict mode.  We attempt each assignment
+  // inside a try/catch: if a module is immutable we skip it rather than
+  // leaving the instrument in a half-patched state.
+  const successfullyPatched: any[] = [];
   for (const mod of _patchedModules) {
-    mod.generateText = patchedGenerateText;
-    mod.streamText = patchedStreamText;
+    try {
+      mod.generateText = patchedGenerateText;
+      mod.streamText = patchedStreamText;
+      successfullyPatched.push(mod);
+    } catch {
+      // Module namespace is frozen/sealed (typical for pure ESM namespace
+      // objects).  The CJS exports object — which is the one CJS consumers
+      // actually call — is always writable, so this is safe to skip.
+    }
   }
 
+  if (successfullyPatched.length === 0) {
+    // Roll back state so a future retry starts clean.
+    _aiModule = null;
+    _patchedModules = [];
+    throw new Error(
+      "Could not patch 'ai' module — all resolved objects are read-only",
+    );
+  }
+
+  _patchedModules = successfullyPatched;
   _patched = true;
 }
 
@@ -254,8 +276,13 @@ export function uninstrumentVercelAi(): void {
   if (!_patched) return;
 
   for (const mod of _patchedModules) {
-    if (_originalGenerateText) mod.generateText = _originalGenerateText;
-    if (_originalStreamText) mod.streamText = _originalStreamText;
+    try {
+      if (_originalGenerateText) mod.generateText = _originalGenerateText;
+      if (_originalStreamText) mod.streamText = _originalStreamText;
+    } catch {
+      // Module became frozen between instrument and uninstrument — unusual
+      // but harmless; the module will be GC'd with the patched wrappers.
+    }
   }
 
   _originalGenerateText = null;
