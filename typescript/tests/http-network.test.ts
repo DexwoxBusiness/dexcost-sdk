@@ -161,6 +161,34 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     expect(snap.bytesIn).toBeGreaterThan(0);
   });
 
+  it("suppression scope leaves no external_cost placeholder in recorded events", async () => {
+    // Regression: an un-cataloged suppressed call must NOT create a $0
+    // external_cost placeholder. _finaliseHttpCall returns early for
+    // suppressed calls (before the drop path), so any placeholder created
+    // here would leak into _recordedEvents as a phantom $0 event.
+    const big = "x".repeat(200_000);
+    const server = await startServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(big);
+    });
+
+    const task = createTask({ taskId: "t-suppressed-placeholder" });
+    const accountant = new NetworkAccountant();
+    registerAccountant(task.taskId, accountant);
+
+    await runWithTask(task, async () => {
+      await suppressNetworkEvent(async () => {
+        const r = await fetch(server.url + "/big");
+        await r.text();
+      });
+    });
+
+    await server.close();
+    // No cost events at all for a suppressed call — neither a `network`
+    // event nor a phantom $0 `external_cost` placeholder.
+    expect(getRecordedEvents()).toHaveLength(0);
+  });
+
   it("domain-rate call emits external_cost with byte_details (request side)", async () => {
     const server = await startServer((req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });

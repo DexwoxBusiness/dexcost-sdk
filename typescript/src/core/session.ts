@@ -147,6 +147,25 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Finalize ALL active sessions regardless of idle time.
+   *
+   * Called during shutdown (`close` / `closeAsync`) to ensure no session
+   * tasks are left in "pending" status.
+   */
+  finalizeAllSessions(buffer?: EventBuffer): void {
+    for (const [, session] of this._sessions) {
+      if (session.task.status === "pending") {
+        session.task.status = "success";
+        session.task.endedAt = new Date();
+        if (buffer) {
+          buffer.upsertTask(session.task);
+        }
+      }
+    }
+    this._sessions.clear();
+  }
+
   /** Number of active sessions. */
   get activeSessionCount(): number {
     return this._sessions.size;

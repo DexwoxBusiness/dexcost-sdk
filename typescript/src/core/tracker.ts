@@ -1022,6 +1022,7 @@ export class CostTracker {
   private _config: ResolvedConfig;
   private _httpTracked = false;
   private _sessionTimer: ReturnType<typeof setInterval> | null = null;
+  private _getSessionManager?: () => import("./session.js").SessionManager | null;
 
   constructor(options: TrackerOptions = {}) {
     this._options = {
@@ -1115,7 +1116,8 @@ export class CostTracker {
   private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
     try {
       const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
-      trackHttp(this._buffer);
+      this._getSessionManager = getSessionManager;
+      trackHttp(this._buffer, this._pricing);
       this._httpTracked = true;
 
       // Safety-net timer: finalize idle sessions every 30s so auto-created
@@ -1322,6 +1324,10 @@ export class CostTracker {
       uninstrumentProvider(name);
     }
     this._instrumented.clear();
+
+    // Finalize all pending sessions before tearing down HTTP tracking
+    this._finalizeAllSessionsSync();
+
     this._disableHttpTracking();
     if (this._sessionTimer) {
       clearInterval(this._sessionTimer);
@@ -1335,6 +1341,31 @@ export class CostTracker {
     }
     this._pricing.stopBackgroundRefresh();
     this._buffer.close();
+  }
+
+  /**
+   * Force-finalize all active session tasks so none are left "pending"
+   * on shutdown.  Synchronous — safe to call from both close() and
+   * closeAsync().
+   */
+  private _finalizeAllSessionsSync(): void {
+    if (!this._httpTracked) return;
+    // Best-effort: session finalization must never abort shutdown. Any
+    // exception from finalizeAllSessions is swallowed so close()/closeAsync()
+    // still tear down the pusher and HTTP tracking.
+    try {
+      const sm = this._getSessionManager?.();
+      if (sm) {
+        sm.finalizeAllSessions(this._buffer);
+      }
+    } catch (err) {
+      // Best-effort: never abort shutdown so the pusher/buffer still close,
+      // but surface the failure so stuck-pending sessions (e.g. from
+      // buffer.upsertTask throwing) stay observable rather than silently
+      // swallowed.
+      // eslint-disable-next-line no-console
+      console.warn("[dexcost] session finalization failed during shutdown:", err);
+    }
   }
 
   /** Restore patched HTTP transports if HTTP tracking was enabled. */
@@ -1357,6 +1388,10 @@ export class CostTracker {
       uninstrumentProvider(name);
     }
     this._instrumented.clear();
+
+    // Finalize all pending sessions before tearing down HTTP tracking
+    this._finalizeAllSessionsSync();
+
     this._disableHttpTracking();
     if (this._sessionTimer) {
       clearInterval(this._sessionTimer);
