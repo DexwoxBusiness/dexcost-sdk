@@ -1358,8 +1358,13 @@ export class CostTracker {
       if (sm) {
         sm.finalizeAllSessions(this._buffer);
       }
-    } catch {
-      // ignore — shutdown continues
+    } catch (err) {
+      // Best-effort: never abort shutdown so the pusher/buffer still close,
+      // but surface the failure so stuck-pending sessions (e.g. from
+      // buffer.upsertTask throwing) stay observable rather than silently
+      // swallowed.
+      // eslint-disable-next-line no-console
+      console.warn("[dexcost] session finalization failed during shutdown:", err);
     }
   }
 
