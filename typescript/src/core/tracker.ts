@@ -1022,6 +1022,7 @@ export class CostTracker {
   private _config: ResolvedConfig;
   private _httpTracked = false;
   private _sessionTimer: ReturnType<typeof setInterval> | null = null;
+  private _getSessionManager?: () => import("./session.js").SessionManager | null;
 
   constructor(options: TrackerOptions = {}) {
     this._options = {
@@ -1115,6 +1116,7 @@ export class CostTracker {
   private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
     try {
       const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
+      this._getSessionManager = getSessionManager;
       trackHttp(this._buffer, this._pricing);
       this._httpTracked = true;
 
@@ -1348,20 +1350,9 @@ export class CostTracker {
    */
   private _finalizeAllSessionsSync(): void {
     if (!this._httpTracked) return;
-    try {
-      // getSessionManager is already imported lazily inside _enableHttpTracking;
-      // we can't reuse that import synchronously, but the http module is already
-      // loaded at this point, so require-style dynamic import resolves from cache.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getSessionManager } = require("../adapters/http.js") as {
-        getSessionManager: () => import("./session.js").SessionManager | null;
-      };
-      const sm = getSessionManager();
-      if (sm) {
-        sm.finalizeAllSessions(this._buffer);
-      }
-    } catch {
-      // best-effort — don't crash shutdown
+    const sm = this._getSessionManager?.();
+    if (sm) {
+      sm.finalizeAllSessions(this._buffer);
     }
   }
 

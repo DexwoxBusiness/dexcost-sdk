@@ -753,6 +753,10 @@ interface _HttpCallContext {
   llmStreamFormat?: "openai" | "anthropic";
   /** Accumulated tail of SSE data for LLM usage extraction on stream end. */
   sseTailBuffer?: string;
+  /** Head of SSE stream preserved so Anthropic message_start is not lost. */
+  sseHeadBuffer?: string;
+  /** Shared TextDecoder for SSE chunk decoding (avoids per-chunk allocation). */
+  _sseDecoder?: InstanceType<typeof TextDecoder>;
   /** Task resolved once in _maybeRecordCost, reused in _finaliseHttpCall.
    *  Avoids a second getCurrentTask() lookup which would either create a
    *  duplicate auto-task or (before the auto-task leak fix) find a stale one. */
@@ -863,15 +867,30 @@ function _wrapResponseForByteCounting(
     transform(chunk, controller) {
       bytesRead += chunk.byteLength;
       controller.enqueue(chunk);
-      // Buffer tail of SSE data for LLM usage extraction
+      // Buffer tail (and head) of SSE data for LLM usage extraction.
+      // Reuse a single TextDecoder so multi-byte chars split across
+      // chunks are decoded correctly.
       if (ctx.llmStreamFormat) {
         try {
-          const text = new TextDecoder().decode(chunk, { stream: true });
+          if (!ctx._sseDecoder) ctx._sseDecoder = new TextDecoder();
+          const text = ctx._sseDecoder.decode(chunk, { stream: true });
           ctx.sseTailBuffer = ((ctx.sseTailBuffer ?? "") + text).slice(-8192);
+          if ((ctx.sseHeadBuffer?.length ?? 0) < 4096) {
+            ctx.sseHeadBuffer = ((ctx.sseHeadBuffer ?? "") + text).slice(0, 4096);
+          }
         } catch { /* ignore decode errors */ }
       }
     },
     flush() {
+      // Flush remaining bytes from the streaming TextDecoder
+      if (ctx.llmStreamFormat && ctx._sseDecoder) {
+        try {
+          const text = ctx._sseDecoder.decode();
+          if (text) {
+            ctx.sseTailBuffer = ((ctx.sseTailBuffer ?? "") + text).slice(-8192);
+          }
+        } catch { /* ignore decode errors */ }
+      }
       finalise();
     },
   });
@@ -927,7 +946,12 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
 
   // LLM streaming fallback — extract usage from accumulated SSE data.
   if (ctx.llmStreamFormat && ctx.sseTailBuffer && _pricing && !ctx.suppressed) {
-    const llmUsage = _parseSseUsage(ctx.sseTailBuffer, ctx.llmStreamFormat);
+    // Merge head + tail buffers so Anthropic message_start (model + input
+    // tokens) survives even when the stream exceeds the 8k tail window.
+    const sseData = ctx.sseHeadBuffer && ctx.sseTailBuffer && ctx.sseHeadBuffer !== ctx.sseTailBuffer
+      ? ctx.sseHeadBuffer + ctx.sseTailBuffer
+      : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
+    const llmUsage = _parseSseUsage(sseData, ctx.llmStreamFormat);
     if (llmUsage) {
       const costResult: CostResult = _pricing.getCost(
         llmUsage.model,
@@ -1169,33 +1193,27 @@ async function _maybeRecordCost(
   // _finaliseHttpCall will RE-TYPE to a `network` event with
   // cost_pending=true once the response body has been fully drained
   // (and byte counts are known). If combined bytes stay below
-  // threshold and there's no error, the placeholder is dropped instead
-  // — counters-only path (v1 §4.4). If suppressed (LLM-host call),
-  // no event is emitted at all.
-  //
-  // The placeholder is stored ONLY in the in-memory _recordedEvents
-  // array — NOT persisted to _buffer yet. _finaliseHttpCall will
-  // persist it to _buffer only when it re-types to `network` (above
-  // threshold). Events that get dropped never reach the buffer, so
-  // phantom $0 external_cost events are eliminated.
-  if (ctx?.suppressed) {
-    return; // bytes still flow into the accountant via finalise
-  }
+  // threshold and there's no error, the placeholderis silently
+  // dropped — no phantom event reaches the durable buffer.
+  if (!ctx) return; // node-level http — no ctx, no placeholder
+
   const event = createCostEvent({
     eventId: randomUUID(),
     taskId: task.taskId,
     eventType: "external_cost",
     costUsd: 0,
     costConfidence: "unknown",
+    pricingSource: "unknown",
     serviceName: domain,
     details: { url: urlStr, ...byteDetailsRequestOnly },
   });
 
   _pushRecordedEvent(event);
-  // Store the placeholder on ctx so _finaliseHttpCall can find it
-  // directly — survives FIFO eviction and eliminates the fragile
-  // backward scan.
-  if (ctx) ctx.placeholderEvent = event;
-  // Intentionally NOT calling _buffer.addEvent(event) here — deferred
-  // to _finaliseHttpCall where the final classification is known.
+  // NOTE: intentionally NOT persisting to _buffer here. The event is
+  // held in-memory only. _finaliseHttpCall promotes it to a `network`
+  // event with cost_pending=true (and persists it) IF the combined
+  // bytes exceed the threshold. If they don't, the placeholder is
+  // silently dropped from _recordedEvents — no phantom $0 event ever
+  // reaches the push/ingest pipeline.
+  ctx.placeholderEvent = event;
 }
