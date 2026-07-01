@@ -1,6 +1,6 @@
 {
   "name": "@dexcost/sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Agent Unit Economics SDK for Node.js",
   "type": "module",
   "main": "./dist/cjs/index.js",
