@@ -1350,9 +1350,16 @@ export class CostTracker {
    */
   private _finalizeAllSessionsSync(): void {
     if (!this._httpTracked) return;
-    const sm = this._getSessionManager?.();
-    if (sm) {
-      sm.finalizeAllSessions(this._buffer);
+    // Best-effort: session finalization must never abort shutdown. Any
+    // exception from finalizeAllSessions is swallowed so close()/closeAsync()
+    // still tear down the pusher and HTTP tracking.
+    try {
+      const sm = this._getSessionManager?.();
+      if (sm) {
+        sm.finalizeAllSessions(this._buffer);
+      }
+    } catch {
+      // ignore — shutdown continues
     }
   }
 

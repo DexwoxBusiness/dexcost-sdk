@@ -948,9 +948,13 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   if (ctx.llmStreamFormat && ctx.sseTailBuffer && _pricing && !ctx.suppressed) {
     // Merge head + tail buffers so Anthropic message_start (model + input
     // tokens) survives even when the stream exceeds the 8k tail window.
-    const sseData = ctx.sseHeadBuffer && ctx.sseTailBuffer && ctx.sseHeadBuffer !== ctx.sseTailBuffer
-      ? ctx.sseHeadBuffer + ctx.sseTailBuffer
-      : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
+    // Only merge when the tail does NOT already start with the head — for
+    // short streams the 8k tail already contains the 4k head, and blind
+    // concatenation would duplicate the overlapping prefix.
+    const sseData =
+      ctx.sseHeadBuffer && ctx.sseTailBuffer && !ctx.sseTailBuffer.startsWith(ctx.sseHeadBuffer)
+        ? ctx.sseHeadBuffer + ctx.sseTailBuffer
+        : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
     const llmUsage = _parseSseUsage(sseData, ctx.llmStreamFormat);
     if (llmUsage) {
       const costResult: CostResult = _pricing.getCost(
@@ -1195,7 +1199,11 @@ async function _maybeRecordCost(
   // (and byte counts are known). If combined bytes stay below
   // threshold and there's no error, the placeholderis silently
   // dropped — no phantom event reaches the durable buffer.
-  if (!ctx) return; // node-level http — no ctx, no placeholder
+  // node-level http (no ctx) OR a suppressed LLM-host call: no placeholder.
+  // Suppressed calls MUST be skipped here — _finaliseHttpCall returns early
+  // for suppressed calls (before the drop path), so a placeholder created
+  // here would never be dropped and would leak as a phantom $0 event.
+  if (!ctx || ctx.suppressed) return;
 
   const event = createCostEvent({
     eventId: randomUUID(),
