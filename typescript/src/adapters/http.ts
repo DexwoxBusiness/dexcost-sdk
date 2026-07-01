@@ -33,6 +33,7 @@ import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-ca
 import { SessionManager } from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
+import type { PricingEngine, CostResult } from "../pricing/engine.js";
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -89,6 +90,9 @@ let _sessionManager: SessionManager | null = null;
 /** Event buffer reference (set via trackHttp). */
 let _buffer: EventBuffer | null = null;
 
+/** Pricing engine for LLM-aware HTTP fallback. */
+let _pricing: PricingEngine | null = null;
+
 /** Max response body size to parse (1 MB). */
 const MAX_BODY_SIZE = 1_048_576;
 
@@ -132,6 +136,167 @@ export function clearDomainRates(): void {
 }
 
 // ---------------------------------------------------------------------------
+// LLM HTTP fallback — detect LLM API calls at the fetch level
+// ---------------------------------------------------------------------------
+//
+// When LLM instruments cannot intercept a call (ESM consumers, Vercel AI SDK
+// providers that use raw fetch instead of official SDK packages), the HTTP
+// adapter detects known LLM API endpoints, parses the response for token
+// usage, and emits proper `llm_call` events with token-based pricing.
+
+/** Known LLM API domains and their response format. */
+const _LLM_DOMAINS: Record<string, "openai" | "anthropic"> = {
+  "api.openai.com": "openai",
+  "api.anthropic.com": "anthropic",
+  "api.kimi.com": "anthropic",
+  "api.moonshot.ai": "openai",
+  "api.moonshot.cn": "openai",
+  "api.deepseek.com": "openai",
+  "api.groq.com": "openai",
+  "api.together.xyz": "openai",
+  "api.fireworks.ai": "openai",
+  "api.mistral.ai": "openai",
+  "api.x.ai": "openai",
+  "generativelanguage.googleapis.com": "openai",
+  "api.cohere.com": "openai",
+  "api.perplexity.ai": "openai",
+  "api.sambanova.ai": "openai",
+  "openrouter.ai": "openai",
+  "api.cerebras.ai": "openai",
+};
+
+/** Chat/completions endpoint prefixes that indicate an LLM inference call. */
+const _LLM_ENDPOINTS = [
+  "/v1/chat/completions",
+  "/v1/messages",
+  "/chat/completions",
+  "/v1/complete",
+  "/v1/completions",
+  "/coding",        // Kimi Code Plan
+  "/v1beta/models", // Google Gemini generateContent
+];
+
+/**
+ * Check if a parsed URL is a known LLM chat/completions endpoint.
+ * Returns the response format if matched, null otherwise.
+ */
+function _detectLlmEndpoint(parsedUrl: URL): "openai" | "anthropic" | null {
+  const format = _LLM_DOMAINS[parsedUrl.hostname];
+  if (!format) return null;
+  const pathname = parsedUrl.pathname;
+  for (const ep of _LLM_ENDPOINTS) {
+    if (pathname.startsWith(ep)) return format;
+  }
+  return null;
+}
+
+/**
+ * Extract model name and token usage from a parsed LLM response body.
+ */
+function _extractLlmUsage(
+  body: unknown,
+  format: "openai" | "anthropic",
+): { model: string; inputTokens: number; outputTokens: number } | null {
+  if (!body || typeof body !== "object") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = body as Record<string, any>;
+  const model: string = typeof b.model === "string" ? b.model : "unknown";
+  const usage = b.usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  if (format === "openai") {
+    return {
+      model,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      inputTokens: (usage as any).prompt_tokens ?? 0,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      outputTokens: (usage as any).completion_tokens ?? 0,
+    };
+  }
+  // Anthropic format
+  return {
+    model,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    inputTokens: (usage as any).input_tokens ?? 0,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    outputTokens: (usage as any).output_tokens ?? 0,
+  };
+}
+
+/**
+ * Try to extract LLM usage from a cloned Response.
+ * Returns null if the response is not JSON or does not contain usage data.
+ */
+async function _tryExtractLlmFromResponse(
+  response: Response,
+  format: "openai" | "anthropic",
+): Promise<{ model: string; inputTokens: number; outputTokens: number } | null> {
+  try {
+    const cloned = response.clone();
+    const contentType = cloned.headers.get("content-type") ?? "";
+    // Only parse JSON responses (non-streaming)
+    if (!contentType.includes("application/json")) return null;
+    const contentLength = cloned.headers.get("content-length");
+    const cl = Number.parseInt(contentLength ?? "", 10);
+    if (contentLength !== null && !Number.isNaN(cl) && cl > MAX_BODY_SIZE) return null;
+    const body = await cloned.json();
+    return _extractLlmUsage(body, format);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse accumulated SSE tail data for LLM token usage.
+ * Works for both OpenAI-compatible and Anthropic-compatible SSE formats.
+ */
+function _parseSseUsage(
+  sseData: string,
+  format: "openai" | "anthropic",
+): { model: string; inputTokens: number; outputTokens: number } | null {
+  // Split into SSE events (separated by double newlines)
+  const events = sseData.split(/\n\n+/).filter(Boolean);
+  let model = "unknown";
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let found = false;
+
+  for (const event of events) {
+    // Extract the data line(s)
+    const dataLines = event.split("\n")
+      .filter((l: string) => l.startsWith("data:") || l.startsWith("data: "))
+      .map((l: string) => l.replace(/^data:\s*/, ""));
+    for (const dataStr of dataLines) {
+      if (dataStr === "[DONE]") continue;
+      try {
+        const data = JSON.parse(dataStr);
+        if (typeof data.model === "string" && data.model !== "unknown") {
+          model = data.model;
+        }
+        if (format === "openai" && data.usage) {
+          inputTokens = data.usage.prompt_tokens ?? inputTokens;
+          outputTokens = data.usage.completion_tokens ?? outputTokens;
+          found = true;
+        }
+        if (format === "anthropic") {
+          if (data.type === "message_start" && data.message?.usage) {
+            inputTokens = data.message.usage.input_tokens ?? 0;
+            model = data.message?.model ?? model;
+            found = true;
+          }
+          if (data.type === "message_delta" && data.usage) {
+            outputTokens = data.usage.output_tokens ?? 0;
+            found = true;
+          }
+        }
+      } catch { /* not valid JSON */ }
+    }
+  }
+
+  return found ? { model, inputTokens, outputTokens } : null;
+}
+
+// ---------------------------------------------------------------------------
 // Fetch patching
 // ---------------------------------------------------------------------------
 
@@ -158,7 +323,7 @@ export function clearDomainRates(): void {
  */
 const DEXCOST_PATCHED = Symbol.for("dexcost.patched");
 
-export function trackHttp(buffer?: EventBuffer): void {
+export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
   if (_patched) return;
 
   // §4.2.1: refuse to wrap an already-dexcost-wrapped fetch.
@@ -189,6 +354,7 @@ export function trackHttp(buffer?: EventBuffer): void {
   if (buffer) {
     _buffer = buffer;
     _sessionManager = new SessionManager();
+    _pricing = pricing ?? null;
   }
 
   // Replace globalThis.fetch with wrapper
@@ -233,6 +399,21 @@ export function trackHttp(buffer?: EventBuffer): void {
     // is looked up via the existing context — see _resolveHttpTask below.
     // Direct reference here would create a cycle; lookup is done inside
     // the byte-recording callback when the task_id is known.
+    // Detect LLM streaming responses for deferred cost extraction.
+    let llmStreamFormat: "openai" | "anthropic" | undefined;
+    if (!suppressed && _pricing) {
+      try {
+        const parsedForLlm = new URL(urlStr);
+        const detectedFormat = _detectLlmEndpoint(parsedForLlm);
+        if (detectedFormat) {
+          const ct = response.headers.get("content-type") ?? "";
+          if (ct.includes("text/event-stream") || ct.includes("text/plain")) {
+            llmStreamFormat = detectedFormat;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     const callContext: _HttpCallContext = {
       urlStr,
       method,
@@ -242,6 +423,7 @@ export function trackHttp(buffer?: EventBuffer): void {
       isInternal,
       suppressed,
       responseHeaderBytes: _measureResponseHeaderBytes(response),
+      llmStreamFormat,
     };
 
     // Wrap the response body in a TransformStream that counts bytes as
@@ -422,6 +604,7 @@ export function untrackHttp(): void {
   _patched = false;
   _sessionManager = null;
   _buffer = null;
+  _pricing = null;
   _unpatchNodeHttp();
 }
 
@@ -566,6 +749,10 @@ interface _HttpCallContext {
   responseHeaderBytes: number;
   isInternal: boolean | null;
   suppressed: boolean;
+  /** LLM response format detected for this call (for SSE stream parsing). */
+  llmStreamFormat?: "openai" | "anthropic";
+  /** Accumulated tail of SSE data for LLM usage extraction on stream end. */
+  sseTailBuffer?: string;
   /** Task resolved once in _maybeRecordCost, reused in _finaliseHttpCall.
    *  Avoids a second getCurrentTask() lookup which would either create a
    *  duplicate auto-task or (before the auto-task leak fix) find a stale one. */
@@ -676,6 +863,13 @@ function _wrapResponseForByteCounting(
     transform(chunk, controller) {
       bytesRead += chunk.byteLength;
       controller.enqueue(chunk);
+      // Buffer tail of SSE data for LLM usage extraction
+      if (ctx.llmStreamFormat) {
+        try {
+          const text = new TextDecoder().decode(chunk, { stream: true });
+          ctx.sseTailBuffer = ((ctx.sseTailBuffer ?? "") + text).slice(-8192);
+        } catch { /* ignore decode errors */ }
+      }
     },
     flush() {
       finalise();
@@ -729,6 +923,48 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   const accountant: NetworkAccountant | undefined = getAccountant(task.taskId);
   if (accountant) {
     accountant.record(ctx.hostname, responseBytes, ctx.requestBytes, ctx.isInternal);
+  }
+
+  // LLM streaming fallback — extract usage from accumulated SSE data.
+  if (ctx.llmStreamFormat && ctx.sseTailBuffer && _pricing && !ctx.suppressed) {
+    const llmUsage = _parseSseUsage(ctx.sseTailBuffer, ctx.llmStreamFormat);
+    if (llmUsage) {
+      const costResult: CostResult = _pricing.getCost(
+        llmUsage.model,
+        llmUsage.inputTokens,
+        llmUsage.outputTokens,
+      );
+      const event = createCostEvent({
+        eventId: randomUUID(),
+        taskId: task.taskId,
+        eventType: "llm_call",
+        costUsd: costResult.costUsd,
+        costConfidence: costResult.costConfidence,
+        pricingSource: costResult.pricingSource,
+        provider: ctx.hostname,
+        model: llmUsage.model,
+        inputTokens: llmUsage.inputTokens,
+        outputTokens: llmUsage.outputTokens,
+        details: {
+          url: ctx.urlStr,
+          source: "http_llm_fallback_stream",
+          request_bytes: ctx.requestBytes,
+          response_bytes: responseBytes,
+        },
+      });
+      _pushRecordedEvent(event);
+      if (_buffer) {
+        _buffer.addEvent(event);
+      }
+      task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+      task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+      task.totalInputTokens += llmUsage.inputTokens;
+      task.totalOutputTokens += llmUsage.outputTokens;
+      if (_buffer) {
+        _buffer.upsertTask(task);
+      }
+      ctx._matchedCatalog = true; // prevent network event emission
+    }
   }
 
   // Network-event emission is the un-cataloged path's responsibility.
@@ -836,6 +1072,51 @@ async function _maybeRecordCost(
     }
     if (ctx) ctx._matchedCatalog = true;
     return;
+  }
+
+  // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
+  // detect known LLM API endpoints and emit llm_call events using the
+  // pricing engine for proper token-based cost attribution.
+  if (!ctx?.suppressed && response && _pricing) {
+    const llmFormat = _detectLlmEndpoint(parsedUrl);
+    if (llmFormat) {
+      const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
+      if (llmUsage) {
+        const costResult: CostResult = _pricing.getCost(
+          llmUsage.model,
+          llmUsage.inputTokens,
+          llmUsage.outputTokens,
+        );
+        const event = createCostEvent({
+          eventId: randomUUID(),
+          taskId: task.taskId,
+          eventType: "llm_call",
+          costUsd: costResult.costUsd,
+          costConfidence: costResult.costConfidence,
+          pricingSource: costResult.pricingSource,
+          provider: domain,
+          model: llmUsage.model,
+          inputTokens: llmUsage.inputTokens,
+          outputTokens: llmUsage.outputTokens,
+          details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
+        });
+
+        _pushRecordedEvent(event);
+        if (_buffer) {
+          _buffer.addEvent(event);
+        }
+        // Update task aggregates
+        task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+        task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+        task.totalInputTokens += llmUsage.inputTokens;
+        task.totalOutputTokens += llmUsage.outputTokens;
+        if (_buffer) {
+          _buffer.upsertTask(task);
+        }
+        if (ctx) ctx._matchedCatalog = true;
+        return;
+      }
+    }
   }
 
   // 2. Check service catalog

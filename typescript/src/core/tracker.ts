@@ -1115,7 +1115,7 @@ export class CostTracker {
   private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
     try {
       const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
-      trackHttp(this._buffer);
+      trackHttp(this._buffer, this._pricing);
       this._httpTracked = true;
 
       // Safety-net timer: finalize idle sessions every 30s so auto-created
@@ -1322,6 +1322,10 @@ export class CostTracker {
       uninstrumentProvider(name);
     }
     this._instrumented.clear();
+
+    // Finalize all pending sessions before tearing down HTTP tracking
+    this._finalizeAllSessionsSync();
+
     this._disableHttpTracking();
     if (this._sessionTimer) {
       clearInterval(this._sessionTimer);
@@ -1335,6 +1339,30 @@ export class CostTracker {
     }
     this._pricing.stopBackgroundRefresh();
     this._buffer.close();
+  }
+
+  /**
+   * Force-finalize all active session tasks so none are left "pending"
+   * on shutdown.  Synchronous — safe to call from both close() and
+   * closeAsync().
+   */
+  private _finalizeAllSessionsSync(): void {
+    if (!this._httpTracked) return;
+    try {
+      // getSessionManager is already imported lazily inside _enableHttpTracking;
+      // we can't reuse that import synchronously, but the http module is already
+      // loaded at this point, so require-style dynamic import resolves from cache.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { getSessionManager } = require("../adapters/http.js") as {
+        getSessionManager: () => import("./session.js").SessionManager | null;
+      };
+      const sm = getSessionManager();
+      if (sm) {
+        sm.finalizeAllSessions(this._buffer);
+      }
+    } catch {
+      // best-effort — don't crash shutdown
+    }
   }
 
   /** Restore patched HTTP transports if HTTP tracking was enabled. */
@@ -1357,6 +1385,10 @@ export class CostTracker {
       uninstrumentProvider(name);
     }
     this._instrumented.clear();
+
+    // Finalize all pending sessions before tearing down HTTP tracking
+    this._finalizeAllSessionsSync();
+
     this._disableHttpTracking();
     if (this._sessionTimer) {
       clearInterval(this._sessionTimer);
