@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.4.2...typescript/v0.4.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* finalize all pending sessions on close/closeAsync ([c9781fd](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c9781fdc42199c06b7d818622d54d02523e03c31))
+* finalize all pending sessions on close/closeAsync ([737bf9c](https://github.com/DexwoxBusiness/dexcost-sdk/commit/737bf9caf22bd8f5353ef4115803a0d1c31289ec))
+
 ## [0.4.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.4.1...typescript/v0.4.2) (2026-06-30)
 
 
