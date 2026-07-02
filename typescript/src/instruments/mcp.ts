@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { createCostEvent } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask } from "../core/context.js";
-import { createAutoTask } from "../core/auto-task.js";
+import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -412,9 +412,7 @@ export async function instrumentMcp(
         // dexcost errors must never crash user code
       }
       if (autoCreated) {
-        task.status = isError ? "failed" : "success";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, isError ? "failed" : "success", _buffer);
       }
       return result;
     } catch (err) {
@@ -426,9 +424,7 @@ export async function instrumentMcp(
         // dexcost errors must never crash user code
       }
       if (autoCreated) {
-        task.status = "failed";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
     }

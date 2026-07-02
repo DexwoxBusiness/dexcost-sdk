@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
-import { createAutoTask } from "../core/auto-task.js";
+import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -90,9 +90,7 @@ export async function instrumentOpenai(
         return wrapStream(rawStream, task, startTime, autoCreated);
       } catch (err) {
         if (autoCreated) {
-          task.status = "failed";
-          task.endedAt = new Date();
-          _buffer?.upsertTask(task);
+          finalizeAutoTask(task, "failed", _buffer);
         }
         throw err;
       }
@@ -109,16 +107,12 @@ export async function instrumentOpenai(
         // dexcost errors must never crash user code
       }
       if (autoCreated) {
-        task.status = "success";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, "success", _buffer);
       }
       return response;
     } catch (err) {
       if (autoCreated) {
-        task.status = "failed";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
     }
@@ -209,10 +203,8 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
       const finalizeTask = (status: "success" | "failed") => {
         if (finalized) return;
         finalized = true;
-        if (autoCreated && _buffer) {
-          task.status = status;
-          task.endedAt = new Date();
-          _buffer.upsertTask(task);
+        if (autoCreated) {
+          finalizeAutoTask(task, status, _buffer);
         }
       };
       return {
@@ -274,10 +266,8 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
             } catch {
               // dexcost errors must never crash user code
             }
-            if (autoCreated && _buffer) {
-              task.status = "success";
-              task.endedAt = new Date();
-              _buffer.upsertTask(task);
+            if (autoCreated) {
+              finalizeAutoTask(task, "success", _buffer);
             }
             return result;
           }
