@@ -170,6 +170,8 @@ export {
 // Integrations
 export { DexcostCallbackHandler } from "./integrations/langchain.js";
 export { dexcostAiMiddleware } from "./integrations/ai-sdk.js";
+export { DexcostSpanProcessor } from "./integrations/otel.js";
+export type { DexcostSpanProcessorOptions } from "./integrations/otel.js";
 export type {
   DexcostAiMiddlewareOptions,
   DexcostLanguageModelMiddleware,

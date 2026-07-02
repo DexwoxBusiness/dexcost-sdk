@@ -19,20 +19,65 @@ export type InstrumentName = (typeof ALL_SUPPORTED_INSTRUMENTS)[number];
 
 type InstrumentFn = (pricing: PricingEngine, buffer: EventBuffer) => Promise<void>;
 type UninstrumentFn = () => void;
+type ProvideModuleFn = (ref: unknown) => void;
 
-const registry = new Map<string, { instrument: InstrumentFn; uninstrument: UninstrumentFn }>();
+const registry = new Map<
+  string,
+  { instrument: InstrumentFn; uninstrument: UninstrumentFn; provideModule?: ProvideModuleFn }
+>();
 
 /**
  * Register an instrument by name.
  *
  * Called at module load time by each provider instrument (e.g., `openai.ts`).
+ * `provideModule` accepts an explicit module/class reference for bundled
+ * apps where runtime resolution fails (see `instrumentModules`).
  */
 export function registerInstrument(
   name: string,
   instrument: InstrumentFn,
   uninstrument: UninstrumentFn,
+  provideModule?: ProvideModuleFn,
 ): void {
-  registry.set(name, { instrument, uninstrument });
+  registry.set(name, { instrument, uninstrument, provideModule });
+}
+
+/** User-facing aliases for instrument names ("ai" is the npm package name). */
+const INSTRUMENT_ALIASES: Record<string, string> = { ai: "vercel-ai" };
+
+/**
+ * Hand an instrument an explicit module/class reference — the escape hatch
+ * for bundlers (Next.js/webpack/esbuild) that inline provider packages so
+ * runtime `import()` resolution finds a DIFFERENT copy than the one the
+ * app actually calls (Traceloop's `instrumentModules` pattern). Returns
+ * false for unknown names or instruments without module injection.
+ */
+export function provideInstrumentModule(name: string, ref: unknown): boolean {
+  const canonical = INSTRUMENT_ALIASES[name] ?? name;
+  const entry = registry.get(canonical);
+  if (!entry?.provideModule) {
+    console.warn(
+      `[dexcost] instrumentModules: unknown provider '${name}'. ` +
+        `Supported: ${[...registry.keys()].join(", ")} (alias: ai).`,
+    );
+    return false;
+  }
+  try {
+    entry.provideModule(ref);
+    return true;
+  } catch (err) {
+    console.warn(
+      `[dexcost] instrumentModules: failed to accept module for '${name}': ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/** Resolve an alias to the canonical instrument name. */
+export function canonicalInstrumentName(name: string): string {
+  return INSTRUMENT_ALIASES[name] ?? name;
 }
 
 /**

@@ -147,6 +147,50 @@ formats, SSE streaming, byte counting), refuses to double-wrap when the
 global patch is active, and never breaks client construction (falls back
 to the base fetch, loudly, if dexcost is unwired).
 
+### OpenTelemetry bridge (ingestion only)
+
+If your app emits OTel spans — the Vercel AI SDK does natively via
+`experimental_telemetry` — dexcost can consume them in-process instead of
+intercepting anything:
+
+```typescript
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { init, DexcostSpanProcessor } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+const sdk = new NodeSDK({ spanProcessors: [new DexcostSpanProcessor()] });
+sdk.start();
+
+// per call:
+await generateText({ model, prompt, experimental_telemetry: { isEnabled: true } });
+```
+
+**One-way, in only.** The processor is not an exporter: it converts LLM
+spans (AI SDK telemetry + GenAI semconv attribute names) into dexcost cost
+events shipped to the dexcost endpoint, and nothing else. It coexists with
+any exporters you already run (Datadog etc. keep seeing exactly what they
+saw), never reads prompt/completion content — only model, provider, token
+counts, and timing — and a cross-layer fingerprint guard prevents double
+counting when the patched fetch captures the same call.
+
+### Bundled apps (`instrumentModules` escape hatch)
+
+Bundlers (Next.js, webpack, esbuild) can inline provider packages so
+dexcost's runtime resolution patches a DIFFERENT copy than the one your
+code calls — instrumented in name, capturing nothing. Hand the instruments
+your actual module references:
+
+```typescript
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+
+init({ instrumentModules: { openai: OpenAI, anthropic: Anthropic } });
+```
+
+Keys: `openai`, `anthropic`, `ai`, `gemini`, `bedrock`, `cohere`, `mcp`.
+Providing a module implies instrumenting it, and its activation failures
+are surfaced loudly.
+
 ### Instance wrappers
 
 ```typescript
@@ -465,6 +509,7 @@ Heavier integrations can be imported without pulling the root barrel:
 ```typescript
 import { createHonoMiddleware } from '@dexcost/sdk/middleware';
 import { dexcostAiMiddleware } from '@dexcost/sdk/integrations/ai-sdk';
+import { DexcostSpanProcessor } from '@dexcost/sdk/integrations/otel';
 import { DexcostCallbackHandler } from '@dexcost/sdk/integrations/langchain';
 import { TrackedOpenAI } from '@dexcost/sdk/clients';
 ```

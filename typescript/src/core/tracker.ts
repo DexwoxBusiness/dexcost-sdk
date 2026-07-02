@@ -63,6 +63,8 @@ import {
   ALL_SUPPORTED_INSTRUMENTS,
   instrumentProvider,
   uninstrumentProvider,
+  provideInstrumentModule,
+  canonicalInstrumentName,
 } from "../instruments/index.js";
 
 // Endpoint resolution lives in ./endpoint.js (single source of truth) so that
@@ -269,6 +271,18 @@ export interface TrackerOptions {
   hashCustomerId?: boolean;
   /** Which LLM SDKs to auto-instrument. Defaults to all supported. Set to [] to disable. */
   autoInstrument?: string[];
+  /**
+   * Explicit module/class references for bundled apps (Next.js, webpack,
+   * esbuild) where runtime resolution finds a DIFFERENT package copy than
+   * the one your code calls — the classic "instrumented but captures
+   * nothing" failure. Keys: openai, anthropic, ai, gemini, bedrock,
+   * cohere, mcp. Providing a module implies instrumenting it.
+   *
+   *   import OpenAI from "openai";
+   *   import * as ai from "ai";
+   *   init({ instrumentModules: { openai: OpenAI, ai } });
+   */
+  instrumentModules?: Record<string, unknown>;
   /**
    * Path to the SQLite database file. Defaults to ~/.dexcost/buffer.db.
    * Override in tests to get per-test isolation.
@@ -1061,10 +1075,26 @@ export class CostTracker {
     // `explicit` is true only when the user listed providers themselves;
     // failures for the default full set stay quiet (issue: noisy warnings for
     // uninstalled providers), while failures for user-requested providers warn.
+    // Explicit module references (bundler escape hatch) are handed to the
+    // instruments BEFORE activation; providing a module implies wanting
+    // that provider instrumented even under a narrowed autoInstrument list.
+    const provided: string[] = [];
+    for (const [name, ref] of Object.entries(options.instrumentModules ?? {})) {
+      if (provideInstrumentModule(name, ref)) {
+        provided.push(canonicalInstrumentName(name));
+      }
+    }
+
     const explicitInstruments = options.autoInstrument !== undefined;
-    const instruments = options.autoInstrument ?? [...ALL_SUPPORTED_INSTRUMENTS];
+    const instruments = new Set([
+      ...(options.autoInstrument ?? [...ALL_SUPPORTED_INSTRUMENTS]),
+      ...provided,
+    ]);
     for (const name of instruments) {
-      void this.instrument(name, explicitInstruments);
+      // Providers with an explicitly provided module are always "explicit":
+      // the user asked for them by handing us the module, so activation
+      // failures must be surfaced.
+      void this.instrument(name, explicitInstruments || provided.includes(name));
     }
 
     // Auto-track outgoing HTTP calls (default on, matches Python).

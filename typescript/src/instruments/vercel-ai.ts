@@ -15,6 +15,7 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import { extractUsage } from "./ai-usage.js";
 import type { ExtractedUsage } from "./ai-usage.js";
@@ -117,6 +118,7 @@ function recordEvent(
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, inputTokens, outputTokens);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -479,4 +481,6 @@ function wrapStream(
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi);
+registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi, (ref: any) => {
+  _setAiModule(ref?.default ?? ref);
+});

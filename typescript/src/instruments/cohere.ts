@@ -343,4 +343,7 @@ function wrapStream(
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("cohere", instrumentCohere, uninstrumentCohere);
+registerInstrument("cohere", instrumentCohere, uninstrumentCohere, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setClientClass(mod?.CohereClient ?? mod);
+});

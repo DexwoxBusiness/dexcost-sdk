@@ -353,4 +353,7 @@ function wrapStream(
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("gemini", instrumentGemini, uninstrumentGemini);
+registerInstrument("gemini", instrumentGemini, uninstrumentGemini, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setGenerativeModelClass(mod?.GenerativeModel ?? mod);
+});

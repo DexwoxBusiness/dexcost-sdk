@@ -48,6 +48,7 @@ import { getAmbientSessionTask } from "../core/session.js";
 import { extractUsage } from "../instruments/ai-usage.js";
 import type { ExtractedUsage } from "../instruments/ai-usage.js";
 import { debugLog } from "../core/debug.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import type { CostTracker } from "../core/tracker.js";
 import { getTracker } from "../core/tracker.js";
 
@@ -185,6 +186,7 @@ function _recordEvent(
   });
 
   tracker.buffer.addEvent(event);
+  registerLlmCapture(task.taskId, inputTokens, outputTokens);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);

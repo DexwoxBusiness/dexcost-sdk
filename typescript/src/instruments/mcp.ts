@@ -514,4 +514,7 @@ function resolveCost(toolName: string): {
 }
 
 // Self-register so the instrument registry can discover us.
-registerInstrument("mcp", instrumentMcp, uninstrumentMcp);
+registerInstrument("mcp", instrumentMcp, uninstrumentMcp, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setClientClass(mod?.Client ?? mod);
+});

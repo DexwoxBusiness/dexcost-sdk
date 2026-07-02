@@ -31,6 +31,7 @@ import {
 } from "../core/models.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { debugLog } from "../core/debug.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import {
   SessionManager,
@@ -1213,6 +1214,7 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
         `llm_call captured via http fallback (sse): ${ctx.hostname} model=${llmUsage.model} ` +
           `in=${llmUsage.inputTokens} out=${llmUsage.outputTokens}`,
       );
+      registerLlmCapture(task.taskId, llmUsage.inputTokens, llmUsage.outputTokens);
       task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
       task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
       task.totalInputTokens += llmUsage.inputTokens;
@@ -1462,6 +1464,12 @@ async function _maybeRecordCost(
           if (_buffer) {
             _buffer.addEvent(event);
           }
+          debugLog(
+            "http",
+            `llm_call captured via http fallback (json): ${domain} model=${llmUsage.model} ` +
+              `in=${llmUsage.inputTokens} out=${llmUsage.outputTokens}`,
+          );
+          registerLlmCapture(task.taskId, llmUsage.inputTokens, llmUsage.outputTokens);
           // Update task aggregates
           task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
           task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);

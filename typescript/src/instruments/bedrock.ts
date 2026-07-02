@@ -257,4 +257,7 @@ function recordEvent(response: any, modelId: string, task: Task, latencyMs: numb
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("bedrock", instrumentBedrock, uninstrumentBedrock);
+registerInstrument("bedrock", instrumentBedrock, uninstrumentBedrock, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setClientClass(mod?.BedrockRuntimeClient ?? mod);
+});

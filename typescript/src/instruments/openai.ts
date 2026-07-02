@@ -12,6 +12,7 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -247,6 +248,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, inputTokens, outputTokens);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
                 task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
                 task.totalInputTokens += inputTokens;
@@ -305,4 +307,8 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("openai", instrumentOpenai, uninstrumentOpenai);
+registerInstrument("openai", instrumentOpenai, uninstrumentOpenai, (ref: any) => {
+  // Accept the OpenAI class, the module namespace, or Completions directly.
+  const mod = ref?.default ?? ref;
+  _setCompletionsClass(mod?.Chat?.Completions ?? mod);
+});
