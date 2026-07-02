@@ -129,6 +129,32 @@ shapes), on generate **and** stream, under any bundler or module system.
 The middleware and the other capture layers coordinate — one call never
 records twice.
 
+### Injectable fetch (any client, no global patch)
+
+Every provider client (`openai`, `@anthropic-ai/sdk`, all `@ai-sdk/*`
+factories) accepts a `fetch` option — inject a tracked one instead of
+relying on the global patch:
+
+```typescript
+import { createDexcostFetch } from '@dexcost/sdk';
+
+const anthropic = createAnthropic({ fetch: createDexcostFetch() });
+const openai = new OpenAI({ fetch: createDexcostFetch() });
+```
+
+Same classification pipeline as the global patch (OpenAI/Anthropic/Gemini
+formats, SSE streaming, byte counting), refuses to double-wrap when the
+global patch is active, and never breaks client construction (falls back
+to the base fetch, loudly, if dexcost is unwired).
+
+### Instance wrappers
+
+```typescript
+import { wrapOpenAI, wrapAnthropic } from '@dexcost/sdk';
+const openai = wrapOpenAI(new OpenAI());       // chat.completions surface
+const anthropic = wrapAnthropic(new Anthropic()); // messages surface
+```
+
 ### HTTP (Non-LLM Cost Capture)
 
 dexcost patches `globalThis.fetch` to capture HTTP calls to domains in the [163-service catalog](src/data/service_prices.json) — Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, and more. Costs are extracted from response headers/body and recorded as `external_cost` events.
@@ -321,9 +347,79 @@ app.use('*', createHonoMiddleware({
 }));
 ```
 
+### NestJS
+
+```typescript
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { init, DexcostInterceptor } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+@Module({
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useValue: new DexcostInterceptor({
+        customerIdFrom: 'headers.x-customer-id',
+        skip: (req) => req.url === '/health',
+      }),
+    },
+  ],
+})
+export class AppModule {}
+```
+
+Duck-typed (no `@nestjs/common` dependency); borrows the host app's own
+`rxjs` lazily and subscribes the handler chain inside the task's async
+scope, so controllers and services inherit attribution. Works on both the
+Express and Fastify platforms; non-HTTP contexts (RPC/WS/GraphQL) pass
+through — wrap those with `wrapJobHandler` or `track()`.
+
 Task status comes from the response status code (>= 400 → `failed`) or a
 thrown handler error. dexcost failures never block a request; handler errors
 are never swallowed.
+
+## Queue Workers
+
+Queue consumers are where agent workloads actually run. Wrap the handler so
+every job gets its own attributed task:
+
+```typescript
+import { wrapJobHandler } from '@dexcost/sdk';
+
+new Worker('reviews', wrapJobHandler(
+  async (job) => runReview(job.data),
+  {
+    taskType: 'code_review',
+    customerId: (job) => job.data.orgId,
+    metadata: (job) => ({ pr_number: job.data.prNumber }),
+  },
+));
+```
+
+Handler errors are marked `failed` and re-thrown, so your queue's retry
+semantics are untouched. Works with any consumer signature (BullMQ,
+RabbitMQ `(msg, channel)`, SQS, cron ticks).
+
+## Serverless
+
+Freeze-prone platforms (Lambda, Cloud Functions, Vercel, Cloud Run) give no
+background CPU after the handler returns — the background pusher may never
+fire. The compute wraps (`wrapLambdaHandler`, `wrapVercelHandler`, …) now
+flush automatically before returning (bounded at 3s, never throws over your
+handler's result). For hand-rolled handlers and Next.js routes:
+
+```typescript
+import { after } from 'next/server';
+import { flushBeforeFreeze } from '@dexcost/sdk';
+
+export async function POST(req: Request) {
+  const result = await handleRequest(req);
+  after(() => flushBeforeFreeze());   // flush outside the response path
+  return result;
+}
+```
+
 
 ## Debugging capture: debug mode & `dexcost doctor`
 
@@ -352,11 +448,13 @@ for everything degraded. Exit code 1 when any check fails.
 ## Runtimes: Node, Bun, Deno
 
 - **Node >= 18** is the primary target.
-- **Bun** and **Deno** work through their Node-compat layers (`node:`
-  imports, AsyncLocalStorage). `better-sqlite3` may not build there — the
-  SDK falls back to the in-memory buffer automatically. Use the Hono
-  middleware for request tracking, and run `npx dexcost doctor` to see
-  exactly what your runtime supports.
+- **Bun** gets DURABLE buffering via the built-in `bun:sqlite` driver
+  (better-sqlite3's native binding is unsupported there — the SDK switches
+  automatically). **Deno** runs on the in-memory buffer (no loadable SQLite
+  driver). Both propagate context via Node-compat AsyncLocalStorage; use
+  the Hono middleware for request tracking, and run `npx dexcost doctor`
+  to see exactly what your runtime supports. All three runtimes are
+  exercised in CI on every commit.
 - **Edge runtimes** (Cloudflare Workers, Vercel Edge) are not supported by
   the Node SDK; the browser adapter covers client-side capture.
 

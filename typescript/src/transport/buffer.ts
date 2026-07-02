@@ -15,7 +15,8 @@
 // §2.2.3 (B8).
 import type Database from "better-sqlite3";
 import { createRequire } from "node:module";
-import { isDeno } from "../core/runtime.js";
+import { isBun, isDeno } from "../core/runtime.js";
+import { loadBunSqliteCompat } from "./bun-sqlite.js";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -495,6 +496,19 @@ export class EventBuffer {
       );
       return;
     }
+    if (isBun()) {
+      // better-sqlite3's native binding is unsupported on Bun (bun#4290),
+      // but Bun ships a built-in SQLite driver — use it for durable
+      // buffering instead of degrading to memory.
+      const BunCompat = loadBunSqliteCompat();
+      if (BunCompat) {
+        DatabaseCtor = BunCompat as unknown as typeof Database;
+      }
+      // If bun:sqlite is somehow unavailable, fall through to the
+      // better-sqlite3 attempt below (whose construction-time failure is
+      // catchable on Bun and degrades to the memory buffer).
+    }
+
     if (isDeno()) {
       // Deno's dlopen of a non-NAPI (V8-ABI) native addon is a FATAL
       // process-level symbol-lookup error — it kills the process before
@@ -510,39 +524,41 @@ export class EventBuffer {
       this._mem = new MemoryBufferStore();
       return;
     }
-    try {
-      const require = createRequire(import.meta.url);
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      DatabaseCtor = require("better-sqlite3") as typeof Database;
-    } catch (err) {
-      const cause = err instanceof Error ? err.message : String(err);
-      // `better-sqlite3` is a native module — it must be compiled for the
-      // running Node version/platform. Two distinct failure modes land here:
-      //   1. Not installed at all (optional dependency skipped).
-      //   2. Installed but the native .node binding is missing/mismatched
-      //      ("Could not locate the bindings file"), common in Docker
-      //      multi-stage builds where the postinstall compile step was
-      //      skipped or run against a different Node ABI.
-      // Either way the SDK stays alive on the in-memory fallback; the message
-      // tells the user exactly how to restore durable buffering.
-      const bindingsIssue = cause.includes("bindings") || cause.includes(".node");
-      const remedy = bindingsIssue
+    if (DatabaseCtor === null) {
+      try {
+        const require = createRequire(import.meta.url);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        DatabaseCtor = require("better-sqlite3") as typeof Database;
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        // `better-sqlite3` is a native module — it must be compiled for the
+        // running Node version/platform. Two distinct failure modes land here:
+        //   1. Not installed at all (optional dependency skipped).
+        //   2. Installed but the native .node binding is missing/mismatched
+        //      ("Could not locate the bindings file"), common in Docker
+        //      multi-stage builds where the postinstall compile step was
+        //      skipped or run against a different Node ABI.
+        // Either way the SDK stays alive on the in-memory fallback; the message
+        // tells the user exactly how to restore durable buffering.
+        const bindingsIssue = cause.includes("bindings") || cause.includes(".node");
+        const remedy = bindingsIssue
         ? "Rebuild the native binding with `npm rebuild better-sqlite3` " +
           "(ensure python3, make and a C++ compiler are available during install — " +
           "in Docker, run the rebuild in the same stage that runs your app)."
         : "Install it for durable buffering: `npm install better-sqlite3` " +
           "(requires python3, make and a C++ compiler to build the native binding).";
-      console.warn(
+        console.warn(
         "dexcost: better-sqlite3 is unavailable — cost tracking continues on an " +
           "in-memory buffer (events are NOT persisted across process restarts; " +
           "hard cap 10k entries). " +
           remedy +
           " Cause: " +
           cause,
-      );
-      this._db = null;
-      this._mem = new MemoryBufferStore();
-      return;
+        );
+        this._db = null;
+        this._mem = new MemoryBufferStore();
+        return;
+      }
     }
 
     const resolvedPath = dbPath ?? join(homedir(), ".dexcost", "buffer.db");

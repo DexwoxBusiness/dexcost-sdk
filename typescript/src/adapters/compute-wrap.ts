@@ -22,7 +22,7 @@ import { RuntimeKind } from "../core/compute-runtime.js";
 import { getCurrentTask } from "../core/context.js";
 import { getCloudEnv } from "../cloud-detect.js";
 import { readMemoryPeak } from "../core/cgroup-reader.js";
-import { getTracker } from "../core/tracker.js";
+import { getTracker, flushBeforeFreeze } from "../core/tracker.js";
 import { createCostEvent } from "../core/models.js";
 import type { Task } from "../core/models.js";
 
@@ -83,6 +83,11 @@ async function _timeAndCapture<R>(
       // eslint-disable-next-line no-console
       console.warn("compute_wrap event-build failed");
     }
+    // Freeze-prone platforms give no background CPU after return — the
+    // pusher interval may never fire. Push whatever is buffered now,
+    // bounded so a slow endpoint can't hang the handler (and never
+    // throwing over the handler's own result/error).
+    await flushBeforeFreeze();
   }
 }
 

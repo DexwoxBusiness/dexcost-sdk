@@ -12,3 +12,5 @@ export { dexcostFastifyPlugin } from "./fastify.js";
 export type { FastifyPluginOptions } from "./fastify.js";
 export { createHonoMiddleware } from "./hono.js";
 export type { HonoMiddlewareOptions } from "./hono.js";
+export { DexcostInterceptor } from "./nestjs.js";
+export type { NestInterceptorOptions } from "./nestjs.js";

@@ -148,6 +148,24 @@ try {
   close();
   ok("close()");
 
+  // 6 — durable buffering (Node: better-sqlite3; Bun: bun:sqlite compat).
+  // Deno has no loadable SQLite driver — memory fallback is the contract.
+  if (typeof globalThis.Deno === "undefined") {
+    const { EventBuffer } = await import(dist("transport/buffer.js"));
+    const reopened = new EventBuffer(join(tmp, "smoke.db"));
+    try {
+      const persisted = reopened
+        .getAllTasks()
+        .some((t) => t.taskType === "smoke_explicit");
+      assert.ok(persisted, "task survived buffer reopen (durable storage)");
+      ok("durable buffer round-trip across reopen");
+    } finally {
+      reopened.close();
+    }
+  } else {
+    ok("durable buffer skipped on Deno (memory fallback is the documented contract)");
+  }
+
   console.log(`\nruntime smoke PASSED on ${runtime} (${passed} checks)`);
 } catch (err) {
   console.error(`\nruntime smoke FAILED on ${runtime} after ${passed} passing checks:`);

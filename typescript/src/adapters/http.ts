@@ -32,7 +32,11 @@ import {
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { debugLog } from "../core/debug.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
-import { SessionManager } from "../core/session.js";
+import {
+  SessionManager,
+  setAmbientSessions,
+  clearAmbientSessions,
+} from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -146,8 +150,11 @@ export function clearDomainRates(): void {
 // adapter detects known LLM API endpoints, parses the response for token
 // usage, and emits proper `llm_call` events with token-based pricing.
 
+/** Response formats the LLM fallback can parse. */
+type LlmFormat = "openai" | "anthropic" | "gemini";
+
 /** Known LLM API domains and their response format. */
-const _LLM_DOMAINS: Record<string, "openai" | "anthropic"> = {
+const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.openai.com": "openai",
   "api.anthropic.com": "anthropic",
   "api.kimi.com": "anthropic",
@@ -159,7 +166,7 @@ const _LLM_DOMAINS: Record<string, "openai" | "anthropic"> = {
   "api.fireworks.ai": "openai",
   "api.mistral.ai": "openai",
   "api.x.ai": "openai",
-  "generativelanguage.googleapis.com": "openai",
+  "generativelanguage.googleapis.com": "gemini",
   "api.cohere.com": "openai",
   "api.perplexity.ai": "openai",
   "api.sambanova.ai": "openai",
@@ -193,13 +200,15 @@ const _LLM_ENDPOINTS = [
  * `network` event (or is dropped below the byte threshold) — losing the
  * llm_call entirely.
  */
-function _formatFromPath(pathname: string): "openai" | "anthropic" | null {
+function _formatFromPath(pathname: string): LlmFormat | null {
   if (/\/messages(\/|$)/.test(pathname)) return "anthropic";
   if (/\/chat\/completions(\/|$)/.test(pathname)) return "openai";
   if (/\/completions(\/|$)/.test(pathname)) return "openai";
-  // Google Gemini REST shape (models/<id>:generateContent)
+  // Google Gemini / Vertex AI REST shape (models/<id>:generateContent).
+  // Matching by path shape also covers Vertex regional hosts
+  // (<region>-aiplatform.googleapis.com) without a domain-map entry.
   if (pathname.includes(":generateContent") || pathname.includes(":streamGenerateContent")) {
-    return "openai";
+    return "gemini";
   }
   return null;
 }
@@ -224,7 +233,7 @@ function _formatFromPath(pathname: string): "openai" | "anthropic" | null {
  * LLM inference calls are always POST; other methods never match (avoids
  * false positives on e.g. `GET /api/messages` chat-history routes).
  */
-function _detectLlmEndpoint(parsedUrl: URL, method?: string): "openai" | "anthropic" | null {
+function _detectLlmEndpoint(parsedUrl: URL, method?: string): LlmFormat | null {
   if (method !== undefined && method.toUpperCase() !== "POST") return null;
   const pathname = parsedUrl.pathname;
   const pathFormat = _formatFromPath(pathname);
@@ -246,12 +255,35 @@ function _detectLlmEndpoint(parsedUrl: URL, method?: string): "openai" | "anthro
  */
 function _extractLlmUsage(
   body: unknown,
-  format: "openai" | "anthropic",
+  format: LlmFormat,
+  modelHint?: string,
 ): { model: string; inputTokens: number; outputTokens: number } | null {
   if (!body || typeof body !== "object") return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const b = body as Record<string, any>;
-  const model: string = typeof b.model === "string" ? b.model : "unknown";
+
+  if (format === "gemini") {
+    // Gemini / Vertex responses carry usage in `usageMetadata`, not `usage`,
+    // and the model in `modelVersion` (else derivable from the request path:
+    // .../models/<id>:generateContent — passed in as modelHint).
+    const meta = b.usageMetadata;
+    if (!meta || typeof meta !== "object") return null;
+    const inTok = meta.promptTokenCount;
+    const outTok = meta.candidatesTokenCount;
+    if (typeof inTok !== "number" && typeof outTok !== "number") return null;
+    // Thinking tokens are billed as output but reported separately.
+    const thoughts = typeof meta.thoughtsTokenCount === "number" ? meta.thoughtsTokenCount : 0;
+    return {
+      model:
+        typeof b.modelVersion === "string" && b.modelVersion
+          ? b.modelVersion
+          : modelHint ?? "unknown",
+      inputTokens: typeof inTok === "number" ? inTok : 0,
+      outputTokens: (typeof outTok === "number" ? outTok : 0) + thoughts,
+    };
+  }
+
+  const model: string = typeof b.model === "string" ? b.model : modelHint ?? "unknown";
   const usage = b.usage;
   if (!usage || typeof usage !== "object") return null;
 
@@ -279,7 +311,8 @@ function _extractLlmUsage(
  */
 async function _tryExtractLlmFromResponse(
   response: Response,
-  format: "openai" | "anthropic",
+  format: LlmFormat,
+  modelHint?: string,
 ): Promise<{ model: string; inputTokens: number; outputTokens: number } | null> {
   try {
     const cloned = response.clone();
@@ -290,10 +323,19 @@ async function _tryExtractLlmFromResponse(
     const cl = Number.parseInt(contentLength ?? "", 10);
     if (contentLength !== null && !Number.isNaN(cl) && cl > MAX_BODY_SIZE) return null;
     const body = await cloned.json();
-    return _extractLlmUsage(body, format);
+    return _extractLlmUsage(body, format, modelHint);
   } catch {
     return null;
   }
+}
+
+/**
+ * Derive a model hint from a Gemini/Vertex request path
+ * (.../models/<id>:generateContent). Returns undefined for other shapes.
+ */
+function _modelHintFromPath(pathname: string): string | undefined {
+  const match = /\/models\/([^/:]+):(?:stream)?[gG]enerateContent/.exec(pathname);
+  return match?.[1];
 }
 
 /**
@@ -302,7 +344,7 @@ async function _tryExtractLlmFromResponse(
  */
 function _parseSseUsage(
   sseData: string,
-  format: "openai" | "anthropic",
+  format: LlmFormat,
 ): { model: string; inputTokens: number; outputTokens: number } | null {
   // Split into SSE events (separated by double newlines)
   const events = sseData.split(/\n\n+/).filter(Boolean);
@@ -322,6 +364,21 @@ function _parseSseUsage(
         const data = JSON.parse(dataStr);
         if (typeof data.model === "string" && data.model !== "unknown") {
           model = data.model;
+        }
+        if (format === "gemini") {
+          if (typeof data.modelVersion === "string" && data.modelVersion) {
+            model = data.modelVersion;
+          }
+          const meta = data.usageMetadata;
+          if (meta && typeof meta === "object") {
+            // Every streamed chunk may carry usageMetadata; the last one is
+            // authoritative (cumulative counts).
+            if (typeof meta.promptTokenCount === "number") inputTokens = meta.promptTokenCount;
+            const outTok = typeof meta.candidatesTokenCount === "number" ? meta.candidatesTokenCount : 0;
+            const thoughts = typeof meta.thoughtsTokenCount === "number" ? meta.thoughtsTokenCount : 0;
+            if (outTok || thoughts) outputTokens = outTok + thoughts;
+            if (typeof meta.promptTokenCount === "number" || outTok) found = true;
+          }
         }
         if (format === "openai" && data.usage) {
           inputTokens = data.usage.prompt_tokens ?? inputTokens;
@@ -373,46 +430,22 @@ function _parseSseUsage(
  */
 const DEXCOST_PATCHED = Symbol.for("dexcost.patched");
 
-export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
-  if (_patched) return;
 
-  // §4.2.1: refuse to wrap an already-dexcost-wrapped fetch.
-  const current = globalThis.fetch as unknown as Record<symbol, unknown>;
-  if (current && current[DEXCOST_PATCHED] === true) {
-    // Already patched — likely a duplicate SDK install. No-op + warn.
-    console.warn(
-      "dexcost: globalThis.fetch is already wrapped by dexcost. " +
-        "trackHttp() called twice (or two SDK copies). Skipping.",
-    );
-    _patched = true;
-    return;
-  }
-
-  _originalFetch = globalThis.fetch;
-  _patched = true;
-
-  // Lazily initialise the service catalog
-  if (_catalog === null) {
-    try {
-      _catalog = new ServiceCatalog();
-    } catch {
-      // If catalog fails to load, continue without it
-      _catalog = null;
-    }
-  }
-
-  if (buffer) {
-    _buffer = buffer;
-    _sessionManager = new SessionManager();
-    _pricing = pricing ?? null;
-  }
-
-  // Replace globalThis.fetch with wrapper
+/**
+ * Build an instrumented fetch over an arbitrary base fetch. Used for BOTH
+ * the global patch (trackHttp) and injectable per-client fetches
+ * (createDexcostFetch). The returned function carries the DEXCOST_PATCHED
+ * marker so layered wrapping is detected and refused.
+ */
+function _buildInstrumentedFetch(
+  base: typeof globalThis.fetch,
+): typeof globalThis.fetch {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).fetch = async function wrappedFetch(
+  const wrapped = async function wrappedFetch(
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> {
+
     // ── v1 byte measurement — request side (known before fetch) ─────────
     // Scrub once at extraction so every downstream use (events, hostname
     // parse, placeholder equality-lookup at the streamed-body re-type
@@ -429,7 +462,7 @@ export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
       requestBodyLen,
     );
 
-    const response = await _originalFetch!(input, init);
+    const response = await base(input, init);
 
     // ── v1 destination classification + byte details ─────────────────────
     let hostname = "";
@@ -450,7 +483,7 @@ export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
     // Direct reference here would create a cycle; lookup is done inside
     // the byte-recording callback when the task_id is known.
     // Detect LLM streaming responses for deferred cost extraction.
-    let llmStreamFormat: "openai" | "anthropic" | undefined;
+    let llmStreamFormat: LlmFormat | undefined;
     if (!suppressed && _pricing) {
       try {
         const parsedForLlm = new URL(urlStr);
@@ -498,16 +531,117 @@ export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
     await _maybeRecordCost(urlStr, wrappedResponse, callContext);
 
     return wrappedResponse;
+  
   };
-
-  // §4.2.1: tag our wrapper so a second `trackHttp()` (or a duplicate
-  // SDK install across realms) doesn't double-wrap.
-  Object.defineProperty(globalThis.fetch, DEXCOST_PATCHED, {
+  // §4.2.1: tag the wrapper so a second trackHttp() (or a duplicate SDK
+  // install across realms) doesn't double-wrap.
+  Object.defineProperty(wrapped, DEXCOST_PATCHED, {
     value: true,
     enumerable: false,
     configurable: false,
     writable: false,
   });
+  return wrapped as typeof globalThis.fetch;
+}
+
+/**
+ * Create an instrumented fetch for explicit injection into HTTP/LLM
+ * clients — the bundler-proof, global-state-free capture point:
+ *
+ *   import { createDexcostFetch } from "@dexcost/sdk";
+ *   const anthropic = createAnthropic({ fetch: createDexcostFetch() });
+ *   const openai = new OpenAI({ fetch: createDexcostFetch() });
+ *
+ * Prefer this over the global patch when you disable `trackHttp` at init
+ * (shared processes, other fetch-wrapping tools) or when a provider takes
+ * a `fetch` option anyway. Calls captured here go through the exact same
+ * classification pipeline as the global patch (LLM fallback incl.
+ * anthropic/openai/gemini formats + SSE, service catalog, byte counting).
+ *
+ * Returns the base fetch UNWRAPPED (and warns) when dexcost has no
+ * buffer/pricing wired yet — i.e. init() has not run and no `tracker` was
+ * passed — so client construction never breaks.
+ */
+export function createDexcostFetch(
+  options: {
+    /** Explicit tracker (required only when init() ran with trackHttp:false
+     *  and this is called before any other wiring). */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tracker?: { buffer: EventBuffer; pricing: PricingEngine };
+    /** Base fetch to instrument. Defaults to globalThis.fetch. */
+    fetch?: typeof globalThis.fetch;
+  } = {},
+): typeof globalThis.fetch {
+  const base = options.fetch ?? globalThis.fetch;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((base as any)?.[DEXCOST_PATCHED] === true) {
+    // Already instrumented (global patch active) — wrapping again would
+    // double-count every call.
+    return base;
+  }
+  if (options.tracker) {
+    if (!_buffer) _buffer = options.tracker.buffer;
+    if (!_pricing) _pricing = options.tracker.pricing;
+  }
+  if (_catalog === null) {
+    try {
+      _catalog = new ServiceCatalog();
+    } catch {
+      _catalog = null;
+    }
+  }
+  if (!_buffer || !_pricing) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[dexcost] createDexcostFetch: dexcost has no buffer/pricing wired " +
+        "(call init() first, or pass { tracker }) — returning the base " +
+        "fetch untracked.",
+    );
+    return base;
+  }
+  return _buildInstrumentedFetch(base);
+}
+
+export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
+  if (_patched) return;
+
+  // §4.2.1: refuse to wrap an already-dexcost-wrapped fetch.
+  const current = globalThis.fetch as unknown as Record<symbol, unknown>;
+  if (current && current[DEXCOST_PATCHED] === true) {
+    // Already patched — likely a duplicate SDK install. No-op + warn.
+    console.warn(
+      "dexcost: globalThis.fetch is already wrapped by dexcost. " +
+        "trackHttp() called twice (or two SDK copies). Skipping.",
+    );
+    _patched = true;
+    return;
+  }
+
+  _originalFetch = globalThis.fetch;
+  _patched = true;
+
+  // Lazily initialise the service catalog
+  if (_catalog === null) {
+    try {
+      _catalog = new ServiceCatalog();
+    } catch {
+      // If catalog fails to load, continue without it
+      _catalog = null;
+    }
+  }
+
+  if (buffer) {
+    _buffer = buffer;
+    _sessionManager = new SessionManager();
+    _pricing = pricing ?? null;
+    // Publish the session manager so LLM instruments join the same
+    // ambient sessions instead of creating per-call auto-tasks.
+    setAmbientSessions(_sessionManager, buffer);
+  }
+
+  // Replace globalThis.fetch with the instrumented wrapper.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).fetch = _buildInstrumentedFetch(_originalFetch);
 
   // Also patch Node's low-level http/https transports — many SDKs
   // (AWS SDK v2, older clients, agents) use these directly rather than
@@ -653,6 +787,7 @@ export function untrackHttp(): void {
   _originalFetch = null;
   _patched = false;
   _sessionManager = null;
+  clearAmbientSessions();
   _buffer = null;
   _pricing = null;
   _unpatchNodeHttp();
@@ -806,7 +941,7 @@ interface _HttpCallContext {
   isInternal: boolean | null;
   suppressed: boolean;
   /** LLM response format detected for this call (for SSE stream parsing). */
-  llmStreamFormat?: "openai" | "anthropic";
+  llmStreamFormat?: LlmFormat;
   /** Response BODY bytes, known once the counting stream has drained.
    *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
    *  llm_call path, whose extraction drains the body via clone()) can
@@ -1284,7 +1419,11 @@ async function _maybeRecordCost(
     if (!ctx?.suppressed && response && _pricing) {
       const llmFormat = _detectLlmEndpoint(parsedUrl, ctx?.method);
       if (llmFormat) {
-        const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
+        const llmUsage = await _tryExtractLlmFromResponse(
+        response,
+        llmFormat,
+        _modelHintFromPath(parsedUrl.pathname),
+      );
         if (llmUsage) {
           const costResult: CostResult = _pricing.getCost(
             llmUsage.model,

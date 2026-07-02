@@ -189,6 +189,45 @@ export async function globalFlush(): Promise<void> {
   return getTracker().flush();
 }
 
+/**
+ * Best-effort, bounded flush for freeze-prone environments (Lambda, Cloud
+ * Functions, Vercel, Cloud Run without always-on CPU): serverless runtimes
+ * give NO background CPU after the handler returns, so the pusher's
+ * interval may never fire and buffered events sit undelivered until the
+ * next (possibly never-coming) invocation.
+ *
+ * Never throws and never hangs the handler: resolves after `timeoutMs`
+ * even if the push is still in flight, and is a no-op when the SDK is not
+ * initialized or runs in local mode.
+ *
+ * Next.js route handlers: pair it with `after()` so the flush runs outside
+ * the response's critical path:
+ *
+ *   import { after } from "next/server";
+ *   after(() => flushBeforeFreeze());
+ */
+export async function flushBeforeFreeze(timeoutMs: number = 3_000): Promise<void> {
+  let tracker: CostTracker;
+  try {
+    tracker = getTracker();
+  } catch {
+    return; // not initialized — nothing to flush
+  }
+  try {
+    await Promise.race([
+      tracker.flush(),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs);
+        // Never keep the event loop (and a serverless bill) alive for this.
+        if (typeof timer.unref === "function") timer.unref();
+      }),
+    ]);
+  } catch (err) {
+    // A failed push stays buffered for the next cycle — log in debug only.
+    debugLog("flush", `flushBeforeFreeze push failed (events remain buffered): ${String(err)}`);
+  }
+}
+
 export function globalClose(): void {
   if (_instance !== null) {
     _instance.close();

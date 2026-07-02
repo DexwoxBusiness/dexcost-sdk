@@ -316,3 +316,33 @@ function _addEventAndUpdateTask(
 
   buffer.upsertTask(task);
 }
+
+// ---------------------------------------------------------------------------
+// wrap* convention entry points
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap an OpenAI client instance for cost tracking (ecosystem `wrapOpenAI`
+ * convention). Returns a {@link TrackedOpenAI} exposing the chat-completions
+ * surface; for FULL client-surface coverage prefer injecting a tracked
+ * fetch instead: `new OpenAI({ fetch: createDexcostFetch() })`.
+ */
+export function wrapOpenAI(
+  client: unknown,
+  opts?: { tracker?: CostTracker },
+): TrackedOpenAI {
+  return new TrackedOpenAI({ client, tracker: opts?.tracker });
+}
+
+/**
+ * Wrap an Anthropic client instance for cost tracking (ecosystem
+ * `wrapAnthropic` convention). Returns a {@link TrackedAnthropic} exposing
+ * the messages surface; for FULL client-surface coverage prefer injecting
+ * a tracked fetch instead: `new Anthropic({ fetch: createDexcostFetch() })`.
+ */
+export function wrapAnthropic(
+  client: unknown,
+  opts?: { tracker?: CostTracker },
+): TrackedAnthropic {
+  return new TrackedAnthropic({ client, tracker: opts?.tracker });
+}

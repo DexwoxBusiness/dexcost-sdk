@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { isDeno, runtimeDescription } from "../core/runtime.js";
+import { isBun, isDeno, runtimeDescription } from "../core/runtime.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -115,6 +115,32 @@ function checkAsyncLocalStorage(): DoctorCheck {
 }
 
 function checkSqlite(): DoctorCheck {
+  if (isBun()) {
+    // Bun uses the built-in bun:sqlite driver via the SDK's compat layer
+    // (better-sqlite3's native binding is unsupported there, bun#4290).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const BunDatabase = _require("bun:sqlite").Database;
+      const probe = new BunDatabase(":memory:");
+      probe.close();
+      return {
+        id: "sqlite",
+        name: "Durable buffer (bun:sqlite)",
+        status: "ok",
+        detail: "built-in bun:sqlite driver works — events persist across restarts",
+      };
+    } catch (err) {
+      return {
+        id: "sqlite",
+        name: "Durable buffer (bun:sqlite)",
+        status: "warn",
+        detail: `bun:sqlite unavailable — in-memory fallback (10k cap). Cause: ${
+          err instanceof Error ? err.message.split("\n")[0] : String(err)
+        }`,
+        remedy: "Upgrade Bun; bun:sqlite ships with the runtime.",
+      };
+    }
+  }
   if (isDeno()) {
     // Deno's dlopen of the V8-ABI addon is a FATAL process error — never
     // probe it. The SDK skips it there too and uses the memory buffer.

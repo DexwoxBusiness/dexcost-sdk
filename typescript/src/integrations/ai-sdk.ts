@@ -44,6 +44,7 @@ import {
   isNetworkEventSuppressed,
 } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { getAmbientSessionTask } from "../core/session.js";
 import { extractUsage } from "../instruments/ai-usage.js";
 import type { ExtractedUsage } from "../instruments/ai-usage.js";
 import { debugLog } from "../core/debug.js";
@@ -229,9 +230,16 @@ export function dexcostAiMiddleware(
       let task = getCurrentTask();
       let autoCreated = false;
       if (!task) {
-        task = createAutoTask(options.taskType ?? "ai-sdk.generate");
-        tracker.buffer.upsertTask(task);
-        autoCreated = true;
+        // Join the ambient session (grouping with sibling HTTP/LLM calls
+        // in the same context) when session tracking is active; the
+        // session sweep owns its lifecycle. Otherwise fall back to a
+        // per-call auto-task owned (and finalized) here.
+        task = getAmbientSessionTask(options.taskType ?? "ai-sdk.generate");
+        if (!task) {
+          task = createAutoTask(options.taskType ?? "ai-sdk.generate");
+          tracker.buffer.upsertTask(task);
+          autoCreated = true;
+        }
       }
 
       const startTime = performance.now();
@@ -274,9 +282,16 @@ export function dexcostAiMiddleware(
       let task = getCurrentTask();
       let autoCreated = false;
       if (!task) {
-        task = createAutoTask(options.taskType ?? "ai-sdk.stream");
-        tracker.buffer.upsertTask(task);
-        autoCreated = true;
+        // Join the ambient session (grouping with sibling HTTP/LLM calls
+        // in the same context) when session tracking is active; the
+        // session sweep owns its lifecycle. Otherwise fall back to a
+        // per-call auto-task owned (and finalized) here.
+        task = getAmbientSessionTask(options.taskType ?? "ai-sdk.stream");
+        if (!task) {
+          task = createAutoTask(options.taskType ?? "ai-sdk.stream");
+          tracker.buffer.upsertTask(task);
+          autoCreated = true;
+        }
       }
 
       const startTime = performance.now();

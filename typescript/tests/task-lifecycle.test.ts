@@ -198,6 +198,71 @@ describe("ambient (kodus-style) end-to-end: capture + grouping + egress", () => 
   });
 });
 
+describe("ambient session unification (instruments + HTTP share one task)", () => {
+  it("middleware-captured LLM calls and fetch-fallback calls join the SAME session task", async () => {
+    const pricing = new PricingEngine();
+    const { dexcostAiMiddleware } = await import("../src/integrations/ai-sdk.js");
+    const { CostTracker } = await import("../src/core/tracker.js");
+    const tracker = new CostTracker({
+      dbPath: join(tmpDir, "unify.db"),
+      autoInstrument: [],
+      trackHttp: false,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ model: "kimi-k2", usage: { input_tokens: 10, output_tokens: 5 } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    trackHttp(tracker.buffer, pricing);
+    try {
+      // 1. An instrument-captured call with no explicit task…
+      const mw = dexcostAiMiddleware({ tracker });
+      await mw.wrapGenerate({
+        doGenerate: async () => ({ usage: { inputTokens: 100, outputTokens: 20 } }),
+        model: { modelId: "claude-sonnet-4-5", provider: "anthropic.messages" },
+      });
+      // 2. …and a raw fetch captured by the HTTP fallback…
+      const res = await fetch("https://api.kimi.com/anthropic/v1/messages", {
+        method: "POST",
+        body: "{}",
+      });
+      await res.text();
+
+      // …must land on ONE shared ambient session task.
+      const llmEvents = tracker.buffer
+        .getAllEvents()
+        .filter((e) => e.eventType === "llm_call");
+      expect(llmEvents).toHaveLength(2);
+      expect(llmEvents[1].taskId).toBe(llmEvents[0].taskId);
+
+      const sessionTask = tracker.buffer
+        .getAllTasks()
+        .find((t) => t.taskId === llmEvents[0].taskId)!;
+      expect(sessionTask.metadata["session"]).toBe(true);
+      // No per-call auto-task was created for the middleware call.
+      expect(
+        tracker.buffer.getAllTasks().filter((t) => t.taskType === "ai-sdk.generate"),
+      ).toHaveLength(0);
+
+      // Session sweep finalizes the shared task with both calls' tokens.
+      getSessionManager()!.finalizeAllSessions(tracker.buffer);
+      const finalized = tracker.buffer
+        .getAllTasks()
+        .find((t) => t.taskId === sessionTask.taskId)!;
+      expect(finalized.status).toBe("success");
+      expect(finalized.totalInputTokens).toBe(110);
+      expect(finalized.totalOutputTokens).toBe(25);
+    } finally {
+      untrackHttp();
+      tracker.close();
+    }
+  });
+});
+
 describe("unparseable-URL calls (outcome gate release)", () => {
   it("finalizes the adapter auto-task and drains its accountant when the URL cannot be parsed", async () => {
     // Regression (Kody review finding): _maybeRecordCost's URL-parse catch
