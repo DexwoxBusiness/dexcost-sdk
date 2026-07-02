@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.10.0...typescript/v0.11.0) (2026-07-02)
+
+
+### Features
+
+* **typescript:** AI SDK middleware, dexcost doctor, debug mode, Fastify/Hono middleware ([05d5ef2](https://github.com/DexwoxBusiness/dexcost-sdk/commit/05d5ef25d3e2a4fc4a543d38988e49f7248133f2))
+* **typescript:** OTel ingestion bridge and instrumentModules bundler escape hatch ([1ce22cf](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1ce22cfa4903a92f59cf3d68d08667f2e0ca349d))
+* **typescript:** P1 integration surface — sessions unified, NestJS, workers, injectable fetch, Gemini fallback, bun:sqlite ([97dde5a](https://github.com/DexwoxBusiness/dexcost-sdk/commit/97dde5a2c305ed4e456b700a55ab4c630944670a))
+
+
+### Bug Fixes
+
+* **typescript:** accept qualified callees in the dedup guardrail counter ([ce69b39](https://github.com/DexwoxBusiness/dexcost-sdk/commit/ce69b397d5839973bbd6ce26eaffc5cddd9c0c90))
+* **typescript:** Bun/Deno runtime support enforced by CI smoke tests ([af626d6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/af626d615b0893f84ad311652ea9648a6faf0cab))
+* **typescript:** count dedup registrations via TypeScript AST, not substring scan ([8ec8699](https://github.com/DexwoxBusiness/dexcost-sdk/commit/8ec869955413560875ee961632fa1b2fe7023fea))
+* **typescript:** register dedup fingerprints at EVERY llm_call recording site ([e521cca](https://github.com/DexwoxBusiness/dexcost-sdk/commit/e521ccaa1cfc229770e4abbc112af4f14823fbb2))
+* **typescript:** resolve import bindings in the dedup guardrail counter ([3dc4e63](https://github.com/DexwoxBusiness/dexcost-sdk/commit/3dc4e63d7a5c03e55883b81c1e353ed0792c2404))
+
 ## [0.10.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.9.0...typescript/v0.10.0) (2026-07-02)
 
 
