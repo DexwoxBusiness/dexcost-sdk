@@ -62,27 +62,55 @@ function walk(dir: string): string[] {
 }
 
 /**
- * Count actual `registerLlmCapture(...)` CALL EXPRESSIONS via the
- * TypeScript AST — immune to mentions in comments and string literals
- * (which a substring scan would count, letting a future comment silently
- * satisfy — or spuriously break — the invariant), and to formatting
- * (inline `if (x) registerLlmCapture(...)`, multiline argument lists).
+ * Count `registerLlmCapture(...)` call sites by resolving the IMPORT
+ * BINDING, not by name-matching the callee. Review iterations showed why
+ * both cheaper approaches fail:
+ *  - substring scans count comments/string literals (silent offset);
+ *  - bare-identifier AST matching breaks on namespace-import refactors
+ *    (spurious guardrail failure);
+ *  - any-property-access AST matching lets an unrelated method named
+ *    registerLlmCapture offset a missing real registration (silent pass).
+ *
+ * So: collect the local names bound to the llm-dedup module's
+ * registerLlmCapture export (named imports incl. aliases, namespace
+ * imports under any alias), then count only calls that bind to them.
+ * A call that would not compile against the real module never counts.
  */
 function countRegistrations(source: string, fileName: string): number {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+
+  const bareLocals = new Set<string>(); // import { registerLlmCapture [as X] }
+  const namespaceLocals = new Set<string>(); // import * as NS
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isImportDeclaration(stmt)) continue;
+    const spec = stmt.moduleSpecifier;
+    if (!ts.isStringLiteral(spec)) continue;
+    if (!/(^|\/)llm-dedup(\.js)?$/.test(spec.text)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      namespaceLocals.add(bindings.name.text);
+    } else if (ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        const exportedName = (element.propertyName ?? element.name).text;
+        if (exportedName === "registerLlmCapture") {
+          bareLocals.add(element.name.text);
+        }
+      }
+    }
+  }
+
   let count = 0;
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
-      // Accept both bare calls (named import) and qualified calls
-      // (namespace import `dedup.registerLlmCapture(...)`, class method
-      // `this.registerLlmCapture(...)`) so an import-style refactor can't
-      // make real registrations count as zero and fail the guardrail
-      // spuriously.
-      const isBare = ts.isIdentifier(callee) && callee.text === "registerLlmCapture";
-      const isQualified =
-        ts.isPropertyAccessExpression(callee) && callee.name.text === "registerLlmCapture";
-      if (isBare || isQualified) {
+      const boundBareCall = ts.isIdentifier(callee) && bareLocals.has(callee.text);
+      const boundNamespaceCall =
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        namespaceLocals.has(callee.expression.text) &&
+        callee.name.text === "registerLlmCapture";
+      if (boundBareCall || boundNamespaceCall) {
         count += 1;
       }
     }
