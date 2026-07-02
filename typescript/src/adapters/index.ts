@@ -5,7 +5,7 @@
  */
 
 // HTTP adapter
-export { createDexcostFetch } from "./http.js";
+export { createDexcostFetch, registerInternalHost } from "./http.js";
 export {
   registerDomainRate,
   getDomainRates,

@@ -125,6 +125,7 @@ export type { ServiceEntry, CostExtractionResult } from "./pricing/service-catal
 // Adapters
 export {
   createDexcostFetch,
+  registerInternalHost,
   registerDomainRate,
   getDomainRates,
   clearDomainRates,

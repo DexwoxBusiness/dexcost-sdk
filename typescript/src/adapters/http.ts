@@ -49,6 +49,37 @@ import type { PricingEngine, CostResult } from "../pricing/engine.js";
 /** Map of domain → { costUsd, per } registered rates (user overrides). */
 const _domainRates = new Map<string, { costUsd: number; per: string }>();
 
+/**
+ * Hostnames whose traffic is the SDK's OWN plumbing (event pusher, pricing
+ * refresh, service-catalog refresh) and must be completely invisible to
+ * capture. Without this, every telemetry push through the patched fetch
+ * resolved an ambient session task, which was persisted, pushed on the
+ * next cycle — ANOTHER fetch — and so on: a self-generating drip of empty
+ * agent_session tasks (plus egress cost for dexcost pushing dexcost) that
+ * never stopped, even on an idle app.
+ */
+const _DEFAULT_INTERNAL_HOSTS = ["api.dexcost.io"];
+const _internalHosts = new Set<string>(_DEFAULT_INTERNAL_HOSTS);
+
+/**
+ * Mark a hostname as SDK-internal — its traffic bypasses capture entirely
+ * (no events, no session, no byte accounting). The tracker registers the
+ * resolved Control Layer endpoint (and any serviceCatalogUrl host)
+ * automatically; call this yourself only for additional self-hosted
+ * dexcost infrastructure.
+ */
+export function registerInternalHost(hostname: string): void {
+  if (typeof hostname === "string" && hostname) {
+    _internalHosts.add(hostname.toLowerCase());
+  }
+}
+
+/** Test-only: restore the internal-host set to its default. */
+export function _resetInternalHostsForTests(): void {
+  _internalHosts.clear();
+  for (const host of _DEFAULT_INTERNAL_HOSTS) _internalHosts.add(host);
+}
+
 /** Events recorded by the adapter.
  *
  * Sprint 4 §5.2 (A3) — hard FIFO cap matching Python (commit c1d87a7).
@@ -446,6 +477,19 @@ function _buildInstrumentedFetch(
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> {
+    // ── SDK self-traffic bypass ──────────────────────────────────────────
+    // The SDK's own HTTP (telemetry push, pricing/catalog refresh) must
+    // never be captured: tracking it feeds the buffer, whose push is
+    // itself a fetch — an endless loop of empty session tasks. Checked
+    // FIRST so internal calls pay zero capture overhead.
+    try {
+      const host = new URL(_resolveUrlStr(input)).hostname.toLowerCase();
+      if (_internalHosts.has(host)) {
+        return base(input, init);
+      }
+    } catch {
+      // Unparseable URL — fall through to normal capture handling.
+    }
 
     // ── v1 byte measurement — request side (known before fetch) ─────────
     // Scrub once at extraction so every downstream use (events, hostname
@@ -703,7 +747,16 @@ function _patchNodeHttp(): void {
       try {
         const raw = _urlFromRequestArgs(isHttps, args);
         const urlStr = raw ? scrubUrl(raw) : raw;
+        // SDK self-traffic bypass — mirror of the fetch wrapper's check.
+        let internal = false;
         if (urlStr) {
+          try {
+            internal = _internalHosts.has(new URL(urlStr).hostname.toLowerCase());
+          } catch {
+            internal = false;
+          }
+        }
+        if (urlStr && !internal) {
           // Record on response — body is not parsed for Node-level
           // requests (matches the Python urllib3 wrapper's behaviour).
           if (req && typeof req.on === "function") {
