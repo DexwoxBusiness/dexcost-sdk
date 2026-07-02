@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,11 +61,28 @@ function walk(dir: string): string[] {
   return out;
 }
 
-function countRegistrations(source: string): number {
-  return source
-    .split("\n")
-    .filter((l) => l.includes("registerLlmCapture(") && !l.trimStart().startsWith("import"))
-    .length;
+/**
+ * Count actual `registerLlmCapture(...)` CALL EXPRESSIONS via the
+ * TypeScript AST — immune to mentions in comments and string literals
+ * (which a substring scan would count, letting a future comment silently
+ * satisfy — or spuriously break — the invariant), and to formatting
+ * (inline `if (x) registerLlmCapture(...)`, multiline argument lists).
+ */
+function countRegistrations(source: string, fileName: string): number {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "registerLlmCapture"
+    ) {
+      count += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return count;
 }
 
 describe("LLM dedup fingerprint guardrail", () => {
@@ -97,7 +115,7 @@ describe("LLM dedup fingerprint guardrail", () => {
         );
         continue;
       }
-      const actual = countRegistrations(source);
+      const actual = countRegistrations(source, rel);
       if (actual !== expected) {
         problems.push(
           `${rel}: expected ${expected} registerLlmCapture call site(s), found ${actual} — ` +
