@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.9.0...typescript/v0.10.0) (2026-07-02)
+
+
+### Features
+
+* **typescript:** scoped runWithContext + kodus-ai ambient integration example ([6ca0afc](https://github.com/DexwoxBusiness/dexcost-sdk/commit/6ca0afc95a6d65f6a1d6f907a4a2306a66d863dd))
+
+
+### Bug Fixes
+
+* **typescript:** capture LLM calls on prefixed compatible endpoints and AI SDK v5+ ([e5ba7e2](https://github.com/DexwoxBusiness/dexcost-sdk/commit/e5ba7e2bd4852f694ec3bb02267dd0a83bc06e38))
+* **typescript:** gate network outcome on body-drain AND classification completion ([51d1c34](https://github.com/DexwoxBusiness/dexcost-sdk/commit/51d1c345a7117d5d4aee5d8f349e418a190c16fa))
+* **typescript:** release the network-outcome gate for unparseable URLs ([c48c1e5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c48c1e5de10d53e7d7fa2d460a6e02b16f18bca1))
+* **typescript:** stamp response bytes on JSON-path fallback llm_call events ([9fc0635](https://github.com/DexwoxBusiness/dexcost-sdk/commit/9fc06353d0504e741f40bf0e6b2e786e2d6c5b26))
+* **typescript:** task lifecycle, session grouping, and network cost persistence ([9445621](https://github.com/DexwoxBusiness/dexcost-sdk/commit/944562151c0edf801b90846f81c8614b61ef4373))
+
 ## [0.9.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.8.0...typescript/v0.9.0) (2026-07-01)
 
 
