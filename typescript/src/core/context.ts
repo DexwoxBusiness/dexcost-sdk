@@ -90,6 +90,40 @@ export function getContext(): DexcostContext | undefined {
 }
 
 /**
+ * Run `fn` with `ctx` as the ambient DexcostContext, scoped to the call.
+ *
+ * Prefer this over `setContext()` in queue consumers, cron jobs, and any
+ * long-lived worker loop: `setContext()` uses `enterWith()`, which binds the
+ * context to the REMAINDER of the current async chain — consecutive jobs
+ * processed on the same chain silently inherit the previous job's
+ * customer/project attribution. `runWithContext()` scopes the context to
+ * `fn` exactly (including all async continuations started inside it) and
+ * restores the outer context afterwards.
+ *
+ * The context object also serves as the session grouping key, so each
+ * `runWithContext()` scope gets its own ambient session task.
+ */
+export function runWithContext<T>(
+  ctx: {
+    customerId?: string;
+    projectId?: string;
+    metadata?: Record<string, unknown>;
+    agent?: string;
+  },
+  fn: () => T,
+): T {
+  return contextStore.run(
+    {
+      customerId: ctx.customerId,
+      projectId: ctx.projectId,
+      metadata: ctx.metadata ?? {},
+      agent: ctx.agent,
+    },
+    fn,
+  );
+}
+
+/**
  * Clear the ambient DexcostContext for the current async execution context.
  */
 export function clearContext(): void {

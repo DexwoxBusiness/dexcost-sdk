@@ -36,6 +36,7 @@ export {
   setContext,
   getContext,
   clearContext,
+  runWithContext,
 } from "./core/context.js";
 export type { DexcostContext } from "./core/context.js";
 export {
