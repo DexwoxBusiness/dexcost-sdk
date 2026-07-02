@@ -828,6 +828,18 @@ interface _HttpCallContext {
    *  a fragile O(n) backward scan of _recordedEvents that is vulnerable to
    *  FIFO eviction under high concurrency. */
   placeholderEvent?: CostEvent;
+  /**
+   * Two-signal gate for the network outcome (placeholder retype/drop +
+   * adapter auto-task finalize). The two producers can complete in EITHER
+   * order: _maybeRecordCost's own extraction (clone().json()) drains the
+   * wrapped body, firing _finaliseHttpCall BEFORE the placeholder is
+   * created; conversely for streamed bodies the caller drains long after
+   * classification finished. The outcome runs exactly once, when the
+   * second signal arrives.
+   */
+  bodyDrained?: boolean;
+  classificationDone?: boolean;
+  outcomeEmitted?: boolean;
 }
 
 function _resolveUrlStr(input: string | URL | Request): string {
@@ -1070,57 +1082,81 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
     }
   }
 
-  // Network-event emission is the un-cataloged path's responsibility.
-  // _maybeRecordCost decides which path was taken — for catalog /
-  // domain-rate calls it sets a "matched" flag we check here. Stored on
-  // the ctx so a single-call closure threads it.
-  if (ctx._matchedCatalog || ctx.suppressed) {
-    _finaliseAdapterAutoTask(task, taskAutoCreated);
-    return;
-  }
+  ctx.bodyDrained = true;
+  _maybeEmitNetworkOutcome(ctx);
+}
 
-  const combined = ctx.requestBytes + responseBytes;
-  // Use the placeholder event stored directly on ctx (set in
-  // _maybeRecordCost). This replaces the old O(n) backward scan of
-  // _recordedEvents which was fragile under FIFO eviction when
-  // concurrent calls exceeded _RECORDED_EVENTS_CAP.
-  const ev = ctx.placeholderEvent;
-  if (!ev) {
-    _finaliseAdapterAutoTask(task, taskAutoCreated);
-    return;
-  }
+/**
+ * Emit the network outcome for a call: retype-or-drop the placeholder
+ * event and finalize the adapter-owned auto-task.
+ *
+ * Runs exactly once, and only after BOTH the response body has drained
+ * (byte totals known) AND _maybeRecordCost's classification has completed
+ * (placeholder created / matched flag set). The two happen in either
+ * order: extraction's clone().json() drains the body mid-classification
+ * for usage-less JSON responses, while streamed bodies drain long after
+ * classification. Gating on both closes the race where a too-early
+ * finalisation found no placeholder — large usage-less calls silently
+ * lost their network event and small ones leaked a phantom $0
+ * external_cost entry in the in-memory list.
+ */
+function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
+  if (!ctx.bodyDrained || !ctx.classificationDone || ctx.outcomeEmitted) return;
+  ctx.outcomeEmitted = true;
 
-  if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
-    ev.eventType = "network";
-    ev.serviceName = ctx.hostname;
-    ev.details = {
-      ...ev.details,
-      method: ctx.method,
-      cost_pending: true,
-      protocol: ctx.protocol,
-      request_bytes: ctx.requestBytes,
-      response_bytes: responseBytes,
-      is_internal_traffic: _isInternalToValue(ctx.isInternal),
-      _reTyped: true,
-    };
-    // Persist to durable buffer now that the final classification is
-    // known. The placeholder was intentionally NOT persisted in
-    // _maybeRecordCost to avoid phantom $0 external_cost events.
-    if (_buffer) {
-      _buffer.addEvent(ev);
+  const task = ctx.resolvedTask;
+  const taskAutoCreated = ctx.resolvedTaskAutoCreated === true;
+
+  try {
+    // Network-event emission is the un-cataloged path's responsibility.
+    // _maybeRecordCost decides which path was taken — for catalog /
+    // domain-rate calls it sets a "matched" flag we check here. Stored on
+    // the ctx so a single-call closure threads it.
+    if (ctx._matchedCatalog || ctx.suppressed) return;
+
+    const responseBytes = ctx.responseHeaderBytes + (ctx.responseBodyBytes ?? 0);
+    const combined = ctx.requestBytes + responseBytes;
+    // Use the placeholder event stored directly on ctx (set in
+    // _maybeRecordCost). This replaces the old O(n) backward scan of
+    // _recordedEvents which was fragile under FIFO eviction when
+    // concurrent calls exceeded _RECORDED_EVENTS_CAP.
+    const ev = ctx.placeholderEvent;
+    if (!ev) return;
+
+    if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
+      ev.eventType = "network";
+      ev.serviceName = ctx.hostname;
+      ev.details = {
+        ...ev.details,
+        method: ctx.method,
+        cost_pending: true,
+        protocol: ctx.protocol,
+        request_bytes: ctx.requestBytes,
+        response_bytes: responseBytes,
+        is_internal_traffic: _isInternalToValue(ctx.isInternal),
+        _reTyped: true,
+      };
+      // Persist to durable buffer now that the final classification is
+      // known. The placeholder was intentionally NOT persisted in
+      // _maybeRecordCost to avoid phantom $0 external_cost events.
+      if (_buffer) {
+        _buffer.addEvent(ev);
+      }
+    } else {
+      // Below threshold and no error → counters-only. Drop the
+      // placeholder external_cost-zero event from the in-memory list.
+      // The placeholder was never persisted to _buffer (deferred
+      // persistence), so no phantom event leaks to the durable store.
+      const idx = _recordedEvents.indexOf(ev);
+      if (idx !== -1) {
+        _recordedEvents.splice(idx, 1);
+      }
     }
-  } else {
-    // Below threshold and no error → counters-only. Drop the
-    // placeholder external_cost-zero event from the in-memory list.
-    // The placeholder was never persisted to _buffer (deferred
-    // persistence), so no phantom event leaks to the durable store.
-    const idx = _recordedEvents.indexOf(ev);
-    if (idx !== -1) {
-      _recordedEvents.splice(idx, 1);
+  } finally {
+    if (task) {
+      _finaliseAdapterAutoTask(task, taskAutoCreated);
     }
   }
-
-  _finaliseAdapterAutoTask(task, taskAutoCreated);
 }
 
 /**
@@ -1353,6 +1389,13 @@ async function _maybeRecordCost(
   } finally {
     if (!ctx && resolved.autoCreated) {
       finalizeAutoTask(task, "success", _buffer ?? undefined);
+    }
+    if (ctx) {
+      // Classification is done (matched flag / placeholder are final).
+      // If extraction already drained the body, the network outcome runs
+      // now; otherwise it runs when the caller drains the stream.
+      ctx.classificationDone = true;
+      _maybeEmitNetworkOutcome(ctx);
     }
   }
 }

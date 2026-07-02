@@ -23,6 +23,7 @@ import {
   untrackHttp,
   clearDomainRates,
   clearRecordedEvents,
+  getRecordedEvents,
   resetServiceCatalog,
 } from "../src/adapters/http.js";
 
@@ -252,6 +253,74 @@ describe("LLM HTTP fallback — false-positive guards", () => {
     });
 
     expect(buffer.getAllEvents().filter((e) => e.eventType === "llm_call")).toHaveLength(0);
+  });
+
+  it("usage-less JSON on an LLM-looking path still emits a network event when large", async () => {
+    // Regression: _tryExtractLlmFromResponse drains the wrapped body via
+    // clone().json() BEFORE the placeholder event exists. Finalisation used
+    // to run once at that moment, find no placeholder, and bail — so the
+    // fall-through path never re-typed the placeholder and large usage-less
+    // calls lost their network event entirely.
+    const bigBody = JSON.stringify({ items: "x".repeat(150_000) });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(bigBody, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "review" });
+    await runWithTask(task, async () => {
+      const res = await fetch("https://api.somechatapp.example.com/v2/messages", {
+        method: "POST",
+        body: "{}",
+      });
+      await res.text();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events.filter((e) => e.eventType === "llm_call")).toHaveLength(0);
+    const network = events.filter((e) => e.eventType === "network");
+    expect(network).toHaveLength(1);
+    expect(network[0].details?.cost_pending).toBe(true);
+    expect(network[0].details?.response_bytes as number).toBeGreaterThan(100_000);
+  });
+
+  it("usage-less JSON on an LLM-looking path leaves no phantom $0 event when small", async () => {
+    // Same race, small-body variant: the too-late placeholder was never
+    // dropped from the in-memory recorded-events list.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ items: [], usage: { credits: 3 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "review" });
+    await runWithTask(task, async () => {
+      const res = await fetch("https://api.somechatapp.example.com/v2/messages", {
+        method: "POST",
+        body: "{}",
+      });
+      await res.text();
+    });
+
+    expect(buffer.getAllEvents()).toHaveLength(0);
+    // The in-memory placeholder must be dropped, not leaked as a $0
+    // external_cost phantom.
+    expect(
+      getRecordedEvents().filter(
+        (e) => e.details?.url === "https://api.somechatapp.example.com/v2/messages",
+      ),
+    ).toHaveLength(0);
   });
 
   it("still captures canonical non-prefixed endpoints on known hosts", async () => {
