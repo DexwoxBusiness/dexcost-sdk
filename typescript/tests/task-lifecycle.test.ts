@@ -21,7 +21,11 @@ import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { SessionManager } from "../src/core/session.js";
 import { createAutoTask, finalizeAutoTask } from "../src/core/auto-task.js";
-import { getAccountant } from "../src/adapters/network-accountant.js";
+import {
+  getAccountant,
+  _accountantRegistrySize,
+  _resetAccountantRegistryForTests,
+} from "../src/adapters/network-accountant.js";
 import {
   getCurrentTask,
   setContext,
@@ -191,6 +195,32 @@ describe("ambient (kodus-style) end-to-end: capture + grouping + egress", () => 
     expect(sessionTask!.networkCallCount).toBe(2);
     expect(sessionTask!.networkBytesOut).toBeGreaterThan(0);
     expect(sessionTask!.networkBytesIn).toBeGreaterThan(0);
+  });
+});
+
+describe("unparseable-URL calls (outcome gate release)", () => {
+  it("finalizes the adapter auto-task and drains its accountant when the URL cannot be parsed", async () => {
+    // Regression (Kody review finding): _maybeRecordCost's URL-parse catch
+    // returned BEFORE setting ctx.classificationDone, so for a fetch that
+    // succeeds on a URL `new URL()` rejects (mocked fetch, browser-ish
+    // relative URLs) the outcome gate never opened — the adapter-created
+    // http_call auto-task stayed "pending" forever and its
+    // NetworkAccountant registry entry leaked.
+    _resetAccountantRegistryForTests();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }),
+      ),
+    );
+    // No buffer → no session manager → the adapter falls back to an
+    // auto-task it must own and finalize itself.
+    trackHttp();
+
+    const res = await fetch("not-a-valid-url");
+    await res.text(); // drain → byte counting finalises
+
+    expect(_accountantRegistrySize()).toBe(0);
   });
 });
 

@@ -1191,6 +1191,18 @@ async function _maybeRecordCost(
     parsedUrl = new URL(urlStr);
     hostname = parsedUrl.hostname;
   } catch {
+    // Unparseable URL — possible when a custom or mocked fetch accepts
+    // inputs that `new URL()` rejects (relative URLs in browser-ish
+    // runtimes, test stubs). Classification is trivially "done" (nothing
+    // to classify), and the outcome gate must still be released: without
+    // this, ctx.classificationDone stayed unset, _maybeEmitNetworkOutcome
+    // never fired after the body drained, and an adapter-created
+    // http_call auto-task stayed "pending" forever with its
+    // NetworkAccountant registry entry leaked.
+    if (ctx) {
+      ctx.classificationDone = true;
+      _maybeEmitNetworkOutcome(ctx);
+    }
     return;
   }
 
