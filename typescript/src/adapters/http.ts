@@ -799,6 +799,11 @@ interface _HttpCallContext {
   suppressed: boolean;
   /** LLM response format detected for this call (for SSE stream parsing). */
   llmStreamFormat?: "openai" | "anthropic";
+  /** Response BODY bytes, known once the counting stream has drained.
+   *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
+   *  llm_call path, whose extraction drains the body via clone()) can
+   *  attach complete byte details instead of request-side only. */
+  responseBodyBytes?: number;
   /** Accumulated tail of SSE data for LLM usage extraction on stream end. */
   sseTailBuffer?: string;
   /** Head of SSE stream preserved so Anthropic message_start is not lost. */
@@ -982,6 +987,7 @@ function _wrapResponseForByteCounting(
  * event with `cost_pending=true`.
  */
 function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): void {
+  ctx.responseBodyBytes = responseBodyBytes;
   const responseBytes = ctx.responseHeaderBytes + responseBodyBytes;
   // Reuse the task resolved in _maybeRecordCost — avoids a second
   // getCurrentTask() lookup which would create a duplicate auto-task
@@ -1163,6 +1169,15 @@ async function _maybeRecordCost(
           llmUsage.inputTokens,
           llmUsage.outputTokens,
         );
+        // The clone().json() above drained the counting stream, so by now
+        // _finaliseHttpCall has stamped the response body bytes on ctx.
+        // Attach the complete byte picture: this llm_call REPLACES the
+        // standalone network event for the call (≤1 event per HTTP call),
+        // so it must carry the byte details the network event would have.
+        const responseBytesKnown =
+          ctx !== undefined && ctx.responseBodyBytes !== undefined
+            ? { response_bytes: ctx.responseHeaderBytes + ctx.responseBodyBytes }
+            : {};
         const event = createCostEvent({
           eventId: randomUUID(),
           taskId: task.taskId,
@@ -1174,7 +1189,12 @@ async function _maybeRecordCost(
           model: llmUsage.model,
           inputTokens: llmUsage.inputTokens,
           outputTokens: llmUsage.outputTokens,
-          details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
+          details: {
+            url: urlStr,
+            source: "http_llm_fallback",
+            ...byteDetailsRequestOnly,
+            ...responseBytesKnown,
+          },
         });
 
         _pushRecordedEvent(event);

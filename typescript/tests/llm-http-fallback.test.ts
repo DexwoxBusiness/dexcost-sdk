@@ -91,6 +91,10 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(task.totalOutputTokens).toBe(340);
     // The call must NOT degrade to a network event.
     expect(buffer.getAllEvents().filter((e) => e.eventType === "network")).toHaveLength(0);
+    // The llm_call replaces the network event for this call, so it must
+    // carry the full byte picture (request AND response side).
+    expect(typeof llmEvents[0].details?.request_bytes).toBe("number");
+    expect(llmEvents[0].details?.response_bytes as number).toBeGreaterThan(0);
   });
 
   it("captures @ai-sdk/anthropic style path (baseURL + /messages, no /v1)", async () => {
