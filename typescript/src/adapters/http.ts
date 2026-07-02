@@ -177,17 +177,66 @@ const _LLM_ENDPOINTS = [
 ];
 
 /**
- * Check if a parsed URL is a known LLM chat/completions endpoint.
- * Returns the response format if matched, null otherwise.
+ * Derive the LLM response format from the URL path shape alone, matching the
+ * canonical route ANYWHERE in the pathname — not just as a prefix.
+ *
+ * "OpenAI-compatible" and "Anthropic-compatible" vendors, gateways, and
+ * proxies mount the canonical routes under arbitrary base-path prefixes:
+ * Kimi/Moonshot serve the Anthropic Messages API at
+ * `https://api.kimi.com/anthropic` (request path `/anthropic/v1/messages` from
+ * the official SDK, `/anthropic/messages` from `@ai-sdk/anthropic`), DeepSeek
+ * at `/anthropic/v1/messages`, OpenRouter at `/api/v1/chat/completions`,
+ * LiteLLM-style gateways under `/<deployment>/v1/...`. A prefix match on
+ * "/v1/messages" misses all of them, and the call then degrades to a generic
+ * `network` event (or is dropped below the byte threshold) — losing the
+ * llm_call entirely.
  */
-function _detectLlmEndpoint(parsedUrl: URL): "openai" | "anthropic" | null {
-  const format = _LLM_DOMAINS[parsedUrl.hostname];
-  if (!format) return null;
-  const pathname = parsedUrl.pathname;
-  for (const ep of _LLM_ENDPOINTS) {
-    if (pathname.startsWith(ep)) return format;
+function _formatFromPath(pathname: string): "openai" | "anthropic" | null {
+  if (/\/messages(\/|$)/.test(pathname)) return "anthropic";
+  if (/\/chat\/completions(\/|$)/.test(pathname)) return "openai";
+  if (/\/completions(\/|$)/.test(pathname)) return "openai";
+  // Google Gemini REST shape (models/<id>:generateContent)
+  if (pathname.includes(":generateContent") || pathname.includes(":streamGenerateContent")) {
+    return "openai";
   }
   return null;
+}
+
+/**
+ * Check if a parsed URL is an LLM chat/completions endpoint.
+ * Returns the response format if matched, null otherwise.
+ *
+ * Detection is two-tier:
+ * 1. Known LLM hosts (`_LLM_DOMAINS`): match the canonical path shape
+ *    anywhere in the pathname, or the legacy endpoint-prefix list. The path
+ *    shape decides the format when unambiguous (a host can serve BOTH an
+ *    OpenAI-compatible `/chat/completions` and an Anthropic-compatible
+ *    `/anthropic/v1/messages`), falling back to the domain default.
+ * 2. Unknown hosts (BYOK "…-compatible" vendors, gateways, self-hosted
+ *    proxies): the canonical path shape alone is enough to *attempt* LLM
+ *    extraction. Usage extraction is the correctness gate — the call only
+ *    becomes an `llm_call` if the response actually carries token usage in
+ *    the detected format; otherwise it falls through to normal network
+ *    accounting.
+ *
+ * LLM inference calls are always POST; other methods never match (avoids
+ * false positives on e.g. `GET /api/messages` chat-history routes).
+ */
+function _detectLlmEndpoint(parsedUrl: URL, method?: string): "openai" | "anthropic" | null {
+  if (method !== undefined && method.toUpperCase() !== "POST") return null;
+  const pathname = parsedUrl.pathname;
+  const pathFormat = _formatFromPath(pathname);
+  const domainFormat = _LLM_DOMAINS[parsedUrl.hostname];
+
+  if (domainFormat) {
+    if (pathFormat) return pathFormat;
+    for (const ep of _LLM_ENDPOINTS) {
+      if (pathname.startsWith(ep)) return domainFormat;
+    }
+    return null;
+  }
+
+  return pathFormat;
 }
 
 /**
@@ -204,22 +253,21 @@ function _extractLlmUsage(
   const usage = b.usage;
   if (!usage || typeof usage !== "object") return null;
 
-  if (format === "openai") {
-    return {
-      model,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      inputTokens: (usage as any).prompt_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      outputTokens: (usage as any).completion_tokens ?? 0,
-    };
-  }
-  // Anthropic format
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const u = usage as Record<string, any>;
+  const inKey = format === "openai" ? "prompt_tokens" : "input_tokens";
+  const outKey = format === "openai" ? "completion_tokens" : "output_tokens";
+
+  // Require at least one numeric token field in the expected format. Path-
+  // shape detection now matches unknown hosts too, so a response that merely
+  // happens to carry a differently-shaped `usage` object must not produce a
+  // phantom $0 llm_call.
+  if (typeof u[inKey] !== "number" && typeof u[outKey] !== "number") return null;
+
   return {
     model,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    inputTokens: (usage as any).input_tokens ?? 0,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    outputTokens: (usage as any).output_tokens ?? 0,
+    inputTokens: typeof u[inKey] === "number" ? u[inKey] : 0,
+    outputTokens: typeof u[outKey] === "number" ? u[outKey] : 0,
   };
 }
 
@@ -404,7 +452,7 @@ export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
     if (!suppressed && _pricing) {
       try {
         const parsedForLlm = new URL(urlStr);
-        const detectedFormat = _detectLlmEndpoint(parsedForLlm);
+        const detectedFormat = _detectLlmEndpoint(parsedForLlm, method);
         if (detectedFormat) {
           const ct = response.headers.get("content-type") ?? "";
           if (ct.includes("text/event-stream") || ct.includes("text/plain")) {
@@ -1106,7 +1154,7 @@ async function _maybeRecordCost(
   // detect known LLM API endpoints and emit llm_call events using the
   // pricing engine for proper token-based cost attribution.
   if (!ctx?.suppressed && response && _pricing) {
-    const llmFormat = _detectLlmEndpoint(parsedUrl);
+    const llmFormat = _detectLlmEndpoint(parsedUrl, ctx?.method);
     if (llmFormat) {
       const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
       if (llmUsage) {
