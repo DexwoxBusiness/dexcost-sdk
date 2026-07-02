@@ -11,6 +11,12 @@ import { randomUUID } from "node:crypto";
 import { createTask } from "./models.js";
 import type { Task } from "./models.js";
 import { getCurrentTask, getContext } from "./context.js";
+import {
+  NetworkAccountant,
+  registerAccountant,
+} from "../adapters/network-accountant.js";
+import { finalizeTaskNetwork } from "./network-finalize.js";
+import type { EventBuffer } from "../transport/buffer.js";
 
 /** Return true if there is no active explicit task. */
 export function needsAutoTask(): boolean {
@@ -41,5 +47,42 @@ export function createAutoTask(taskType: string): Task {
     projectId: ctx?.projectId,
     metadata: ctx?.metadata ? { ...ctx.metadata } : {},
   });
+  // Register a NetworkAccountant so the patched fetch attributes the
+  // call's bytes to this task (same as TrackedTask does for explicit
+  // tasks). Drained + priced by finalizeAutoTask — every creator of an
+  // auto-task MUST finalize it through that helper or the accountant
+  // registry entry leaks.
+  registerAccountant(task.taskId, new NetworkAccountant());
   return task;
+}
+
+/**
+ * Finalize an auto-task: set terminal status, drain its NetworkAccountant
+ * into byte aggregates + egress dollars, and persist.
+ *
+ * Counterpart of Python's `finalize_auto_task`, extended with the network
+ * finalize step so auto-tasks get the same egress pricing as explicit
+ * `tracker.track()` tasks (whose TrackedTask.end() runs the same shared
+ * path).
+ *
+ * Idempotent enough for the instrument call sites: the accountant drain
+ * unregisters on first call, and later calls only re-stamp status.
+ */
+export function finalizeAutoTask(
+  task: Task,
+  status: "success" | "failed",
+  buffer?: EventBuffer | null,
+): void {
+  task.status = status;
+  task.endedAt = new Date();
+  if (status === "failed") {
+    task.failureCount += 1;
+  }
+  try {
+    finalizeTaskNetwork(task, buffer ?? undefined);
+  } catch {
+    // Tier-5 fail-silent: a pricing/catalog bug must never break user
+    // code paths that finalize auto-tasks (instrument hot paths).
+  }
+  buffer?.upsertTask(task);
 }

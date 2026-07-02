@@ -70,6 +70,12 @@ interface TaskRow {
   parent_task_id: string | null;
   experiment_id: string | null;
   variant: string | null;
+  network_bytes_in: number | null;
+  network_bytes_out: number | null;
+  network_call_count: number | null;
+  network_by_host: string | null;
+  network_cost_usd: string | null;
+  gpu_cost_usd: string | null;
   sync_status: string;
 }
 
@@ -159,20 +165,27 @@ function rowToTask(row: TaskRow): Task {
     parentTaskId: row.parent_task_id ?? undefined,
     experimentId: row.experiment_id ?? undefined,
     variant: row.variant ?? undefined,
-    // Network capture fields default to zero / empty for rows that
-    // pre-date the v1 migration. Phase D wires the SQLite columns +
-    // serialisation/deserialisation; for now legacy rows read back as
-    // fresh, matching Python's from_dict defaults.
-    networkBytesIn: 0,
-    networkBytesOut: 0,
-    networkCallCount: 0,
-    networkByHost: { hosts: [] },
-    networkCostUsd: new Decimal(0),
-    // Same legacy-row default as the other network/GPU fields: rows
-    // pre-dating the GPU columns read back as fresh zero. Matches
-    // Python's from_dict default and aligns with the post-Sprint-2
-    // 5-subsystem `Task` type.
-    gpuCostUsd: new Decimal(0),
+    // Network + GPU capture fields. Persisted since the network-columns
+    // migration below; legacy rows (columns backfilled as NULL) read back
+    // as fresh zero, matching Python's from_dict defaults. Pre-fix these
+    // were never persisted at all, so every task read back from SQLite —
+    // including the pusher's outbound payloads — carried
+    // network_cost_usd = 0 and zero byte aggregates even when egress had
+    // been computed at finalize.
+    networkBytesIn: row.network_bytes_in ?? 0,
+    networkBytesOut: row.network_bytes_out ?? 0,
+    networkCallCount: row.network_call_count ?? 0,
+    networkByHost: (() => {
+      try {
+        return row.network_by_host != null
+          ? (JSON.parse(row.network_by_host) as Record<string, unknown>)
+          : { hosts: [] };
+      } catch {
+        return { hosts: [] };
+      }
+    })(),
+    networkCostUsd: _rowDecimal(row.network_cost_usd),
+    gpuCostUsd: _rowDecimal(row.gpu_cost_usd),
     schemaVersion: "1",
   };
 }
@@ -204,6 +217,12 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_task_id      TEXT,
     experiment_id       TEXT,
     variant             TEXT,
+    network_bytes_in    INTEGER DEFAULT 0,
+    network_bytes_out   INTEGER DEFAULT 0,
+    network_call_count  INTEGER DEFAULT 0,
+    network_by_host     TEXT,
+    network_cost_usd    TEXT DEFAULT '0',
+    gpu_cost_usd        TEXT DEFAULT '0',
     sync_status         TEXT NOT NULL DEFAULT 'pending'
 )`;
 
@@ -533,6 +552,14 @@ export class EventBuffer {
       // so add it explicitly; ignore the "duplicate column" error when the
       // column already exists.
       this._migrateAddColumn("tasks", "sync_status", "TEXT NOT NULL DEFAULT 'pending'");
+      // Network + GPU task dimensions (previously computed in memory but
+      // never persisted — read-back and pushed payloads showed $0).
+      this._migrateAddColumn("tasks", "network_bytes_in", "INTEGER DEFAULT 0");
+      this._migrateAddColumn("tasks", "network_bytes_out", "INTEGER DEFAULT 0");
+      this._migrateAddColumn("tasks", "network_call_count", "INTEGER DEFAULT 0");
+      this._migrateAddColumn("tasks", "network_by_host", "TEXT");
+      this._migrateAddColumn("tasks", "network_cost_usd", "TEXT DEFAULT '0'");
+      this._migrateAddColumn("tasks", "gpu_cost_usd", "TEXT DEFAULT '0'");
       for (const idx of INDEXES) {
         this._db.exec(idx);
       }
@@ -641,6 +668,8 @@ export class EventBuffer {
             total_input_tokens, total_output_tokens, total_cached_tokens,
             retry_count, retry_cost_usd, failure_count,
             customer_id, project_id, parent_task_id, experiment_id, variant,
+            network_bytes_in, network_bytes_out, network_call_count,
+            network_by_host, network_cost_usd, gpu_cost_usd,
             sync_status
           ) VALUES (
             ?, ?, ?, ?, ?, ?,
@@ -648,6 +677,8 @@ export class EventBuffer {
             ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
             'pending'
           )`
         )
@@ -672,7 +703,13 @@ export class EventBuffer {
           task.projectId ?? null,
           task.parentTaskId ?? null,
           task.experimentId ?? null,
-          task.variant ?? null
+          task.variant ?? null,
+          task.networkBytesIn,
+          task.networkBytesOut,
+          task.networkCallCount,
+          JSON.stringify(task.networkByHost ?? { hosts: [] }),
+          task.networkCostUsd.toString(),
+          task.gpuCostUsd.toString()
         );
     } catch {
       // SQLite error (disk full, locked) — skip this upsert, don't crash

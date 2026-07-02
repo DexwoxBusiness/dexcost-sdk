@@ -28,7 +28,7 @@ import {
   type CostConfidence,
   type Task,
 } from "../core/models.js";
-import { createAutoTask } from "../core/auto-task.js";
+import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import { SessionManager } from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
@@ -704,10 +704,10 @@ export function clearRecordedEvents(): void {
  * Order: active task → session task → freshly-created auto-task. An
  * auto-task is always returned, so HTTP costs are never silently lost.
  */
-function _resolveHttpTask(): Task {
+function _resolveHttpTask(): { task: Task; autoCreated: boolean } {
   const current = getCurrentTask();
   if (current !== undefined) {
-    return current;
+    return { task: current, autoCreated: false };
   }
 
   if (_sessionManager && _buffer) {
@@ -715,16 +715,22 @@ function _resolveHttpTask(): Task {
       getCurrentTask(),
     );
     if (sessionTask !== undefined) {
-      return sessionTask;
+      // Session tasks are owned + finalized by the SessionManager (idle
+      // sweep / shutdown), not by the adapter.
+      return { task: sessionTask, autoCreated: false };
     }
   }
 
-  // No task and no session — create an auto-task (mirrors Python).
+  // No task and no session — create an auto-task (mirrors Python). The
+  // adapter OWNS this task's lifecycle: pre-fix it was never finalized and
+  // stayed "pending" forever (and, since createAutoTask now registers a
+  // NetworkAccountant, would also leak the registry entry). Callers
+  // finalize it via finalizeAutoTask once the call completes.
   const autoTask = createAutoTask("http_call");
   if (_buffer) {
     _buffer.upsertTask(autoTask);
   }
-  return autoTask;
+  return { task: autoTask, autoCreated: true };
 }
 
 /**
@@ -814,6 +820,10 @@ interface _HttpCallContext {
    *  Avoids a second getCurrentTask() lookup which would either create a
    *  duplicate auto-task or (before the auto-task leak fix) find a stale one. */
   resolvedTask?: Task;
+  /** True when resolvedTask is an adapter-created auto-task whose lifecycle
+   *  the adapter owns — _finaliseHttpCall finalizes it (status + network
+   *  drain) once the response body has drained. */
+  resolvedTaskAutoCreated?: boolean;
   /** Placeholder event stored here so _finaliseHttpCall can find it without
    *  a fragile O(n) backward scan of _recordedEvents that is vulnerable to
    *  FIFO eviction under high concurrency. */
@@ -992,7 +1002,18 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   // Reuse the task resolved in _maybeRecordCost — avoids a second
   // getCurrentTask() lookup which would create a duplicate auto-task
   // now that createAutoTask no longer pollutes AsyncLocalStorage.
-  const task = ctx.resolvedTask ?? _resolveHttpTask();
+  let task = ctx.resolvedTask;
+  let taskAutoCreated = ctx.resolvedTaskAutoCreated === true;
+  if (!task) {
+    // Zero-body responses finalise BEFORE _maybeRecordCost runs — resolve
+    // here and stamp the ctx so _maybeRecordCost reuses the same task
+    // instead of resolving a second one.
+    const resolved = _resolveHttpTask();
+    task = resolved.task;
+    taskAutoCreated = resolved.autoCreated;
+    ctx.resolvedTask = task;
+    ctx.resolvedTaskAutoCreated = taskAutoCreated;
+  }
   const accountant: NetworkAccountant | undefined = getAccountant(task.taskId);
   if (accountant) {
     accountant.record(ctx.hostname, responseBytes, ctx.requestBytes, ctx.isInternal);
@@ -1053,7 +1074,10 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   // _maybeRecordCost decides which path was taken — for catalog /
   // domain-rate calls it sets a "matched" flag we check here. Stored on
   // the ctx so a single-call closure threads it.
-  if (ctx._matchedCatalog || ctx.suppressed) return;
+  if (ctx._matchedCatalog || ctx.suppressed) {
+    _finaliseAdapterAutoTask(task, taskAutoCreated);
+    return;
+  }
 
   const combined = ctx.requestBytes + responseBytes;
   // Use the placeholder event stored directly on ctx (set in
@@ -1061,7 +1085,10 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   // _recordedEvents which was fragile under FIFO eviction when
   // concurrent calls exceeded _RECORDED_EVENTS_CAP.
   const ev = ctx.placeholderEvent;
-  if (!ev) return;
+  if (!ev) {
+    _finaliseAdapterAutoTask(task, taskAutoCreated);
+    return;
+  }
 
   if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
     ev.eventType = "network";
@@ -1092,6 +1119,23 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
       _recordedEvents.splice(idx, 1);
     }
   }
+
+  _finaliseAdapterAutoTask(task, taskAutoCreated);
+}
+
+/**
+ * Finalize an adapter-owned auto-task once its (single) HTTP call has
+ * fully drained. Session and explicit tasks are owned elsewhere
+ * (SessionManager sweep / TrackedTask.end) and pass autoCreated=false.
+ * Pre-fix these tasks were never finalized and stayed "pending" forever.
+ */
+function _finaliseAdapterAutoTask(task: Task, autoCreated: boolean): void {
+  if (!autoCreated) return;
+  try {
+    finalizeAutoTask(task, "success", _buffer ?? undefined);
+  } catch {
+    // never crash user code
+  }
 }
 
 // _HttpCallContext is augmented inside _maybeRecordCost with _matchedCatalog
@@ -1120,176 +1164,195 @@ async function _maybeRecordCost(
   // when none is active so HTTP costs are never silently lost (mirrors
   // the Python adapter's session auto-creation). Store on ctx so
   // _finaliseHttpCall reuses the same task without a second lookup.
-  const task = _resolveHttpTask();
-  if (ctx) ctx.resolvedTask = task;
+  // Reuse a task already resolved by _finaliseHttpCall (zero-body
+  // responses finalise first); otherwise resolve and stamp the ctx.
+  const resolved: { task: Task; autoCreated: boolean } = ctx?.resolvedTask
+    ? { task: ctx.resolvedTask, autoCreated: ctx.resolvedTaskAutoCreated === true }
+    : _resolveHttpTask();
+  const task = resolved.task;
+  if (ctx) {
+    ctx.resolvedTask = task;
+    ctx.resolvedTaskAutoCreated = resolved.autoCreated;
+  }
 
-  // v1 §4.3 byte_details — stamped into every event below. Response_bytes
-  // are deferred to the TransformStream finalisation; for now only the
-  // request side is known on catalog/domain-rate events.
-  const byteDetailsRequestOnly: Record<string, unknown> = ctx
-    ? {
-        protocol: ctx.protocol,
-        request_bytes: ctx.requestBytes,
-        is_internal_traffic: _isInternalToValue(ctx.isInternal),
+  // Node-level http/https calls (no ctx) have no byte-counting stream and
+  // therefore no _finaliseHttpCall hook. When the adapter created the
+  // auto-task for such a call, finalize it here once recording is done —
+  // pre-fix it leaked as "pending" forever.
+  try {
+
+    // v1 §4.3 byte_details — stamped into every event below. Response_bytes
+    // are deferred to the TransformStream finalisation; for now only the
+    // request side is known on catalog/domain-rate events.
+    const byteDetailsRequestOnly: Record<string, unknown> = ctx
+      ? {
+          protocol: ctx.protocol,
+          request_bytes: ctx.requestBytes,
+          is_internal_traffic: _isInternalToValue(ctx.isInternal),
+        }
+      : {};
+
+    // 1. Check user-registered domain rate first (highest precedence)
+    const rate = _domainRates.get(domain);
+    if (rate !== undefined) {
+      const event = createCostEvent({
+        eventId: randomUUID(),
+        taskId: task.taskId,
+        eventType: "external_cost",
+        costUsd: rate.costUsd,
+        costConfidence: "exact",
+        pricingSource: "rate_registry",
+        serviceName: domain,
+        details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
+      });
+
+      _pushRecordedEvent(event);
+      if (_buffer) {
+        _buffer.addEvent(event);
       }
-    : {};
+      if (ctx) ctx._matchedCatalog = true;
+      return;
+    }
 
-  // 1. Check user-registered domain rate first (highest precedence)
-  const rate = _domainRates.get(domain);
-  if (rate !== undefined) {
+    // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
+    // detect known LLM API endpoints and emit llm_call events using the
+    // pricing engine for proper token-based cost attribution.
+    if (!ctx?.suppressed && response && _pricing) {
+      const llmFormat = _detectLlmEndpoint(parsedUrl, ctx?.method);
+      if (llmFormat) {
+        const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
+        if (llmUsage) {
+          const costResult: CostResult = _pricing.getCost(
+            llmUsage.model,
+            llmUsage.inputTokens,
+            llmUsage.outputTokens,
+          );
+          // The clone().json() above drained the counting stream, so by now
+          // _finaliseHttpCall has stamped the response body bytes on ctx.
+          // Attach the complete byte picture: this llm_call REPLACES the
+          // standalone network event for the call (≤1 event per HTTP call),
+          // so it must carry the byte details the network event would have.
+          const responseBytesKnown =
+            ctx !== undefined && ctx.responseBodyBytes !== undefined
+              ? { response_bytes: ctx.responseHeaderBytes + ctx.responseBodyBytes }
+              : {};
+          const event = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "llm_call",
+            costUsd: costResult.costUsd,
+            costConfidence: costResult.costConfidence,
+            pricingSource: costResult.pricingSource,
+            provider: domain,
+            model: llmUsage.model,
+            inputTokens: llmUsage.inputTokens,
+            outputTokens: llmUsage.outputTokens,
+            details: {
+              url: urlStr,
+              source: "http_llm_fallback",
+              ...byteDetailsRequestOnly,
+              ...responseBytesKnown,
+            },
+          });
+
+          _pushRecordedEvent(event);
+          if (_buffer) {
+            _buffer.addEvent(event);
+          }
+          // Update task aggregates
+          task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+          task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+          task.totalInputTokens += llmUsage.inputTokens;
+          task.totalOutputTokens += llmUsage.outputTokens;
+          if (_buffer) {
+            _buffer.upsertTask(task);
+          }
+          if (ctx) ctx._matchedCatalog = true;
+          return;
+        }
+      }
+    }
+
+    // 2. Check service catalog
+    if (_catalog) {
+      const entry = _catalog.lookup(urlStr);
+      if (entry) {
+        // Extract cost from response
+        let extractionResult: CostExtractionResult | null = null;
+
+        if (!response) {
+          // No response body available (Node-level request) — extract
+          // from the catalog entry alone.
+          try {
+            extractionResult = _catalog.extractCost(entry, new Headers(), null);
+          } catch {
+            // Give up on extraction
+          }
+        } else {
+          extractionResult = await _extractFromResponse(_catalog, entry, response);
+        }
+
+        if (extractionResult) {
+          const event = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "external_cost",
+            costUsd: extractionResult.costUsd,
+            costConfidence: extractionResult.confidence as CostConfidence,
+            pricingSource: "rate_registry",
+            serviceName: extractionResult.serviceName,
+            details: {
+              url: urlStr,
+              pricingSource: extractionResult.pricingSource,
+              catalogService: entry.display_name,
+              ...byteDetailsRequestOnly,
+            },
+          });
+
+          _pushRecordedEvent(event);
+          if (_buffer) {
+            _buffer.addEvent(event);
+          }
+          if (ctx) ctx._matchedCatalog = true;
+          return;
+        }
+      }
+    }
+
+    // 3. Un-cataloged — emit a placeholder external_cost-zero event that
+    // _finaliseHttpCall will RE-TYPE to a `network` event with
+    // cost_pending=true once the response body has been fully drained
+    // (and byte counts are known). If combined bytes stay below
+    // threshold and there's no error, the placeholderis silently
+    // dropped — no phantom event reaches the durable buffer.
+    // node-level http (no ctx) OR a suppressed LLM-host call: no placeholder.
+    // Suppressed calls MUST be skipped here — _finaliseHttpCall returns early
+    // for suppressed calls (before the drop path), so a placeholder created
+    // here would never be dropped and would leak as a phantom $0 event.
+    if (!ctx || ctx.suppressed) return;
+
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: task.taskId,
       eventType: "external_cost",
-      costUsd: rate.costUsd,
-      costConfidence: "exact",
-      pricingSource: "rate_registry",
+      costUsd: 0,
+      costConfidence: "unknown",
+      pricingSource: "unknown",
       serviceName: domain,
-      details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
+      details: { url: urlStr, ...byteDetailsRequestOnly },
     });
 
     _pushRecordedEvent(event);
-    if (_buffer) {
-      _buffer.addEvent(event);
-    }
-    if (ctx) ctx._matchedCatalog = true;
-    return;
-  }
-
-  // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
-  // detect known LLM API endpoints and emit llm_call events using the
-  // pricing engine for proper token-based cost attribution.
-  if (!ctx?.suppressed && response && _pricing) {
-    const llmFormat = _detectLlmEndpoint(parsedUrl, ctx?.method);
-    if (llmFormat) {
-      const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
-      if (llmUsage) {
-        const costResult: CostResult = _pricing.getCost(
-          llmUsage.model,
-          llmUsage.inputTokens,
-          llmUsage.outputTokens,
-        );
-        // The clone().json() above drained the counting stream, so by now
-        // _finaliseHttpCall has stamped the response body bytes on ctx.
-        // Attach the complete byte picture: this llm_call REPLACES the
-        // standalone network event for the call (≤1 event per HTTP call),
-        // so it must carry the byte details the network event would have.
-        const responseBytesKnown =
-          ctx !== undefined && ctx.responseBodyBytes !== undefined
-            ? { response_bytes: ctx.responseHeaderBytes + ctx.responseBodyBytes }
-            : {};
-        const event = createCostEvent({
-          eventId: randomUUID(),
-          taskId: task.taskId,
-          eventType: "llm_call",
-          costUsd: costResult.costUsd,
-          costConfidence: costResult.costConfidence,
-          pricingSource: costResult.pricingSource,
-          provider: domain,
-          model: llmUsage.model,
-          inputTokens: llmUsage.inputTokens,
-          outputTokens: llmUsage.outputTokens,
-          details: {
-            url: urlStr,
-            source: "http_llm_fallback",
-            ...byteDetailsRequestOnly,
-            ...responseBytesKnown,
-          },
-        });
-
-        _pushRecordedEvent(event);
-        if (_buffer) {
-          _buffer.addEvent(event);
-        }
-        // Update task aggregates
-        task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-        task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-        task.totalInputTokens += llmUsage.inputTokens;
-        task.totalOutputTokens += llmUsage.outputTokens;
-        if (_buffer) {
-          _buffer.upsertTask(task);
-        }
-        if (ctx) ctx._matchedCatalog = true;
-        return;
-      }
+    // NOTE: intentionally NOT persisting to _buffer here. The event is
+    // held in-memory only. _finaliseHttpCall promotes it to a `network`
+    // event with cost_pending=true (and persists it) IF the combined
+    // bytes exceed the threshold. If they don't, the placeholder is
+    // silently dropped from _recordedEvents — no phantom $0 event ever
+    // reaches the push/ingest pipeline.
+    ctx.placeholderEvent = event;
+  } finally {
+    if (!ctx && resolved.autoCreated) {
+      finalizeAutoTask(task, "success", _buffer ?? undefined);
     }
   }
-
-  // 2. Check service catalog
-  if (_catalog) {
-    const entry = _catalog.lookup(urlStr);
-    if (entry) {
-      // Extract cost from response
-      let extractionResult: CostExtractionResult | null = null;
-
-      if (!response) {
-        // No response body available (Node-level request) — extract
-        // from the catalog entry alone.
-        try {
-          extractionResult = _catalog.extractCost(entry, new Headers(), null);
-        } catch {
-          // Give up on extraction
-        }
-      } else {
-        extractionResult = await _extractFromResponse(_catalog, entry, response);
-      }
-
-      if (extractionResult) {
-        const event = createCostEvent({
-          eventId: randomUUID(),
-          taskId: task.taskId,
-          eventType: "external_cost",
-          costUsd: extractionResult.costUsd,
-          costConfidence: extractionResult.confidence as CostConfidence,
-          pricingSource: "rate_registry",
-          serviceName: extractionResult.serviceName,
-          details: {
-            url: urlStr,
-            pricingSource: extractionResult.pricingSource,
-            catalogService: entry.display_name,
-            ...byteDetailsRequestOnly,
-          },
-        });
-
-        _pushRecordedEvent(event);
-        if (_buffer) {
-          _buffer.addEvent(event);
-        }
-        if (ctx) ctx._matchedCatalog = true;
-        return;
-      }
-    }
-  }
-
-  // 3. Un-cataloged — emit a placeholder external_cost-zero event that
-  // _finaliseHttpCall will RE-TYPE to a `network` event with
-  // cost_pending=true once the response body has been fully drained
-  // (and byte counts are known). If combined bytes stay below
-  // threshold and there's no error, the placeholderis silently
-  // dropped — no phantom event reaches the durable buffer.
-  // node-level http (no ctx) OR a suppressed LLM-host call: no placeholder.
-  // Suppressed calls MUST be skipped here — _finaliseHttpCall returns early
-  // for suppressed calls (before the drop path), so a placeholder created
-  // here would never be dropped and would leak as a phantom $0 event.
-  if (!ctx || ctx.suppressed) return;
-
-  const event = createCostEvent({
-    eventId: randomUUID(),
-    taskId: task.taskId,
-    eventType: "external_cost",
-    costUsd: 0,
-    costConfidence: "unknown",
-    pricingSource: "unknown",
-    serviceName: domain,
-    details: { url: urlStr, ...byteDetailsRequestOnly },
-  });
-
-  _pushRecordedEvent(event);
-  // NOTE: intentionally NOT persisting to _buffer here. The event is
-  // held in-memory only. _finaliseHttpCall promotes it to a `network`
-  // event with cost_pending=true (and persists it) IF the combined
-  // bytes exceed the threshold. If they don't, the placeholder is
-  // silently dropped from _recordedEvents — no phantom $0 event ever
-  // reaches the push/ingest pipeline.
-  ctx.placeholderEvent = event;
 }
