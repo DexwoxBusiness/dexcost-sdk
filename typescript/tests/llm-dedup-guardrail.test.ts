@@ -72,12 +72,19 @@ function countRegistrations(source: string, fileName: string): number {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   let count = 0;
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "registerLlmCapture"
-    ) {
-      count += 1;
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      // Accept both bare calls (named import) and qualified calls
+      // (namespace import `dedup.registerLlmCapture(...)`, class method
+      // `this.registerLlmCapture(...)`) so an import-style refactor can't
+      // make real registrations count as zero and fail the guardrail
+      // spuriously.
+      const isBare = ts.isIdentifier(callee) && callee.text === "registerLlmCapture";
+      const isQualified =
+        ts.isPropertyAccessExpression(callee) && callee.name.text === "registerLlmCapture";
+      if (isBare || isQualified) {
+        count += 1;
+      }
     }
     ts.forEachChild(node, visit);
   };
