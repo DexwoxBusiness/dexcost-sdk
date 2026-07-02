@@ -59,6 +59,7 @@ import {
   untrackHttp as _adapterUntrackHttp,
   getServiceCatalog as _adapterGetServiceCatalog,
   getSessionManager as _adapterGetSessionManager,
+  registerInternalHost as _adapterRegisterInternalHost,
 } from "../adapters/http.js";
 import {
   ALL_SUPPORTED_INSTRUMENTS,
@@ -1041,6 +1042,22 @@ export class CostTracker {
     // default) — never from the process env. Threaded to both consumers below:
     // the pusher (telemetry POST) and the pricing refresher.
     const endpoint = resolveEndpoint(this._options.endpoint);
+
+    // The SDK's own traffic (pusher, pricing refresh, catalog refresh)
+    // must be invisible to capture — register the hosts it talks to
+    // BEFORE HTTP tracking patches fetch.
+    try {
+      _adapterRegisterInternalHost(new URL(endpoint).hostname);
+    } catch {
+      // endpoint already validated by resolveEndpoint; never fatal here
+    }
+    if (this._options.serviceCatalogUrl) {
+      try {
+        _adapterRegisterInternalHost(new URL(this._options.serviceCatalogUrl).hostname);
+      } catch {
+        // invalid catalog URL fails later in refresh; not fatal here
+      }
+    }
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
     debugLog(
