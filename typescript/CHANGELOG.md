@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.11.0...typescript/v0.11.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **typescript:** never capture the SDK's own telemetry traffic ([7495be7](https://github.com/DexwoxBusiness/dexcost-sdk/commit/7495be7a87f174a7aa3c023ea7272cada0f1316a))
+
 ## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.10.0...typescript/v0.11.0) (2026-07-02)
 
 
