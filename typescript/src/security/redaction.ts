@@ -6,6 +6,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 
 /** Default maximum metadata size in bytes (10 KB). */
 const DEFAULT_MAX_BYTES = 10_240;

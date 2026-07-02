@@ -15,6 +15,7 @@ import {
 } from "../adapters/network-accountant.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
 import type { EventBuffer } from "../transport/buffer.js";
+import { debugLog } from "./debug.js";
 
 // ---------------------------------------------------------------------------
 // Session tracking
@@ -80,6 +81,11 @@ export class SessionManager {
     registerAccountant(task.taskId, new NetworkAccountant());
 
     buffer.upsertTask(task);
+
+    debugLog(
+      "session",
+      `session task created: ${task.taskId} type=${taskType} initiatedBy=${callType}`,
+    );
 
     const info: SessionInfo = { task, lastActivityAt: Date.now() };
     this._sessions.set(key, info);
@@ -171,6 +177,7 @@ export class SessionManager {
     if (buffer) {
       buffer.upsertTask(info.task);
     }
+    debugLog("session", `session task finalized: ${info.task.taskId} status=${info.task.status}`);
   }
 
   /**
@@ -221,5 +228,47 @@ export class SessionManager {
   /** Get a session's task by ID (for testing). */
   getSession(taskId: string): Task | undefined {
     return this._byTaskId.get(taskId)?.task;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ambient session bridge — lets the LLM instruments join the same session
+// tasks the HTTP adapter uses, so all un-wrapped activity in one context
+// groups into ONE task instead of scattering across per-call auto-tasks.
+// (Deliberate divergence from the Python SDK, whose instruments always
+// create per-call auto-tasks.)
+// ---------------------------------------------------------------------------
+
+let _ambientManager: SessionManager | null = null;
+let _ambientBuffer: EventBuffer | null = null;
+
+/** Register the active session manager (called by trackHttp). */
+export function setAmbientSessions(manager: SessionManager, buffer: EventBuffer): void {
+  _ambientManager = manager;
+  _ambientBuffer = buffer;
+}
+
+/** Clear the ambient session registration (called by untrackHttp). */
+export function clearAmbientSessions(): void {
+  _ambientManager = null;
+  _ambientBuffer = null;
+}
+
+/**
+ * Get-or-create the ambient session task for the current context, or
+ * undefined when session tracking is not active (no trackHttp(buffer)).
+ *
+ * Callers use this ONLY when no explicit task is bound; the returned
+ * session task is owned and finalized by the SessionManager (idle sweep /
+ * shutdown) — callers must NOT finalize it per call.
+ */
+export function getAmbientSessionTask(callType: string): Task | undefined {
+  if (!_ambientManager || !_ambientBuffer) return undefined;
+  try {
+    return _ambientManager.getOrCreateSession(callType, _ambientBuffer);
+  } catch {
+    // Session resolution must never break an instrument hot path — the
+    // caller falls back to a per-call auto-task.
+    return undefined;
   }
 }

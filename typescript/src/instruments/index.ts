@@ -9,6 +9,7 @@
 
 import type { PricingEngine } from "../pricing/engine.js";
 import type { EventBuffer } from "../transport/buffer.js";
+import { debugLog } from "../core/debug.js";
 
 /** All provider instruments the SDK ships with. */
 export const ALL_SUPPORTED_INSTRUMENTS = ["openai", "anthropic", "vercel-ai", "gemini", "bedrock", "cohere", "mcp"] as const;
@@ -18,20 +19,65 @@ export type InstrumentName = (typeof ALL_SUPPORTED_INSTRUMENTS)[number];
 
 type InstrumentFn = (pricing: PricingEngine, buffer: EventBuffer) => Promise<void>;
 type UninstrumentFn = () => void;
+type ProvideModuleFn = (ref: unknown) => void;
 
-const registry = new Map<string, { instrument: InstrumentFn; uninstrument: UninstrumentFn }>();
+const registry = new Map<
+  string,
+  { instrument: InstrumentFn; uninstrument: UninstrumentFn; provideModule?: ProvideModuleFn }
+>();
 
 /**
  * Register an instrument by name.
  *
  * Called at module load time by each provider instrument (e.g., `openai.ts`).
+ * `provideModule` accepts an explicit module/class reference for bundled
+ * apps where runtime resolution fails (see `instrumentModules`).
  */
 export function registerInstrument(
   name: string,
   instrument: InstrumentFn,
   uninstrument: UninstrumentFn,
+  provideModule?: ProvideModuleFn,
 ): void {
-  registry.set(name, { instrument, uninstrument });
+  registry.set(name, { instrument, uninstrument, provideModule });
+}
+
+/** User-facing aliases for instrument names ("ai" is the npm package name). */
+const INSTRUMENT_ALIASES: Record<string, string> = { ai: "vercel-ai" };
+
+/**
+ * Hand an instrument an explicit module/class reference — the escape hatch
+ * for bundlers (Next.js/webpack/esbuild) that inline provider packages so
+ * runtime `import()` resolution finds a DIFFERENT copy than the one the
+ * app actually calls (Traceloop's `instrumentModules` pattern). Returns
+ * false for unknown names or instruments without module injection.
+ */
+export function provideInstrumentModule(name: string, ref: unknown): boolean {
+  const canonical = INSTRUMENT_ALIASES[name] ?? name;
+  const entry = registry.get(canonical);
+  if (!entry?.provideModule) {
+    console.warn(
+      `[dexcost] instrumentModules: unknown provider '${name}'. ` +
+        `Supported: ${[...registry.keys()].join(", ")} (alias: ai).`,
+    );
+    return false;
+  }
+  try {
+    entry.provideModule(ref);
+    return true;
+  } catch (err) {
+    console.warn(
+      `[dexcost] instrumentModules: failed to accept module for '${name}': ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/** Resolve an alias to the canonical instrument name. */
+export function canonicalInstrumentName(name: string): string {
+  return INSTRUMENT_ALIASES[name] ?? name;
 }
 
 /**
@@ -53,7 +99,10 @@ function isModuleNotInstalled(msg: string): boolean {
     msg.includes("Failed to load url") ||
     msg.includes("not found") ||
     msg.includes("not installed") ||
-    msg.includes("ERR_MODULE_NOT_FOUND")
+    msg.includes("ERR_MODULE_NOT_FOUND") ||
+    // Deno phrases a missing bare specifier as a relative-import error:
+    // "Relative import path \"cohere-ai\" not prefixed with / or ./ or ../"
+    msg.includes("not prefixed with /")
   );
 }
 
@@ -87,10 +136,12 @@ export async function instrumentProvider(
   }
   try {
     await entry.instrument(pricing, buffer);
+    debugLog("instrument", `${name}: activated (module patch in effect)`);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotInstalled(msg)) {
+      debugLog("instrument", `${name}: package not installed — instrument inactive`);
       // Provider package not installed. Expected during default
       // auto-instrumentation — only surface it when the user explicitly
       // asked for this provider, and then with an actionable hint.
@@ -104,6 +155,7 @@ export async function instrumentProvider(
       // The package IS present but patching threw — a real problem worth
       // surfacing regardless of explicit/default.
       console.warn(`[dexcost] Failed to instrument ${name}: ${msg}`);
+      debugLog("instrument", `${name}: activation FAILED — ${msg}`);
     }
     return false;
   }

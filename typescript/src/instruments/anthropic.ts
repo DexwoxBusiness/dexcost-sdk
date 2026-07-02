@@ -12,6 +12,8 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
+import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -74,9 +76,16 @@ export async function instrumentAnthropic(
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
-      task = createAutoTask("anthropic.messages");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("anthropic.messages");
+      if (!task) {
+        task = createAutoTask("anthropic.messages");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const startTime = performance.now();
@@ -198,6 +207,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -271,6 +281,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   details,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, inputTokens, outputTokens);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
                 task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
                 task.totalInputTokens += inputTokens;
@@ -293,6 +304,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);
               }
             } catch {
@@ -341,4 +353,8 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("anthropic", instrumentAnthropic, uninstrumentAnthropic);
+registerInstrument("anthropic", instrumentAnthropic, uninstrumentAnthropic, (ref: any) => {
+  // Accept the Anthropic class, the module namespace, or Messages directly.
+  const mod = ref?.default ?? ref;
+  _setMessagesClass(mod?.Messages ?? mod);
+});

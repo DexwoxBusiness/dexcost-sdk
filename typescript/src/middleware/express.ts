@@ -7,6 +7,7 @@
 
 import type { CostTracker } from "../core/tracker.js";
 import { scrubUrl } from "../security/redaction.js";
+import { getNestedValue, resolveMiddlewareTracker } from "./shared.js";
 
 /** Options for configuring the Express middleware. */
 export interface ExpressMiddlewareOptions {
@@ -36,21 +37,6 @@ export interface ExpressMiddlewareOptions {
 }
 
 /**
- * Resolve a dot-separated path on an object.
- *
- * @example getNestedValue({ user: { orgId: "acme" } }, "user.orgId") // "acme"
- */
-function getNestedValue(obj: unknown, path: string): string | undefined {
-  const parts = path.split(".");
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return typeof current === "string" ? current : undefined;
-}
-
-/**
  * Create an Express/Connect middleware that wraps each request in a
  * dexcost tracked task.
  *
@@ -58,30 +44,55 @@ function getNestedValue(obj: unknown, path: string): string | undefined {
  * so that downstream route handlers can call `req.dexcostTask.recordLlmCall()`
  * and similar methods.
  *
+ * The tracker argument is optional — it defaults to the singleton created
+ * by `init()`, resolved lazily per request so the middleware can be mounted
+ * before `init()` runs.
+ *
  * @example
  * ```typescript
  * import express from "express";
- * import { CostTracker } from "dexcost";
- * import { createExpressMiddleware } from "dexcost/middleware/express";
+ * import { init, createExpressMiddleware } from "@dexcost/sdk";
  *
+ * init({ apiKey: process.env.DEXCOST_API_KEY });
  * const app = express();
- * const tracker = new CostTracker();
  *
- * app.use(createExpressMiddleware(tracker, {
+ * app.use(createExpressMiddleware({
  *   customerIdFrom: "user.orgId",
  *   skip: (req) => req.path === "/health",
  * }));
  * ```
  */
 export function createExpressMiddleware(
+  options?: ExpressMiddlewareOptions,
+): (req: unknown, res: unknown, next: () => void) => void;
+export function createExpressMiddleware(
   tracker: CostTracker,
-  options: ExpressMiddlewareOptions = {},
+  options?: ExpressMiddlewareOptions,
+): (req: unknown, res: unknown, next: () => void) => void;
+export function createExpressMiddleware(
+  trackerOrOptions?: CostTracker | ExpressMiddlewareOptions,
+  maybeOptions?: ExpressMiddlewareOptions,
 ): (req: unknown, res: unknown, next: () => void) => void {
+  // Overload discrimination: a CostTracker instance has a `track` method;
+  // an options bag never does.
+  const explicitTracker =
+    trackerOrOptions && typeof (trackerOrOptions as CostTracker).track === "function"
+      ? (trackerOrOptions as CostTracker)
+      : undefined;
+  const options: ExpressMiddlewareOptions =
+    (explicitTracker ? maybeOptions : (trackerOrOptions as ExpressMiddlewareOptions)) ?? {};
+
   return (req: unknown, res: unknown, next: () => void): void => {
     const reqObj = req as Record<string, unknown>;
     const resObj = res as Record<string, unknown>;
 
     if (options.skip?.(req)) {
+      next();
+      return;
+    }
+
+    const tracker = resolveMiddlewareTracker("express", explicitTracker);
+    if (!tracker) {
       next();
       return;
     }

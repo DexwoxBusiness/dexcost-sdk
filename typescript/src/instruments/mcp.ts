@@ -10,6 +10,7 @@ import { createCostEvent } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -388,9 +389,16 @@ export async function instrumentMcp(
     let autoCreated = false;
 
     if (!task) {
-      task = createAutoTask("mcp.tool_call");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("mcp.tool_call");
+      if (!task) {
+        task = createAutoTask("mcp.tool_call");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const toolName: string = params?.name ?? "unknown";
@@ -506,4 +514,7 @@ function resolveCost(toolName: string): {
 }
 
 // Self-register so the instrument registry can discover us.
-registerInstrument("mcp", instrumentMcp, uninstrumentMcp);
+registerInstrument("mcp", instrumentMcp, uninstrumentMcp, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setClientClass(mod?.Client ?? mod);
+});

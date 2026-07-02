@@ -37,4 +37,19 @@ describe("package.json dual-format exports", () => {
   it("build script produces the CJS tree", () => {
     expect(pkg.scripts.build).toContain("build-cjs");
   });
+
+  it("exposes documented subpaths with import/require/types conditions", () => {
+    for (const subpath of [
+      "./middleware",
+      "./integrations/ai-sdk",
+      "./integrations/langchain",
+      "./clients",
+    ]) {
+      const entry = pkg.exports?.[subpath];
+      expect(entry, `${subpath} missing from exports map`).toBeDefined();
+      expect(entry.import, `${subpath} import condition`).toMatch(/^\.\/dist\//);
+      expect(entry.require, `${subpath} require condition`).toMatch(/^\.\/dist\/cjs\//);
+      expect(entry.types, `${subpath} types condition`).toMatch(/\.d\.ts$/);
+    }
+  });
 });

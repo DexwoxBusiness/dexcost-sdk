@@ -215,6 +215,102 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
   });
 });
 
+describe("LLM HTTP fallback — Gemini / Vertex format", () => {
+  function geminiJsonResponse(withModelVersion = true): Response {
+    return new Response(
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "hi" }] } }],
+        ...(withModelVersion ? { modelVersion: "gemini-2.5-pro" } : {}),
+        usageMetadata: {
+          promptTokenCount: 900,
+          candidatesTokenCount: 150,
+          thoughtsTokenCount: 50,
+          totalTokenCount: 1100,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  it("captures generativelanguage.googleapis.com generateContent (usageMetadata)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(geminiJsonResponse()));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "review" });
+    await runWithTask(task, async () => {
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+        { method: "POST", body: "{}" },
+      );
+      await res.text();
+    });
+
+    const llmEvents = buffer.getAllEvents().filter((e) => e.eventType === "llm_call");
+    expect(llmEvents).toHaveLength(1);
+    expect(llmEvents[0].model).toBe("gemini-2.5-pro");
+    expect(llmEvents[0].inputTokens).toBe(900);
+    // Thinking tokens billed as output: 150 + 50.
+    expect(llmEvents[0].outputTokens).toBe(200);
+  });
+
+  it("captures Vertex regional hosts by path shape, model from the URL when body omits it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(geminiJsonResponse(false)));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "review" });
+    await runWithTask(task, async () => {
+      const res = await fetch(
+        "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        { method: "POST", body: "{}" },
+      );
+      await res.text();
+    });
+
+    const llmEvents = buffer.getAllEvents().filter((e) => e.eventType === "llm_call");
+    expect(llmEvents).toHaveLength(1);
+    expect(llmEvents[0].provider).toBe("us-central1-aiplatform.googleapis.com");
+    expect(llmEvents[0].model).toBe("gemini-2.5-flash");
+    expect(llmEvents[0].inputTokens).toBe(900);
+  });
+
+  it("captures Gemini SSE streaming (streamGenerateContent?alt=sse)", async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "hel" }] } }],
+        modelVersion: "gemini-2.5-pro",
+        usageMetadata: { promptTokenCount: 900, candidatesTokenCount: 3 },
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "lo" }] } }],
+        modelVersion: "gemini-2.5-pro",
+        usageMetadata: { promptTokenCount: 900, candidatesTokenCount: 150, thoughtsTokenCount: 50 },
+      })}\n\n`,
+    ].join("");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "review" });
+    await runWithTask(task, async () => {
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+        { method: "POST", body: "{}" },
+      );
+      await res.text();
+    });
+
+    const llmEvents = buffer.getAllEvents().filter((e) => e.eventType === "llm_call");
+    expect(llmEvents).toHaveLength(1);
+    expect(llmEvents[0].model).toBe("gemini-2.5-pro");
+    expect(llmEvents[0].inputTokens).toBe(900);
+    expect(llmEvents[0].outputTokens).toBe(200); // last chunk authoritative
+  });
+});
+
 describe("LLM HTTP fallback — false-positive guards", () => {
   it("ignores non-POST requests to message-like paths", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(anthropicJsonResponse()));

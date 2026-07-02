@@ -15,6 +15,8 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
+import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -80,9 +82,16 @@ export async function instrumentGemini(
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
-      task = createAutoTask("gemini.generateContent");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("gemini.generateContent");
+      if (!task) {
+        task = createAutoTask("gemini.generateContent");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const startTime = performance.now();
@@ -118,9 +127,16 @@ export async function instrumentGemini(
     let autoCreated = false;
 
     if (!task) {
-      task = createAutoTask("gemini.generateContentStream");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("gemini.generateContentStream");
+      if (!task) {
+        task = createAutoTask("gemini.generateContentStream");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const startTime = performance.now();
@@ -204,6 +220,7 @@ function recordEvent(response: any, model: string, task: Task, latencyMs: number
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -275,6 +292,7 @@ function wrapStream(
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
                 task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
                 task.totalInputTokens += inputTokens;
@@ -297,6 +315,7 @@ function wrapStream(
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);
               }
             } catch {
@@ -338,4 +357,7 @@ function wrapStream(
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("gemini", instrumentGemini, uninstrumentGemini);
+registerInstrument("gemini", instrumentGemini, uninstrumentGemini, (ref: any) => {
+  const mod = ref?.default ?? ref;
+  _setGenerativeModelClass(mod?.GenerativeModel ?? mod);
+});

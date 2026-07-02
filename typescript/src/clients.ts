@@ -7,7 +7,7 @@
  *
  * Usage:
  *
- *   import { TrackedOpenAI } from "dexcost/clients";
+ *   import { TrackedOpenAI } from "@dexcost/sdk/clients";
  *
  *   const client = new TrackedOpenAI({ tracker });
  *   // Inside a tracked task, events are auto-recorded:
@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "./core/context.js";
 import { createCostEvent, Decimal } from "./core/models.js";
 import { createAutoTask } from "./core/auto-task.js";
+import { registerLlmCapture } from "./core/llm-dedup.js";
 import type { Task, CostConfidence, PricingSource } from "./core/models.js";
 import { PricingEngine } from "./pricing/engine.js";
 import type { EventBuffer } from "./transport/buffer.js";
@@ -307,6 +308,7 @@ function _addEventAndUpdateTask(
   });
 
   buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(spec.costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(spec.costUsd);
@@ -315,4 +317,34 @@ function _addEventAndUpdateTask(
   task.totalCachedTokens += spec.cachedTokens;
 
   buffer.upsertTask(task);
+}
+
+// ---------------------------------------------------------------------------
+// wrap* convention entry points
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap an OpenAI client instance for cost tracking (ecosystem `wrapOpenAI`
+ * convention). Returns a {@link TrackedOpenAI} exposing the chat-completions
+ * surface; for FULL client-surface coverage prefer injecting a tracked
+ * fetch instead: `new OpenAI({ fetch: createDexcostFetch() })`.
+ */
+export function wrapOpenAI(
+  client: unknown,
+  opts?: { tracker?: CostTracker },
+): TrackedOpenAI {
+  return new TrackedOpenAI({ client, tracker: opts?.tracker });
+}
+
+/**
+ * Wrap an Anthropic client instance for cost tracking (ecosystem
+ * `wrapAnthropic` convention). Returns a {@link TrackedAnthropic} exposing
+ * the messages surface; for FULL client-surface coverage prefer injecting
+ * a tracked fetch instead: `new Anthropic({ fetch: createDexcostFetch() })`.
+ */
+export function wrapAnthropic(
+  client: unknown,
+  opts?: { tracker?: CostTracker },
+): TrackedAnthropic {
+  return new TrackedAnthropic({ client, tracker: opts?.tracker });
 }

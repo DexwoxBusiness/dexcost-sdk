@@ -26,6 +26,7 @@ export {
   getTracker,
   globalTrack as track,
   globalFlush as flush,
+  flushBeforeFreeze,
   globalClose as close,
   globalCloseAsync as closeAsync,
   setApiKey,
@@ -107,6 +108,12 @@ export type { InstrumentName } from "./instruments/index.js";
 // Middleware
 export { createExpressMiddleware } from "./middleware/express.js";
 export type { ExpressMiddlewareOptions } from "./middleware/express.js";
+export { dexcostFastifyPlugin } from "./middleware/fastify.js";
+export type { FastifyPluginOptions } from "./middleware/fastify.js";
+export { createHonoMiddleware } from "./middleware/hono.js";
+export type { HonoMiddlewareOptions } from "./middleware/hono.js";
+export { DexcostInterceptor } from "./middleware/nestjs.js";
+export type { NestInterceptorOptions } from "./middleware/nestjs.js";
 
 // Session
 export { SessionManager } from "./core/session.js";
@@ -117,6 +124,7 @@ export type { ServiceEntry, CostExtractionResult } from "./pricing/service-catal
 
 // Adapters
 export {
+  createDexcostFetch,
   registerDomainRate,
   getDomainRates,
   clearDomainRates,
@@ -139,6 +147,10 @@ export type {
   LambdaCostDetails,
 } from "./adapters/index.js";
 
+// Queue-worker wrap — one tracked task per consumed job.
+export { wrapJobHandler } from "./adapters/worker-wrap.js";
+export type { WrapJobHandlerOptions } from "./adapters/worker-wrap.js";
+
 // Compute handler wraps — serverless capture (Phase 1 compute foundation).
 export {
   wrapLambdaHandler,
@@ -157,9 +169,19 @@ export {
 
 // Integrations
 export { DexcostCallbackHandler } from "./integrations/langchain.js";
+export { dexcostAiMiddleware } from "./integrations/ai-sdk.js";
+export { DexcostSpanProcessor } from "./integrations/otel.js";
+export type { DexcostSpanProcessorOptions } from "./integrations/otel.js";
+export type {
+  DexcostAiMiddlewareOptions,
+  DexcostLanguageModelMiddleware,
+} from "./integrations/ai-sdk.js";
+
+// Debug mode
+export { setDebugMode, isDebugMode } from "./core/debug.js";
 
 // Schema Validation
 export { validate } from "./schema/validate.js";
 
 // Client Wrappers
-export { TrackedOpenAI, TrackedAnthropic } from "./clients.js";
+export { TrackedOpenAI, TrackedAnthropic, wrapOpenAI, wrapAnthropic } from "./clients.js";

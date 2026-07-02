@@ -52,10 +52,20 @@ import { resolveConfig } from "./config.js";
 import type { ResolvedConfig } from "./config.js";
 import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
+import { setDebugMode, debugLog } from "./debug.js";
+import { registerLlmCapture } from "./llm-dedup.js";
+import {
+  trackHttp as _adapterTrackHttp,
+  untrackHttp as _adapterUntrackHttp,
+  getServiceCatalog as _adapterGetServiceCatalog,
+  getSessionManager as _adapterGetSessionManager,
+} from "../adapters/http.js";
 import {
   ALL_SUPPORTED_INSTRUMENTS,
   instrumentProvider,
   uninstrumentProvider,
+  provideInstrumentModule,
+  canonicalInstrumentName,
 } from "../instruments/index.js";
 
 // Endpoint resolution lives in ./endpoint.js (single source of truth) so that
@@ -182,6 +192,45 @@ export async function globalFlush(): Promise<void> {
   return getTracker().flush();
 }
 
+/**
+ * Best-effort, bounded flush for freeze-prone environments (Lambda, Cloud
+ * Functions, Vercel, Cloud Run without always-on CPU): serverless runtimes
+ * give NO background CPU after the handler returns, so the pusher's
+ * interval may never fire and buffered events sit undelivered until the
+ * next (possibly never-coming) invocation.
+ *
+ * Never throws and never hangs the handler: resolves after `timeoutMs`
+ * even if the push is still in flight, and is a no-op when the SDK is not
+ * initialized or runs in local mode.
+ *
+ * Next.js route handlers: pair it with `after()` so the flush runs outside
+ * the response's critical path:
+ *
+ *   import { after } from "next/server";
+ *   after(() => flushBeforeFreeze());
+ */
+export async function flushBeforeFreeze(timeoutMs: number = 3_000): Promise<void> {
+  let tracker: CostTracker;
+  try {
+    tracker = getTracker();
+  } catch {
+    return; // not initialized — nothing to flush
+  }
+  try {
+    await Promise.race([
+      tracker.flush(),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs);
+        // Never keep the event loop (and a serverless bill) alive for this.
+        if (typeof timer.unref === "function") timer.unref();
+      }),
+    ]);
+  } catch (err) {
+    // A failed push stays buffered for the next cycle — log in debug only.
+    debugLog("flush", `flushBeforeFreeze push failed (events remain buffered): ${String(err)}`);
+  }
+}
+
 export function globalClose(): void {
   if (_instance !== null) {
     _instance.close();
@@ -224,6 +273,18 @@ export interface TrackerOptions {
   /** Which LLM SDKs to auto-instrument. Defaults to all supported. Set to [] to disable. */
   autoInstrument?: string[];
   /**
+   * Explicit module/class references for bundled apps (Next.js, webpack,
+   * esbuild) where runtime resolution finds a DIFFERENT package copy than
+   * the one your code calls — the classic "instrumented but captures
+   * nothing" failure. Keys: openai, anthropic, ai, gemini, bedrock,
+   * cohere, mcp. Providing a module implies instrumenting it.
+   *
+   *   import OpenAI from "openai";
+   *   import * as ai from "ai";
+   *   init({ instrumentModules: { openai: OpenAI, ai } });
+   */
+  instrumentModules?: Record<string, unknown>;
+  /**
    * Path to the SQLite database file. Defaults to ~/.dexcost/buffer.db.
    * Override in tests to get per-test isolation.
    */
@@ -232,6 +293,12 @@ export interface TrackerOptions {
   environment?: string;
   /** Enable automatic retry detection via sliding-window heuristics. */
   enableRetryHeuristics?: boolean;
+  /**
+   * Log every capture decision to stderr (instrument activation, HTTP
+   * fallback classification, session lifecycle) — answers "why wasn't
+   * this call captured?". Also enabled by `DEXCOST_DEBUG=1`.
+   */
+  debug?: boolean;
   /** Sliding window size in seconds for heuristic retry detection. Defaults to 30. */
   retryHeuristicWindow?: number;
   /** Minimum confidence threshold (0–1) to flag a heuristic retry. Defaults to 0.8. */
@@ -408,6 +475,7 @@ export class TrackedTask {
     // Persist only after the retry fields have been finalised on `event`.
     this._events.push(event);
     this._buffer.addEvent(event);
+    registerLlmCapture(this._task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
     logEvent(event, this._task.taskType);
 
     // Feed the persisted event into the engine's sliding window.
@@ -952,6 +1020,11 @@ export class CostTracker {
 
     // Resolve API key (explicit arg → DEXCOST_API_KEY env var) and storage
     // mode. Throws InvalidAPIKeyError for a malformed key.
+    // Debug mode: explicit option wins; otherwise DEXCOST_DEBUG decides.
+    if (options.debug !== undefined) {
+      setDebugMode(options.debug);
+    }
+
     this._config = resolveConfig(this._options.apiKey, this._options.storage);
     // Use the resolved key everywhere downstream (env-var fallback included).
     this._options.apiKey = this._config.apiKey;
@@ -970,6 +1043,11 @@ export class CostTracker {
     const endpoint = resolveEndpoint(this._options.endpoint);
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
+    debugLog(
+      "init",
+      `storage=${isDevMode() ? "dev-console" : cloudMode ? "cloud" : "local"} ` +
+        `endpoint=${cloudMode ? endpoint : "n/a"} apiKey=${this._config.apiKey ? "present" : "absent"}`,
+    );
 
     if (cloudMode) {
       this._pusher = new EventPusher(this._buffer, this._options, endpoint);
@@ -999,15 +1077,31 @@ export class CostTracker {
     // `explicit` is true only when the user listed providers themselves;
     // failures for the default full set stay quiet (issue: noisy warnings for
     // uninstalled providers), while failures for user-requested providers warn.
+    // Explicit module references (bundler escape hatch) are handed to the
+    // instruments BEFORE activation; providing a module implies wanting
+    // that provider instrumented even under a narrowed autoInstrument list.
+    const provided: string[] = [];
+    for (const [name, ref] of Object.entries(options.instrumentModules ?? {})) {
+      if (provideInstrumentModule(name, ref)) {
+        provided.push(canonicalInstrumentName(name));
+      }
+    }
+
     const explicitInstruments = options.autoInstrument !== undefined;
-    const instruments = options.autoInstrument ?? [...ALL_SUPPORTED_INSTRUMENTS];
+    const instruments = new Set([
+      ...(options.autoInstrument ?? [...ALL_SUPPORTED_INSTRUMENTS]),
+      ...provided,
+    ]);
     for (const name of instruments) {
-      void this.instrument(name, explicitInstruments);
+      // Providers with an explicitly provided module are always "explicit":
+      // the user asked for them by handing us the module, so activation
+      // failures must be surfaced.
+      void this.instrument(name, explicitInstruments || provided.includes(name));
     }
 
     // Auto-track outgoing HTTP calls (default on, matches Python).
     if (this._options.trackHttp !== false) {
-      void this._enableHttpTracking(this._options.serviceCatalogUrl);
+      this._enableHttpTracking(this._options.serviceCatalogUrl);
     }
 
     // Wire the browser adapter to durable storage so trackBrowser() cost
@@ -1028,11 +1122,15 @@ export class CostTracker {
    * Patch outgoing HTTP transports to auto-record external costs and,
    * when a catalog URL is provided, refresh the service catalog.
    */
-  private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
+  private _enableHttpTracking(serviceCatalogUrl?: string): void {
     try {
-      const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
-      this._getSessionManager = getSessionManager;
-      trackHttp(this._buffer, this._pricing);
+      // SYNCHRONOUS on purpose. This used to be fire-and-forget async with
+      // a dynamic import, which meant init() returned BEFORE globalThis.fetch
+      // was patched — LLM calls made immediately after init() (cold-start
+      // requests, top-level awaits) escaped capture entirely. The fetch
+      // patch must be in effect the moment init() returns.
+      this._getSessionManager = _adapterGetSessionManager;
+      _adapterTrackHttp(this._buffer, this._pricing);
       this._httpTracked = true;
 
       // Safety-net timer: finalize idle sessions every 30s so auto-created
@@ -1041,7 +1139,7 @@ export class CostTracker {
       const buffer = this._buffer;
       this._sessionTimer = setInterval(() => {
         try {
-          const sm = getSessionManager();
+          const sm = _adapterGetSessionManager();
           if (sm) {
             sm.finalizeIdleSessions(buffer);
           }
@@ -1054,9 +1152,13 @@ export class CostTracker {
       }
 
       if (serviceCatalogUrl) {
-        const catalog = getServiceCatalog();
+        // Catalog refresh is network I/O — the only part that stays async
+        // (and best-effort). The patch above is already installed.
+        const catalog = _adapterGetServiceCatalog();
         if (catalog) {
-          await catalog.refreshFromUrl(serviceCatalogUrl);
+          void catalog.refreshFromUrl(serviceCatalogUrl).catch(() => {
+            // best-effort refresh — bundled catalog remains in use
+          });
         }
       }
     } catch {
@@ -1287,11 +1389,11 @@ export class CostTracker {
   private _disableHttpTracking(): void {
     if (!this._httpTracked) return;
     this._httpTracked = false;
-    void import("../adapters/http.js")
-      .then(({ untrackHttp }) => untrackHttp())
-      .catch(() => {
-        // best-effort
-      });
+    try {
+      _adapterUntrackHttp();
+    } catch {
+      // best-effort
+    }
   }
 
   /**

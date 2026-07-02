@@ -15,6 +15,10 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
+import { getAmbientSessionTask } from "../core/session.js";
+import { extractUsage } from "./ai-usage.js";
+import type { ExtractedUsage } from "./ai-usage.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -63,39 +67,8 @@ function extractModel(opts: any): string {
   return "unknown";
 }
 
-/** Normalized token counts extracted from an AI SDK usage object. */
-interface ExtractedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-}
-
-/**
- * Extract token counts from a Vercel AI SDK usage object across major
- * versions. The field names were renamed between majors:
- *
- * - ai v4 (`LanguageModelUsage`): `promptTokens` / `completionTokens`
- * - ai v5 (AI SDK 5): `inputTokens` / `outputTokens`, cache reads in
- *   `cachedInputTokens`
- * - ai v6/v7: `inputTokens` / `outputTokens`, cache reads in
- *   `inputTokenDetails.cacheReadTokens`
- *
- * Reading only the v4 names silently records 0 tokens (and therefore $0)
- * on every modern AI SDK install.
- */
-function extractUsage(usage: any): ExtractedUsage {
-  if (!usage || typeof usage !== "object") {
-    return { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-  }
-  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-  return {
-    inputTokens: num(usage.inputTokens ?? usage.promptTokens),
-    outputTokens: num(usage.outputTokens ?? usage.completionTokens),
-    cachedTokens: num(
-      usage.cachedInputTokens ?? usage.inputTokenDetails?.cacheReadTokens,
-    ),
-  };
-}
+// Usage extraction is shared with the model-level middleware
+// (integrations/ai-sdk.ts) — see instruments/ai-usage.ts.
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -145,6 +118,7 @@ function recordEvent(
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, inputTokens, outputTokens);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -241,9 +215,16 @@ export async function instrumentVercelAi(
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
-      task = createAutoTask("vercel-ai.generateText");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("vercel-ai.generateText");
+      if (!task) {
+        task = createAutoTask("vercel-ai.generateText");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const startTime = performance.now();
@@ -287,9 +268,16 @@ export async function instrumentVercelAi(
     // Auto-create a task when no explicit task is active so LLM costs
     // are never silently lost (mirrors Python create_auto_task).
     if (!task) {
-      task = createAutoTask("vercel-ai.streamText");
-      _buffer?.upsertTask(task);
-      autoCreated = true;
+      // Join the ambient session (grouping with sibling HTTP/LLM calls
+      // in the same context) when session tracking is active; the
+      // session sweep owns its lifecycle. Otherwise fall back to a
+      // per-call auto-task owned (and finalized) here.
+      task = getAmbientSessionTask("vercel-ai.streamText");
+      if (!task) {
+        task = createAutoTask("vercel-ai.streamText");
+        _buffer?.upsertTask(task);
+        autoCreated = true;
+      }
     }
 
     const startTime = performance.now();
@@ -493,4 +481,6 @@ function wrapStream(
 }
 
 // Self-register so importing this module is enough to make the instrument available.
-registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi);
+registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi, (ref: any) => {
+  _setAiModule(ref?.default ?? ref);
+});

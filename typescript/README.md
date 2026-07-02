@@ -103,6 +103,102 @@ dexcost auto-instruments **6 LLM providers** and the **global fetch API**.
 
 LLM provider packages are **peer dependencies** — install only the ones you use. dexcost detects them at runtime and patches automatically.
 
+> **Vercel AI SDK v5+:** the `ai` package ships ESM-only builds since v5, which
+> **cannot be monkey-patched** (you will see a one-line warning at init). Calls
+> are still captured at the HTTP layer, but for exact usage — multi-step tool
+> loops, cached tokens — wrap your models with the middleware below.
+
+### Vercel AI SDK middleware (recommended for `ai` >= 5)
+
+```typescript
+import { wrapLanguageModel } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
+import { init, dexcostAiMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+const model = wrapLanguageModel({
+  model: anthropic('claude-sonnet-4-5'),
+  middleware: dexcostAiMiddleware(),
+});
+// use `model` with generateText / streamText as usual — every call is captured
+```
+
+Works with ai v3 through v7 (`LanguageModelV1Middleware` … `V4Middleware`
+shapes), on generate **and** stream, under any bundler or module system.
+The middleware and the other capture layers coordinate — one call never
+records twice.
+
+### Injectable fetch (any client, no global patch)
+
+Every provider client (`openai`, `@anthropic-ai/sdk`, all `@ai-sdk/*`
+factories) accepts a `fetch` option — inject a tracked one instead of
+relying on the global patch:
+
+```typescript
+import { createDexcostFetch } from '@dexcost/sdk';
+
+const anthropic = createAnthropic({ fetch: createDexcostFetch() });
+const openai = new OpenAI({ fetch: createDexcostFetch() });
+```
+
+Same classification pipeline as the global patch (OpenAI/Anthropic/Gemini
+formats, SSE streaming, byte counting), refuses to double-wrap when the
+global patch is active, and never breaks client construction (falls back
+to the base fetch, loudly, if dexcost is unwired).
+
+### OpenTelemetry bridge (ingestion only)
+
+If your app emits OTel spans — the Vercel AI SDK does natively via
+`experimental_telemetry` — dexcost can consume them in-process instead of
+intercepting anything:
+
+```typescript
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { init, DexcostSpanProcessor } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+const sdk = new NodeSDK({ spanProcessors: [new DexcostSpanProcessor()] });
+sdk.start();
+
+// per call:
+await generateText({ model, prompt, experimental_telemetry: { isEnabled: true } });
+```
+
+**One-way, in only.** The processor is not an exporter: it converts LLM
+spans (AI SDK telemetry + GenAI semconv attribute names) into dexcost cost
+events shipped to the dexcost endpoint, and nothing else. It coexists with
+any exporters you already run (Datadog etc. keep seeing exactly what they
+saw), never reads prompt/completion content — only model, provider, token
+counts, and timing — and a cross-layer fingerprint guard prevents double
+counting when the patched fetch captures the same call.
+
+### Bundled apps (`instrumentModules` escape hatch)
+
+Bundlers (Next.js, webpack, esbuild) can inline provider packages so
+dexcost's runtime resolution patches a DIFFERENT copy than the one your
+code calls — instrumented in name, capturing nothing. Hand the instruments
+your actual module references:
+
+```typescript
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+
+init({ instrumentModules: { openai: OpenAI, anthropic: Anthropic } });
+```
+
+Keys: `openai`, `anthropic`, `ai`, `gemini`, `bedrock`, `cohere`, `mcp`.
+Providing a module implies instrumenting it, and its activation failures
+are surfaced loudly.
+
+### Instance wrappers
+
+```typescript
+import { wrapOpenAI, wrapAnthropic } from '@dexcost/sdk';
+const openai = wrapOpenAI(new OpenAI());       // chat.completions surface
+const anthropic = wrapAnthropic(new Anthropic()); // messages surface
+```
+
 ### HTTP (Non-LLM Cost Capture)
 
 dexcost patches `globalThis.fetch` to capture HTTP calls to domains in the [163-service catalog](src/data/service_prices.json) — Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, and more. Costs are extracted from response headers/body and recorded as `external_cost` events.
@@ -133,6 +229,7 @@ init({ autoInstrument: [] });
 | `environment` | `string` | `undefined` | Set to `"development"` for dev console mode |
 | `dbPath` | `string` | `~/.dexcost/buffer.db` | Path to local SQLite buffer |
 | `enableRetryHeuristics` | `boolean` | `false` | Auto-detect retries via pattern matching |
+| `debug` | `boolean` | `false` | Log every capture decision to stderr (see Debugging capture) |
 
 ### Environment Variables
 
@@ -140,6 +237,7 @@ init({ autoInstrument: [] });
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
 | `DEXCOST_ENV` | Set to `development` for dev console output |
+| `DEXCOST_DEBUG` | Set to `1` to log every capture decision to stderr |
 
 > **Note:** `DEXCOST_ENDPOINT` is no longer read. The endpoint is sourced
 > **only** from the explicit `endpoint` option in code (defaulting to
@@ -247,15 +345,173 @@ Set `DEXCOST_ENV=development` or pass `environment: "development"` to `init()`. 
 - Cost events are printed to the console
 - No data is pushed to the cloud (this is intentional and logged once at startup)
 
-## Express Middleware
+## HTTP Framework Middleware
+
+Each request runs inside a tracked task (`req.dexcostTask` /
+`c.get('dexcostTask')`), so LLM and HTTP calls made while handling it are
+attributed automatically. The tracker argument is optional everywhere — it
+defaults to the `init()` singleton, resolved lazily per request.
+
+### Express / Connect
 
 ```typescript
-import { createExpressMiddleware } from '@dexcost/sdk';
+import { init, createExpressMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
 
 app.use(createExpressMiddleware({
-  taskType: 'api_request',
-  extractCustomerId: (req) => req.headers['x-customer-id'],
+  customerIdFrom: 'headers.x-customer-id',   // dot-path into req
+  skip: (req) => req.path === '/health',
 }));
+```
+
+### Fastify
+
+```typescript
+import { init, dexcostFastifyPlugin } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+await app.register(dexcostFastifyPlugin, {
+  customerIdFrom: 'headers.x-customer-id',
+  skip: (req) => req.url === '/health',
+});
+```
+
+### Hono (Node, Bun, Deno)
+
+```typescript
+import { init, createHonoMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+app.use('*', createHonoMiddleware({
+  customerId: (c) => c.req.header('x-customer-id'),
+  skip: (c) => c.req.path === '/health',
+}));
+```
+
+### NestJS
+
+```typescript
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { init, DexcostInterceptor } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+@Module({
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useValue: new DexcostInterceptor({
+        customerIdFrom: 'headers.x-customer-id',
+        skip: (req) => req.url === '/health',
+      }),
+    },
+  ],
+})
+export class AppModule {}
+```
+
+Duck-typed (no `@nestjs/common` dependency); borrows the host app's own
+`rxjs` lazily and subscribes the handler chain inside the task's async
+scope, so controllers and services inherit attribution. Works on both the
+Express and Fastify platforms; non-HTTP contexts (RPC/WS/GraphQL) pass
+through — wrap those with `wrapJobHandler` or `track()`.
+
+Task status comes from the response status code (>= 400 → `failed`) or a
+thrown handler error. dexcost failures never block a request; handler errors
+are never swallowed.
+
+## Queue Workers
+
+Queue consumers are where agent workloads actually run. Wrap the handler so
+every job gets its own attributed task:
+
+```typescript
+import { wrapJobHandler } from '@dexcost/sdk';
+
+new Worker('reviews', wrapJobHandler(
+  async (job) => runReview(job.data),
+  {
+    taskType: 'code_review',
+    customerId: (job) => job.data.orgId,
+    metadata: (job) => ({ pr_number: job.data.prNumber }),
+  },
+));
+```
+
+Handler errors are marked `failed` and re-thrown, so your queue's retry
+semantics are untouched. Works with any consumer signature (BullMQ,
+RabbitMQ `(msg, channel)`, SQS, cron ticks).
+
+## Serverless
+
+Freeze-prone platforms (Lambda, Cloud Functions, Vercel, Cloud Run) give no
+background CPU after the handler returns — the background pusher may never
+fire. The compute wraps (`wrapLambdaHandler`, `wrapVercelHandler`, …) now
+flush automatically before returning (bounded at 3s, never throws over your
+handler's result). For hand-rolled handlers and Next.js routes:
+
+```typescript
+import { after } from 'next/server';
+import { flushBeforeFreeze } from '@dexcost/sdk';
+
+export async function POST(req: Request) {
+  const result = await handleRequest(req);
+  after(() => flushBeforeFreeze());   // flush outside the response path
+  return result;
+}
+```
+
+
+## Debugging capture: debug mode & `dexcost doctor`
+
+When the dashboard shows less than you expect, two tools answer "why wasn't
+this call captured?":
+
+```typescript
+init({ debug: true });   // or DEXCOST_DEBUG=1
+```
+
+Debug mode logs every capture decision to stderr: which instruments
+activated (and why not), how each HTTP call was classified (`llm_call` via
+fallback, network event, suppressed), and session lifecycle.
+
+```bash
+npx dexcost doctor            # full pipeline check
+npx dexcost doctor --offline  # skip the endpoint reachability probe
+```
+
+Doctor verifies the whole chain — runtime (Node/Bun/Deno), AsyncLocalStorage,
+better-sqlite3 vs memory fallback, provider packages (including the `ai` >= 5
+ESM caveat), an instrument dry-run, the fetch patch, a buffer write/read
+round-trip, API-key format, and endpoint reachability — with a remedy line
+for everything degraded. Exit code 1 when any check fails.
+
+## Runtimes: Node, Bun, Deno
+
+- **Node >= 18** is the primary target.
+- **Bun** gets DURABLE buffering via the built-in `bun:sqlite` driver
+  (better-sqlite3's native binding is unsupported there — the SDK switches
+  automatically). **Deno** runs on the in-memory buffer (no loadable SQLite
+  driver). Both propagate context via Node-compat AsyncLocalStorage; use
+  the Hono middleware for request tracking, and run `npx dexcost doctor`
+  to see exactly what your runtime supports. All three runtimes are
+  exercised in CI on every commit.
+- **Edge runtimes** (Cloudflare Workers, Vercel Edge) are not supported by
+  the Node SDK; the browser adapter covers client-side capture.
+
+## Subpath imports
+
+Heavier integrations can be imported without pulling the root barrel:
+
+```typescript
+import { createHonoMiddleware } from '@dexcost/sdk/middleware';
+import { dexcostAiMiddleware } from '@dexcost/sdk/integrations/ai-sdk';
+import { DexcostSpanProcessor } from '@dexcost/sdk/integrations/otel';
+import { DexcostCallbackHandler } from '@dexcost/sdk/integrations/langchain';
+import { TrackedOpenAI } from '@dexcost/sdk/clients';
 ```
 
 ## Runtime Dependencies
