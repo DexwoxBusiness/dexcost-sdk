@@ -103,6 +103,32 @@ dexcost auto-instruments **6 LLM providers** and the **global fetch API**.
 
 LLM provider packages are **peer dependencies** — install only the ones you use. dexcost detects them at runtime and patches automatically.
 
+> **Vercel AI SDK v5+:** the `ai` package ships ESM-only builds since v5, which
+> **cannot be monkey-patched** (you will see a one-line warning at init). Calls
+> are still captured at the HTTP layer, but for exact usage — multi-step tool
+> loops, cached tokens — wrap your models with the middleware below.
+
+### Vercel AI SDK middleware (recommended for `ai` >= 5)
+
+```typescript
+import { wrapLanguageModel } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
+import { init, dexcostAiMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+const model = wrapLanguageModel({
+  model: anthropic('claude-sonnet-4-5'),
+  middleware: dexcostAiMiddleware(),
+});
+// use `model` with generateText / streamText as usual — every call is captured
+```
+
+Works with ai v3 through v7 (`LanguageModelV1Middleware` … `V4Middleware`
+shapes), on generate **and** stream, under any bundler or module system.
+The middleware and the other capture layers coordinate — one call never
+records twice.
+
 ### HTTP (Non-LLM Cost Capture)
 
 dexcost patches `globalThis.fetch` to capture HTTP calls to domains in the [163-service catalog](src/data/service_prices.json) — Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, and more. Costs are extracted from response headers/body and recorded as `external_cost` events.
@@ -133,6 +159,7 @@ init({ autoInstrument: [] });
 | `environment` | `string` | `undefined` | Set to `"development"` for dev console mode |
 | `dbPath` | `string` | `~/.dexcost/buffer.db` | Path to local SQLite buffer |
 | `enableRetryHeuristics` | `boolean` | `false` | Auto-detect retries via pattern matching |
+| `debug` | `boolean` | `false` | Log every capture decision to stderr (see Debugging capture) |
 
 ### Environment Variables
 
@@ -140,6 +167,7 @@ init({ autoInstrument: [] });
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
 | `DEXCOST_ENV` | Set to `development` for dev console output |
+| `DEXCOST_DEBUG` | Set to `1` to log every capture decision to stderr |
 
 > **Note:** `DEXCOST_ENDPOINT` is no longer read. The endpoint is sourced
 > **only** from the explicit `endpoint` option in code (defaulting to
@@ -247,15 +275,100 @@ Set `DEXCOST_ENV=development` or pass `environment: "development"` to `init()`. 
 - Cost events are printed to the console
 - No data is pushed to the cloud (this is intentional and logged once at startup)
 
-## Express Middleware
+## HTTP Framework Middleware
+
+Each request runs inside a tracked task (`req.dexcostTask` /
+`c.get('dexcostTask')`), so LLM and HTTP calls made while handling it are
+attributed automatically. The tracker argument is optional everywhere — it
+defaults to the `init()` singleton, resolved lazily per request.
+
+### Express / Connect
 
 ```typescript
-import { createExpressMiddleware } from '@dexcost/sdk';
+import { init, createExpressMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
 
 app.use(createExpressMiddleware({
-  taskType: 'api_request',
-  extractCustomerId: (req) => req.headers['x-customer-id'],
+  customerIdFrom: 'headers.x-customer-id',   // dot-path into req
+  skip: (req) => req.path === '/health',
 }));
+```
+
+### Fastify
+
+```typescript
+import { init, dexcostFastifyPlugin } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+await app.register(dexcostFastifyPlugin, {
+  customerIdFrom: 'headers.x-customer-id',
+  skip: (req) => req.url === '/health',
+});
+```
+
+### Hono (Node, Bun, Deno)
+
+```typescript
+import { init, createHonoMiddleware } from '@dexcost/sdk';
+
+init({ apiKey: process.env.DEXCOST_API_KEY });
+
+app.use('*', createHonoMiddleware({
+  customerId: (c) => c.req.header('x-customer-id'),
+  skip: (c) => c.req.path === '/health',
+}));
+```
+
+Task status comes from the response status code (>= 400 → `failed`) or a
+thrown handler error. dexcost failures never block a request; handler errors
+are never swallowed.
+
+## Debugging capture: debug mode & `dexcost doctor`
+
+When the dashboard shows less than you expect, two tools answer "why wasn't
+this call captured?":
+
+```typescript
+init({ debug: true });   // or DEXCOST_DEBUG=1
+```
+
+Debug mode logs every capture decision to stderr: which instruments
+activated (and why not), how each HTTP call was classified (`llm_call` via
+fallback, network event, suppressed), and session lifecycle.
+
+```bash
+npx dexcost doctor            # full pipeline check
+npx dexcost doctor --offline  # skip the endpoint reachability probe
+```
+
+Doctor verifies the whole chain — runtime (Node/Bun/Deno), AsyncLocalStorage,
+better-sqlite3 vs memory fallback, provider packages (including the `ai` >= 5
+ESM caveat), an instrument dry-run, the fetch patch, a buffer write/read
+round-trip, API-key format, and endpoint reachability — with a remedy line
+for everything degraded. Exit code 1 when any check fails.
+
+## Runtimes: Node, Bun, Deno
+
+- **Node >= 18** is the primary target.
+- **Bun** and **Deno** work through their Node-compat layers (`node:`
+  imports, AsyncLocalStorage). `better-sqlite3` may not build there — the
+  SDK falls back to the in-memory buffer automatically. Use the Hono
+  middleware for request tracking, and run `npx dexcost doctor` to see
+  exactly what your runtime supports.
+- **Edge runtimes** (Cloudflare Workers, Vercel Edge) are not supported by
+  the Node SDK; the browser adapter covers client-side capture.
+
+## Subpath imports
+
+Heavier integrations can be imported without pulling the root barrel:
+
+```typescript
+import { createHonoMiddleware } from '@dexcost/sdk/middleware';
+import { dexcostAiMiddleware } from '@dexcost/sdk/integrations/ai-sdk';
+import { DexcostCallbackHandler } from '@dexcost/sdk/integrations/langchain';
+import { TrackedOpenAI } from '@dexcost/sdk/clients';
 ```
 
 ## Runtime Dependencies

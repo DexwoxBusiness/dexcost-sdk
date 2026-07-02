@@ -52,6 +52,7 @@ import { resolveConfig } from "./config.js";
 import type { ResolvedConfig } from "./config.js";
 import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
+import { setDebugMode, debugLog } from "./debug.js";
 import {
   ALL_SUPPORTED_INSTRUMENTS,
   instrumentProvider,
@@ -232,6 +233,12 @@ export interface TrackerOptions {
   environment?: string;
   /** Enable automatic retry detection via sliding-window heuristics. */
   enableRetryHeuristics?: boolean;
+  /**
+   * Log every capture decision to stderr (instrument activation, HTTP
+   * fallback classification, session lifecycle) — answers "why wasn't
+   * this call captured?". Also enabled by `DEXCOST_DEBUG=1`.
+   */
+  debug?: boolean;
   /** Sliding window size in seconds for heuristic retry detection. Defaults to 30. */
   retryHeuristicWindow?: number;
   /** Minimum confidence threshold (0–1) to flag a heuristic retry. Defaults to 0.8. */
@@ -952,6 +959,11 @@ export class CostTracker {
 
     // Resolve API key (explicit arg → DEXCOST_API_KEY env var) and storage
     // mode. Throws InvalidAPIKeyError for a malformed key.
+    // Debug mode: explicit option wins; otherwise DEXCOST_DEBUG decides.
+    if (options.debug !== undefined) {
+      setDebugMode(options.debug);
+    }
+
     this._config = resolveConfig(this._options.apiKey, this._options.storage);
     // Use the resolved key everywhere downstream (env-var fallback included).
     this._options.apiKey = this._config.apiKey;
@@ -970,6 +982,11 @@ export class CostTracker {
     const endpoint = resolveEndpoint(this._options.endpoint);
 
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
+    debugLog(
+      "init",
+      `storage=${isDevMode() ? "dev-console" : cloudMode ? "cloud" : "local"} ` +
+        `endpoint=${cloudMode ? endpoint : "n/a"} apiKey=${this._config.apiKey ? "present" : "absent"}`,
+    );
 
     if (cloudMode) {
       this._pusher = new EventPusher(this._buffer, this._options, endpoint);

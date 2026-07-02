@@ -15,6 +15,7 @@ import {
 } from "../adapters/network-accountant.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
 import type { EventBuffer } from "../transport/buffer.js";
+import { debugLog } from "./debug.js";
 
 // ---------------------------------------------------------------------------
 // Session tracking
@@ -80,6 +81,11 @@ export class SessionManager {
     registerAccountant(task.taskId, new NetworkAccountant());
 
     buffer.upsertTask(task);
+
+    debugLog(
+      "session",
+      `session task created: ${task.taskId} type=${taskType} initiatedBy=${callType}`,
+    );
 
     const info: SessionInfo = { task, lastActivityAt: Date.now() };
     this._sessions.set(key, info);
@@ -171,6 +177,7 @@ export class SessionManager {
     if (buffer) {
       buffer.upsertTask(info.task);
     }
+    debugLog("session", `session task finalized: ${info.task.taskId} status=${info.task.status}`);
   }
 
   /**

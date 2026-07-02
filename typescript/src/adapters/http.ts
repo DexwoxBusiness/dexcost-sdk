@@ -29,6 +29,7 @@ import {
   type Task,
 } from "../core/models.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { debugLog } from "../core/debug.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import { SessionManager } from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
@@ -1071,6 +1072,11 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
       if (_buffer) {
         _buffer.addEvent(event);
       }
+      debugLog(
+        "http",
+        `llm_call captured via http fallback (sse): ${ctx.hostname} model=${llmUsage.model} ` +
+          `in=${llmUsage.inputTokens} out=${llmUsage.outputTokens}`,
+      );
       task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
       task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
       task.totalInputTokens += llmUsage.inputTokens;
@@ -1112,7 +1118,12 @@ function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
     // _maybeRecordCost decides which path was taken — for catalog /
     // domain-rate calls it sets a "matched" flag we check here. Stored on
     // the ctx so a single-call closure threads it.
-    if (ctx._matchedCatalog || ctx.suppressed) return;
+    if (ctx._matchedCatalog || ctx.suppressed) {
+      if (ctx.suppressed) {
+        debugLog("http", `network event suppressed for ${ctx.hostname} (owned by an instrument)`);
+      }
+      return;
+    }
 
     const responseBytes = ctx.responseHeaderBytes + (ctx.responseBodyBytes ?? 0);
     const combined = ctx.requestBytes + responseBytes;
@@ -1142,6 +1153,10 @@ function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
       if (_buffer) {
         _buffer.addEvent(ev);
       }
+      debugLog(
+        "http",
+        `network event emitted for ${ctx.hostname} (${combined} bytes > threshold, cost_pending)`,
+      );
     } else {
       // Below threshold and no error → counters-only. Drop the
       // placeholder external_cost-zero event from the in-memory list.

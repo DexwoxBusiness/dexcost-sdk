@@ -107,6 +107,10 @@ export type { InstrumentName } from "./instruments/index.js";
 // Middleware
 export { createExpressMiddleware } from "./middleware/express.js";
 export type { ExpressMiddlewareOptions } from "./middleware/express.js";
+export { dexcostFastifyPlugin } from "./middleware/fastify.js";
+export type { FastifyPluginOptions } from "./middleware/fastify.js";
+export { createHonoMiddleware } from "./middleware/hono.js";
+export type { HonoMiddlewareOptions } from "./middleware/hono.js";
 
 // Session
 export { SessionManager } from "./core/session.js";
@@ -157,6 +161,14 @@ export {
 
 // Integrations
 export { DexcostCallbackHandler } from "./integrations/langchain.js";
+export { dexcostAiMiddleware } from "./integrations/ai-sdk.js";
+export type {
+  DexcostAiMiddlewareOptions,
+  DexcostLanguageModelMiddleware,
+} from "./integrations/ai-sdk.js";
+
+// Debug mode
+export { setDebugMode, isDebugMode } from "./core/debug.js";
 
 // Schema Validation
 export { validate } from "./schema/validate.js";

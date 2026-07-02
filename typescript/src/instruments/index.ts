@@ -9,6 +9,7 @@
 
 import type { PricingEngine } from "../pricing/engine.js";
 import type { EventBuffer } from "../transport/buffer.js";
+import { debugLog } from "../core/debug.js";
 
 /** All provider instruments the SDK ships with. */
 export const ALL_SUPPORTED_INSTRUMENTS = ["openai", "anthropic", "vercel-ai", "gemini", "bedrock", "cohere", "mcp"] as const;
@@ -87,10 +88,12 @@ export async function instrumentProvider(
   }
   try {
     await entry.instrument(pricing, buffer);
+    debugLog("instrument", `${name}: activated (module patch in effect)`);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotInstalled(msg)) {
+      debugLog("instrument", `${name}: package not installed — instrument inactive`);
       // Provider package not installed. Expected during default
       // auto-instrumentation — only surface it when the user explicitly
       // asked for this provider, and then with an actionable hint.
@@ -104,6 +107,7 @@ export async function instrumentProvider(
       // The package IS present but patching threw — a real problem worth
       // surfacing regardless of explicit/default.
       console.warn(`[dexcost] Failed to instrument ${name}: ${msg}`);
+      debugLog("instrument", `${name}: activation FAILED — ${msg}`);
     }
     return false;
   }

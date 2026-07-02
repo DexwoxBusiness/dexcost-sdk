@@ -15,6 +15,26 @@
       "import": "./dist/index.js",
       "require": "./dist/cjs/index.js"
     },
+    "./middleware": {
+      "types": "./dist/middleware/index.d.ts",
+      "import": "./dist/middleware/index.js",
+      "require": "./dist/cjs/middleware/index.js"
+    },
+    "./integrations/ai-sdk": {
+      "types": "./dist/integrations/ai-sdk.d.ts",
+      "import": "./dist/integrations/ai-sdk.js",
+      "require": "./dist/cjs/integrations/ai-sdk.js"
+    },
+    "./integrations/langchain": {
+      "types": "./dist/integrations/langchain.d.ts",
+      "import": "./dist/integrations/langchain.js",
+      "require": "./dist/cjs/integrations/langchain.js"
+    },
+    "./clients": {
+      "types": "./dist/clients.d.ts",
+      "import": "./dist/clients.js",
+      "require": "./dist/cjs/clients.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

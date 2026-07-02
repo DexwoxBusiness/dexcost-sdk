@@ -250,11 +250,38 @@ function main(): void {
     cmdStatus(args.slice(1));
   } else if (cmd === "rates") {
     cmdRates(args.slice(1));
+  } else if (cmd === "doctor") {
+    void cmdDoctor(args.slice(1));
   } else {
     console.log("Usage: dexcost <command> [options]");
     console.log("  scan [directory]");
     console.log("  status [--db path]");
     console.log("  rates [--import path] [--list] [--export path]");
+    console.log("  doctor [--api-key key] [--endpoint url] [--offline]");
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// doctor command
+// ---------------------------------------------------------------------------
+
+async function cmdDoctor(args: string[]): Promise<void> {
+  const opts: { apiKey?: string; endpoint?: string; offline?: boolean } = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--api-key" && args[i + 1]) opts.apiKey = args[++i];
+    else if (args[i] === "--endpoint" && args[i + 1]) opts.endpoint = args[++i];
+    else if (args[i] === "--offline") opts.offline = true;
+  }
+  try {
+    const { runDoctor, printDoctorReport } = await import("./doctor.js");
+    const report = await runDoctor(opts);
+    process.exit(printDoctorReport(report));
+  } catch (err) {
+    // Doctor must diagnose, never crash undiagnosed.
+    console.error(
+      `dexcost doctor crashed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`,
+    );
     process.exit(1);
   }
 }

@@ -7,7 +7,7 @@
  *
  * Usage:
  *
- *   import { TrackedOpenAI } from "dexcost/clients";
+ *   import { TrackedOpenAI } from "@dexcost/sdk/clients";
  *
  *   const client = new TrackedOpenAI({ tracker });
  *   // Inside a tracked task, events are auto-recorded:
