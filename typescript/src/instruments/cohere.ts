@@ -14,6 +14,7 @@ import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
@@ -220,6 +221,7 @@ function recordEvent(response: any, model: string, task: Task, latencyMs: number
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -281,6 +283,7 @@ function wrapStream(
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
                 task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
                 task.totalInputTokens += inputTokens;
@@ -302,6 +305,7 @@ function wrapStream(
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);
               }
             } catch {

@@ -207,6 +207,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   });
 
   _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -303,6 +304,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   isRetry: false,
                 });
                 _buffer.addEvent(event);
+                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);
               }
             } catch {

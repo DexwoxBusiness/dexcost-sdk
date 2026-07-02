@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "./core/context.js";
 import { createCostEvent, Decimal } from "./core/models.js";
 import { createAutoTask } from "./core/auto-task.js";
+import { registerLlmCapture } from "./core/llm-dedup.js";
 import type { Task, CostConfidence, PricingSource } from "./core/models.js";
 import { PricingEngine } from "./pricing/engine.js";
 import type { EventBuffer } from "./transport/buffer.js";
@@ -307,6 +308,7 @@ function _addEventAndUpdateTask(
   });
 
   buffer.addEvent(event);
+  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
   task.llmCostUsd = task.llmCostUsd.plus(spec.costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(spec.costUsd);

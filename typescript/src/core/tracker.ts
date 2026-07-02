@@ -53,6 +53,7 @@ import type { ResolvedConfig } from "./config.js";
 import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
 import { setDebugMode, debugLog } from "./debug.js";
+import { registerLlmCapture } from "./llm-dedup.js";
 import {
   trackHttp as _adapterTrackHttp,
   untrackHttp as _adapterUntrackHttp,
@@ -474,6 +475,7 @@ export class TrackedTask {
     // Persist only after the retry fields have been finalised on `event`.
     this._events.push(event);
     this._buffer.addEvent(event);
+    registerLlmCapture(this._task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
     logEvent(event, this._task.taskType);
 
     // Feed the persisted event into the engine's sliding window.

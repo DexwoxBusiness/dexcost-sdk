@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "../core/context.js";
+import { registerLlmCapture } from "../core/llm-dedup.js";
 import { createCostEvent } from "../core/models.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import type { EventBuffer } from "../transport/buffer.js";
@@ -115,6 +116,7 @@ export class DexcostCallbackHandler {
 
     // Persist event
     this._buffer.addEvent(event);
+    registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
 
     // Update task aggregates
     task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
@@ -166,6 +168,7 @@ export class DexcostCallbackHandler {
         details: { error: String(error?.message ?? error), error_type: errorType },
       });
       this._buffer.addEvent(event);
+      registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
       this._buffer.upsertTask(task);
     } catch {
       // dexcost errors must never crash user code
