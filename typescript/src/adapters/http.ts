@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { getCurrentTask, isNetworkEventSuppressed } from "../core/context.js";
 import {

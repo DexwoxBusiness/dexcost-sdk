@@ -54,6 +54,12 @@ import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
 import { finalizeTaskNetwork } from "./network-finalize.js";
 import { setDebugMode, debugLog } from "./debug.js";
 import {
+  trackHttp as _adapterTrackHttp,
+  untrackHttp as _adapterUntrackHttp,
+  getServiceCatalog as _adapterGetServiceCatalog,
+  getSessionManager as _adapterGetSessionManager,
+} from "../adapters/http.js";
+import {
   ALL_SUPPORTED_INSTRUMENTS,
   instrumentProvider,
   uninstrumentProvider,
@@ -1024,7 +1030,7 @@ export class CostTracker {
 
     // Auto-track outgoing HTTP calls (default on, matches Python).
     if (this._options.trackHttp !== false) {
-      void this._enableHttpTracking(this._options.serviceCatalogUrl);
+      this._enableHttpTracking(this._options.serviceCatalogUrl);
     }
 
     // Wire the browser adapter to durable storage so trackBrowser() cost
@@ -1045,11 +1051,15 @@ export class CostTracker {
    * Patch outgoing HTTP transports to auto-record external costs and,
    * when a catalog URL is provided, refresh the service catalog.
    */
-  private async _enableHttpTracking(serviceCatalogUrl?: string): Promise<void> {
+  private _enableHttpTracking(serviceCatalogUrl?: string): void {
     try {
-      const { trackHttp, getServiceCatalog, getSessionManager } = await import("../adapters/http.js");
-      this._getSessionManager = getSessionManager;
-      trackHttp(this._buffer, this._pricing);
+      // SYNCHRONOUS on purpose. This used to be fire-and-forget async with
+      // a dynamic import, which meant init() returned BEFORE globalThis.fetch
+      // was patched — LLM calls made immediately after init() (cold-start
+      // requests, top-level awaits) escaped capture entirely. The fetch
+      // patch must be in effect the moment init() returns.
+      this._getSessionManager = _adapterGetSessionManager;
+      _adapterTrackHttp(this._buffer, this._pricing);
       this._httpTracked = true;
 
       // Safety-net timer: finalize idle sessions every 30s so auto-created
@@ -1058,7 +1068,7 @@ export class CostTracker {
       const buffer = this._buffer;
       this._sessionTimer = setInterval(() => {
         try {
-          const sm = getSessionManager();
+          const sm = _adapterGetSessionManager();
           if (sm) {
             sm.finalizeIdleSessions(buffer);
           }
@@ -1071,9 +1081,13 @@ export class CostTracker {
       }
 
       if (serviceCatalogUrl) {
-        const catalog = getServiceCatalog();
+        // Catalog refresh is network I/O — the only part that stays async
+        // (and best-effort). The patch above is already installed.
+        const catalog = _adapterGetServiceCatalog();
         if (catalog) {
-          await catalog.refreshFromUrl(serviceCatalogUrl);
+          void catalog.refreshFromUrl(serviceCatalogUrl).catch(() => {
+            // best-effort refresh — bundled catalog remains in use
+          });
         }
       }
     } catch {
@@ -1304,11 +1318,11 @@ export class CostTracker {
   private _disableHttpTracking(): void {
     if (!this._httpTracked) return;
     this._httpTracked = false;
-    void import("../adapters/http.js")
-      .then(({ untrackHttp }) => untrackHttp())
-      .catch(() => {
-        // best-effort
-      });
+    try {
+      _adapterUntrackHttp();
+    } catch {
+      // best-effort
+    }
   }
 
   /**

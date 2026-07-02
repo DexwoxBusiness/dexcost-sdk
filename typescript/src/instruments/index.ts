@@ -54,7 +54,10 @@ function isModuleNotInstalled(msg: string): boolean {
     msg.includes("Failed to load url") ||
     msg.includes("not found") ||
     msg.includes("not installed") ||
-    msg.includes("ERR_MODULE_NOT_FOUND")
+    msg.includes("ERR_MODULE_NOT_FOUND") ||
+    // Deno phrases a missing bare specifier as a relative-import error:
+    // "Relative import path \"cohere-ai\" not prefixed with / or ./ or ../"
+    msg.includes("not prefixed with /")
   );
 }
 

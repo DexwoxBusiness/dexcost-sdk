@@ -92,6 +92,53 @@ jobs:
       - name: Test (excluding cross-SDK parity)
         working-directory: typescript
         run: npx vitest run --exclude 'tests/cross-sdk-parity.test.ts'
+      - name: Build + runtime smoke (node control)
+        working-directory: typescript
+        run: npm run build && node scripts/runtime-smoke.mjs
+
+  # Enforces the "works on Bun and Deno" claim against the BUILT package —
+  # not just documentation. The smoke script exercises init, explicit
+  # track(), the ambient fetch capture, the AI SDK middleware, the Hono
+  # middleware, and `dexcost doctor` on each runtime. This job caught real
+  # bugs on day one (Bun: better-sqlite3 crash instead of memory fallback;
+  # Deno: fatal native-addon dlopen, missing Buffer global).
+  typescript-runtimes:
+    name: typescript runtime smoke (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [bun, deno]
+    steps:
+      - uses: actions/checkout@v4
+      # Node is always needed: the package builds with tsc/esbuild on Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - name: Install
+        working-directory: typescript
+        run: npm ci || npm install
+      - name: Build
+        working-directory: typescript
+        run: npm run build
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: latest
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: v2.x
+      - name: Runtime smoke (bun)
+        if: matrix.runtime == 'bun'
+        working-directory: typescript
+        run: bun scripts/runtime-smoke.mjs
+      - name: Runtime smoke (deno)
+        if: matrix.runtime == 'deno'
+        working-directory: typescript
+        run: deno run --allow-all scripts/runtime-smoke.mjs
 
   rust:
     name: rust tests

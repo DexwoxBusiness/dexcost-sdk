@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeno, runtimeDescription } from "../core/runtime.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -74,13 +75,7 @@ const PROVIDER_PACKAGES: Array<{ instrument: string; pkg: string }> = [
 ];
 
 function checkRuntime(): DoctorCheck {
-  const g: any = globalThis;
-  let runtime = `node ${process.versions.node}`;
-  if (typeof g.Bun !== "undefined") {
-    runtime = `bun ${g.Bun.version ?? "unknown"} (node-compat ${process.versions.node})`;
-  } else if (typeof g.Deno !== "undefined") {
-    runtime = `deno ${g.Deno.version?.deno ?? "unknown"} (node-compat ${process.versions.node})`;
-  }
+  const runtime = runtimeDescription();
   const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
   if (major < 18) {
     return {
@@ -120,13 +115,31 @@ function checkAsyncLocalStorage(): DoctorCheck {
 }
 
 function checkSqlite(): DoctorCheck {
+  if (isDeno()) {
+    // Deno's dlopen of the V8-ABI addon is a FATAL process error — never
+    // probe it. The SDK skips it there too and uses the memory buffer.
+    return {
+      id: "sqlite",
+      name: "Durable buffer (better-sqlite3)",
+      status: "warn",
+      detail:
+        "skipped on Deno — V8-ABI native addons cannot be loaded; the SDK " +
+        "uses the in-memory buffer (10k cap, lost on restart)",
+      remedy: "For durable buffering run the workload on Node (or Bun once bun#4290 lands).",
+    };
+  }
   try {
-    _require("better-sqlite3");
+    const Database = _require("better-sqlite3");
+    // Requiring can succeed while the native binding still fails at open
+    // time (Bun loads the JS wrapper but rejects the .node binding) —
+    // actually open a throwaway in-memory database to prove it works.
+    const probe = new Database(":memory:");
+    probe.close();
     return {
       id: "sqlite",
       name: "Durable buffer (better-sqlite3)",
       status: "ok",
-      detail: "native module loads — events persist across restarts",
+      detail: "native module loads and opens — events persist across restarts",
     };
   } catch (err) {
     const cause = err instanceof Error ? err.message.split("\n")[0] : String(err);

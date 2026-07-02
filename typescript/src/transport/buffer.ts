@@ -15,6 +15,7 @@
 // §2.2.3 (B8).
 import type Database from "better-sqlite3";
 import { createRequire } from "node:module";
+import { isDeno } from "../core/runtime.js";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -494,6 +495,21 @@ export class EventBuffer {
       );
       return;
     }
+    if (isDeno()) {
+      // Deno's dlopen of a non-NAPI (V8-ABI) native addon is a FATAL
+      // process-level symbol-lookup error — it kills the process before
+      // any JS catch can run. better-sqlite3 is such an addon, so on Deno
+      // we must not even attempt to load it.
+      console.warn(
+        "dexcost: running on Deno — better-sqlite3 (a V8-ABI native addon) " +
+          "cannot be loaded here; cost tracking continues on an in-memory " +
+          "buffer (events are NOT persisted across process restarts; hard " +
+          "cap 10k entries).",
+      );
+      this._db = null;
+      this._mem = new MemoryBufferStore();
+      return;
+    }
     try {
       const require = createRequire(import.meta.url);
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -536,7 +552,28 @@ export class EventBuffer {
       throw new Error(`Cannot create dexcost storage directory: ${err instanceof Error ? err.message : err}`);
     }
 
-    this._db = new DatabaseCtor(resolvedPath);
+    try {
+      this._db = new DatabaseCtor(resolvedPath);
+    } catch (err) {
+      // require("better-sqlite3") can SUCCEED while opening the database
+      // still fails: Bun loads the JS wrapper but rejects the native
+      // binding at dlopen time (ERR_DLOPEN_FAILED, bun#4290), and a
+      // corrupt/locked db file lands here too. Pre-fix this crashed the
+      // customer app inside init(); it must degrade to the in-memory
+      // fallback exactly like a failed require.
+      const cause = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      console.warn(
+        "dexcost: better-sqlite3 loaded but the database could not be opened — " +
+          "cost tracking continues on an in-memory buffer (events are NOT " +
+          "persisted across process restarts; hard cap 10k entries). " +
+          "On Bun, better-sqlite3's native binding is unsupported (bun#4290) " +
+          "and this fallback is expected. Cause: " +
+          cause,
+      );
+      this._db = null;
+      this._mem = new MemoryBufferStore();
+      return;
+    }
 
     // PRAGMAs and DDL
     try {
