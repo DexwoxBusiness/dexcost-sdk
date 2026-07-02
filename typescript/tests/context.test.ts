@@ -6,7 +6,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getCurrentTask, runWithTask } from "../src/core/context.js";
+import {
+  getCurrentTask,
+  runWithTask,
+  runWithContext,
+  getContext,
+  setContext,
+  clearContext,
+} from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
 import { CostTracker } from "../src/core/tracker.js";
 import { randomUUID } from "node:crypto";
@@ -85,5 +92,73 @@ describe("Context propagation", () => {
     expect(taskIds[0]).not.toBe(taskIds[1]);
 
     tracker.close();
+  });
+});
+
+describe("runWithContext (scoped ambient context)", () => {
+  afterEach(() => {
+    clearContext();
+  });
+
+  it("scopes the context to the callback, including async continuations", async () => {
+    expect(getContext()).toBeUndefined();
+
+    const inside = await runWithContext(
+      { customerId: "org-1", projectId: "repo-a", agent: "kodus_code_review" },
+      async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return getContext();
+      },
+    );
+
+    expect(inside?.customerId).toBe("org-1");
+    expect(inside?.agent).toBe("kodus_code_review");
+    // Restored after the scope ends — no leak into the rest of the chain
+    // (the setContext/enterWith failure mode in worker loops).
+    expect(getContext()).toBeUndefined();
+  });
+
+  it("does not leak across sequential jobs on the same async chain", async () => {
+    const seen: Array<string | undefined> = [];
+
+    for (const job of ["cust-a", "cust-b"]) {
+      await runWithContext({ customerId: job }, async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        seen.push(getContext()?.customerId);
+      });
+      seen.push(getContext()?.customerId);
+    }
+
+    expect(seen).toEqual(["cust-a", undefined, "cust-b", undefined]);
+  });
+
+  it("restores an outer setContext after the scope ends", () => {
+    setContext({ customerId: "outer" });
+    runWithContext({ customerId: "inner" }, () => {
+      expect(getContext()?.customerId).toBe("inner");
+    });
+    expect(getContext()?.customerId).toBe("outer");
+  });
+
+  it("each scope is a distinct session grouping key", async () => {
+    const { SessionManager } = await import("../src/core/session.js");
+    const { EventBuffer } = await import("../src/transport/buffer.js");
+    const tmp = mkdtempSync(join(tmpdir(), "dexcost-ctx-test-"));
+    const buffer = new EventBuffer(join(tmp, "test.db"));
+    try {
+      const sm = new SessionManager();
+      const taskA = runWithContext({ customerId: "a" }, () =>
+        sm.runInSession("http", buffer, () => getCurrentTask()!),
+      );
+      const taskB = runWithContext({ customerId: "b" }, () =>
+        sm.runInSession("http", buffer, () => getCurrentTask()!),
+      );
+      expect(taskA.taskId).not.toBe(taskB.taskId);
+      expect(taskA.customerId).toBe("a");
+      expect(taskB.customerId).toBe("b");
+    } finally {
+      buffer.close();
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

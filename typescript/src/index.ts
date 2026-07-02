@@ -36,6 +36,7 @@ export {
   setContext,
   getContext,
   clearContext,
+  runWithContext,
 } from "./core/context.js";
 export type { DexcostContext } from "./core/context.js";
 export {
@@ -69,7 +70,8 @@ export {
 export type { KeyType, StorageMode, ResolvedConfig } from "./core/config.js";
 
 // Auto-task
-export { createAutoTask, needsAutoTask } from "./core/auto-task.js";
+export { createAutoTask, finalizeAutoTask, needsAutoTask } from "./core/auto-task.js";
+export { finalizeTaskNetwork } from "./core/network-finalize.js";
 
 // Dev Mode
 export { isDevMode } from "./dev-console.js";

@@ -10,10 +10,11 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
 import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
-import { createAutoTask } from "../core/auto-task.js";
+import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
@@ -62,19 +63,53 @@ function extractModel(opts: any): string {
   return "unknown";
 }
 
+/** Normalized token counts extracted from an AI SDK usage object. */
+interface ExtractedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
+/**
+ * Extract token counts from a Vercel AI SDK usage object across major
+ * versions. The field names were renamed between majors:
+ *
+ * - ai v4 (`LanguageModelUsage`): `promptTokens` / `completionTokens`
+ * - ai v5 (AI SDK 5): `inputTokens` / `outputTokens`, cache reads in
+ *   `cachedInputTokens`
+ * - ai v6/v7: `inputTokens` / `outputTokens`, cache reads in
+ *   `inputTokenDetails.cacheReadTokens`
+ *
+ * Reading only the v4 names silently records 0 tokens (and therefore $0)
+ * on every modern AI SDK install.
+ */
+function extractUsage(usage: any): ExtractedUsage {
+  if (!usage || typeof usage !== "object") {
+    return { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  }
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    inputTokens: num(usage.inputTokens ?? usage.promptTokens),
+    outputTokens: num(usage.outputTokens ?? usage.completionTokens),
+    cachedTokens: num(
+      usage.cachedInputTokens ?? usage.inputTokenDetails?.cacheReadTokens,
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 function recordEvent(
   model: string,
-  inputTokens: number,
-  outputTokens: number,
+  usage: ExtractedUsage,
   task: Task,
   latencyMs: number,
 ): void {
   if (!_buffer || !_pricing) return;
 
+  const { inputTokens, outputTokens, cachedTokens } = usage;
   const hasUsage = inputTokens > 0 || outputTokens > 0;
 
   let costUsd: Decimal = new Decimal(0);
@@ -82,7 +117,12 @@ function recordEvent(
   let pricingSource: PricingSource = "unknown";
 
   if (hasUsage) {
-    const result: CostResult = _pricing.getCost(model, inputTokens, outputTokens);
+    const result: CostResult = _pricing.getCost(
+      model,
+      inputTokens,
+      outputTokens,
+      cachedTokens,
+    );
     costUsd = result.costUsd;
     costConfidence = result.costConfidence;
     pricingSource = result.pricingSource;
@@ -99,6 +139,7 @@ function recordEvent(
     model,
     inputTokens,
     outputTokens,
+    cachedTokens,
     latencyMs,
     isRetry: false,
   });
@@ -109,6 +150,7 @@ function recordEvent(
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
   task.totalInputTokens += inputTokens;
   task.totalOutputTokens += outputTokens;
+  task.totalCachedTokens += cachedTokens;
   _buffer.upsertTask(task);
 }
 
@@ -142,16 +184,19 @@ export async function instrumentVercelAi(
     const modules: any[] = [];
 
     // 1. CJS path — covers NestJS, tsc-compiled, and other CJS apps.
-    //    `typeof require` is safe on undeclared identifiers and evaluates
-    //    to "undefined" in pure ESM contexts without throwing.
-    // @ts-ignore -- require is only available in CJS context
-    if (typeof require === "function") {
-      try {
-        // @ts-ignore -- require is only available in CJS context
-        modules.push(require("ai"));
-      } catch {
-        // CJS resolution failed (ESM-only package, or not installed)
-      }
+    //    `createRequire` works from BOTH builds of this SDK (the CJS build
+    //    shims `import.meta.url`), unlike a bare `require` reference which
+    //    is undefined in the ESM build and silently skipped this path.
+    //    Note: `ai` >= 5 ships ESM-only; on Node >= 20.19 `require(esm)`
+    //    returns the (unpatchable) module namespace, which the
+    //    effectiveness check below rejects; on older Node it throws
+    //    ERR_REQUIRE_ESM and is caught here. `ai` v4 resolves to a mutable
+    //    CJS exports object and patches cleanly.
+    try {
+      const cjsRequire = createRequire(import.meta.url);
+      modules.push(cjsRequire("ai"));
+    } catch {
+      // CJS resolution failed (ESM-only package, or not installed)
     }
 
     // 2. ESM path — covers native ESM apps.
@@ -210,21 +255,18 @@ export async function instrumentVercelAi(
       const latencyMs = Math.round(performance.now() - startTime);
 
       const model = extractModel(opts);
-      const inputTokens: number = result?.usage?.promptTokens ?? 0;
-      const outputTokens: number = result?.usage?.completionTokens ?? 0;
+      // v5+ multi-step calls (tool loops) report the aggregate in
+      // `totalUsage`; `usage` covers only the final step.
+      const usage = extractUsage(result?.totalUsage ?? result?.usage);
 
-      recordEvent(model, inputTokens, outputTokens, task, latencyMs);
+      recordEvent(model, usage, task, latencyMs);
       if (autoCreated) {
-        task.status = "success";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, "success", _buffer);
       }
       return result;
     } catch (err) {
       if (autoCreated) {
-        task.status = "failed";
-        task.endedAt = new Date();
-        _buffer?.upsertTask(task);
+        finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
     }
@@ -257,44 +299,84 @@ export async function instrumentVercelAi(
         runWithTask(task, () => _originalStreamText!.call(self, opts)),
       );
 
-      // Wrap the stream to capture usage after iteration completes.
-      // The Vercel AI SDK streamText returns an object with an async iterator
-      // for text chunks and a `usage` promise that resolves when done.
+      // The real Vercel AI SDK `StreamTextResult` is NOT async-iterable —
+      // callers consume `result.textStream` / `result.fullStream`. The
+      // reliable capture point is the `usage` promise (v5+: `totalUsage`
+      // aggregates multi-step tool loops), which resolves once the stream
+      // finishes and never forces consumption. Recording through it also
+      // returns the ORIGINAL result object untouched, so instanceof checks
+      // and lazy getters on StreamTextResult keep working.
+      const usagePromise = streamResult?.totalUsage ?? streamResult?.usage;
+      if (usagePromise && typeof usagePromise.then === "function") {
+        let recorded = false;
+        Promise.resolve(usagePromise).then(
+          (usage: any) => {
+            if (recorded) return;
+            recorded = true;
+            try {
+              const latencyMs = Math.round(performance.now() - startTime);
+              recordEvent(extractModel(opts), extractUsage(usage), task, latencyMs);
+            } catch {
+              // dexcost errors must never crash user code
+            }
+            if (autoCreated) {
+              finalizeAutoTask(task, "success", _buffer);
+            }
+          },
+          () => {
+            // Stream errored or was aborted before usage was known.
+            if (recorded) return;
+            recorded = true;
+            if (autoCreated) {
+              finalizeAutoTask(task, "failed", _buffer);
+            }
+          },
+        );
+        return streamResult;
+      }
+
+      // Legacy/mock shape: the result itself is async-iterable — wrap the
+      // iterator to capture usage after iteration completes.
       if (streamResult && typeof streamResult[Symbol.asyncIterator] === "function") {
         return wrapStream(streamResult, opts, task, startTime, autoCreated);
       }
 
-      // Non-stream fallback: the underlying streamText returned a result that
-      // is not async-iterable, so there is nothing to wrap or iterate. Finalize
-      // the auto-created task here so it is not left "pending" forever. Guard
+      // Non-stream fallback: nothing to wrap or await. Finalize the
+      // auto-created task here so it is not left "pending" forever. Guard
       // matches wrapStream's finalizeTask (autoCreated && _buffer).
-      if (autoCreated && _buffer) {
-        task.status = "success";
-        task.endedAt = new Date();
-        _buffer.upsertTask(task);
+      if (autoCreated) {
+        finalizeAutoTask(task, "success", _buffer);
       }
       return streamResult;
     } catch (err) {
-      if (autoCreated && _buffer) {
-        task.status = "failed";
-        task.endedAt = new Date();
-        _buffer.upsertTask(task);
+      if (autoCreated) {
+        finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
     }
   };
 
   // Apply patches to ALL resolved module objects (CJS + ESM).
-  // ESM module namespace objects have read-only properties (per spec), so
-  // assigning to them throws in strict mode.  We attempt each assignment
-  // inside a try/catch: if a module is immutable we skip it rather than
-  // leaving the instrument in a half-patched state.
+  // ESM module namespace objects have read-only properties (per spec):
+  // assigning to them throws in strict mode and is SILENTLY IGNORED in
+  // sloppy mode — the assignment "succeeds" but the export still points at
+  // the original function. So a try/catch alone is not enough; after each
+  // assignment we read the property back and only count the module as
+  // patched when the write actually landed. Without this check the
+  // instrument reports success on `ai` >= 5 (ESM-only) while capturing
+  // nothing, and — worse — the HTTP-fallback path assumes the instrument
+  // has the call covered.
   const successfullyPatched: any[] = [];
   for (const mod of _patchedModules) {
     try {
       mod.generateText = patchedGenerateText;
       mod.streamText = patchedStreamText;
-      successfullyPatched.push(mod);
+      if (
+        mod.generateText === patchedGenerateText &&
+        mod.streamText === patchedStreamText
+      ) {
+        successfullyPatched.push(mod);
+      }
     } catch {
       // Module namespace is frozen/sealed (typical for pure ESM namespace
       // objects).  The CJS exports object — which is the one CJS consumers
@@ -307,7 +389,10 @@ export async function instrumentVercelAi(
     _aiModule = null;
     _patchedModules = [];
     throw new Error(
-      "Could not patch 'ai' module — all resolved objects are read-only",
+      "Could not patch the 'ai' module: its exports are read-only ES module " +
+        "namespaces ('ai' >= 5 ships ESM-only builds, which cannot be " +
+        "monkey-patched). Vercel AI SDK calls are still captured at the " +
+        "HTTP layer when trackHttp is enabled (the default).",
     );
   }
 
@@ -357,10 +442,8 @@ function wrapStream(
     const finalizeTask = (status: "success" | "failed") => {
       if (recorded) return;
       recorded = true;
-      if (autoCreated && _buffer) {
-        task.status = status;
-        task.endedAt = new Date();
-        _buffer.upsertTask(task);
+      if (autoCreated) {
+        finalizeAutoTask(task, status, _buffer);
       }
     };
     return {
@@ -378,25 +461,18 @@ function wrapStream(
 
           // After stream completes, try to read usage from the stream result.
           // Vercel AI SDK exposes usage as a property or promise on the result.
-          let inputTokens = 0;
-          let outputTokens = 0;
+          let usage: ExtractedUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 
           try {
-            const usage = rawStream.usage ?? (await rawStream.usage);
-            if (usage) {
-              inputTokens = usage.promptTokens ?? 0;
-              outputTokens = usage.completionTokens ?? 0;
-            }
+            usage = extractUsage(await (rawStream.totalUsage ?? rawStream.usage));
           } catch {
             // usage not available
           }
 
           const model = extractModel(opts);
-          recordEvent(model, inputTokens, outputTokens, task, latencyMs);
-          if (autoCreated && _buffer) {
-            task.status = "success";
-            task.endedAt = new Date();
-            _buffer.upsertTask(task);
+          recordEvent(model, usage, task, latencyMs);
+          if (autoCreated) {
+            finalizeAutoTask(task, "success", _buffer);
           }
         }
         return result;
@@ -415,5 +491,6 @@ function wrapStream(
 
   return wrapped;
 }
-// Self-register so importing this module is enough to make the instrument available.
+
+// Self-register so importing this module is enough to make the instrument available.
 registerInstrument("vercel-ai", instrumentVercelAi, uninstrumentVercelAi);

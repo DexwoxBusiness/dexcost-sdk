@@ -251,6 +251,75 @@ describe("Vercel AI SDK instrumentation", () => {
     expect(typeof events[0].latencyMs).toBe("number");
   });
 
+  it("records AI SDK v5+ usage field names for generateText", async () => {
+    const v5Ai = {
+      generateText: async (): Promise<unknown> => ({
+        text: "hi",
+        usage: { inputTokens: 700, outputTokens: 90, cachedInputTokens: 100 },
+        finishReason: "stop",
+      }),
+      streamText: (): unknown => ({}),
+    };
+    _setAiModule(v5Ai);
+    await instrumentVercelAi(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      await v5Ai.generateText();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].inputTokens).toBe(700);
+    expect(events[0].outputTokens).toBe(90);
+    expect(events[0].cachedTokens).toBe(100);
+  });
+
+  it("prefers totalUsage (multi-step aggregate) over usage for generateText", async () => {
+    const v5Ai = {
+      generateText: async (): Promise<unknown> => ({
+        text: "hi",
+        usage: { inputTokens: 100, outputTokens: 10 }, // final step only
+        totalUsage: { inputTokens: 900, outputTokens: 120 }, // all steps
+        finishReason: "stop",
+      }),
+      streamText: (): unknown => ({}),
+    };
+    _setAiModule(v5Ai);
+    await instrumentVercelAi(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      await v5Ai.generateText();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events[0].inputTokens).toBe(900);
+    expect(events[0].outputTokens).toBe(120);
+  });
+
+  it("fails loudly when module assignment is silently ignored (ESM namespace)", async () => {
+    // ES module namespace objects ignore assignment in sloppy mode instead
+    // of throwing — emulate that with a Proxy whose set trap reports
+    // success without storing. The instrument must detect that the write
+    // did not land and reject, instead of claiming success while every
+    // call still hits the original functions.
+    const originals = {
+      generateText: async (): Promise<unknown> => makeMockGenerateTextResult(),
+      streamText: (): unknown => ({}),
+    };
+    const namespaceLike = new Proxy(originals, {
+      set: () => true, // pretend the write worked
+    });
+    _setAiModule(namespaceLike);
+
+    await expect(instrumentVercelAi(pricing, buffer)).rejects.toThrow(
+      /Could not patch the 'ai' module/,
+    );
+    // Consumers keep calling the untouched originals.
+    expect(namespaceLike.generateText).toBe(originals.generateText);
+  });
+
   it("gracefully handles missing ai package via registry", async () => {
     // Reset so no mock module is injected
     _resetAiModule();
@@ -341,6 +410,80 @@ describe("Vercel AI SDK streaming instrumentation", () => {
 
     expect(task.totalInputTokens).toBe(400);
     expect(task.totalOutputTokens).toBe(80);
+  });
+
+  it("records usage from an AI SDK v5+ StreamTextResult (not async-iterable, usage promise)", async () => {
+    // The REAL StreamTextResult has never been async-iterable — callers
+    // consume result.textStream. Usage is exposed as promises (`usage`,
+    // and `totalUsage` aggregating multi-step tool loops) that resolve
+    // when the stream finishes.
+    let resolveUsage!: (u: unknown) => void;
+    const realShapeAi = {
+      generateText: async (): Promise<unknown> => makeMockGenerateTextResult(),
+      streamText: function (_opts: unknown): unknown {
+        return {
+          textStream: (async function* () {
+            yield "Hello";
+          })(),
+          usage: new Promise((r) => {
+            resolveUsage = r;
+          }),
+          totalUsage: new Promise((r) => {
+            resolveUsage = r;
+          }),
+        };
+      },
+    };
+    _setAiModule(realShapeAi);
+    await instrumentVercelAi(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const result = realShapeAi.streamText({
+        model: { modelId: "claude-sonnet-4-20250514" },
+        prompt: "Hello",
+      }) as Record<string, unknown>;
+      // The original result object must be returned untouched.
+      expect(result.textStream).toBeDefined();
+      // Stream finishes → usage resolves with v5 field names.
+      resolveUsage({ inputTokens: 1500, outputTokens: 250, cachedInputTokens: 300 });
+      await new Promise((r) => setImmediate(r));
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("llm_call");
+    expect(events[0].model).toBe("claude-sonnet-4-20250514");
+    expect(events[0].inputTokens).toBe(1500);
+    expect(events[0].outputTokens).toBe(250);
+    expect(events[0].cachedTokens).toBe(300);
+    expect(task.totalInputTokens).toBe(1500);
+    expect(task.totalOutputTokens).toBe(250);
+  });
+
+  it("finalizes the auto-task once the usage promise resolves (v5+ shape)", async () => {
+    let resolveUsage!: (u: unknown) => void;
+    const realShapeAi = {
+      generateText: async (): Promise<unknown> => makeMockGenerateTextResult(),
+      streamText: (): unknown => ({
+        usage: new Promise((r) => {
+          resolveUsage = r;
+        }),
+      }),
+    };
+    _setAiModule(realShapeAi);
+    await instrumentVercelAi(pricing, buffer);
+
+    realShapeAi.streamText();
+    resolveUsage({ inputTokens: 10, outputTokens: 5 });
+    await new Promise((r) => setImmediate(r));
+
+    const autoTask = buffer
+      .getAllTasks()
+      .find((t) => t.taskType === "vercel-ai.streamText");
+    expect(autoTask).toBeDefined();
+    expect(autoTask!.status).toBe("success");
+    expect(autoTask!.endedAt).not.toBeNull();
   });
 
   it("finalizes the auto-task when streamText returns a non-iterable result", async () => {

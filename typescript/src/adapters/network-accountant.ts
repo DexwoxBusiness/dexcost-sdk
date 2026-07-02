@@ -180,6 +180,11 @@ export function unregisterAccountant(
   return a;
 }
 
+/** Test-only: number of live accountant registry entries (leak checks). */
+export function _accountantRegistrySize(): number {
+  return _registry.size;
+}
+
 /**
  * Test-only: clear the entire registry. Use between tests that exercise
  * the registry to avoid cross-test contamination.

@@ -28,7 +28,7 @@ import {
   type CostConfidence,
   type Task,
 } from "../core/models.js";
-import { createAutoTask } from "../core/auto-task.js";
+import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import { SessionManager } from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
@@ -177,17 +177,66 @@ const _LLM_ENDPOINTS = [
 ];
 
 /**
- * Check if a parsed URL is a known LLM chat/completions endpoint.
- * Returns the response format if matched, null otherwise.
+ * Derive the LLM response format from the URL path shape alone, matching the
+ * canonical route ANYWHERE in the pathname — not just as a prefix.
+ *
+ * "OpenAI-compatible" and "Anthropic-compatible" vendors, gateways, and
+ * proxies mount the canonical routes under arbitrary base-path prefixes:
+ * Kimi/Moonshot serve the Anthropic Messages API at
+ * `https://api.kimi.com/anthropic` (request path `/anthropic/v1/messages` from
+ * the official SDK, `/anthropic/messages` from `@ai-sdk/anthropic`), DeepSeek
+ * at `/anthropic/v1/messages`, OpenRouter at `/api/v1/chat/completions`,
+ * LiteLLM-style gateways under `/<deployment>/v1/...`. A prefix match on
+ * "/v1/messages" misses all of them, and the call then degrades to a generic
+ * `network` event (or is dropped below the byte threshold) — losing the
+ * llm_call entirely.
  */
-function _detectLlmEndpoint(parsedUrl: URL): "openai" | "anthropic" | null {
-  const format = _LLM_DOMAINS[parsedUrl.hostname];
-  if (!format) return null;
-  const pathname = parsedUrl.pathname;
-  for (const ep of _LLM_ENDPOINTS) {
-    if (pathname.startsWith(ep)) return format;
+function _formatFromPath(pathname: string): "openai" | "anthropic" | null {
+  if (/\/messages(\/|$)/.test(pathname)) return "anthropic";
+  if (/\/chat\/completions(\/|$)/.test(pathname)) return "openai";
+  if (/\/completions(\/|$)/.test(pathname)) return "openai";
+  // Google Gemini REST shape (models/<id>:generateContent)
+  if (pathname.includes(":generateContent") || pathname.includes(":streamGenerateContent")) {
+    return "openai";
   }
   return null;
+}
+
+/**
+ * Check if a parsed URL is an LLM chat/completions endpoint.
+ * Returns the response format if matched, null otherwise.
+ *
+ * Detection is two-tier:
+ * 1. Known LLM hosts (`_LLM_DOMAINS`): match the canonical path shape
+ *    anywhere in the pathname, or the legacy endpoint-prefix list. The path
+ *    shape decides the format when unambiguous (a host can serve BOTH an
+ *    OpenAI-compatible `/chat/completions` and an Anthropic-compatible
+ *    `/anthropic/v1/messages`), falling back to the domain default.
+ * 2. Unknown hosts (BYOK "…-compatible" vendors, gateways, self-hosted
+ *    proxies): the canonical path shape alone is enough to *attempt* LLM
+ *    extraction. Usage extraction is the correctness gate — the call only
+ *    becomes an `llm_call` if the response actually carries token usage in
+ *    the detected format; otherwise it falls through to normal network
+ *    accounting.
+ *
+ * LLM inference calls are always POST; other methods never match (avoids
+ * false positives on e.g. `GET /api/messages` chat-history routes).
+ */
+function _detectLlmEndpoint(parsedUrl: URL, method?: string): "openai" | "anthropic" | null {
+  if (method !== undefined && method.toUpperCase() !== "POST") return null;
+  const pathname = parsedUrl.pathname;
+  const pathFormat = _formatFromPath(pathname);
+  const domainFormat = _LLM_DOMAINS[parsedUrl.hostname];
+
+  if (domainFormat) {
+    if (pathFormat) return pathFormat;
+    for (const ep of _LLM_ENDPOINTS) {
+      if (pathname.startsWith(ep)) return domainFormat;
+    }
+    return null;
+  }
+
+  return pathFormat;
 }
 
 /**
@@ -204,22 +253,21 @@ function _extractLlmUsage(
   const usage = b.usage;
   if (!usage || typeof usage !== "object") return null;
 
-  if (format === "openai") {
-    return {
-      model,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      inputTokens: (usage as any).prompt_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      outputTokens: (usage as any).completion_tokens ?? 0,
-    };
-  }
-  // Anthropic format
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const u = usage as Record<string, any>;
+  const inKey = format === "openai" ? "prompt_tokens" : "input_tokens";
+  const outKey = format === "openai" ? "completion_tokens" : "output_tokens";
+
+  // Require at least one numeric token field in the expected format. Path-
+  // shape detection now matches unknown hosts too, so a response that merely
+  // happens to carry a differently-shaped `usage` object must not produce a
+  // phantom $0 llm_call.
+  if (typeof u[inKey] !== "number" && typeof u[outKey] !== "number") return null;
+
   return {
     model,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    inputTokens: (usage as any).input_tokens ?? 0,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    outputTokens: (usage as any).output_tokens ?? 0,
+    inputTokens: typeof u[inKey] === "number" ? u[inKey] : 0,
+    outputTokens: typeof u[outKey] === "number" ? u[outKey] : 0,
   };
 }
 
@@ -404,7 +452,7 @@ export function trackHttp(buffer?: EventBuffer, pricing?: PricingEngine): void {
     if (!suppressed && _pricing) {
       try {
         const parsedForLlm = new URL(urlStr);
-        const detectedFormat = _detectLlmEndpoint(parsedForLlm);
+        const detectedFormat = _detectLlmEndpoint(parsedForLlm, method);
         if (detectedFormat) {
           const ct = response.headers.get("content-type") ?? "";
           if (ct.includes("text/event-stream") || ct.includes("text/plain")) {
@@ -656,10 +704,10 @@ export function clearRecordedEvents(): void {
  * Order: active task → session task → freshly-created auto-task. An
  * auto-task is always returned, so HTTP costs are never silently lost.
  */
-function _resolveHttpTask(): Task {
+function _resolveHttpTask(): { task: Task; autoCreated: boolean } {
   const current = getCurrentTask();
   if (current !== undefined) {
-    return current;
+    return { task: current, autoCreated: false };
   }
 
   if (_sessionManager && _buffer) {
@@ -667,16 +715,22 @@ function _resolveHttpTask(): Task {
       getCurrentTask(),
     );
     if (sessionTask !== undefined) {
-      return sessionTask;
+      // Session tasks are owned + finalized by the SessionManager (idle
+      // sweep / shutdown), not by the adapter.
+      return { task: sessionTask, autoCreated: false };
     }
   }
 
-  // No task and no session — create an auto-task (mirrors Python).
+  // No task and no session — create an auto-task (mirrors Python). The
+  // adapter OWNS this task's lifecycle: pre-fix it was never finalized and
+  // stayed "pending" forever (and, since createAutoTask now registers a
+  // NetworkAccountant, would also leak the registry entry). Callers
+  // finalize it via finalizeAutoTask once the call completes.
   const autoTask = createAutoTask("http_call");
   if (_buffer) {
     _buffer.upsertTask(autoTask);
   }
-  return autoTask;
+  return { task: autoTask, autoCreated: true };
 }
 
 /**
@@ -751,6 +805,11 @@ interface _HttpCallContext {
   suppressed: boolean;
   /** LLM response format detected for this call (for SSE stream parsing). */
   llmStreamFormat?: "openai" | "anthropic";
+  /** Response BODY bytes, known once the counting stream has drained.
+   *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
+   *  llm_call path, whose extraction drains the body via clone()) can
+   *  attach complete byte details instead of request-side only. */
+  responseBodyBytes?: number;
   /** Accumulated tail of SSE data for LLM usage extraction on stream end. */
   sseTailBuffer?: string;
   /** Head of SSE stream preserved so Anthropic message_start is not lost. */
@@ -761,10 +820,26 @@ interface _HttpCallContext {
    *  Avoids a second getCurrentTask() lookup which would either create a
    *  duplicate auto-task or (before the auto-task leak fix) find a stale one. */
   resolvedTask?: Task;
+  /** True when resolvedTask is an adapter-created auto-task whose lifecycle
+   *  the adapter owns — _finaliseHttpCall finalizes it (status + network
+   *  drain) once the response body has drained. */
+  resolvedTaskAutoCreated?: boolean;
   /** Placeholder event stored here so _finaliseHttpCall can find it without
    *  a fragile O(n) backward scan of _recordedEvents that is vulnerable to
    *  FIFO eviction under high concurrency. */
   placeholderEvent?: CostEvent;
+  /**
+   * Two-signal gate for the network outcome (placeholder retype/drop +
+   * adapter auto-task finalize). The two producers can complete in EITHER
+   * order: _maybeRecordCost's own extraction (clone().json()) drains the
+   * wrapped body, firing _finaliseHttpCall BEFORE the placeholder is
+   * created; conversely for streamed bodies the caller drains long after
+   * classification finished. The outcome runs exactly once, when the
+   * second signal arrives.
+   */
+  bodyDrained?: boolean;
+  classificationDone?: boolean;
+  outcomeEmitted?: boolean;
 }
 
 function _resolveUrlStr(input: string | URL | Request): string {
@@ -934,11 +1009,23 @@ function _wrapResponseForByteCounting(
  * event with `cost_pending=true`.
  */
 function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): void {
+  ctx.responseBodyBytes = responseBodyBytes;
   const responseBytes = ctx.responseHeaderBytes + responseBodyBytes;
   // Reuse the task resolved in _maybeRecordCost — avoids a second
   // getCurrentTask() lookup which would create a duplicate auto-task
   // now that createAutoTask no longer pollutes AsyncLocalStorage.
-  const task = ctx.resolvedTask ?? _resolveHttpTask();
+  let task = ctx.resolvedTask;
+  let taskAutoCreated = ctx.resolvedTaskAutoCreated === true;
+  if (!task) {
+    // Zero-body responses finalise BEFORE _maybeRecordCost runs — resolve
+    // here and stamp the ctx so _maybeRecordCost reuses the same task
+    // instead of resolving a second one.
+    const resolved = _resolveHttpTask();
+    task = resolved.task;
+    taskAutoCreated = resolved.autoCreated;
+    ctx.resolvedTask = task;
+    ctx.resolvedTaskAutoCreated = taskAutoCreated;
+  }
   const accountant: NetworkAccountant | undefined = getAccountant(task.taskId);
   if (accountant) {
     accountant.record(ctx.hostname, responseBytes, ctx.requestBytes, ctx.isInternal);
@@ -995,48 +1082,95 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
     }
   }
 
-  // Network-event emission is the un-cataloged path's responsibility.
-  // _maybeRecordCost decides which path was taken — for catalog /
-  // domain-rate calls it sets a "matched" flag we check here. Stored on
-  // the ctx so a single-call closure threads it.
-  if (ctx._matchedCatalog || ctx.suppressed) return;
+  ctx.bodyDrained = true;
+  _maybeEmitNetworkOutcome(ctx);
+}
 
-  const combined = ctx.requestBytes + responseBytes;
-  // Use the placeholder event stored directly on ctx (set in
-  // _maybeRecordCost). This replaces the old O(n) backward scan of
-  // _recordedEvents which was fragile under FIFO eviction when
-  // concurrent calls exceeded _RECORDED_EVENTS_CAP.
-  const ev = ctx.placeholderEvent;
-  if (!ev) return;
+/**
+ * Emit the network outcome for a call: retype-or-drop the placeholder
+ * event and finalize the adapter-owned auto-task.
+ *
+ * Runs exactly once, and only after BOTH the response body has drained
+ * (byte totals known) AND _maybeRecordCost's classification has completed
+ * (placeholder created / matched flag set). The two happen in either
+ * order: extraction's clone().json() drains the body mid-classification
+ * for usage-less JSON responses, while streamed bodies drain long after
+ * classification. Gating on both closes the race where a too-early
+ * finalisation found no placeholder — large usage-less calls silently
+ * lost their network event and small ones leaked a phantom $0
+ * external_cost entry in the in-memory list.
+ */
+function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
+  if (!ctx.bodyDrained || !ctx.classificationDone || ctx.outcomeEmitted) return;
+  ctx.outcomeEmitted = true;
 
-  if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
-    ev.eventType = "network";
-    ev.serviceName = ctx.hostname;
-    ev.details = {
-      ...ev.details,
-      method: ctx.method,
-      cost_pending: true,
-      protocol: ctx.protocol,
-      request_bytes: ctx.requestBytes,
-      response_bytes: responseBytes,
-      is_internal_traffic: _isInternalToValue(ctx.isInternal),
-      _reTyped: true,
-    };
-    // Persist to durable buffer now that the final classification is
-    // known. The placeholder was intentionally NOT persisted in
-    // _maybeRecordCost to avoid phantom $0 external_cost events.
-    if (_buffer) {
-      _buffer.addEvent(ev);
+  const task = ctx.resolvedTask;
+  const taskAutoCreated = ctx.resolvedTaskAutoCreated === true;
+
+  try {
+    // Network-event emission is the un-cataloged path's responsibility.
+    // _maybeRecordCost decides which path was taken — for catalog /
+    // domain-rate calls it sets a "matched" flag we check here. Stored on
+    // the ctx so a single-call closure threads it.
+    if (ctx._matchedCatalog || ctx.suppressed) return;
+
+    const responseBytes = ctx.responseHeaderBytes + (ctx.responseBodyBytes ?? 0);
+    const combined = ctx.requestBytes + responseBytes;
+    // Use the placeholder event stored directly on ctx (set in
+    // _maybeRecordCost). This replaces the old O(n) backward scan of
+    // _recordedEvents which was fragile under FIFO eviction when
+    // concurrent calls exceeded _RECORDED_EVENTS_CAP.
+    const ev = ctx.placeholderEvent;
+    if (!ev) return;
+
+    if (combined > NETWORK_EVENT_THRESHOLD_BYTES) {
+      ev.eventType = "network";
+      ev.serviceName = ctx.hostname;
+      ev.details = {
+        ...ev.details,
+        method: ctx.method,
+        cost_pending: true,
+        protocol: ctx.protocol,
+        request_bytes: ctx.requestBytes,
+        response_bytes: responseBytes,
+        is_internal_traffic: _isInternalToValue(ctx.isInternal),
+        _reTyped: true,
+      };
+      // Persist to durable buffer now that the final classification is
+      // known. The placeholder was intentionally NOT persisted in
+      // _maybeRecordCost to avoid phantom $0 external_cost events.
+      if (_buffer) {
+        _buffer.addEvent(ev);
+      }
+    } else {
+      // Below threshold and no error → counters-only. Drop the
+      // placeholder external_cost-zero event from the in-memory list.
+      // The placeholder was never persisted to _buffer (deferred
+      // persistence), so no phantom event leaks to the durable store.
+      const idx = _recordedEvents.indexOf(ev);
+      if (idx !== -1) {
+        _recordedEvents.splice(idx, 1);
+      }
     }
-  } else {
-    // Below threshold and no error → counters-only. Drop the
-    // placeholder external_cost-zero event from the in-memory list.
-    // The placeholder was never persisted to _buffer (deferred
-    // persistence), so no phantom event leaks to the durable store.
-    const idx = _recordedEvents.indexOf(ev);
-    if (idx !== -1) {
-      _recordedEvents.splice(idx, 1);
+  } finally {
+    if (task) {
+      _finaliseAdapterAutoTask(task, taskAutoCreated);
     }
+  }
+}
+
+/**
+ * Finalize an adapter-owned auto-task once its (single) HTTP call has
+ * fully drained. Session and explicit tasks are owned elsewhere
+ * (SessionManager sweep / TrackedTask.end) and pass autoCreated=false.
+ * Pre-fix these tasks were never finalized and stayed "pending" forever.
+ */
+function _finaliseAdapterAutoTask(task: Task, autoCreated: boolean): void {
+  if (!autoCreated) return;
+  try {
+    finalizeAutoTask(task, "success", _buffer ?? undefined);
+  } catch {
+    // never crash user code
   }
 }
 
@@ -1057,6 +1191,18 @@ async function _maybeRecordCost(
     parsedUrl = new URL(urlStr);
     hostname = parsedUrl.hostname;
   } catch {
+    // Unparseable URL — possible when a custom or mocked fetch accepts
+    // inputs that `new URL()` rejects (relative URLs in browser-ish
+    // runtimes, test stubs). Classification is trivially "done" (nothing
+    // to classify), and the outcome gate must still be released: without
+    // this, ctx.classificationDone stayed unset, _maybeEmitNetworkOutcome
+    // never fired after the body drained, and an adapter-created
+    // http_call auto-task stayed "pending" forever with its
+    // NetworkAccountant registry entry leaked.
+    if (ctx) {
+      ctx.classificationDone = true;
+      _maybeEmitNetworkOutcome(ctx);
+    }
     return;
   }
 
@@ -1066,162 +1212,202 @@ async function _maybeRecordCost(
   // when none is active so HTTP costs are never silently lost (mirrors
   // the Python adapter's session auto-creation). Store on ctx so
   // _finaliseHttpCall reuses the same task without a second lookup.
-  const task = _resolveHttpTask();
-  if (ctx) ctx.resolvedTask = task;
+  // Reuse a task already resolved by _finaliseHttpCall (zero-body
+  // responses finalise first); otherwise resolve and stamp the ctx.
+  const resolved: { task: Task; autoCreated: boolean } = ctx?.resolvedTask
+    ? { task: ctx.resolvedTask, autoCreated: ctx.resolvedTaskAutoCreated === true }
+    : _resolveHttpTask();
+  const task = resolved.task;
+  if (ctx) {
+    ctx.resolvedTask = task;
+    ctx.resolvedTaskAutoCreated = resolved.autoCreated;
+  }
 
-  // v1 §4.3 byte_details — stamped into every event below. Response_bytes
-  // are deferred to the TransformStream finalisation; for now only the
-  // request side is known on catalog/domain-rate events.
-  const byteDetailsRequestOnly: Record<string, unknown> = ctx
-    ? {
-        protocol: ctx.protocol,
-        request_bytes: ctx.requestBytes,
-        is_internal_traffic: _isInternalToValue(ctx.isInternal),
+  // Node-level http/https calls (no ctx) have no byte-counting stream and
+  // therefore no _finaliseHttpCall hook. When the adapter created the
+  // auto-task for such a call, finalize it here once recording is done —
+  // pre-fix it leaked as "pending" forever.
+  try {
+
+    // v1 §4.3 byte_details — stamped into every event below. Response_bytes
+    // are deferred to the TransformStream finalisation; for now only the
+    // request side is known on catalog/domain-rate events.
+    const byteDetailsRequestOnly: Record<string, unknown> = ctx
+      ? {
+          protocol: ctx.protocol,
+          request_bytes: ctx.requestBytes,
+          is_internal_traffic: _isInternalToValue(ctx.isInternal),
+        }
+      : {};
+
+    // 1. Check user-registered domain rate first (highest precedence)
+    const rate = _domainRates.get(domain);
+    if (rate !== undefined) {
+      const event = createCostEvent({
+        eventId: randomUUID(),
+        taskId: task.taskId,
+        eventType: "external_cost",
+        costUsd: rate.costUsd,
+        costConfidence: "exact",
+        pricingSource: "rate_registry",
+        serviceName: domain,
+        details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
+      });
+
+      _pushRecordedEvent(event);
+      if (_buffer) {
+        _buffer.addEvent(event);
       }
-    : {};
+      if (ctx) ctx._matchedCatalog = true;
+      return;
+    }
 
-  // 1. Check user-registered domain rate first (highest precedence)
-  const rate = _domainRates.get(domain);
-  if (rate !== undefined) {
+    // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
+    // detect known LLM API endpoints and emit llm_call events using the
+    // pricing engine for proper token-based cost attribution.
+    if (!ctx?.suppressed && response && _pricing) {
+      const llmFormat = _detectLlmEndpoint(parsedUrl, ctx?.method);
+      if (llmFormat) {
+        const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
+        if (llmUsage) {
+          const costResult: CostResult = _pricing.getCost(
+            llmUsage.model,
+            llmUsage.inputTokens,
+            llmUsage.outputTokens,
+          );
+          // The clone().json() above drained the counting stream, so by now
+          // _finaliseHttpCall has stamped the response body bytes on ctx.
+          // Attach the complete byte picture: this llm_call REPLACES the
+          // standalone network event for the call (≤1 event per HTTP call),
+          // so it must carry the byte details the network event would have.
+          const responseBytesKnown =
+            ctx !== undefined && ctx.responseBodyBytes !== undefined
+              ? { response_bytes: ctx.responseHeaderBytes + ctx.responseBodyBytes }
+              : {};
+          const event = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "llm_call",
+            costUsd: costResult.costUsd,
+            costConfidence: costResult.costConfidence,
+            pricingSource: costResult.pricingSource,
+            provider: domain,
+            model: llmUsage.model,
+            inputTokens: llmUsage.inputTokens,
+            outputTokens: llmUsage.outputTokens,
+            details: {
+              url: urlStr,
+              source: "http_llm_fallback",
+              ...byteDetailsRequestOnly,
+              ...responseBytesKnown,
+            },
+          });
+
+          _pushRecordedEvent(event);
+          if (_buffer) {
+            _buffer.addEvent(event);
+          }
+          // Update task aggregates
+          task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+          task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+          task.totalInputTokens += llmUsage.inputTokens;
+          task.totalOutputTokens += llmUsage.outputTokens;
+          if (_buffer) {
+            _buffer.upsertTask(task);
+          }
+          if (ctx) ctx._matchedCatalog = true;
+          return;
+        }
+      }
+    }
+
+    // 2. Check service catalog
+    if (_catalog) {
+      const entry = _catalog.lookup(urlStr);
+      if (entry) {
+        // Extract cost from response
+        let extractionResult: CostExtractionResult | null = null;
+
+        if (!response) {
+          // No response body available (Node-level request) — extract
+          // from the catalog entry alone.
+          try {
+            extractionResult = _catalog.extractCost(entry, new Headers(), null);
+          } catch {
+            // Give up on extraction
+          }
+        } else {
+          extractionResult = await _extractFromResponse(_catalog, entry, response);
+        }
+
+        if (extractionResult) {
+          const event = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "external_cost",
+            costUsd: extractionResult.costUsd,
+            costConfidence: extractionResult.confidence as CostConfidence,
+            pricingSource: "rate_registry",
+            serviceName: extractionResult.serviceName,
+            details: {
+              url: urlStr,
+              pricingSource: extractionResult.pricingSource,
+              catalogService: entry.display_name,
+              ...byteDetailsRequestOnly,
+            },
+          });
+
+          _pushRecordedEvent(event);
+          if (_buffer) {
+            _buffer.addEvent(event);
+          }
+          if (ctx) ctx._matchedCatalog = true;
+          return;
+        }
+      }
+    }
+
+    // 3. Un-cataloged — emit a placeholder external_cost-zero event that
+    // _finaliseHttpCall will RE-TYPE to a `network` event with
+    // cost_pending=true once the response body has been fully drained
+    // (and byte counts are known). If combined bytes stay below
+    // threshold and there's no error, the placeholderis silently
+    // dropped — no phantom event reaches the durable buffer.
+    // node-level http (no ctx) OR a suppressed LLM-host call: no placeholder.
+    // Suppressed calls MUST be skipped here — _finaliseHttpCall returns early
+    // for suppressed calls (before the drop path), so a placeholder created
+    // here would never be dropped and would leak as a phantom $0 event.
+    if (!ctx || ctx.suppressed) return;
+
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: task.taskId,
       eventType: "external_cost",
-      costUsd: rate.costUsd,
-      costConfidence: "exact",
-      pricingSource: "rate_registry",
+      costUsd: 0,
+      costConfidence: "unknown",
+      pricingSource: "unknown",
       serviceName: domain,
-      details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
+      details: { url: urlStr, ...byteDetailsRequestOnly },
     });
 
     _pushRecordedEvent(event);
-    if (_buffer) {
-      _buffer.addEvent(event);
+    // NOTE: intentionally NOT persisting to _buffer here. The event is
+    // held in-memory only. _finaliseHttpCall promotes it to a `network`
+    // event with cost_pending=true (and persists it) IF the combined
+    // bytes exceed the threshold. If they don't, the placeholder is
+    // silently dropped from _recordedEvents — no phantom $0 event ever
+    // reaches the push/ingest pipeline.
+    ctx.placeholderEvent = event;
+  } finally {
+    if (!ctx && resolved.autoCreated) {
+      finalizeAutoTask(task, "success", _buffer ?? undefined);
     }
-    if (ctx) ctx._matchedCatalog = true;
-    return;
-  }
-
-  // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
-  // detect known LLM API endpoints and emit llm_call events using the
-  // pricing engine for proper token-based cost attribution.
-  if (!ctx?.suppressed && response && _pricing) {
-    const llmFormat = _detectLlmEndpoint(parsedUrl);
-    if (llmFormat) {
-      const llmUsage = await _tryExtractLlmFromResponse(response, llmFormat);
-      if (llmUsage) {
-        const costResult: CostResult = _pricing.getCost(
-          llmUsage.model,
-          llmUsage.inputTokens,
-          llmUsage.outputTokens,
-        );
-        const event = createCostEvent({
-          eventId: randomUUID(),
-          taskId: task.taskId,
-          eventType: "llm_call",
-          costUsd: costResult.costUsd,
-          costConfidence: costResult.costConfidence,
-          pricingSource: costResult.pricingSource,
-          provider: domain,
-          model: llmUsage.model,
-          inputTokens: llmUsage.inputTokens,
-          outputTokens: llmUsage.outputTokens,
-          details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
-        });
-
-        _pushRecordedEvent(event);
-        if (_buffer) {
-          _buffer.addEvent(event);
-        }
-        // Update task aggregates
-        task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-        task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-        task.totalInputTokens += llmUsage.inputTokens;
-        task.totalOutputTokens += llmUsage.outputTokens;
-        if (_buffer) {
-          _buffer.upsertTask(task);
-        }
-        if (ctx) ctx._matchedCatalog = true;
-        return;
-      }
+    if (ctx) {
+      // Classification is done (matched flag / placeholder are final).
+      // If extraction already drained the body, the network outcome runs
+      // now; otherwise it runs when the caller drains the stream.
+      ctx.classificationDone = true;
+      _maybeEmitNetworkOutcome(ctx);
     }
   }
-
-  // 2. Check service catalog
-  if (_catalog) {
-    const entry = _catalog.lookup(urlStr);
-    if (entry) {
-      // Extract cost from response
-      let extractionResult: CostExtractionResult | null = null;
-
-      if (!response) {
-        // No response body available (Node-level request) — extract
-        // from the catalog entry alone.
-        try {
-          extractionResult = _catalog.extractCost(entry, new Headers(), null);
-        } catch {
-          // Give up on extraction
-        }
-      } else {
-        extractionResult = await _extractFromResponse(_catalog, entry, response);
-      }
-
-      if (extractionResult) {
-        const event = createCostEvent({
-          eventId: randomUUID(),
-          taskId: task.taskId,
-          eventType: "external_cost",
-          costUsd: extractionResult.costUsd,
-          costConfidence: extractionResult.confidence as CostConfidence,
-          pricingSource: "rate_registry",
-          serviceName: extractionResult.serviceName,
-          details: {
-            url: urlStr,
-            pricingSource: extractionResult.pricingSource,
-            catalogService: entry.display_name,
-            ...byteDetailsRequestOnly,
-          },
-        });
-
-        _pushRecordedEvent(event);
-        if (_buffer) {
-          _buffer.addEvent(event);
-        }
-        if (ctx) ctx._matchedCatalog = true;
-        return;
-      }
-    }
-  }
-
-  // 3. Un-cataloged — emit a placeholder external_cost-zero event that
-  // _finaliseHttpCall will RE-TYPE to a `network` event with
-  // cost_pending=true once the response body has been fully drained
-  // (and byte counts are known). If combined bytes stay below
-  // threshold and there's no error, the placeholderis silently
-  // dropped — no phantom event reaches the durable buffer.
-  // node-level http (no ctx) OR a suppressed LLM-host call: no placeholder.
-  // Suppressed calls MUST be skipped here — _finaliseHttpCall returns early
-  // for suppressed calls (before the drop path), so a placeholder created
-  // here would never be dropped and would leak as a phantom $0 event.
-  if (!ctx || ctx.suppressed) return;
-
-  const event = createCostEvent({
-    eventId: randomUUID(),
-    taskId: task.taskId,
-    eventType: "external_cost",
-    costUsd: 0,
-    costConfidence: "unknown",
-    pricingSource: "unknown",
-    serviceName: domain,
-    details: { url: urlStr, ...byteDetailsRequestOnly },
-  });
-
-  _pushRecordedEvent(event);
-  // NOTE: intentionally NOT persisting to _buffer here. The event is
-  // held in-memory only. _finaliseHttpCall promotes it to a `network`
-  // event with cost_pending=true (and persists it) IF the combined
-  // bytes exceed the threshold. If they don't, the placeholder is
-  // silently dropped from _recordedEvents — no phantom $0 event ever
-  // reaches the push/ingest pipeline.
-  ctx.placeholderEvent = event;
 }
