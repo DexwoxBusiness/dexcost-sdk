@@ -38,6 +38,9 @@ type modelPricing struct {
 	// the prompt cache. Charged separately from cache reads and normal input.
 	CacheCreationCost decimal.Decimal
 	HasCacheCreation  bool
+	// Anthropic usage reports input, cache-read, and cache-write as disjoint
+	// buckets. OpenAI reports cached tokens as a subset of input tokens.
+	CacheTokensAreDisjoint bool
 }
 
 // customPricing holds per-1k-token costs set by the user.
@@ -101,6 +104,8 @@ func newEngineFromBytes(data []byte) (*Engine, error) {
 			mp.CacheCreationCost = decimalFromInterface(v)
 			mp.HasCacheCreation = true
 		}
+		provider, _ := fields["litellm_provider"].(string)
+		mp.CacheTokensAreDisjoint = usesDisjointCacheBuckets(name, provider)
 		models[name] = mp
 	}
 
@@ -118,13 +123,21 @@ func newEngineFromBytes(data []byte) (*Engine, error) {
 // dateSuffixRe matches date suffixes like -2024-08-06 at end of model name.
 var dateSuffixRe = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 
+func usesDisjointCacheBuckets(model, provider string) bool {
+	provider = strings.ToLower(provider)
+	model = strings.ToLower(model)
+	return provider == "anthropic" ||
+		provider == "vertex_ai-anthropic_models" ||
+		strings.Contains(model, "claude") ||
+		strings.Contains(model, "anthropic.")
+}
+
 // GetCost computes the cost for a model invocation given token counts.
 // It tries: exact match, provider-prefix stripped, date-suffix fallback.
 //
 // cachedTokens are prompt-cache *read* tokens (discounted); cacheCreationTokens
-// are Anthropic prompt-cache *write* tokens, charged at their own rate. Both are
-// subtracted from inputTokens before the remainder is charged at the full input
-// rate (Python parity: pricing.py:174-186).
+// are prompt-cache *write* tokens. Anthropic reports both as disjoint from
+// inputTokens, while OpenAI includes cachedTokens inside inputTokens.
 func (e *Engine) GetCost(model string, inputTokens, outputTokens, cachedTokens, cacheCreationTokens int) CostResult {
 	// Check custom pricing first.
 	e.mu.RLock()
@@ -133,11 +146,23 @@ func (e *Engine) GetCost(model string, inputTokens, outputTokens, cachedTokens, 
 
 	if hasCustom {
 		thousand := decimal.NewFromInt(1000)
-		inputCost := cp.InputPer1k.Mul(decimal.NewFromInt(int64(inputTokens))).Div(thousand)
+		inputTokens = max(inputTokens, 0)
+		outputTokens = max(outputTokens, 0)
+		cachedTokens = max(cachedTokens, 0)
+		cacheCreationTokens = max(cacheCreationTokens, 0)
+		hasUnpricedDisjointCache := usesDisjointCacheBuckets(model, "") &&
+			(cachedTokens > 0 || cacheCreationTokens > 0)
+		billableInput := inputTokens
+		confidence := "computed"
+		if hasUnpricedDisjointCache {
+			billableInput += cachedTokens + cacheCreationTokens
+			confidence = "unknown"
+		}
+		inputCost := cp.InputPer1k.Mul(decimal.NewFromInt(int64(billableInput))).Div(thousand)
 		outputCost := cp.OutputPer1k.Mul(decimal.NewFromInt(int64(outputTokens))).Div(thousand)
 		return CostResult{
 			CostUSD:        inputCost.Add(outputCost),
-			CostConfidence: "computed",
+			CostConfidence: confidence,
 			PricingSource:  "custom",
 			PricingVersion: e.pricingVersion,
 		}
@@ -187,34 +212,62 @@ func (e *Engine) findModel(model string) *modelPricing {
 }
 
 func (e *Engine) computeCost(mp *modelPricing, inputTokens, outputTokens, cachedTokens, cacheCreationTokens int) CostResult {
-	// Mirror Python pricing.py:174-186: cache-read and cache-creation tokens are
-	// subtracted from input_tokens and charged at their own per-token rates;
-	// the remainder is charged at the full input rate.
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
 	if cachedTokens < 0 {
 		cachedTokens = 0
 	}
 	if cacheCreationTokens < 0 {
 		cacheCreationTokens = 0
 	}
-	effectiveCached := cachedTokens
-	if effectiveCached > inputTokens {
-		effectiveCached = inputTokens
-	}
-	remaining := inputTokens - effectiveCached
-	effectiveCreation := cacheCreationTokens
-	if effectiveCreation > remaining {
-		effectiveCreation = remaining
-	}
-	nonCachedInput := remaining - effectiveCreation
 
-	totalCost := mp.InputCostPerToken.Mul(decimal.NewFromInt(int64(nonCachedInput))).
-		Add(mp.CacheReadCost.Mul(decimal.NewFromInt(int64(effectiveCached)))).
-		Add(mp.CacheCreationCost.Mul(decimal.NewFromInt(int64(effectiveCreation)))).
-		Add(mp.OutputCostPerToken.Mul(decimal.NewFromInt(int64(outputTokens))))
+	confidence := "computed"
+	var totalCost decimal.Decimal
+	if mp.CacheTokensAreDisjoint {
+		cacheReadRate := mp.CacheReadCost
+		cacheCreationRate := mp.CacheCreationCost
+		if cachedTokens > 0 && !mp.HasCacheRead {
+			cacheReadRate = mp.InputCostPerToken
+			confidence = "unknown"
+		}
+		if cacheCreationTokens > 0 && !mp.HasCacheCreation {
+			cacheCreationRate = mp.InputCostPerToken
+			confidence = "unknown"
+		}
+		totalCost = mp.InputCostPerToken.Mul(decimal.NewFromInt(int64(inputTokens))).
+			Add(cacheReadRate.Mul(decimal.NewFromInt(int64(cachedTokens)))).
+			Add(cacheCreationRate.Mul(decimal.NewFromInt(int64(cacheCreationTokens)))).
+			Add(mp.OutputCostPerToken.Mul(decimal.NewFromInt(int64(outputTokens))))
+	} else {
+		effectiveCached := 0
+		if mp.HasCacheRead {
+			effectiveCached = cachedTokens
+			if effectiveCached > inputTokens {
+				effectiveCached = inputTokens
+			}
+		}
+		remaining := inputTokens - effectiveCached
+		effectiveCreation := 0
+		if mp.HasCacheCreation {
+			effectiveCreation = cacheCreationTokens
+			if effectiveCreation > remaining {
+				effectiveCreation = remaining
+			}
+		}
+		nonCachedInput := remaining - effectiveCreation
+		totalCost = mp.InputCostPerToken.Mul(decimal.NewFromInt(int64(nonCachedInput))).
+			Add(mp.CacheReadCost.Mul(decimal.NewFromInt(int64(effectiveCached)))).
+			Add(mp.CacheCreationCost.Mul(decimal.NewFromInt(int64(effectiveCreation)))).
+			Add(mp.OutputCostPerToken.Mul(decimal.NewFromInt(int64(outputTokens))))
+	}
 
 	return CostResult{
 		CostUSD:        totalCost,
-		CostConfidence: "computed",
+		CostConfidence: confidence,
 		PricingSource:  "litellm",
 		PricingVersion: e.pricingVersion,
 	}
@@ -247,6 +300,7 @@ type serverPricingResponse struct {
 		OutputCostPerToken float64 `json:"output_cost_per_token"`
 		CacheReadCost      float64 `json:"cache_read_input_token_cost"`
 		CacheCreationCost  float64 `json:"cache_creation_input_token_cost"`
+		LiteLLMProvider    string  `json:"litellm_provider"`
 	} `json:"models"`
 }
 
@@ -280,8 +334,9 @@ func (e *Engine) RefreshFromServer(endpoint string) error {
 	models := make(map[string]*modelPricing, len(payload.Models))
 	for name, entry := range payload.Models {
 		mp := &modelPricing{
-			InputCostPerToken:  decimal.NewFromFloat(entry.InputCostPerToken),
-			OutputCostPerToken: decimal.NewFromFloat(entry.OutputCostPerToken),
+			InputCostPerToken:      decimal.NewFromFloat(entry.InputCostPerToken),
+			OutputCostPerToken:     decimal.NewFromFloat(entry.OutputCostPerToken),
+			CacheTokensAreDisjoint: usesDisjointCacheBuckets(name, entry.LiteLLMProvider),
 		}
 		if entry.CacheReadCost != 0 {
 			mp.CacheReadCost = decimal.NewFromFloat(entry.CacheReadCost)

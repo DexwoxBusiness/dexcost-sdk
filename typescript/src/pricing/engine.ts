@@ -24,6 +24,7 @@ interface ModelPricing {
   output_cost_per_token: number;
   cache_read_input_token_cost?: number;
   cache_creation_input_token_cost?: number;
+  litellm_provider?: string;
 }
 
 interface CustomPricing {
@@ -38,6 +39,16 @@ interface CustomPricing {
  */
 function dec(v: number): Decimal {
   return new Decimal(String(v));
+}
+
+/** Anthropic reports input, cache-read, and cache-write as disjoint buckets. */
+function usesDisjointCacheBuckets(model: string, provider: string = ""): boolean {
+  provider = provider.toLowerCase();
+  const normalizedModel = model.toLowerCase();
+  return provider === "anthropic"
+    || provider === "vertex_ai-anthropic_models"
+    || normalizedModel.includes("claude")
+    || normalizedModel.includes("anthropic.");
 }
 
 export class PricingEngine {
@@ -74,13 +85,21 @@ export class PricingEngine {
     if (custom) {
       // Decimal math throughout — rates routed through String() so a float64
       // rate literal never poisons the product (matches Python Decimal(str)).
+      const safeInput = Math.max(0, inputTokens);
+      const safeOutput = Math.max(0, outputTokens);
+      const safeCached = Math.max(0, cachedTokens);
+      const safeCreation = Math.max(0, cacheCreationTokens);
+      const hasUnpricedDisjointCache = usesDisjointCacheBuckets(model)
+        && (safeCached > 0 || safeCreation > 0);
+      const billableInput = safeInput
+        + (hasUnpricedDisjointCache ? safeCached + safeCreation : 0);
       const cost = dec(custom.inputPer1k)
-        .times(inputTokens)
+        .times(billableInput)
         .dividedBy(1000)
-        .plus(dec(custom.outputPer1k).times(outputTokens).dividedBy(1000));
+        .plus(dec(custom.outputPer1k).times(safeOutput).dividedBy(1000));
       return {
         costUsd: cost,
-        costConfidence: "computed",
+        costConfidence: hasUnpricedDisjointCache ? "unknown" : "computed",
         pricingSource: "custom",
         pricingVersion: this._pricingVersion,
       };
@@ -98,23 +117,54 @@ export class PricingEngine {
 
     const inputRate = dec(info.input_cost_per_token);
     const outputRate = dec(info.output_cost_per_token);
-    const cacheReadRate = dec(info.cache_read_input_token_cost ?? 0);
-    const cacheCreationRate = dec(info.cache_creation_input_token_cost ?? 0);
+    const hasCacheReadRate = info.cache_read_input_token_cost !== undefined;
+    const hasCacheCreationRate = info.cache_creation_input_token_cost !== undefined;
+    const cacheReadRate = dec(info.cache_read_input_token_cost ?? info.input_cost_per_token);
+    const cacheCreationRate = dec(
+      info.cache_creation_input_token_cost ?? info.input_cost_per_token,
+    );
+    const safeInput = Math.max(0, inputTokens);
+    const safeOutput = Math.max(0, outputTokens);
+    const safeCached = Math.max(0, cachedTokens);
+    const safeCreation = Math.max(0, cacheCreationTokens);
 
-    const effectiveCached = Math.min(cachedTokens, inputTokens);
-    const remaining = inputTokens - effectiveCached;
-    const effectiveCreation = Math.min(cacheCreationTokens, remaining);
-    const nonCachedInput = remaining - effectiveCreation;
-
-    const cost = inputRate
-      .times(nonCachedInput)
-      .plus(cacheReadRate.times(effectiveCached))
-      .plus(cacheCreationRate.times(effectiveCreation))
-      .plus(outputRate.times(outputTokens));
+    let cost: Decimal;
+    let costConfidence: "computed" | "unknown" = "computed";
+    if (usesDisjointCacheBuckets(model, info.litellm_provider)) {
+      // Anthropic usage exposes three independent input buckets. Subtracting
+      // cache tokens from input_tokens drops most of the billable usage.
+      cost = inputRate
+        .times(safeInput)
+        .plus(cacheReadRate.times(safeCached))
+        .plus(cacheCreationRate.times(safeCreation))
+        .plus(outputRate.times(safeOutput));
+      if (
+        (safeCached > 0 && !hasCacheReadRate)
+        || (safeCreation > 0 && !hasCacheCreationRate)
+      ) {
+        costConfidence = "unknown";
+      }
+    } else {
+      // OpenAI-style usage includes cached tokens inside input_tokens. Only
+      // subtract a cache bucket when the catalog supplies its dedicated rate.
+      const effectiveCached = hasCacheReadRate
+        ? Math.min(safeCached, safeInput)
+        : 0;
+      const remaining = safeInput - effectiveCached;
+      const effectiveCreation = hasCacheCreationRate
+        ? Math.min(safeCreation, remaining)
+        : 0;
+      const nonCachedInput = remaining - effectiveCreation;
+      cost = inputRate
+        .times(nonCachedInput)
+        .plus(cacheReadRate.times(effectiveCached))
+        .plus(cacheCreationRate.times(effectiveCreation))
+        .plus(outputRate.times(safeOutput));
+    }
 
     return {
       costUsd: cost,
-      costConfidence: "computed",
+      costConfidence,
       pricingSource: "litellm",
       pricingVersion: this._pricingVersion,
     };

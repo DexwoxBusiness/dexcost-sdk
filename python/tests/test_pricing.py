@@ -53,6 +53,7 @@ def minimal_data(tmp_path: Path) -> Path:
             "input_cost_per_token": 0.000003,
             "output_cost_per_token": 0.000015,
             "cache_read_input_token_cost": 0.0000003,
+            "cache_creation_input_token_cost": 0.00000375,
             "litellm_provider": "anthropic",
         },
         "gpt-3.5-turbo": {
@@ -234,21 +235,42 @@ class TestCachedTokens:
         assert result.cost_usd == Decimal("0.00125")
 
     def test_cached_exceeds_input_clamped(self, engine: PricingEngine) -> None:
-        """cached_tokens > input_tokens is clamped."""
+        """OpenAI cached_tokens > input_tokens is clamped."""
         result = engine.get_cost("gpt-4o", input_tokens=100, output_tokens=0, cached_tokens=500)
         # Clamped to 100 cached: 100 * 0.00000125 = 0.000125
         assert result.cost_usd == Decimal("0.000125")
 
+    def test_anthropic_cache_read_is_disjoint(self, engine: PricingEngine) -> None:
+        """Anthropic cache reads are additional to normal input tokens."""
+        result = engine.get_cost(
+            "claude-3-5-sonnet-20241022",
+            input_tokens=100,
+            output_tokens=0,
+            cached_tokens=1000,
+        )
+        assert result.cost_usd == Decimal("0.00060000")
+        assert result.cost_confidence == "computed"
+
+    def test_anthropic_cache_creation_is_disjoint(self, engine: PricingEngine) -> None:
+        """Anthropic cache writes are not clamped to normal input tokens."""
+        result = engine.get_cost(
+            "claude-3-5-sonnet-20241022",
+            input_tokens=10,
+            output_tokens=0,
+            cache_creation_tokens=5000,
+        )
+        assert result.cost_usd == Decimal("0.01878000")
+        assert result.cost_confidence == "computed"
+
     def test_no_cache_rate_model(self, engine: PricingEngine) -> None:
-        """Model without cache_read_input_token_cost: cached tokens charged at 0."""
+        """Without a cache rate, input tokens remain billed at the normal rate."""
         result = engine.get_cost(
             "gpt-3.5-turbo", input_tokens=1000, output_tokens=500, cached_tokens=200
         )
-        # non-cached: 800 * 0.0000005 = 0.0004
-        # cached: 200 * 0 = 0 (no cache_read_input_token_cost in data)
+        # input: 1000 * 0.0000005 = 0.0005 (no discount is invented)
         # output: 500 * 0.0000015 = 0.00075
-        # total: 0.00115
-        assert result.cost_usd == Decimal("0.00115")
+        # total: 0.00125
+        assert result.cost_usd == Decimal("0.00125")
 
     def test_zero_cached_same_as_no_arg(self, engine: PricingEngine) -> None:
         r1 = engine.get_cost("gpt-4o", 1000, 500, cached_tokens=0)
@@ -299,6 +321,23 @@ class TestCustomPricing:
         r2 = engine.get_cost("my-model", 1000, 500, cached_tokens=500)
         # Custom pricing uses total input_tokens regardless of cached
         assert r1.cost_usd == r2.cost_usd
+
+    def test_custom_anthropic_cache_buckets_are_not_dropped(
+        self, engine: PricingEngine
+    ) -> None:
+        engine.set_custom_pricing(
+            "my-claude-model", input_per_1k="0.001", output_per_1k="0.002"
+        )
+        result = engine.get_cost(
+            "my-claude-model",
+            input_tokens=100,
+            output_tokens=0,
+            cached_tokens=1000,
+            cache_creation_tokens=500,
+        )
+        assert result.cost_usd == Decimal("0.0016")
+        assert result.cost_confidence == "unknown"
+        assert result.pricing_source == "custom"
 
 
 # ---------------------------------------------------------------------------

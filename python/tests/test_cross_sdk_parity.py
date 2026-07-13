@@ -231,6 +231,7 @@ def _price_llm(payload: dict[str, Any]) -> dict[str, str]:
         input_tokens=details.get("input_tokens", 0),
         output_tokens=details.get("output_tokens", 0),
         cached_tokens=details.get("cached_tokens", 0),
+        cache_creation_tokens=details.get("cache_creation_tokens", 0),
     )
     return {
         "cost_usd": str(result.cost_usd) if result.cost_usd is not None else "0",

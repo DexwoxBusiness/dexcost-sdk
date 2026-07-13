@@ -1,0 +1,9 @@
+{
+  "_description": "Anthropic cache-read tokens are disjoint from normal input tokens.",
+  "provider": "anthropic",
+  "model": "claude-3-5-sonnet-20241022",
+  "input_tokens": 100,
+  "output_tokens": 0,
+  "cached_tokens": 1000,
+  "cache_creation_tokens": 0
+}

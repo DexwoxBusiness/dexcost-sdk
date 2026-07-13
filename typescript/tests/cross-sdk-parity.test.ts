@@ -116,6 +116,8 @@ describe("cross-SDK LLM pricing parity", () => {
   const LLM_FIXTURES = [
     "pricing_inputs/llm/gpt4o_500_in_200_out.json",
     "pricing_inputs/llm/claude_sonnet_streaming_2000_in_1500_out.json",
+    "pricing_inputs/llm/claude_cache_read_disjoint.json",
+    "pricing_inputs/llm/claude_cache_write_disjoint.json",
   ];
   for (const rel of LLM_FIXTURES) {
     it(rel, () => {
@@ -129,7 +131,7 @@ describe("cross-SDK LLM pricing parity", () => {
         input.input_tokens as number,
         input.output_tokens as number,
         (input.cached_tokens as number) ?? 0,
-        0,
+        (input.cache_creation_tokens as number) ?? 0,
       );
       // Decimal equality (not string equality) — TS uses number, so trailing
       // zeros / repr differ from Python's Decimal stringification. Drift in

@@ -26,7 +26,9 @@ use serde_json::Value;
 use dexcost::{scrub_url, CostEvent, PricingEngine, Task};
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("fixtures")
 }
 
 fn read_json(path: &Path) -> Value {
@@ -189,15 +191,24 @@ fn cross_sdk_llm_pricing_parity() {
     for rel in &[
         "pricing_inputs/llm/gpt4o_500_in_200_out.json",
         "pricing_inputs/llm/claude_sonnet_streaming_2000_in_1500_out.json",
+        "pricing_inputs/llm/claude_cache_read_disjoint.json",
+        "pricing_inputs/llm/claude_cache_write_disjoint.json",
     ] {
         let input = strip_underscored(read_json(&fixtures_dir().join(rel)));
         let expected = read_json(&expected_path_for(rel, "pricing"));
         let model = input["model"].as_str().expect("model");
         let in_tok = input["input_tokens"].as_i64().expect("input_tokens");
         let out_tok = input["output_tokens"].as_i64().expect("output_tokens");
-        let cached = input.get("cached_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let cached = input
+            .get("cached_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let cache_creation = input
+            .get("cache_creation_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
 
-        let actual = engine.get_cost_sync(model, in_tok, out_tok, cached, 0);
+        let actual = engine.get_cost_sync(model, in_tok, out_tok, cached, cache_creation);
         let expected_cost: Decimal = expected["cost_usd"]
             .as_str()
             .expect("expected cost_usd")
@@ -242,9 +253,10 @@ fn cross_sdk_compute_dispatch_b5() {
         "pricing_inputs/compute/k8s_pod_2vcpu_4gb_1800s.json",
     ] {
         let input = strip_underscored(read_json(&fixtures_dir().join(rel)));
-        let window_s = input.get("duration_ms").and_then(|v| v.as_f64()).map(|ms| {
-            Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO)
-        });
+        let window_s = input
+            .get("duration_ms")
+            .and_then(|v| v.as_f64())
+            .map(|ms| Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO));
 
         let actual = engine.resolve_compute_cost(&input, &cloud_env, &overrides, window_s);
 
@@ -252,9 +264,7 @@ fn cross_sdk_compute_dispatch_b5() {
             actual.pricing_source, "compute_catalog:unknown",
             "{}: dispatch did not reach IaaS/k8s pricing path \
              (billing_model={}, pricing_source={})",
-            rel,
-            input["billing_model"],
-            actual.pricing_source,
+            rel, input["billing_model"], actual.pricing_source,
         );
         assert!(
             actual.cost_usd > Decimal::ZERO,
@@ -282,9 +292,10 @@ fn cross_sdk_compute_pricing_exact_parity_b5b() {
     ] {
         let input = strip_underscored(read_json(&fixtures_dir().join(rel)));
         let expected = read_json(&expected_path_for(rel, "pricing"));
-        let window_s = input.get("duration_ms").and_then(|v| v.as_f64()).map(|ms| {
-            Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO)
-        });
+        let window_s = input
+            .get("duration_ms")
+            .and_then(|v| v.as_f64())
+            .map(|ms| Decimal::from_f64_retain(ms / 1000.0).unwrap_or(Decimal::ZERO));
 
         let actual = engine.resolve_compute_cost(&input, &cloud_env, &overrides, window_s);
         let expected_cost: Decimal = expected["cost_usd"]
@@ -340,8 +351,9 @@ fn cross_sdk_url_scrubber_parity() {
 /// B3 invariant: summing 1.23E-8 ten thousand times must equal 0.0001230000 exactly.
 #[test]
 fn cross_sdk_tiny_decimal_accumulation() {
-    let expected =
-        read_json(&fixtures_dir().join("expected_outputs/pricing/decimal_accumulation_invariant.json"));
+    let expected = read_json(
+        &fixtures_dir().join("expected_outputs/pricing/decimal_accumulation_invariant.json"),
+    );
     // Accept both "1.23E-8" (Python repr) and "0.0000000123" (canonical form).
     // rust_decimal's FromStr does not accept E-notation, so try from_scientific
     // first, falling back to from_str.
@@ -350,7 +362,11 @@ fn cross_sdk_tiny_decimal_accumulation() {
         .or_else(|_| per_str.parse::<Decimal>())
         .unwrap_or_else(|e| panic!("parse per_event_cost_usd {}: {}", per_str, e));
     let iters = expected["iterations"].as_u64().unwrap();
-    let want: Decimal = expected["total_cost_usd"].as_str().unwrap().parse().unwrap();
+    let want: Decimal = expected["total_cost_usd"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
 
     let mut total = Decimal::ZERO;
     for _ in 0..iters {

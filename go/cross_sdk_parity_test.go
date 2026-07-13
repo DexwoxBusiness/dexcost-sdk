@@ -196,6 +196,8 @@ func TestCrossSDKLLMPricingParity(t *testing.T) {
 	for _, rel := range []string{
 		"pricing_inputs/llm/gpt4o_500_in_200_out.json",
 		"pricing_inputs/llm/claude_sonnet_streaming_2000_in_1500_out.json",
+		"pricing_inputs/llm/claude_cache_read_disjoint.json",
+		"pricing_inputs/llm/claude_cache_write_disjoint.json",
 	} {
 		rel := rel
 		t.Run(rel, func(t *testing.T) {
@@ -209,8 +211,12 @@ func TestCrossSDKLLMPricingParity(t *testing.T) {
 			if c, ok := input["cached_tokens"].(float64); ok {
 				cached = int(c)
 			}
+			cacheCreation := 0
+			if c, ok := input["cache_creation_tokens"].(float64); ok {
+				cacheCreation = int(c)
+			}
 
-			result := engine.GetCost(model, inTok, outTok, cached, 0)
+			result := engine.GetCost(model, inTok, outTok, cached, cacheCreation)
 
 			decimalEqual(t, expected["cost_usd"], result.CostUSD, rel+":cost_usd")
 			if got, want := result.PricingSource, expected["pricing_source"]; got != want {

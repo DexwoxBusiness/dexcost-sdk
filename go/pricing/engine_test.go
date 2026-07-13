@@ -36,6 +36,7 @@ func minimalDataPath(t *testing.T) string {
 			"output_cost_per_token":           0.000015,
 			"cache_read_input_token_cost":     0.0000003,
 			"cache_creation_input_token_cost": 0.00000375,
+			"litellm_provider":                "anthropic",
 		},
 	}
 	dir := t.TempDir()
@@ -103,25 +104,26 @@ func TestGetCost_CachedExceedsInput(t *testing.T) {
 
 func TestGetCost_CacheCreationTokens(t *testing.T) {
 	eng, _ := NewEngineFromFile(minimalDataPath(t))
-	// input=1000: 200 cache-read, 300 cache-creation, 500 non-cached. output=500.
+	// Anthropic reports 1000 input, 200 cache-read, and 300 cache-creation
+	// as three disjoint buckets. output=500.
 	result := eng.GetCost("claude-test", 1000, 500, 200, 300)
-	// non-cached:     500 * 0.000003   = 0.0015
+	// normal input:  1000 * 0.000003   = 0.003
 	// cache-read:     200 * 0.0000003  = 0.00006
 	// cache-creation: 300 * 0.00000375 = 0.001125
 	// output:         500 * 0.000015   = 0.0075
-	expected := decimal.RequireFromString("0.010185")
+	expected := decimal.RequireFromString("0.011685")
 	if !result.CostUSD.Equal(expected) {
 		t.Errorf("expected %s, got %s", expected, result.CostUSD)
 	}
 }
 
-func TestGetCost_CacheCreationClampedToRemainingInput(t *testing.T) {
+func TestGetCost_AnthropicCacheBucketsAreNotClampedToInput(t *testing.T) {
 	eng, _ := NewEngineFromFile(minimalDataPath(t))
-	// input=100, cache-read=80 -> remaining 20; cache-creation 500 clamps to 20.
 	result := eng.GetCost("claude-test", 100, 0, 80, 500)
+	// normal input:   100 * 0.000003   = 0.0003
 	// cache-read:     80 * 0.0000003  = 0.000024
-	// cache-creation: 20 * 0.00000375 = 0.000075
-	expected := decimal.RequireFromString("0.000099")
+	// cache-creation: 500 * 0.00000375 = 0.001875
+	expected := decimal.RequireFromString("0.002199")
 	if !result.CostUSD.Equal(expected) {
 		t.Errorf("expected %s, got %s", expected, result.CostUSD)
 	}
@@ -171,6 +173,22 @@ func TestCustomPricing_OverridesBundled(t *testing.T) {
 	}
 }
 
+func TestCustomPricing_AnthropicCacheBucketsAreNotDropped(t *testing.T) {
+	eng, _ := NewEngineFromFile(minimalDataPath(t))
+	eng.SetCustomPricing("my-claude-model", decimal.RequireFromString("0.001"), decimal.RequireFromString("0.002"))
+	result := eng.GetCost("my-claude-model", 100, 0, 1000, 500)
+	expected := decimal.RequireFromString("0.0016")
+	if !result.CostUSD.Equal(expected) {
+		t.Errorf("expected %s, got %s", expected, result.CostUSD)
+	}
+	if result.CostConfidence != "unknown" {
+		t.Errorf("expected unknown confidence, got %s", result.CostConfidence)
+	}
+	if result.PricingSource != "custom" {
+		t.Errorf("expected custom, got %s", result.PricingSource)
+	}
+}
+
 func TestPricingVersion_Stable(t *testing.T) {
 	eng, _ := NewEngineFromFile(minimalDataPath(t))
 	r1 := eng.GetCost("gpt-4o", 1000, 500, 0, 0)
@@ -199,6 +217,13 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 			"new-model-v1": map[string]interface{}{
 				"input_cost_per_token":  0.000005,
 				"output_cost_per_token": 0.000015,
+			},
+			"provider-only-model": map[string]interface{}{
+				"input_cost_per_token":            0.000003,
+				"output_cost_per_token":           0.000015,
+				"cache_read_input_token_cost":     0.0000003,
+				"cache_creation_input_token_cost": 0.00000375,
+				"litellm_provider":                "anthropic",
 			},
 		},
 	}
@@ -231,6 +256,18 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 	expected := decimal.RequireFromString("0.02") // 1000*0.000005 + 1000*0.000015
 	if !result.CostUSD.Equal(expected) {
 		t.Errorf("expected cost %s, got %s", expected, result.CostUSD)
+	}
+
+	// Provider metadata must survive the refresh so Anthropic cache buckets
+	// remain disjoint even when the model name itself carries no provider hint.
+	refreshedAnthropic := eng.GetCost("provider-only-model", 100, 0, 1000, 5000)
+	expectedAnthropic := decimal.RequireFromString("0.01935")
+	if !refreshedAnthropic.CostUSD.Equal(expectedAnthropic) {
+		t.Errorf(
+			"expected refreshed Anthropic cost %s, got %s",
+			expectedAnthropic,
+			refreshedAnthropic.CostUSD,
+		)
 	}
 
 	// Version should have changed.
@@ -267,9 +304,12 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 		callCount.Add(1)
 		data := map[string]interface{}{
 			"models": map[string]interface{}{
-				"bg-model": map[string]interface{}{
-					"input_cost_per_token":  0.000001,
-					"output_cost_per_token": 0.000002,
+				"background-provider-model": map[string]interface{}{
+					"input_cost_per_token":            0.000003,
+					"output_cost_per_token":           0.000015,
+					"cache_read_input_token_cost":     0.0000003,
+					"cache_creation_input_token_cost": 0.00000375,
+					"litellm_provider":                "anthropic",
 				},
 			},
 		}
@@ -290,5 +330,15 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 	got := callCount.Load()
 	if got < 2 {
 		t.Errorf("expected at least 2 refresh calls, got %d", got)
+	}
+
+	backgroundAnthropic := eng.GetCost("background-provider-model", 100, 0, 1000, 5000)
+	expectedAnthropic := decimal.RequireFromString("0.01935")
+	if !backgroundAnthropic.CostUSD.Equal(expectedAnthropic) {
+		t.Errorf(
+			"expected background-refreshed Anthropic cost %s, got %s",
+			expectedAnthropic,
+			backgroundAnthropic.CostUSD,
+		)
 	}
 }
