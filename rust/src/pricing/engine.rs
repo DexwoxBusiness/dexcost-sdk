@@ -60,6 +60,7 @@ struct Inner {
 /// PricingEngine provides LLM cost lookups from bundled pricing data.
 /// Supports exact match, provider-prefix stripping, and date-suffix fallback.
 /// Supports background refresh from a control-layer endpoint.
+#[derive(Clone)]
 pub struct PricingEngine {
     inner: Arc<RwLock<Inner>>,
     stop_signal: Arc<AtomicBool>,

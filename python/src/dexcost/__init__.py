@@ -96,7 +96,7 @@ def _reinit_after_fork() -> None:
     copied). This handler is registered via os.register_at_fork in
     init() exactly once per process. Sprint 1 Theme B / §2.2.4.
     """
-    global _sync_worker, _global_tracker, _global_config
+    global _sync_worker, _pricing_engine, _global_tracker, _global_config
 
     # Drop the inherited SyncWorker reference WITHOUT calling .stop() —
     # the underlying thread no longer exists in the child, so the
@@ -128,6 +128,16 @@ def _reinit_after_fork() -> None:
                 db_path=_global_config.buffer_path,
             )
             _sync_worker.start()
+
+            # The parent's daemon pricing thread is not copied across fork.
+            # Reuse the tracker's live pricing engine and start a child-owned
+            # refresh worker so long-running preloaded workers keep updating.
+            try:
+                _pricing_engine = _global_tracker.pricing
+                _pricing_engine.set_api_key(_global_config.api_key)
+                _pricing_engine.start_background_refresh(_global_config.endpoint)
+            except Exception:
+                pass  # Fail-silent — bundled pricing remains available
 
 
 def _atexit_handler() -> None:

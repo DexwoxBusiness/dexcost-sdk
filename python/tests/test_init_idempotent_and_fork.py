@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -60,6 +60,56 @@ def test_double_init_does_not_create_orphan_threads(tmp_path: Path) -> None:
         f"expected exactly 1 sync worker after second init, got {after} "
         f"(orphaned worker leak)"
     )
+
+
+def test_reinit_after_fork_restarts_pricing_refresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A child process must replace the parent's dead pricing thread."""
+    inherited_worker = MagicMock()
+    child_worker = MagicMock()
+    worker_factory = MagicMock(return_value=child_worker)
+    inherited_storage = MagicMock()
+    child_tracker_storage = MagicMock()
+    child_sync_storage = MagicMock()
+    sqlite_factory = MagicMock(side_effect=[child_tracker_storage, child_sync_storage])
+    pricing = MagicMock()
+    tracker = MagicMock()
+    tracker._storage = inherited_storage
+    tracker.pricing = pricing
+    config = MagicMock()
+    config.storage_mode = "cloud"
+    config.is_dev = False
+    config.buffer_path = str(tmp_path / "dexcost.db")
+    config.api_key = "dx_test_fork"
+    config.endpoint = "https://control.example"
+
+    import dexcost.adapters.browser as browser_adapter
+    import dexcost.storage.sqlite as sqlite_module
+
+    monkeypatch.setattr(dexcost, "_sync_worker", inherited_worker)
+    monkeypatch.setattr(dexcost, "_pricing_engine", pricing)
+    monkeypatch.setattr(dexcost, "_global_tracker", tracker)
+    monkeypatch.setattr(dexcost, "_global_config", config)
+    monkeypatch.setattr(dexcost, "SyncWorker", worker_factory)
+    monkeypatch.setattr(sqlite_module, "SQLiteStorage", sqlite_factory)
+    set_browser_storage = MagicMock()
+    monkeypatch.setattr(browser_adapter, "set_storage", set_browser_storage)
+
+    dexcost._reinit_after_fork()
+
+    inherited_worker.stop.assert_not_called()
+    inherited_storage.close.assert_called_once_with()
+    set_browser_storage.assert_called_once_with(child_tracker_storage)
+    worker_factory.assert_called_once_with(
+        config=config,
+        storage=child_sync_storage,
+        db_path=config.buffer_path,
+    )
+    child_worker.start.assert_called_once_with()
+    pricing.set_api_key.assert_called_once_with(config.api_key)
+    pricing.start_background_refresh.assert_called_once_with(config.endpoint)
+    assert dexcost._pricing_engine is pricing
 
 
 def test_fork_does_not_corrupt_sqlite(tmp_path: Path) -> None:

@@ -143,11 +143,14 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
     };
     let pricing_engine = PricingEngine::new();
     pricing_engine.set_api_key(config.api_key.clone());
-    if config.api_key.is_some() && !crate::dev_console::is_dev_mode() {
-        // The refresh task is detached and fail-open; init never waits on the
-        // control plane and the bundled catalog remains active on any failure.
-        pricing_engine.start_background_refresh(config.endpoint(), Duration::from_secs(86_400));
-    }
+    // Keep a shared engine handle ready, but do not spawn its detached worker
+    // until GLOBAL_STATE accepts this initialization. Otherwise a rejected
+    // second init would leave an authenticated refresh worker with no owner.
+    let pricing_refresh = if config.api_key.is_some() && !crate::dev_console::is_dev_mode() {
+        Some((pricing_engine.clone(), config.endpoint()))
+    } else {
+        None
+    };
     let pricing_refresh_stop = pricing_engine.background_stop_signal();
     let pricing = Arc::new(Mutex::new(pricing_engine));
     let rate_registry = Arc::new(Mutex::new(RateRegistry::new()));
@@ -201,6 +204,12 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
             pusher,
         })
         .map_err(|_| DexcostError::AlreadyInitialized)?;
+
+    if let Some((engine, endpoint)) = pricing_refresh {
+        // Detached and fail-open: init never waits on the control plane, and
+        // the bundled catalog remains active on any refresh failure.
+        engine.start_background_refresh(endpoint, Duration::from_secs(86_400));
+    }
 
     // Start pusher background task if in cloud mode.
     // The JoinHandle is intentionally dropped to detach the background task.
