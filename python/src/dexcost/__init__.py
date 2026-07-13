@@ -14,12 +14,13 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-from contextlib import contextmanager
 from collections.abc import Generator
+from contextlib import contextmanager
 from decimal import Decimal
 
 __version__ = "0.2.1"
 
+from dexcost.adapters.http import register_internal_host
 from dexcost.clients import TrackedAnthropic, TrackedOpenAI
 from dexcost.compute_wrap import (
     wrap_azure_functions_handler,
@@ -29,20 +30,23 @@ from dexcost.compute_wrap import (
     wrap_vercel_handler,
 )
 from dexcost.config import DexcostConfig, InvalidAPIKeyError, validate_api_key
-from dexcost.gpu_wrap import (
-    wrap_modal_handler,
-    wrap_replicate_handler,
-    wrap_runpod_handler,
-)
 from dexcost.context import (
     DexcostContext,
     async_task_context,
     clear_context,
     get_context,
     get_current_task,
-    set_context as _set_context_impl,
     set_current_task,
     task_context,
+)
+from dexcost.context import (
+    set_context as _set_context_impl,
+)
+from dexcost.debug import debug_log, is_debug_mode, set_debug_mode
+from dexcost.gpu_wrap import (
+    wrap_modal_handler,
+    wrap_replicate_handler,
+    wrap_runpod_handler,
 )
 from dexcost.instruments import (
     instrument_anthropic,
@@ -72,9 +76,9 @@ from dexcost.pricing import CostResult, PricingEngine
 from dexcost.rates import RateEntry, RateRegistry
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.schema import validate
-from dexcost.sync import SyncWorker
 from dexcost.service_catalog import ServiceCatalog
 from dexcost.session import SessionManager, get_session_manager
+from dexcost.sync import SyncWorker
 from dexcost.tracker import ALL_SUPPORTED_INSTRUMENTS, CostTracker, TrackedTask
 
 _global_config: DexcostConfig | None = None
@@ -191,6 +195,7 @@ def init(
     network_event_latency_ms: int = 0,
     compute_billing_overrides: dict[str, str] | None = None,
     k8s_node_aware: bool = False,
+    debug: bool | None = None,
 ) -> DexcostConfig:
     """Initialize dexcost SDK configuration (US-017).
 
@@ -235,6 +240,11 @@ def init(
             "If you intend to reconfigure, call dexcost.close() first."
         )
         return _global_config  # type: ignore[return-value]
+
+    # Debug mode — programmatic override wins over the DEXCOST_DEBUG env var.
+    # Set first so every capture decision during the rest of init() is loud.
+    if debug is not None:
+        set_debug_mode(debug)
 
     _global_config = DexcostConfig(
         api_key=api_key,
@@ -324,12 +334,24 @@ def init(
 
     # Auto-track HTTP calls via service catalog
     if track_http:
-        from dexcost.adapters.http import (
-            get_catalog,
-            set_network_config as _set_network_config,
-            set_storage as _set_http_storage,
-            track_http as _track_http_fn,
-        )
+        from urllib.parse import urlparse as _urlparse
+
+        from dexcost.adapters.http import get_catalog
+        from dexcost.adapters.http import register_internal_host as _register_internal_host
+        from dexcost.adapters.http import set_network_config as _set_network_config
+        from dexcost.adapters.http import set_storage as _set_http_storage
+        from dexcost.adapters.http import track_http as _track_http_fn
+
+        # Register the SDK's OWN endpoints as internal BEFORE patching, so a
+        # telemetry push / pricing-refresh / catalog-refresh that ever routes
+        # through a patched transport is never captured as customer cost.
+        _endpoint_host = _urlparse(_global_config.endpoint).hostname
+        if _endpoint_host:
+            _register_internal_host(_endpoint_host)
+        if service_catalog_url:
+            _catalog_host = _urlparse(service_catalog_url).hostname
+            if _catalog_host:
+                _register_internal_host(_catalog_host)
 
         _track_http_fn()
         # Wire the adapter to the tracker's storage so HTTP cost events are
@@ -514,6 +536,7 @@ __all__ = [
     "async_task_context",
     "clear_context",
     "close",
+    "debug_log",
     "enforce_metadata_limit",
     "flush",
     "get_context",
@@ -527,10 +550,13 @@ __all__ = [
     "instrument_litellm",
     "instrument_mcp",
     "instrument_openai",
+    "is_debug_mode",
     "record_cost",
     "redact_dict",
+    "register_internal_host",
     "set_context",
     "set_current_task",
+    "set_debug_mode",
     "task",
     "task_context",
     "uninstrument_anthropic",

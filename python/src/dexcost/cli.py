@@ -173,6 +173,24 @@ def rates(
 
 
 # ---------------------------------------------------------------------------
+# dexcost doctor
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option("--api-key", default=None, help="API key to validate (else DEXCOST_API_KEY).")
+@click.option("--endpoint", default=None, help="Control Layer endpoint to probe.")
+@click.option("--offline", is_flag=True, help="Skip the endpoint reachability probe.")
+def doctor(api_key: str | None, endpoint: str | None, offline: bool) -> None:
+    """Diagnose the install: runtime, buffer, provider packages, key, endpoint."""
+    from dexcost.doctor import format_doctor_report, run_doctor
+
+    report = run_doctor(api_key=api_key, endpoint=endpoint, offline=offline)
+    click.echo(format_doctor_report(report))
+    sys.exit(0 if report.healthy else 1)
+
+
+# ---------------------------------------------------------------------------
 # dexcost scan
 # ---------------------------------------------------------------------------
 

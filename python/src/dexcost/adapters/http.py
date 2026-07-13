@@ -127,6 +127,51 @@ def clear_domain_rates() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SDK self-traffic exclusion (parity with TypeScript registerInternalHost)
+# ---------------------------------------------------------------------------
+
+# Hostnames whose traffic is the SDK's OWN plumbing (event pusher, pricing
+# refresh, service-catalog refresh) and must be completely invisible to
+# capture. Without this, if any SDK-internal POST is ever routed through a
+# patched transport (requests/httpx/aiohttp/urllib3), it would resolve an
+# ambient session task, be persisted, pushed on the next cycle — ANOTHER
+# request — and so on: a self-generating drip of empty session tasks (plus
+# egress cost for dexcost pushing dexcost) that never stops, even on an idle
+# app. Today Python's own POSTs use stdlib ``urllib.request`` (unpatched), so
+# this loop is only avoided incidentally; this guard makes the exclusion
+# explicit and durable if any internal call is ever moved to a patched client.
+_DEFAULT_INTERNAL_HOSTS = ("api.dexcost.io",)
+_internal_hosts: set[str] = set(_DEFAULT_INTERNAL_HOSTS)
+
+
+def register_internal_host(hostname: str) -> None:
+    """Mark a hostname as SDK-internal — its traffic bypasses capture entirely.
+
+    No events, no session resolution, no byte accounting are produced for
+    calls to a registered host. :func:`dexcost.init` registers the resolved
+    Control Layer endpoint (and any ``service_catalog_url`` host)
+    automatically; call this yourself only for additional self-hosted
+    dexcost infrastructure.
+
+    Args:
+        hostname: The bare hostname to exclude (e.g. ``"api.dexcost.io"``).
+    """
+    if isinstance(hostname, str) and hostname:
+        _internal_hosts.add(hostname.lower())
+
+
+def is_internal_host(hostname: str) -> bool:
+    """Return ``True`` when *hostname* is registered as SDK-internal."""
+    return bool(hostname) and hostname.lower() in _internal_hosts
+
+
+def _reset_internal_hosts_for_tests() -> None:
+    """Test-only: restore the internal-host set to its default."""
+    _internal_hosts.clear()
+    _internal_hosts.update(_DEFAULT_INTERNAL_HOSTS)
+
+
+# ---------------------------------------------------------------------------
 # Catalog management
 # ---------------------------------------------------------------------------
 
@@ -760,6 +805,12 @@ def _handle_http_call_inner(
     parsed = urlparse(str(url))
     domain = parsed.hostname or ""
     protocol = parsed.scheme or "https"
+
+    # SDK self-traffic bypass — runs FIRST, before any capture work. Calls to
+    # dexcost's own plumbing (pusher, pricing/catalog refresh) must never be
+    # recorded, resolve a task, or accrue egress bytes. See _internal_hosts.
+    if is_internal_host(domain):
+        return
 
     cfg = _cfg()
     track_network = cfg.track_network
