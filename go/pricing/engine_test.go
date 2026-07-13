@@ -218,6 +218,13 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 				"input_cost_per_token":  0.000005,
 				"output_cost_per_token": 0.000015,
 			},
+			"provider-only-model": map[string]interface{}{
+				"input_cost_per_token":            0.000003,
+				"output_cost_per_token":           0.000015,
+				"cache_read_input_token_cost":     0.0000003,
+				"cache_creation_input_token_cost": 0.00000375,
+				"litellm_provider":                "anthropic",
+			},
 		},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +256,18 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 	expected := decimal.RequireFromString("0.02") // 1000*0.000005 + 1000*0.000015
 	if !result.CostUSD.Equal(expected) {
 		t.Errorf("expected cost %s, got %s", expected, result.CostUSD)
+	}
+
+	// Provider metadata must survive the refresh so Anthropic cache buckets
+	// remain disjoint even when the model name itself carries no provider hint.
+	refreshedAnthropic := eng.GetCost("provider-only-model", 100, 0, 1000, 5000)
+	expectedAnthropic := decimal.RequireFromString("0.01935")
+	if !refreshedAnthropic.CostUSD.Equal(expectedAnthropic) {
+		t.Errorf(
+			"expected refreshed Anthropic cost %s, got %s",
+			expectedAnthropic,
+			refreshedAnthropic.CostUSD,
+		)
 	}
 
 	// Version should have changed.
@@ -285,9 +304,12 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 		callCount.Add(1)
 		data := map[string]interface{}{
 			"models": map[string]interface{}{
-				"bg-model": map[string]interface{}{
-					"input_cost_per_token":  0.000001,
-					"output_cost_per_token": 0.000002,
+				"background-provider-model": map[string]interface{}{
+					"input_cost_per_token":            0.000003,
+					"output_cost_per_token":           0.000015,
+					"cache_read_input_token_cost":     0.0000003,
+					"cache_creation_input_token_cost": 0.00000375,
+					"litellm_provider":                "anthropic",
 				},
 			},
 		}
@@ -308,5 +330,15 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 	got := callCount.Load()
 	if got < 2 {
 		t.Errorf("expected at least 2 refresh calls, got %d", got)
+	}
+
+	backgroundAnthropic := eng.GetCost("background-provider-model", 100, 0, 1000, 5000)
+	expectedAnthropic := decimal.RequireFromString("0.01935")
+	if !backgroundAnthropic.CostUSD.Equal(expectedAnthropic) {
+		t.Errorf(
+			"expected background-refreshed Anthropic cost %s, got %s",
+			expectedAnthropic,
+			backgroundAnthropic.CostUSD,
+		)
 	}
 }

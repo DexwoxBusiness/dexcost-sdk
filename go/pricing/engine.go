@@ -300,6 +300,7 @@ type serverPricingResponse struct {
 		OutputCostPerToken float64 `json:"output_cost_per_token"`
 		CacheReadCost      float64 `json:"cache_read_input_token_cost"`
 		CacheCreationCost  float64 `json:"cache_creation_input_token_cost"`
+		LiteLLMProvider    string  `json:"litellm_provider"`
 	} `json:"models"`
 }
 
@@ -333,8 +334,9 @@ func (e *Engine) RefreshFromServer(endpoint string) error {
 	models := make(map[string]*modelPricing, len(payload.Models))
 	for name, entry := range payload.Models {
 		mp := &modelPricing{
-			InputCostPerToken:  decimal.NewFromFloat(entry.InputCostPerToken),
-			OutputCostPerToken: decimal.NewFromFloat(entry.OutputCostPerToken),
+			InputCostPerToken:      decimal.NewFromFloat(entry.InputCostPerToken),
+			OutputCostPerToken:     decimal.NewFromFloat(entry.OutputCostPerToken),
+			CacheTokensAreDisjoint: usesDisjointCacheBuckets(name, entry.LiteLLMProvider),
 		}
 		if entry.CacheReadCost != 0 {
 			mp.CacheReadCost = decimal.NewFromFloat(entry.CacheReadCost)
