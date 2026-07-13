@@ -20,6 +20,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _uses_disjoint_cache_buckets(model: str, provider: str = "") -> bool:
+    """Return whether usage exposes cache tokens outside ``input_tokens``."""
+    normalized_model = model.lower()
+    normalized_provider = provider.lower()
+    return (
+        normalized_provider in {"anthropic", "vertex_ai-anthropic_models"}
+        or "claude" in normalized_model
+        or "anthropic." in normalized_model
+    )
+
+
 @dataclass(frozen=True)
 class CostResult:
     """Result of a cost calculation.
@@ -119,9 +130,8 @@ class PricingEngine:
             input_tokens: Number of input (prompt) tokens.
             output_tokens: Number of output (completion) tokens.
             cached_tokens: Number of cached input tokens that receive a
-                discount.  These are *subtracted* from ``input_tokens`` for
-                pricing at the full input rate, and charged at the cached rate
-                instead.
+                discount. OpenAI includes these inside ``input_tokens``;
+                Anthropic reports them as a separate, disjoint bucket.
             cache_creation_tokens: Number of input tokens written to cache
                 (Anthropic-specific).  Charged at the higher
                 ``cache_creation_input_token_cost`` rate instead of the normal
@@ -135,12 +145,24 @@ class PricingEngine:
         with self._lock:
             custom = self._custom_pricing.get(model)
         if custom is not None:
-            cost = custom.input_per_1k * Decimal(str(input_tokens)) / Decimal(
+            safe_input = max(0, input_tokens)
+            safe_output = max(0, output_tokens)
+            safe_cached = max(0, cached_tokens)
+            safe_creation = max(0, cache_creation_tokens)
+            has_unpriced_disjoint_cache = _uses_disjoint_cache_buckets(model) and (
+                safe_cached > 0 or safe_creation > 0
+            )
+            billable_input = safe_input
+            if has_unpriced_disjoint_cache:
+                billable_input += safe_cached + safe_creation
+            cost = custom.input_per_1k * Decimal(str(billable_input)) / Decimal(
                 "1000"
-            ) + custom.output_per_1k * Decimal(str(output_tokens)) / Decimal("1000")
+            ) + custom.output_per_1k * Decimal(str(safe_output)) / Decimal("1000")
             return CostResult(
                 cost_usd=cost,
-                cost_confidence="computed",
+                cost_confidence=(
+                    "unknown" if has_unpriced_disjoint_cache else "computed"
+                ),
                 pricing_source="custom",
                 pricing_version=self._pricing_version,
             )
@@ -166,28 +188,55 @@ class PricingEngine:
         # is safe here.  Avoid arithmetic on the raw floats before conversion.
         input_cost_per_token = Decimal(str(model_info.get("input_cost_per_token", 0)))
         output_cost_per_token = Decimal(str(model_info.get("output_cost_per_token", 0)))
-        cache_read_cost_per_token = Decimal(str(model_info.get("cache_read_input_token_cost", 0)))
+        has_cache_read_rate = "cache_read_input_token_cost" in model_info
+        has_cache_creation_rate = "cache_creation_input_token_cost" in model_info
+        cache_read_cost_per_token = Decimal(
+            str(model_info.get("cache_read_input_token_cost", input_cost_per_token))
+        )
         cache_creation_cost_per_token = Decimal(
-            str(model_info.get("cache_creation_input_token_cost", 0))
+            str(model_info.get("cache_creation_input_token_cost", input_cost_per_token))
+        )
+        safe_input = max(0, input_tokens)
+        safe_output = max(0, output_tokens)
+        safe_cached = max(0, cached_tokens)
+        safe_creation = max(0, cache_creation_tokens)
+        disjoint_cache_buckets = _uses_disjoint_cache_buckets(
+            model, str(model_info.get("litellm_provider", ""))
         )
 
-        # Cached tokens (read + creation) are subtracted from input_tokens
-        # and charged at their respective rates.
-        effective_cached = min(cached_tokens, input_tokens)
-        remaining = input_tokens - effective_cached
-        effective_creation = min(cache_creation_tokens, remaining)
-        non_cached_input = remaining - effective_creation
-
-        cost = (
-            input_cost_per_token * Decimal(str(non_cached_input))
-            + cache_read_cost_per_token * Decimal(str(effective_cached))
-            + cache_creation_cost_per_token * Decimal(str(effective_creation))
-            + output_cost_per_token * Decimal(str(output_tokens))
-        )
+        cost_confidence = "computed"
+        if disjoint_cache_buckets:
+            # Anthropic reports input, cache-read, and cache-write as separate
+            # billable buckets. None may be clamped to or subtracted from another.
+            cost = (
+                input_cost_per_token * Decimal(str(safe_input))
+                + cache_read_cost_per_token * Decimal(str(safe_cached))
+                + cache_creation_cost_per_token * Decimal(str(safe_creation))
+                + output_cost_per_token * Decimal(str(safe_output))
+            )
+            if (safe_cached > 0 and not has_cache_read_rate) or (
+                safe_creation > 0 and not has_cache_creation_rate
+            ):
+                cost_confidence = "unknown"
+        else:
+            # OpenAI includes cached tokens in input_tokens. Only apply a
+            # discount when the catalog explicitly supplies the cache rate.
+            effective_cached = min(safe_cached, safe_input) if has_cache_read_rate else 0
+            remaining = safe_input - effective_cached
+            effective_creation = (
+                min(safe_creation, remaining) if has_cache_creation_rate else 0
+            )
+            non_cached_input = remaining - effective_creation
+            cost = (
+                input_cost_per_token * Decimal(str(non_cached_input))
+                + cache_read_cost_per_token * Decimal(str(effective_cached))
+                + cache_creation_cost_per_token * Decimal(str(effective_creation))
+                + output_cost_per_token * Decimal(str(safe_output))
+            )
 
         return CostResult(
             cost_usd=cost,
-            cost_confidence="computed",
+            cost_confidence=cost_confidence,
             pricing_source="litellm",
             pricing_version=self._pricing_version,
         )

@@ -1,0 +1,9 @@
+{
+  "_description": "Anthropic cache-write tokens are disjoint from normal input tokens.",
+  "provider": "anthropic",
+  "model": "claude-3-5-sonnet-20241022",
+  "input_tokens": 10,
+  "output_tokens": 0,
+  "cached_tokens": 0,
+  "cache_creation_tokens": 5000
+}

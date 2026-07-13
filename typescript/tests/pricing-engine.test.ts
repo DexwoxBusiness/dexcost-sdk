@@ -49,11 +49,34 @@ describe("PricingEngine", () => {
     expect(result.pricingSource).toBe("custom");
   });
 
+  it("does not drop disjoint Anthropic cache buckets with custom pricing", () => {
+    const engine = new PricingEngine();
+    engine.setCustomPricing("my-claude-model", 0.001, 0.002);
+    const result = engine.getCost("my-claude-model", 100, 0, 1000, 500);
+    expect(result.costUsd.toString()).toBe("0.0016");
+    expect(result.costConfidence).toBe("unknown");
+    expect(result.pricingSource).toBe("custom");
+  });
+
   it("handles cached tokens discount", () => {
     const engine = new PricingEngine();
     const noCached = engine.getCost("gpt-4o", 1000, 500, 0);
     const withCached = engine.getCost("gpt-4o", 1000, 500, 500);
     expect(withCached.costUsd.toNumber()).toBeLessThanOrEqual(noCached.costUsd.toNumber());
+  });
+
+  it("prices Anthropic cache-read tokens as a disjoint usage bucket", () => {
+    const engine = new PricingEngine();
+    const result = engine.getCost("claude-3-5-sonnet-20241022", 100, 0, 1000, 0);
+    expect(result.costUsd.toString()).toBe("0.0006");
+    expect(result.costConfidence).toBe("computed");
+  });
+
+  it("prices Anthropic cache-creation tokens without clamping to input", () => {
+    const engine = new PricingEngine();
+    const result = engine.getCost("claude-3-5-sonnet-20241022", 10, 0, 0, 5000);
+    expect(result.costUsd.toString()).toBe("0.01878");
+    expect(result.costConfidence).toBe("computed");
   });
 
   it("pricing version is stable 12-char hash", () => {

@@ -37,6 +37,9 @@ struct ModelPricing {
     /// Anthropic-specific rate for tokens *written* to the prompt cache.
     cache_creation_cost: Decimal,
     has_cache_creation: bool,
+    /// Anthropic reports cache buckets separately; OpenAI includes cache reads
+    /// inside input tokens.
+    cache_tokens_are_disjoint: bool,
 }
 
 /// Custom per-1k-token pricing set by the user.
@@ -110,6 +113,10 @@ impl PricingEngine {
                     } else {
                         (Decimal::ZERO, false)
                     };
+                let provider = obj
+                    .get("litellm_provider")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
 
                 models.insert(
                     name.clone(),
@@ -120,6 +127,9 @@ impl PricingEngine {
                         has_cache_read,
                         cache_creation_cost: cache_creation,
                         has_cache_creation,
+                        cache_tokens_are_disjoint: Self::uses_disjoint_cache_buckets(
+                            name, provider,
+                        ),
                     },
                 );
             }
@@ -149,6 +159,15 @@ impl PricingEngine {
         }
     }
 
+    fn uses_disjoint_cache_buckets(model: &str, provider: &str) -> bool {
+        let model = model.to_ascii_lowercase();
+        let provider = provider.to_ascii_lowercase();
+        provider == "anthropic"
+            || provider == "vertex_ai-anthropic_models"
+            || model.contains("claude")
+            || model.contains("anthropic.")
+    }
+
     /// Computes the cost for a model invocation given token counts.
     /// Tries: custom pricing, exact match, provider-prefix stripped, date-suffix fallback.
     ///
@@ -167,15 +186,15 @@ impl PricingEngine {
 
         // Check custom pricing first
         if let Some(cp) = inner.custom.get(model) {
-            let thousand = Decimal::new(1000, 0);
-            let input_cost = cp.input_per_1k * Decimal::new(input_tokens, 0) / thousand;
-            let output_cost = cp.output_per_1k * Decimal::new(output_tokens, 0) / thousand;
-            return CostResult {
-                cost_usd: input_cost + output_cost,
-                cost_confidence: CostConfidence::Computed,
-                pricing_source: PricingSource::Custom,
-                pricing_version: inner.pricing_version.clone(),
-            };
+            return Self::compute_custom_cost(
+                cp,
+                &inner.pricing_version,
+                model,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                cache_creation_tokens,
+            );
         }
 
         // Try to find model pricing
@@ -213,15 +232,15 @@ impl PricingEngine {
 
         // Check custom pricing first
         if let Some(cp) = inner.custom.get(model) {
-            let thousand = Decimal::new(1000, 0);
-            let input_cost = cp.input_per_1k * Decimal::new(input_tokens, 0) / thousand;
-            let output_cost = cp.output_per_1k * Decimal::new(output_tokens, 0) / thousand;
-            return CostResult {
-                cost_usd: input_cost + output_cost,
-                cost_confidence: CostConfidence::Computed,
-                pricing_source: PricingSource::Custom,
-                pricing_version: inner.pricing_version.clone(),
-            };
+            return Self::compute_custom_cost(
+                cp,
+                &inner.pricing_version,
+                model,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                cache_creation_tokens,
+            );
         }
 
         if let Some(mp) = Self::find_model_in(&inner.models, model) {
@@ -282,14 +301,9 @@ impl PricingEngine {
 
     /// Computes the cost from model pricing and token counts.
     ///
-    /// Cached (read) tokens and cache-creation tokens are both subtracted from
-    /// `input_tokens` and charged at their respective rates. Mirrors the
-    /// Python SDK (`pricing.py:174-186`):
-    ///
-    /// - `effective_cached = min(cached_tokens, input_tokens)`
-    /// - `remaining = input_tokens - effective_cached`
-    /// - `effective_creation = min(cache_creation_tokens, remaining)`
-    /// - `non_cached = remaining - effective_creation`
+    /// Anthropic reports normal input, cache reads, and cache writes as disjoint
+    /// buckets. OpenAI includes cache reads inside `input_tokens`, where the
+    /// cached subset must still be clamped and discounted.
     fn compute_cost_from(
         mp: &ModelPricing,
         pricing_version: &str,
@@ -298,35 +312,99 @@ impl PricingEngine {
         cached_tokens: i64,
         cache_creation_tokens: i64,
     ) -> CostResult {
-        // Cache-read tokens are only discounted when the model advertises a
-        // cache-read rate; otherwise they stay at the full input rate.
-        let effective_cached = if mp.has_cache_read {
-            cached_tokens.max(0).min(input_tokens)
-        } else {
-            0
-        };
-        let remaining = input_tokens - effective_cached;
+        let input_tokens = input_tokens.max(0);
+        let output_tokens = output_tokens.max(0);
+        let cached_tokens = cached_tokens.max(0);
+        let cache_creation_tokens = cache_creation_tokens.max(0);
 
-        // Likewise, cache-creation tokens use the dedicated rate only when the
-        // model advertises one.
-        let effective_creation = if mp.has_cache_creation {
-            cache_creation_tokens.max(0).min(remaining)
+        let (input_cost, cost_confidence) = if mp.cache_tokens_are_disjoint {
+            let mut confidence = CostConfidence::Computed;
+            let cache_read_rate = if mp.has_cache_read {
+                mp.cache_read_cost
+            } else {
+                if cached_tokens > 0 {
+                    confidence = CostConfidence::Unknown;
+                }
+                mp.input_cost_per_token
+            };
+            let cache_creation_rate = if mp.has_cache_creation {
+                mp.cache_creation_cost
+            } else {
+                if cache_creation_tokens > 0 {
+                    confidence = CostConfidence::Unknown;
+                }
+                mp.input_cost_per_token
+            };
+            (
+                mp.input_cost_per_token * Decimal::new(input_tokens, 0)
+                    + cache_read_rate * Decimal::new(cached_tokens, 0)
+                    + cache_creation_rate * Decimal::new(cache_creation_tokens, 0),
+                confidence,
+            )
         } else {
-            0
+            let effective_cached = if mp.has_cache_read {
+                cached_tokens.min(input_tokens)
+            } else {
+                0
+            };
+            let remaining = input_tokens - effective_cached;
+            let effective_creation = if mp.has_cache_creation {
+                cache_creation_tokens.min(remaining)
+            } else {
+                0
+            };
+            let non_cached = remaining - effective_creation;
+            (
+                mp.input_cost_per_token * Decimal::new(non_cached, 0)
+                    + mp.cache_read_cost * Decimal::new(effective_cached, 0)
+                    + mp.cache_creation_cost * Decimal::new(effective_creation, 0),
+                CostConfidence::Computed,
+            )
         };
-        let non_cached = remaining - effective_creation;
-
-        let input_cost = mp.input_cost_per_token * Decimal::new(non_cached, 0)
-            + mp.cache_read_cost * Decimal::new(effective_cached, 0)
-            + mp.cache_creation_cost * Decimal::new(effective_creation, 0);
 
         let output_cost = mp.output_cost_per_token * Decimal::new(output_tokens, 0);
         let total = input_cost + output_cost;
 
         CostResult {
             cost_usd: total,
-            cost_confidence: CostConfidence::Computed,
+            cost_confidence,
             pricing_source: PricingSource::Litellm,
+            pricing_version: pricing_version.to_string(),
+        }
+    }
+
+    fn compute_custom_cost(
+        pricing: &CustomPricing,
+        pricing_version: &str,
+        model: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cached_tokens: i64,
+        cache_creation_tokens: i64,
+    ) -> CostResult {
+        let thousand = Decimal::new(1000, 0);
+        let input_tokens = input_tokens.max(0);
+        let output_tokens = output_tokens.max(0);
+        let cached_tokens = cached_tokens.max(0);
+        let cache_creation_tokens = cache_creation_tokens.max(0);
+        let has_unpriced_disjoint_cache = Self::uses_disjoint_cache_buckets(model, "")
+            && (cached_tokens > 0 || cache_creation_tokens > 0);
+        let billable_input = input_tokens
+            + if has_unpriced_disjoint_cache {
+                cached_tokens + cache_creation_tokens
+            } else {
+                0
+            };
+        let input_cost = pricing.input_per_1k * Decimal::new(billable_input, 0) / thousand;
+        let output_cost = pricing.output_per_1k * Decimal::new(output_tokens, 0) / thousand;
+        CostResult {
+            cost_usd: input_cost + output_cost,
+            cost_confidence: if has_unpriced_disjoint_cache {
+                CostConfidence::Unknown
+            } else {
+                CostConfidence::Computed
+            },
+            pricing_source: PricingSource::Custom,
             pricing_version: pricing_version.to_string(),
         }
     }
@@ -564,6 +642,19 @@ mod tests {
         let result = engine.get_cost("my-custom-model", 1000, 500, 0, 0).await;
         assert_eq!(result.cost_usd, Decimal::new(2, 3));
         assert_eq!(result.cost_confidence, CostConfidence::Computed);
+        assert_eq!(result.pricing_source, PricingSource::Custom);
+    }
+
+    #[tokio::test]
+    async fn test_custom_pricing_does_not_drop_anthropic_cache_buckets() {
+        let engine = PricingEngine::new();
+        engine
+            .set_custom_pricing("my-claude-model", Decimal::new(1, 3), Decimal::new(2, 3))
+            .await;
+
+        let result = engine.get_cost("my-claude-model", 100, 0, 1000, 500).await;
+        assert_eq!(result.cost_usd, Decimal::new(16, 4));
+        assert_eq!(result.cost_confidence, CostConfidence::Unknown);
         assert_eq!(result.pricing_source, PricingSource::Custom);
     }
 
