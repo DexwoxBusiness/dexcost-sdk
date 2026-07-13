@@ -15,7 +15,7 @@ import (
 )
 
 func TestSetAPIKey_BeforeInit_NoOp(t *testing.T) {
-	resetGlobalTracker(t)
+	Close()
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("SetAPIKey panicked before init: %v", r)
@@ -27,10 +27,14 @@ func TestSetAPIKey_BeforeInit_NoOp(t *testing.T) {
 }
 
 func TestSetAPIKey_UpdatesGlobalConfig(t *testing.T) {
-	resetGlobalTracker(t)
-	defer resetGlobalTracker(t)
+	Close()
+	defer Close()
 
-	if err := Init(Config{APIKey: "dx_test_old", Storage: "local"}); err != nil {
+	if err := Init(Config{
+		APIKey:    "dx_test_old",
+		Storage:   "local",
+		BufferDir: t.TempDir(),
+	}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	if globalConfig.APIKey != "dx_test_old" {

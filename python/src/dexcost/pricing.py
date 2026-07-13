@@ -108,6 +108,8 @@ class PricingEngine:
 
         # Background updater
         self._update_timer: threading.Timer | None = None
+        self._server_refresh_stop = threading.Event()
+        self._server_refresh_thread: threading.Thread | None = None
         if auto_update:
             self._schedule_update()
 
@@ -144,6 +146,8 @@ class PricingEngine:
         # 1. Check custom pricing first
         with self._lock:
             custom = self._custom_pricing.get(model)
+            model_info = None if custom is not None else self._resolve_model(model)
+            pricing_version = self._pricing_version
         if custom is not None:
             safe_input = max(0, input_tokens)
             safe_output = max(0, output_tokens)
@@ -164,11 +168,10 @@ class PricingEngine:
                     "unknown" if has_unpriced_disjoint_cache else "computed"
                 ),
                 pricing_source="custom",
-                pricing_version=self._pricing_version,
+                pricing_version=pricing_version,
             )
 
         # 2. Resolve from bundled LiteLLM data
-        model_info = self._resolve_model(model)
         if model_info is None:
             logger.warning(
                 "Model %r not found in pricing data; setting cost_usd=0 "
@@ -179,7 +182,7 @@ class PricingEngine:
                 cost_usd=Decimal("0"),
                 cost_confidence="unknown",
                 pricing_source="unknown",
-                pricing_version=self._pricing_version,
+                pricing_version=pricing_version,
             )
 
         # JSON stores prices as float literals (e.g. 0.0000025).  Python's
@@ -238,7 +241,7 @@ class PricingEngine:
             cost_usd=cost,
             cost_confidence=cost_confidence,
             pricing_source="litellm",
-            pricing_version=self._pricing_version,
+            pricing_version=pricing_version,
         )
 
     def set_custom_pricing(
@@ -266,16 +269,33 @@ class PricingEngine:
         with self._lock:
             self._custom_pricing[model] = custom
 
+    def set_api_key(self, api_key: str | None) -> None:
+        """Update authentication used by control-plane pricing refreshes."""
+        with self._lock:
+            self._api_key = api_key
+
     @property
     def pricing_version(self) -> str:
         """Hash of the currently loaded pricing data."""
-        return self._pricing_version
+        with self._lock:
+            return self._pricing_version
+
+    @property
+    def model_count(self) -> int:
+        """Number of models in the active pricing catalog."""
+        with self._lock:
+            return len(self._model_map)
 
     def close(self) -> None:
-        """Cancel the background update timer, if running."""
+        """Stop background pricing refresh workers, if running."""
         if self._update_timer is not None:
             self._update_timer.cancel()
             self._update_timer = None
+        self._server_refresh_stop.set()
+        thread = self._server_refresh_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1)
+        self._server_refresh_thread = None
 
     # ------------------------------------------------------------------
     # Model resolution
@@ -363,8 +383,10 @@ class PricingEngine:
         url = f"{endpoint.rstrip('/')}/v1/api/pricing-data/latest"
         try:
             headers: dict[str, str] = {"User-Agent": "dexcost-sdk"}
-            if self._api_key:
-                headers["Authorization"] = f"Bearer {self._api_key}"
+            with self._lock:
+                api_key = self._api_key
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 raw = resp.read().decode("utf-8")
@@ -384,6 +406,11 @@ class PricingEngine:
                 return
 
             server_data.pop("sample_spec", None)
+            if not server_data:
+                logger.warning(
+                    "Server pricing response had no billable models; keeping bundled pricing."
+                )
+                return
             new_version = raw_data.get(
                 "pricing_version", _compute_hash(json.dumps(server_data))
             )
@@ -404,8 +431,10 @@ class PricingEngine:
                 exc_info=True,
             )
 
-    def start_background_refresh(self, endpoint: str) -> None:
-        """Launch a non-blocking daemon thread to refresh pricing from the server.
+    def start_background_refresh(
+        self, endpoint: str, interval_seconds: float = _UPDATE_INTERVAL_SECONDS
+    ) -> None:
+        """Refresh from the control plane now and periodically in a daemon thread.
 
         Returns immediately.  The refresh runs in the background and is
         fail-silent.  Suitable for calling from ``dexcost.init()``.
@@ -413,12 +442,23 @@ class PricingEngine:
         Args:
             endpoint: Base URL of the Control Layer.
         """
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be positive")
+        if self._server_refresh_thread is not None and self._server_refresh_thread.is_alive():
+            return
+        self._server_refresh_stop.clear()
+
+        def _refresh_loop() -> None:
+            while not self._server_refresh_stop.is_set():
+                self.refresh_from_server(endpoint)
+                self._server_refresh_stop.wait(interval_seconds)
+
         thread = threading.Thread(
-            target=self.refresh_from_server,
-            args=(endpoint,),
+            target=_refresh_loop,
             daemon=True,
             name="dexcost-pricing-refresh",
         )
+        self._server_refresh_thread = thread
         thread.start()
 
 

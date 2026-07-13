@@ -132,7 +132,7 @@ def _reinit_after_fork() -> None:
 
 def _atexit_handler() -> None:
     """Flush pending events and close connections on process exit."""
-    global _sync_worker, _global_tracker
+    global _sync_worker, _global_tracker, _pricing_engine
     if _sync_worker is not None:
         try:
             _sync_worker.flush()
@@ -142,8 +142,11 @@ def _atexit_handler() -> None:
             _sync_worker.stop()
         except Exception:
             pass
+    if _pricing_engine is not None:
+        _pricing_engine.close()
     _sync_worker = None
     _global_tracker = None
+    _pricing_engine = None
 
 
 def set_context(
@@ -221,7 +224,8 @@ def init(
         network_event_latency_ms: Emit a ``network`` event when call latency exceeds
             this many milliseconds. ``0`` disables latency-based emission (default).
     """
-    global _global_config, _sync_worker, _global_tracker, _fork_hook_registered
+    global _global_config, _sync_worker, _global_tracker, _pricing_engine
+    global _fork_hook_registered
 
     # Sprint 1 Theme B / §2.2.4(a): idempotency guard. A second init()
     # call without an intervening close() would otherwise orphan the
@@ -317,7 +321,8 @@ def init(
     # Non-blocking pricing data refresh from Control Layer (US-044)
     if _global_config.storage_mode == "cloud" and not _global_config.is_dev:
         try:
-            _pricing_engine = PricingEngine(api_key=_global_config.api_key)
+            _pricing_engine = _global_tracker.pricing
+            _pricing_engine.set_api_key(_global_config.api_key)
             _pricing_engine.start_background_refresh(_global_config.endpoint)
         except Exception:
             pass  # Fail-silent — bundled pricing is always available
@@ -434,7 +439,7 @@ def set_api_key(new_key: str) -> bool:
     Returns True on success, False if ``init()`` has not been called
     (logs a warning).
     """
-    global _global_config, _sync_worker, _global_tracker
+    global _global_config, _sync_worker, _global_tracker, _pricing_engine
     if _global_config is None or _global_tracker is None:
         _log.warning(
             "dexcost.set_api_key() called before init(); ignoring. "
@@ -442,6 +447,8 @@ def set_api_key(new_key: str) -> bool:
         )
         return False
     _global_config.api_key = new_key
+    if _pricing_engine is not None:
+        _pricing_engine.set_api_key(new_key)
     if _sync_worker is None:
         return True  # Local-only mode; nothing else to do.
     # Clear the auth-failed signal so subsequent pushes proceed.
@@ -471,12 +478,15 @@ def close() -> None:
 
     Safe to call even if ``init()`` has not been called (no-op).
     """
-    global _global_tracker, _sync_worker
+    global _global_tracker, _sync_worker, _pricing_engine
     if _sync_worker is not None:
         _sync_worker.flush()
         _sync_worker.stop()
         _sync_worker = None
+    if _pricing_engine is not None:
+        _pricing_engine.close()
     _global_tracker = None
+    _pricing_engine = None
 
 
 def flush() -> None:

@@ -212,28 +212,22 @@ func TestBundledData_Loads(t *testing.T) {
 }
 
 func TestEngine_RefreshFromServer(t *testing.T) {
-	serverData := map[string]interface{}{
-		"models": map[string]interface{}{
-			"new-model-v1": map[string]interface{}{
-				"input_cost_per_token":  0.000005,
-				"output_cost_per_token": 0.000015,
-			},
-			"provider-only-model": map[string]interface{}{
-				"input_cost_per_token":            0.000003,
-				"output_cost_per_token":           0.000015,
-				"cache_read_input_token_cost":     0.0000003,
-				"cache_creation_input_token_cost": 0.00000375,
-				"litellm_provider":                "anthropic",
-			},
-		},
+	serverData, err := os.ReadFile(filepath.Join(
+		"..", "..", "fixtures", "pricing_refresh", "control_plane_latest.json",
+	))
+	if err != nil {
+		t.Fatalf("read control-plane pricing fixture: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/api/pricing-data/latest" {
 			http.NotFound(w, r)
 			return
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer dx_test_refresh" {
+			t.Errorf("expected refresh auth header, got %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(serverData)
+		_, _ = w.Write(serverData)
 	}))
 	defer srv.Close()
 
@@ -241,6 +235,7 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	eng.SetAPIKey("dx_test_refresh")
 	oldVersion := eng.PricingVersion()
 
 	err = eng.RefreshFromServer(srv.URL)
@@ -274,8 +269,30 @@ func TestEngine_RefreshFromServer(t *testing.T) {
 	if eng.PricingVersion() == oldVersion {
 		t.Error("expected pricingVersion to change after refresh")
 	}
-	if len(eng.PricingVersion()) != 12 {
-		t.Errorf("expected 12-char version, got %d", len(eng.PricingVersion()))
+	if eng.PricingVersion() != "server-v-42" {
+		t.Errorf("expected server-v-42, got %q", eng.PricingVersion())
+	}
+}
+
+func TestEngine_RefreshFromServer_RejectsEmptyModelMap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"pricing_version":"empty-v1","data":{}}}`))
+	}))
+	defer srv.Close()
+
+	eng, err := NewEngineFromFile(minimalDataPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldVersion := eng.PricingVersion()
+	oldCount := eng.ModelCount()
+
+	if err := eng.RefreshFromServer(srv.URL); err == nil {
+		t.Fatal("expected empty pricing response to be rejected")
+	}
+	if eng.PricingVersion() != oldVersion || eng.ModelCount() != oldCount {
+		t.Fatal("empty pricing response replaced the existing catalog")
 	}
 }
 
@@ -303,13 +320,16 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 		data := map[string]interface{}{
-			"models": map[string]interface{}{
-				"background-provider-model": map[string]interface{}{
-					"input_cost_per_token":            0.000003,
-					"output_cost_per_token":           0.000015,
-					"cache_read_input_token_cost":     0.0000003,
-					"cache_creation_input_token_cost": 0.00000375,
-					"litellm_provider":                "anthropic",
+			"data": map[string]interface{}{
+				"pricing_version": "background-v1",
+				"data": map[string]interface{}{
+					"background-provider-model": map[string]interface{}{
+						"input_cost_per_token":            0.000003,
+						"output_cost_per_token":           0.000015,
+						"cache_read_input_token_cost":     0.0000003,
+						"cache_creation_input_token_cost": 0.00000375,
+						"litellm_provider":                "anthropic",
+					},
 				},
 			},
 		}
@@ -341,4 +361,48 @@ func TestEngine_StartStopBackgroundRefresh(t *testing.T) {
 			backgroundAnthropic.CostUSD,
 		)
 	}
+}
+
+func TestEngine_StartBackgroundRefresh_DoesNotBlockOnInitialRequest(t *testing.T) {
+	serverData, err := os.ReadFile(filepath.Join(
+		"..", "..", "fixtures", "pricing_refresh", "control_plane_latest.json",
+	))
+	if err != nil {
+		t.Fatalf("read control-plane pricing fixture: %v", err)
+	}
+	requestStarted := make(chan struct{}, 1)
+	releaseResponse := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestStarted <- struct{}{}
+		<-releaseResponse
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(serverData)
+	}))
+	defer srv.Close()
+
+	eng, err := NewEngineFromFile(minimalDataPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	startReturned := make(chan struct{})
+	go func() {
+		eng.StartBackgroundRefresh(srv.URL, time.Hour)
+		close(startReturned)
+	}()
+
+	select {
+	case <-startReturned:
+	case <-time.After(200 * time.Millisecond):
+		close(releaseResponse)
+		t.Fatal("StartBackgroundRefresh blocked on its initial network request")
+	}
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		close(releaseResponse)
+		t.Fatal("background refresh did not start its initial request")
+	}
+
+	close(releaseResponse)
+	eng.StopBackgroundRefresh()
 }

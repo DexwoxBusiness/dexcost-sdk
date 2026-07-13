@@ -54,6 +54,7 @@ struct Inner {
     models: HashMap<String, ModelPricing>,
     custom: HashMap<String, CustomPricing>,
     pricing_version: String,
+    api_key: Option<String>,
 }
 
 /// PricingEngine provides LLM cost lookups from bundled pricing data.
@@ -78,6 +79,7 @@ impl PricingEngine {
                 models,
                 custom: HashMap::new(),
                 pricing_version,
+                api_key: None,
             })),
             stop_signal: Arc::new(AtomicBool::new(false)),
         }
@@ -463,45 +465,25 @@ impl PricingEngine {
         self.inner.read().models.len()
     }
 
+    /// Configure authentication for control-plane pricing refreshes.
+    pub fn set_api_key(&self, api_key: Option<String>) {
+        self.inner.write().api_key = api_key;
+    }
+
     // -------------------------------------------------------------------------
     // Background refresh
     // -------------------------------------------------------------------------
 
     /// Fetch fresh pricing from the control layer. Fail-silent on error.
     ///
-    /// Calls `GET {endpoint}/v1/api/pricing-data/latest` and expects JSON:
-    /// `{ "models": { "<name>": { "input_cost_per_token": 0.001, ... } } }`
+    /// Calls the authenticated control-plane pricing endpoint and consumes its
+    /// `{ "data": { "pricing_version": "...", "data": { ...models } } }`
+    /// response. Invalid or empty catalogs leave the current map untouched.
     pub async fn refresh_from_server(
         &self,
         endpoint: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let url = format!(
-            "{}/v1/api/pricing-data/latest",
-            endpoint.trim_end_matches('/')
-        );
-
-        let resp = reqwest::get(&url).await?;
-        if !resp.status().is_success() {
-            return Err(format!("pricing refresh failed: HTTP {}", resp.status()).into());
-        }
-        let body = resp.bytes().await?;
-
-        // Parse: { "models": { ... } }
-        let outer: serde_json::Value = serde_json::from_slice(&body)?;
-        let models_val = outer
-            .get("models")
-            .ok_or("missing 'models' key in response")?;
-
-        let models_bytes = serde_json::to_vec(models_val)?;
-        let (new_models, new_version) = Self::parse_cost_map(&models_bytes);
-
-        {
-            let mut inner = self.inner.write();
-            inner.models = new_models;
-            inner.pricing_version = new_version;
-        }
-
-        Ok(())
+        Self::refresh_shared(&self.inner, endpoint).await
     }
 
     /// Start background refresh on a tokio interval.
@@ -518,7 +500,10 @@ impl PricingEngine {
         let inner = Arc::clone(&self.inner);
         let stop = Arc::clone(&self.stop_signal);
 
-        tokio::spawn(async move {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
             // Build a temporary engine shell that wraps the shared inner state.
             // This avoids cloning all pricing data — we operate directly on the Arc.
             let engine = RefreshWorker {
@@ -546,6 +531,75 @@ impl PricingEngine {
     pub fn stop_background_refresh(&self) {
         self.stop_signal.store(true, Ordering::SeqCst);
     }
+
+    pub(crate) fn background_stop_signal(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop_signal)
+    }
+
+    async fn refresh_shared(
+        inner: &Arc<RwLock<Inner>>,
+        endpoint: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "{}/v1/api/pricing-data/latest",
+            endpoint.trim_end_matches('/')
+        );
+        let api_key = inner.read().api_key.clone();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let mut request = client.get(&url).header("User-Agent", "dexcost-sdk");
+        if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+            request = request.bearer_auth(key);
+        }
+
+        let resp = request.send().await?;
+        if !resp.status().is_success() {
+            return Err(format!("pricing refresh failed: HTTP {}", resp.status()).into());
+        }
+        let body = resp.bytes().await?;
+        let (new_models, new_version) = Self::parse_control_plane_response(&body)?;
+
+        let mut state = inner.write();
+        state.models = new_models;
+        state.pricing_version = new_version;
+        Ok(())
+    }
+
+    fn parse_control_plane_response(
+        body: &[u8],
+    ) -> Result<(HashMap<String, ModelPricing>, String), Box<dyn std::error::Error + Send + Sync>>
+    {
+        let invalid =
+            |message: &'static str| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
+        let outer: serde_json::Value = serde_json::from_slice(body)?;
+        let response_data = outer
+            .get("data")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| invalid("missing 'data' response envelope"))?;
+        let mut models = response_data
+            .get("data")
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .ok_or_else(|| invalid("missing pricing model map"))?;
+        models.remove("sample_spec");
+        if models.is_empty() {
+            return Err(invalid("pricing response contained no models").into());
+        }
+
+        let models_bytes = serde_json::to_vec(&models)?;
+        let (new_models, fallback_version) = Self::parse_cost_map(&models_bytes);
+        if new_models.is_empty() {
+            return Err(invalid("pricing response contained no usable models").into());
+        }
+        let version = response_data
+            .get("pricing_version")
+            .and_then(serde_json::Value::as_str)
+            .filter(|version| !version.is_empty())
+            .unwrap_or(&fallback_version)
+            .to_string();
+        Ok((new_models, version))
+    }
 }
 
 impl Default for PricingEngine {
@@ -570,36 +624,16 @@ impl RefreshWorker {
             return Ok(());
         }
 
-        let url = format!(
-            "{}/v1/api/pricing-data/latest",
-            endpoint.trim_end_matches('/')
-        );
-
-        let resp = reqwest::get(&url).await?;
-        if !resp.status().is_success() {
-            return Err(format!("pricing refresh failed: HTTP {}", resp.status()).into());
-        }
-        let body = resp.bytes().await?;
-
-        let outer: serde_json::Value = serde_json::from_slice(&body)?;
-        let models_val = outer
-            .get("models")
-            .ok_or("missing 'models' key in response")?;
-
-        let models_bytes = serde_json::to_vec(models_val)?;
-        let (new_models, new_version) = PricingEngine::parse_cost_map(&models_bytes);
-
-        let mut inner = self.inner.write();
-        inner.models = new_models;
-        inner.pricing_version = new_version;
-
-        Ok(())
+        PricingEngine::refresh_shared(&self.inner, endpoint).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CONTROL_PLANE_PRICING_RESPONSE: &str =
+        include_str!("../../../fixtures/pricing_refresh/control_plane_latest.json");
 
     #[tokio::test]
     async fn test_pricing_engine_loads() {
@@ -736,7 +770,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        // Serve a response with a body that has no "models" key
+        // Serve a response with no control-plane data envelope.
         tokio::spawn(async move {
             if let Ok((mut stream, _)) = listener.accept().await {
                 // Drain the HTTP request headers first (required on Windows)
@@ -756,7 +790,7 @@ mod tests {
         let result = engine
             .refresh_from_server(&format!("http://{}", addr))
             .await;
-        // `null` has no "models" key — should return an error
+        // `null` has no pricing envelope — should return an error.
         assert!(result.is_err());
     }
 
@@ -768,55 +802,99 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        // Serve a minimal valid pricing response
-        let body = r#"{"models":{"test-refresh-model":{"input_cost_per_token":0.001,"output_cost_per_token":0.002}}}"#;
+        // Serve the real control-plane response envelope.
+        let body = CONTROL_PLANE_PRICING_RESPONSE;
         let body_bytes = body.as_bytes().to_vec();
         let body_len = body_bytes.len();
+        let saw_auth = Arc::new(AtomicBool::new(false));
+        let saw_auth_server = Arc::clone(&saw_auth);
 
         tokio::spawn(async move {
-            // Handle up to two connections
-            for _ in 0..2u8 {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    // Drain request before responding (required on Windows to avoid ECONNABORTED)
-                    let mut buf = [0u8; 4096];
-                    let _ = stream.read(&mut buf).await;
-                    let header = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        body_len
-                    );
-                    let _ = stream.write_all(header.as_bytes()).await;
-                    let _ = stream.write_all(&body_bytes).await;
-                }
+            if let Ok((mut stream, _)) = listener.accept().await {
+                // Drain request before responding (required on Windows to avoid ECONNABORTED)
+                let mut buf = [0u8; 4096];
+                let read = stream.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..read]);
+                saw_auth_server.store(
+                    request.contains("authorization: Bearer dx_test_refresh")
+                        || request.contains("Authorization: Bearer dx_test_refresh"),
+                    Ordering::SeqCst,
+                );
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body_len
+                );
+                let _ = stream.write_all(header.as_bytes()).await;
+                let _ = stream.write_all(&body_bytes).await;
             }
         });
 
         let engine = PricingEngine::new();
+        engine.set_api_key(Some("dx_test_refresh".to_string()));
         let original_count = engine.model_count().await;
 
         let result = engine
             .refresh_from_server(&format!("http://{}", addr))
             .await;
         assert!(result.is_ok(), "refresh should succeed: {:?}", result);
+        assert!(
+            saw_auth.load(Ordering::SeqCst),
+            "missing refresh auth header"
+        );
 
         // After refresh the model map should contain only what the server returned
         let new_count = engine.model_count().await;
         assert_eq!(
-            new_count, 1,
-            "model map should be replaced with server data"
+            new_count, 2,
+            "model map should match the shared control-plane fixture"
         );
 
         // The refreshed model should be queryable
-        let cost = engine.get_cost("test-refresh-model", 1000, 500, 0, 0).await;
+        let cost = engine.get_cost("new-model-v1", 1000, 500, 0, 0).await;
         assert_eq!(cost.cost_confidence, CostConfidence::Computed);
         assert!(cost.cost_usd > Decimal::ZERO);
         // Version should have changed from the bundled one
-        assert_ne!(engine.pricing_version().await, "");
+        assert_eq!(engine.pricing_version().await, "server-v-42");
 
         assert!(
             original_count != new_count
                 || engine.pricing_version().await != PricingEngine::new().pricing_version().await,
             "pricing version should differ from bundled after refresh"
         );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_from_server_rejects_empty_model_map() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = br#"{"data":{"pricing_version":"empty-v1","data":{}}}"#;
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes()).await;
+                let _ = stream.write_all(body).await;
+            }
+        });
+
+        let engine = PricingEngine::new();
+        let original_count = engine.model_count().await;
+        let original_version = engine.pricing_version().await;
+        let result = engine
+            .refresh_from_server(&format!("http://{}", addr))
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(engine.model_count().await, original_count);
+        assert_eq!(engine.pricing_version().await, original_version);
     }
 
     #[tokio::test]
@@ -828,6 +906,14 @@ mod tests {
         // Give the task a moment to attempt one refresh
         tokio::time::sleep(Duration::from_millis(20)).await;
         // Stop should not panic
+        engine.stop_background_refresh();
+    }
+
+    #[test]
+    fn test_start_background_refresh_without_runtime_is_fail_open() {
+        let engine = PricingEngine::new();
+        engine
+            .start_background_refresh("http://127.0.0.1:1".to_string(), Duration::from_millis(50));
         engine.stop_background_refresh();
     }
 
@@ -846,7 +932,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let body = r#"{"models":{"bg-refresh-model":{"input_cost_per_token":0.005,"output_cost_per_token":0.010}}}"#;
+        let body = r#"{"data":{"pricing_version":"background-v1","data":{"bg-refresh-model":{"input_cost_per_token":0.005,"output_cost_per_token":0.010}}}}"#;
         let body_bytes = body.as_bytes().to_vec();
         let body_len = body_bytes.len();
 

@@ -7,14 +7,19 @@ Control Layer and updates the model map, and that failure is silent.
 from __future__ import annotations
 
 import json
-import threading
+import time
 from decimal import Decimal
-from typing import Any
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from dexcost.pricing import PricingEngine
+
+CONTROL_PLANE_PRICING_RESPONSE = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "pricing_refresh"
+    / "control_plane_latest.json"
+).read_text(encoding="utf-8")
 
 
 class TestPricingRefreshFromServer:
@@ -22,32 +27,22 @@ class TestPricingRefreshFromServer:
 
     def test_refresh_updates_model_map(self) -> None:
         """Successful refresh replaces the model map with server data."""
-        engine = PricingEngine()
-        original_version = engine.pricing_version
-
-        fake_server_data = {
-            "gpt-4o": {
-                "input_cost_per_token": 0.000005,
-                "output_cost_per_token": 0.000015,
-            },
-            "new-model-from-server": {
-                "input_cost_per_token": 0.00001,
-                "output_cost_per_token": 0.00003,
-            },
-        }
+        engine = PricingEngine(api_key="dx_test_refresh")
 
         fake_response = MagicMock()
-        fake_response.read.return_value = json.dumps(
-            {"data": {"data": fake_server_data, "pricing_version": "server123"}}
-        ).encode("utf-8")
+        fake_response.read.return_value = CONTROL_PLANE_PRICING_RESPONSE.encode("utf-8")
         fake_response.__enter__ = MagicMock(return_value=fake_response)
         fake_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=fake_response):
+        with patch("urllib.request.urlopen", return_value=fake_response) as urlopen:
             engine.refresh_from_server("http://localhost:3000")
 
+        request = urlopen.call_args.args[0]
+        assert request.get_header("Authorization") == "Bearer dx_test_refresh"
+        assert engine.pricing_version == "server-v-42"
+
         # The engine should now know about the new model
-        result = engine.get_cost("new-model-from-server", input_tokens=1000, output_tokens=500)
+        result = engine.get_cost("new-model-v1", input_tokens=1000, output_tokens=500)
         assert result.cost_usd > Decimal("0")
         assert result.pricing_source == "litellm"
 
@@ -79,6 +74,51 @@ class TestPricingRefreshFromServer:
         result = engine.get_cost("gpt-4o", input_tokens=100, output_tokens=50)
         assert result.cost_confidence in ("computed", "unknown")
 
+    def test_empty_model_map_keeps_existing_catalog(self) -> None:
+        engine = PricingEngine()
+        original_version = engine.pricing_version
+        original_count = engine.model_count
+
+        fake_response = MagicMock()
+        fake_response.read.return_value = json.dumps(
+            {"data": {"data": {}, "pricing_version": "empty-v1"}}
+        ).encode("utf-8")
+        fake_response.__enter__ = MagicMock(return_value=fake_response)
+        fake_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=fake_response):
+            engine.refresh_from_server("http://localhost:3000")
+
+        assert engine.pricing_version == original_version
+        assert engine.model_count == original_count
+
+    def test_set_api_key_updates_refresh_auth(self) -> None:
+        engine = PricingEngine(api_key="dx_test_old")
+        engine.set_api_key("dx_test_new")
+
+        fake_response = MagicMock()
+        fake_response.read.return_value = json.dumps(
+            {
+                "data": {
+                    "data": {
+                        "new-model": {
+                            "input_cost_per_token": 0.00001,
+                            "output_cost_per_token": 0.00002,
+                        }
+                    },
+                    "pricing_version": "new-key-v1",
+                }
+            }
+        ).encode("utf-8")
+        fake_response.__enter__ = MagicMock(return_value=fake_response)
+        fake_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=fake_response) as urlopen:
+            engine.refresh_from_server("http://localhost:3000")
+
+        request = urlopen.call_args.args[0]
+        assert request.get_header("Authorization") == "Bearer dx_test_new"
+
     def test_refresh_is_non_blocking(self) -> None:
         """start_background_refresh launches a daemon thread and returns immediately."""
         engine = PricingEngine()
@@ -88,9 +128,25 @@ class TestPricingRefreshFromServer:
             engine.start_background_refresh("http://localhost:3000")
 
         # Give the thread a moment to complete (it will fail silently)
-        import time
         time.sleep(0.1)
 
         # Engine still works
         result = engine.get_cost("gpt-4o", input_tokens=100, output_tokens=50)
         assert result.cost_confidence in ("computed", "unknown")
+        engine.close()
+
+    def test_background_refresh_repeats_until_closed(self) -> None:
+        engine = PricingEngine()
+        fake_response = MagicMock()
+        fake_response.read.return_value = CONTROL_PLANE_PRICING_RESPONSE.encode("utf-8")
+        fake_response.__enter__ = MagicMock(return_value=fake_response)
+        fake_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=fake_response) as urlopen:
+            engine.start_background_refresh("http://localhost:3000", interval_seconds=0.02)
+            deadline = time.monotonic() + 1
+            while urlopen.call_count < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            engine.close()
+
+        assert urlopen.call_count >= 2
