@@ -1,5 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { PricingEngine } from "../src/pricing/engine.js";
+
+const controlPlanePricingPayload = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../fixtures/pricing_refresh/control_plane_latest.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 describe("PricingEngine", () => {
   it("calculates cost for known model", () => {
@@ -93,38 +104,56 @@ describe("PricingEngine background refresh", () => {
 
   it("refreshFromServer updates model map on success", async () => {
     const engine = new PricingEngine();
+    engine.setApiKey("dx_test_refresh");
     const originalVersion = engine.pricingVersion;
-
-    const mockModels = {
-      "test-refresh-model": {
-        input_cost_per_token: 0.00001,
-        output_cost_per_token: 0.00003,
-      },
-    };
-
-    // Control Layer contract: models nested under data.data, with the
-    // pricing_version alongside.
-    const payload = {
-      data: { data: mockModels, pricing_version: "server-v-42" },
-    };
 
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        text: async () => JSON.stringify(payload),
-        json: async () => payload,
+        text: async () => JSON.stringify(controlPlanePricingPayload),
       })
     );
 
     await engine.refreshFromServer("https://example.com");
 
-    const result = engine.getCost("test-refresh-model", 1000, 500);
+    const result = engine.getCost("new-model-v1", 1000, 500);
     expect(result.costUsd.toNumber()).toBeGreaterThan(0);
     expect(result.pricingSource).toBe("litellm");
     expect(engine.pricingVersion).not.toBe(originalVersion);
     // pricing_version from the server payload is captured verbatim.
     expect(engine.pricingVersion).toBe("server-v-42");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://example.com/v1/api/pricing-data/latest",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer dx_test_refresh",
+        }),
+      }),
+    );
+  });
+
+  it("keeps the active catalog when only sample_spec is returned", async () => {
+    const engine = new PricingEngine();
+    const originalVersion = engine.pricingVersion;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => JSON.stringify({
+          data: {
+            pricing_version: "empty-v1",
+            data: { sample_spec: { input_cost_per_token: 0 } },
+          },
+        }),
+      }),
+    );
+
+    await engine.refreshFromServer("https://example.com");
+
+    expect(engine.pricingVersion).toBe(originalVersion);
+    expect(engine.getCost("gpt-4o", 100, 50).pricingSource).toBe("litellm");
   });
 
   it("refreshFromServer is fail-silent on network error", async () => {

@@ -110,6 +110,7 @@ func (tr *Tracker) Rates() *pricing.RateRegistry {
 
 // Close releases all resources held by the Tracker.
 func (tr *Tracker) Close() error {
+	tr.pricing.StopBackgroundRefresh()
 	return tr.buffer.Close()
 }
 

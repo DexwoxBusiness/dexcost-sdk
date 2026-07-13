@@ -91,6 +91,7 @@ func doInit(cfg *Config) error {
 		buf.Close()
 		return fmt.Errorf("init pricing engine: %w", err)
 	}
+	pricingEngine.SetAPIKey(cfg.APIKey)
 
 	tracker, err := core.NewTracker(core.TrackerOptions{
 		Buffer:                  buf,
@@ -120,6 +121,7 @@ func doInit(cfg *Config) error {
 
 	// Start pusher if in cloud mode and not in dev mode.
 	if cfg.StorageMode() == "cloud" && !IsDevMode() {
+		pricingEngine.StartBackgroundRefresh(cfg.resolvedEndpoint(), 24*time.Hour)
 		globalPusher = transport.NewEventPusher(transport.PusherOptions{
 			Buffer:         buf,
 			Endpoint:       cfg.resolvedEndpoint(),
@@ -334,6 +336,7 @@ func SetAPIKey(newKey string) bool {
 		return false
 	}
 	globalConfig.APIKey = newKey
+	globalTracker.Pricing().SetAPIKey(newKey)
 	if globalPusher != nil {
 		globalPusher.SetAPIKey(newKey)
 	}

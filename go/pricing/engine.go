@@ -56,6 +56,8 @@ type Engine struct {
 	custom         map[string]*customPricing
 	mu             sync.RWMutex
 	pricingVersion string
+	apiKey         string
+	httpClient     *http.Client
 	stopCh         chan struct{}
 }
 
@@ -117,6 +119,7 @@ func newEngineFromBytes(data []byte) (*Engine, error) {
 		models:         models,
 		custom:         make(map[string]*customPricing),
 		pricingVersion: version,
+		httpClient:     &http.Client{Timeout: 10 * time.Second},
 	}, nil
 }
 
@@ -164,29 +167,35 @@ func (e *Engine) GetCost(model string, inputTokens, outputTokens, cachedTokens, 
 			CostUSD:        inputCost.Add(outputCost),
 			CostConfidence: confidence,
 			PricingSource:  "custom",
-			PricingVersion: e.pricingVersion,
+			PricingVersion: e.PricingVersion(),
 		}
 	}
 
 	// Try exact match.
-	mp := e.findModel(model)
+	mp, pricingVersion := e.findModel(model)
 	if mp == nil {
 		return CostResult{
 			CostUSD:        decimal.Zero,
 			CostConfidence: "unknown",
 			PricingSource:  "unknown",
-			PricingVersion: e.pricingVersion,
+			PricingVersion: pricingVersion,
 		}
 	}
 
-	return e.computeCost(mp, inputTokens, outputTokens, cachedTokens, cacheCreationTokens)
+	return e.computeCost(
+		mp, pricingVersion, inputTokens, outputTokens, cachedTokens, cacheCreationTokens,
+	)
 }
 
 // findModel resolves a model name to its pricing entry using fallback strategies.
-func (e *Engine) findModel(model string) *modelPricing {
+func (e *Engine) findModel(model string) (*modelPricing, string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	version := e.pricingVersion
+
 	// 1. Exact match.
 	if mp, ok := e.models[model]; ok {
-		return mp
+		return mp, version
 	}
 
 	// 2. Strip provider prefix (e.g. "openai/gpt-4o" -> "gpt-4o").
@@ -194,7 +203,7 @@ func (e *Engine) findModel(model string) *modelPricing {
 		if model[i] == '/' {
 			stripped := model[i+1:]
 			if mp, ok := e.models[stripped]; ok {
-				return mp
+				return mp, version
 			}
 			break
 		}
@@ -204,14 +213,18 @@ func (e *Engine) findModel(model string) *modelPricing {
 	base := dateSuffixRe.ReplaceAllString(model, "")
 	if base != model {
 		if mp, ok := e.models[base]; ok {
-			return mp
+			return mp, version
 		}
 	}
 
-	return nil
+	return nil, version
 }
 
-func (e *Engine) computeCost(mp *modelPricing, inputTokens, outputTokens, cachedTokens, cacheCreationTokens int) CostResult {
+func (e *Engine) computeCost(
+	mp *modelPricing,
+	pricingVersion string,
+	inputTokens, outputTokens, cachedTokens, cacheCreationTokens int,
+) CostResult {
 	if inputTokens < 0 {
 		inputTokens = 0
 	}
@@ -269,7 +282,7 @@ func (e *Engine) computeCost(mp *modelPricing, inputTokens, outputTokens, cached
 		CostUSD:        totalCost,
 		CostConfidence: confidence,
 		PricingSource:  "litellm",
-		PricingVersion: e.pricingVersion,
+		PricingVersion: pricingVersion,
 	}
 }
 
@@ -283,25 +296,41 @@ func (e *Engine) SetCustomPricing(model string, inputPer1k, outputPer1k decimal.
 	}
 }
 
-// PricingVersion returns the 12-char SHA-256 prefix of the pricing data.
+// SetAPIKey configures authentication for control-plane pricing refreshes.
+func (e *Engine) SetAPIKey(apiKey string) {
+	e.mu.Lock()
+	e.apiKey = apiKey
+	e.mu.Unlock()
+}
+
+// PricingVersion returns the active catalog version from the control plane or bundle.
 func (e *Engine) PricingVersion() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.pricingVersion
 }
 
-// ModelCount returns the number of models in the bundled pricing data.
+// ModelCount returns the number of models in the active pricing catalog.
 func (e *Engine) ModelCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return len(e.models)
 }
 
-// serverPricingResponse is the JSON shape returned by the pricing server.
+type serverPricingModel struct {
+	InputCostPerToken  float64 `json:"input_cost_per_token"`
+	OutputCostPerToken float64 `json:"output_cost_per_token"`
+	CacheReadCost      float64 `json:"cache_read_input_token_cost"`
+	CacheCreationCost  float64 `json:"cache_creation_input_token_cost"`
+	LiteLLMProvider    string  `json:"litellm_provider"`
+}
+
+// serverPricingResponse matches the authenticated control-plane envelope.
 type serverPricingResponse struct {
-	Models map[string]struct {
-		InputCostPerToken  float64 `json:"input_cost_per_token"`
-		OutputCostPerToken float64 `json:"output_cost_per_token"`
-		CacheReadCost      float64 `json:"cache_read_input_token_cost"`
-		CacheCreationCost  float64 `json:"cache_creation_input_token_cost"`
-		LiteLLMProvider    string  `json:"litellm_provider"`
-	} `json:"models"`
+	Data struct {
+		PricingVersion string                        `json:"pricing_version"`
+		Models         map[string]serverPricingModel `json:"data"`
+	} `json:"data"`
 }
 
 // RefreshFromServer fetches the latest pricing data from the given endpoint,
@@ -311,7 +340,19 @@ type serverPricingResponse struct {
 // existing pricing data is left unchanged.
 func (e *Engine) RefreshFromServer(endpoint string) error {
 	url := strings.TrimRight(endpoint, "/") + "/v1/api/pricing-data/latest"
-	resp, err := http.Get(url) //nolint:gosec // URL is controlled by caller
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("pricing refresh request: %w", err)
+	}
+	req.Header.Set("User-Agent", "dexcost-sdk")
+	e.mu.RLock()
+	apiKey := e.apiKey
+	client := e.httpClient
+	e.mu.RUnlock()
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req) //nolint:gosec // URL is controlled by caller
 	if err != nil {
 		return fmt.Errorf("pricing refresh GET: %w", err)
 	}
@@ -331,8 +372,13 @@ func (e *Engine) RefreshFromServer(endpoint string) error {
 		return fmt.Errorf("pricing refresh parse JSON: %w", err)
 	}
 
-	models := make(map[string]*modelPricing, len(payload.Models))
-	for name, entry := range payload.Models {
+	delete(payload.Data.Models, "sample_spec")
+	if len(payload.Data.Models) == 0 {
+		return fmt.Errorf("pricing refresh: response contained no models")
+	}
+
+	models := make(map[string]*modelPricing, len(payload.Data.Models))
+	for name, entry := range payload.Data.Models {
 		mp := &modelPricing{
 			InputCostPerToken:      decimal.NewFromFloat(entry.InputCostPerToken),
 			OutputCostPerToken:     decimal.NewFromFloat(entry.OutputCostPerToken),
@@ -349,9 +395,11 @@ func (e *Engine) RefreshFromServer(endpoint string) error {
 		models[name] = mp
 	}
 
-	// Recompute version from the raw response body.
-	h := sha256.Sum256(body)
-	version := fmt.Sprintf("%x", h[:6])
+	version := payload.Data.PricingVersion
+	if version == "" {
+		h := sha256.Sum256(body)
+		version = fmt.Sprintf("%x", h[:6])
+	}
 
 	e.mu.Lock()
 	e.models = models
@@ -376,14 +424,19 @@ func (e *Engine) StartBackgroundRefresh(endpoint string, interval time.Duration)
 	e.stopCh = ch
 	e.mu.Unlock()
 
-	// Initial refresh before the first tick.
-	_ = e.RefreshFromServer(endpoint) //nolint:errcheck
-
 	// safego.Go wraps a `defer recover()` so a panic in the background
 	// refresh (network teardown, malformed cost map mid-parse, etc.) is
 	// logged but cannot crash the customer's process.
 	// Sprint 1 Theme B / §2.2.5.
 	safego.Go("pricing-refresh", func() {
+		// The initial network request is deliberately inside the goroutine so
+		// SDK initialization never waits on control-plane availability.
+		select {
+		case <-ch:
+			return
+		default:
+		}
+		_ = e.RefreshFromServer(endpoint) //nolint:errcheck
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {

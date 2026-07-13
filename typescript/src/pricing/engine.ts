@@ -202,11 +202,17 @@ export class PricingEngine {
       const rawData = payload.data;
       if (!rawData || typeof rawData !== "object") return;
       const serverData = rawData.data;
-      if (!serverData || typeof serverData !== "object" || Object.keys(serverData).length === 0) {
+      if (
+        !serverData
+        || typeof serverData !== "object"
+        || Array.isArray(serverData)
+        || Object.keys(serverData).length === 0
+      ) {
         return;
       }
       // Drop the schema sample if present (matches Python).
       delete (serverData as Record<string, unknown>).sample_spec;
+      if (Object.keys(serverData).length === 0) return;
       this._modelMap = serverData;
       this._pricingVersion =
         typeof rawData.pricing_version === "string" && rawData.pricing_version

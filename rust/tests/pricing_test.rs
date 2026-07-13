@@ -181,7 +181,7 @@ async fn test_refresh_from_server_updates_model_map() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let body = r#"{"models":{"refresh-only-model":{"input_cost_per_token":0.001,"output_cost_per_token":0.002}}}"#;
+    let body = r#"{"data":{"pricing_version":"refresh-test-v1","source":"litellm","fetched_at":"2026-07-14T00:00:00Z","model_count":1,"data":{"refresh-only-model":{"input_cost_per_token":0.001,"output_cost_per_token":0.002}}}}"#;
     let body_bytes = body.as_bytes().to_vec();
     let body_len = body_bytes.len();
 
@@ -238,7 +238,7 @@ async fn test_background_refresh_updates_engine() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let body = r#"{"models":{"bg-refresh-model":{"input_cost_per_token":0.005,"output_cost_per_token":0.010}}}"#;
+    let body = r#"{"data":{"pricing_version":"background-test-v1","source":"litellm","fetched_at":"2026-07-14T00:00:00Z","model_count":1,"data":{"bg-refresh-model":{"input_cost_per_token":0.005,"output_cost_per_token":0.010}}}}"#;
     let body_bytes = body.as_bytes().to_vec();
     let body_len = body_bytes.len();
 

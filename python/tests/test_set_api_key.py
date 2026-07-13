@@ -38,10 +38,14 @@ def test_set_api_key_updates_global_config(tmp_path) -> None:
     dexcost.init(api_key="dx_test_old", buffer_path=db)
     assert dexcost._global_config is not None
     assert dexcost._global_config.api_key == "dx_test_old"
+    assert dexcost._global_tracker is not None
+    assert dexcost._pricing_engine is dexcost._global_tracker.pricing
 
     dexcost.set_api_key("dx_live_new")
 
     assert dexcost._global_config.api_key == "dx_live_new"
+    assert dexcost._pricing_engine is not None
+    assert dexcost._pricing_engine._api_key == "dx_live_new"
 
 
 def test_set_api_key_before_init_logs_warning_and_no_op(

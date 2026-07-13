@@ -47,7 +47,9 @@ pub mod schema;
 pub mod security;
 pub mod transport;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 
@@ -92,6 +94,7 @@ pub const ALL_SUPPORTED_INSTRUMENTS: &[&str] = &["openai", "anthropic", "gemini"
 struct SdkState {
     buffer: Arc<Mutex<EventBuffer>>,
     pricing: Arc<Mutex<PricingEngine>>,
+    pricing_refresh_stop: Arc<AtomicBool>,
     rate_registry: Arc<Mutex<RateRegistry>>,
     /// Service catalog for non-LLM HTTP cost extraction. `None` when
     /// `track_http` is disabled.
@@ -138,7 +141,18 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
             None => Arc::new(Mutex::new(EventBuffer::new()?)),
         }
     };
-    let pricing = Arc::new(Mutex::new(PricingEngine::new()));
+    let pricing_engine = PricingEngine::new();
+    pricing_engine.set_api_key(config.api_key.clone());
+    // Keep a shared engine handle ready, but do not spawn its detached worker
+    // until GLOBAL_STATE accepts this initialization. Otherwise a rejected
+    // second init would leave an authenticated refresh worker with no owner.
+    let pricing_refresh = if config.api_key.is_some() && !crate::dev_console::is_dev_mode() {
+        Some((pricing_engine.clone(), config.endpoint()))
+    } else {
+        None
+    };
+    let pricing_refresh_stop = pricing_engine.background_stop_signal();
+    let pricing = Arc::new(Mutex::new(pricing_engine));
     let rate_registry = Arc::new(Mutex::new(RateRegistry::new()));
 
     // Sprint 3 Theme F mediums / §4.3: spawn cloud_detect background
@@ -183,12 +197,19 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
         .set(SdkState {
             buffer,
             pricing,
+            pricing_refresh_stop,
             rate_registry,
             service_catalog,
             config,
             pusher,
         })
         .map_err(|_| DexcostError::AlreadyInitialized)?;
+
+    if let Some((engine, endpoint)) = pricing_refresh {
+        // Detached and fail-open: init never waits on the control plane, and
+        // the bundled catalog remains active on any refresh failure.
+        engine.start_background_refresh(endpoint, Duration::from_secs(86_400));
+    }
 
     // Start pusher background task if in cloud mode.
     // The JoinHandle is intentionally dropped to detach the background task.
@@ -297,6 +318,7 @@ pub async fn flush() -> Result<(), DexcostError> {
 /// Note: Due to OnceLock, the SDK cannot be re-initialized after close().
 pub fn close() {
     if let Some(state) = GLOBAL_STATE.get() {
+        state.pricing_refresh_stop.store(true, Ordering::SeqCst);
         if let Some(ref pusher) = state.pusher {
             pusher.stop();
         }
