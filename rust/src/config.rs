@@ -38,7 +38,7 @@ pub struct Config {
     /// When `true`, HTTP calls are tracked via the service catalog.
     /// Defaults to `true` to match the Python SDK.
     pub track_http: bool,
-    /// Optional URL of a remote service catalog to merge at init time.
+    /// Optional URL of a conformant remote service catalog to install at init.
     pub service_catalog_url: Option<String>,
     /// Optional explicit path for the on-disk SQLite event buffer.
     /// When `None`, the default `~/.dexcost/buffer.db` location is used.

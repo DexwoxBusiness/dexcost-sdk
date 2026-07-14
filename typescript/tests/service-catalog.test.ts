@@ -3,7 +3,9 @@
  * endpoint matching, cost extraction, transforms, and user overrides.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { ServiceCatalog } from "../src/pricing/service-catalog.js";
 
 describe("ServiceCatalog", () => {
@@ -51,11 +53,10 @@ describe("ServiceCatalog", () => {
     expect(entry!.display_name).toBe("Pinecone");
   });
 
-  it("matches wildcard domain for supabase", () => {
+  it("does not load safety-disabled synthetic-zero services", () => {
     const catalog = new ServiceCatalog();
     const entry = catalog.lookup("https://myproject.supabase.co/rest/v1/todos");
-    expect(entry).not.toBeNull();
-    expect(entry!.display_name).toBe("Supabase");
+    expect(entry).toBeNull();
   });
 
   it("matches wildcard domain for S3", () => {
@@ -240,17 +241,16 @@ describe("ServiceCatalog", () => {
     expect(result!.confidence).toBe("exact");
   });
 
-  it("applies stripe_fee transform", () => {
+  it("does not load services whose billing lifecycle is not observable", () => {
     const catalog = new ServiceCatalog();
     const entry = catalog.lookup("https://api.stripe.com/v1/charges");
-    expect(entry).not.toBeNull();
+    expect(entry).toBeNull();
+  });
 
-    const body = { amount: 1000, currency: "usd" }; // $10.00 in cents
-    const result = catalog.extractCost(entry!, new Headers(), body);
-    expect(result).not.toBeNull();
-    // 2.9% of $10.00 + $0.30 = $0.29 + $0.30 = $0.59
-    expect(result!.costUsd).toBeCloseTo(0.59, 2);
-    expect(result!.confidence).toBe("exact");
+  it("bundles the byte-identical safety-filtered canonical catalog", () => {
+    const typescriptCatalog = readFileSync(resolve("src/data/service_prices.json"));
+    const pythonCanonical = readFileSync(resolve("../python/src/dexcost/data/service_prices.json"));
+    expect(typescriptCatalog.equals(pythonCanonical)).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -279,5 +279,101 @@ describe("ServiceCatalog", () => {
     const catalog2 = new ServiceCatalog();
     expect(catalog1.catalogVersion).toBe(catalog2.catalogVersion);
     expect(catalog1.catalogVersion).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("authenticates and atomically replaces from a conformant control-plane envelope", async () => {
+    const envelope = {
+      data: {
+        _meta: {
+          version: "test",
+          service_count: 1,
+          disabled_service_count: 1,
+          safety_policy_version: "2026-07-14.2",
+        },
+        custom_search: {
+          display_name: "Custom Search",
+          domains: ["api.custom-search.test"],
+          category: "search",
+          pricing_model: "per_request",
+          cost_per_request_usd: "0.01",
+          cost_extraction: { type: "fixed" },
+          source: "test",
+          last_verified: "2026-07-14",
+        },
+      },
+      meta: {
+        catalog_version: "test",
+        safety_policy_version: "2026-07-14.2",
+        source: "bundled",
+        service_count: 1,
+        disabled_service_count: 1,
+        disabled_entries: [{ service_key: "unsafe_service" }],
+      },
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+    const catalog = new ServiceCatalog();
+
+    await expect(
+      catalog.refreshFromUrl("https://api.dexcost.test/v1/api/service-catalog/latest", "dx_test_key"),
+    ).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.dexcost.test/v1/api/service-catalog/latest",
+      { headers: { Authorization: "Bearer dx_test_key" }, redirect: "error" },
+    );
+    expect(catalog.lookup("https://api.tavily.com/search")).toBeNull();
+    expect(catalog.lookup("https://api.custom-search.test/search")?.display_name).toBe(
+      "Custom Search",
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("rejects unsafe or unsupported-policy refreshes without mutation", async () => {
+    const invalidEnvelope = {
+      data: {
+        _meta: {
+          version: "test",
+          service_count: 1,
+          disabled_service_count: 0,
+          safety_policy_version: "2026-07-14.2",
+        },
+        synthetic_zero: {
+          display_name: "Synthetic Zero",
+          domains: ["zero.test"],
+          category: "test",
+          pricing_model: "per_request",
+          cost_per_request_usd: "0",
+          cost_extraction: { type: "fixed" },
+          source: "test",
+          last_verified: "2026-07-14",
+        },
+      },
+      meta: {
+        catalog_version: "test",
+        safety_policy_version: "2026-07-14.2",
+        source: "bundled",
+        service_count: 1,
+        disabled_service_count: 0,
+        disabled_entries: [],
+      },
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify(invalidEnvelope), { status: 200 }));
+    const catalog = new ServiceCatalog();
+    const versionBefore = catalog.catalogVersion;
+
+    await expect(catalog.refreshFromUrl("https://api.dexcost.test/catalog")).resolves.toBe(false);
+    expect(catalog.catalogVersion).toBe(versionBefore);
+    expect(catalog.lookup("https://api.tavily.com/search")).not.toBeNull();
+    expect(catalog.lookup("https://zero.test")).toBeNull();
+
+    invalidEnvelope.data.synthetic_zero.cost_per_request_usd = "0.01";
+    invalidEnvelope.data._meta.safety_policy_version = "future-policy";
+    invalidEnvelope.meta.safety_policy_version = "future-policy";
+    await expect(catalog.refreshFromUrl("https://api.dexcost.test/catalog")).resolves.toBe(false);
+    expect(catalog.catalogVersion).toBe(versionBefore);
+    fetchMock.mockRestore();
   });
 });

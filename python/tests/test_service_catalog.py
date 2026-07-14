@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import urllib.request
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
-from dexcost.service_catalog import CostExtractionResult, ServiceCatalog, ServiceEntry
-
+import dexcost.service_catalog as service_catalog_module
+from dexcost.service_catalog import ServiceCatalog
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -318,20 +319,9 @@ class TestTransforms:
         # 120000ms -> 2min * $0.002/min = $0.004
         assert result.amount == Decimal("120000") / Decimal("60000") * Decimal("0.002")
 
-    def test_stripe_fee(self, catalog: ServiceCatalog) -> None:
-        """Stripe: amount (cents) -> 2.9% + $0.30."""
+    def test_stripe_requires_final_billing_lifecycle(self, catalog: ServiceCatalog) -> None:
         entry = catalog.lookup("https://api.stripe.com/v1/charges")
-        assert entry is not None
-
-        result = catalog.extract_cost(
-            entry,
-            response_headers={},
-            response_body={"amount": 10000},  # $100.00
-        )
-        assert result is not None
-        # $100 * 2.9% + $0.30 = $3.20
-        expected = Decimal("10000") / Decimal("100") * Decimal("0.029") + Decimal("0.30")
-        assert result.amount == expected
+        assert entry is None
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +370,105 @@ class TestCatalogVersion:
         cat1 = ServiceCatalog()
         cat2 = ServiceCatalog()
         assert cat1.catalog_version == cat2.catalog_version
+
+
+class _RemoteResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._body = json.dumps(payload).encode()
+
+    def __enter__(self) -> _RemoteResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
+    return {
+        "data": {
+            "_meta": {
+                "version": "test",
+                "service_count": 1,
+                "disabled_service_count": 1,
+                "safety_policy_version": "2026-07-14.2",
+            },
+            "custom_search": {
+                "display_name": "Custom Search",
+                "domains": ["api.custom-search.test"],
+                "category": "search",
+                "pricing_model": "per_request",
+                "cost_per_request_usd": rate,
+                "cost_extraction": {"type": "fixed"},
+                "source": "test",
+                "last_verified": "2026-07-14",
+            },
+        },
+        "meta": {
+            "catalog_version": "test",
+            "safety_policy_version": "2026-07-14.2",
+            "source": "bundled",
+            "service_count": 1,
+            "disabled_service_count": 1,
+            "disabled_entries": [{"service_key": "unsafe_service"}],
+        },
+    }
+
+
+class TestRemoteCatalogRefresh:
+    def test_authenticated_refresh_atomically_replaces_catalog(
+        self, catalog: ServiceCatalog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_urlopen(request: urllib.request.Request, timeout: int) -> _RemoteResponse:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return _RemoteResponse(_remote_envelope())
+
+        monkeypatch.setattr(service_catalog_module, "_open_catalog_request", fake_urlopen)
+        assert catalog.refresh_from_url("https://api.dexcost.test/catalog", "dx_test_key")
+
+        request = captured["request"]
+        assert isinstance(request, urllib.request.Request)
+        assert request.get_header("Authorization") == "Bearer dx_test_key"
+        assert captured["timeout"] == 10
+        assert catalog.lookup("https://api.tavily.com/search") is None
+        assert catalog.lookup("https://api.custom-search.test/search") is not None
+
+    def test_rejects_synthetic_zero_without_mutating_catalog(
+        self, catalog: ServiceCatalog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            service_catalog_module,
+            "_open_catalog_request",
+            lambda *_args, **_kwargs: _RemoteResponse(_remote_envelope(rate="0")),
+        )
+        version_before = catalog.catalog_version
+
+        assert not catalog.refresh_from_url("https://api.dexcost.test/catalog")
+        assert catalog.catalog_version == version_before
+        assert catalog.lookup("https://api.tavily.com/search") is not None
+        assert catalog.lookup("https://api.custom-search.test/search") is None
+
+    def test_rejects_unsupported_safety_policy(
+        self, catalog: ServiceCatalog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = _remote_envelope()
+        data = payload["data"]
+        meta = payload["meta"]
+        assert isinstance(data, dict) and isinstance(meta, dict)
+        data_meta = data["_meta"]
+        assert isinstance(data_meta, dict)
+        data_meta["safety_policy_version"] = "future-policy"
+        meta["safety_policy_version"] = "future-policy"
+        monkeypatch.setattr(
+            service_catalog_module,
+            "_open_catalog_request",
+            lambda *_args, **_kwargs: _RemoteResponse(payload),
+        )
+
+        assert not catalog.refresh_from_url("https://api.dexcost.test/catalog")
+        assert catalog.lookup("https://api.tavily.com/search") is not None

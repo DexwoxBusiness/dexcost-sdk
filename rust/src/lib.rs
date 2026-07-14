@@ -171,21 +171,28 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
         None
     };
 
-    // When a remote service catalog URL is configured, merge it in the
-    // background (fail-silent — the bundled catalog remains usable).
-    if let (Some(url), Some(catalog)) =
-        (config.service_catalog_url.clone(), service_catalog.clone())
-    {
-        tokio::spawn(async move {
-            let mut cat = catalog.lock().await;
-            if let Err(e) = cat.refresh_from_url(&url).await {
-                eprintln!(
-                    "[dexcost] WARNING: service catalog refresh from {} failed: {}",
-                    url, e
-                );
+    // Prepare the catalog refresh, but do not spawn it until GLOBAL_STATE
+    // accepts this initialization. This prevents orphan authenticated workers
+    // when init() is called twice.
+    let service_catalog_refresh = service_catalog.clone().and_then(|catalog| {
+        let endpoint = config.endpoint();
+        let url = config.service_catalog_url.clone().or_else(|| {
+            if config.api_key.is_some() && !crate::dev_console::is_dev_mode() {
+                Some(format!(
+                    "{}/v1/api/service-catalog/latest",
+                    endpoint.trim_end_matches('/')
+                ))
+            } else {
+                None
             }
-        });
-    }
+        })?;
+        let api_key = if same_origin(&url, &endpoint) {
+            config.api_key.clone()
+        } else {
+            None
+        };
+        Some((catalog, url, api_key))
+    });
 
     let pusher = if config.api_key.is_some() {
         Some(EventPusher::new(buffer.clone(), config.clone()))
@@ -211,6 +218,25 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
         engine.start_background_refresh(endpoint, Duration::from_secs(86_400));
     }
 
+    if let Some((catalog, url, api_key)) = service_catalog_refresh {
+        tokio::spawn(async move {
+            // Fetch and validate without holding the live catalog lock. HTTP
+            // attribution keeps using the bundled snapshot while I/O is in flight.
+            let mut candidate = ServiceCatalog::new();
+            if let Err(error) = candidate
+                .refresh_from_url_with_api_key(&url, api_key.as_deref())
+                .await
+            {
+                eprintln!(
+                    "[dexcost] WARNING: service catalog refresh from {} failed: {}",
+                    url, error
+                );
+                return;
+            }
+            catalog.lock().await.replace_data_from(candidate);
+        });
+    }
+
     // Start pusher background task if in cloud mode.
     // The JoinHandle is intentionally dropped to detach the background task.
     if let Some(state) = GLOBAL_STATE.get() {
@@ -227,6 +253,13 @@ pub fn init(mut config: Config) -> Result<(), DexcostError> {
 pub fn service_catalog() -> Result<Option<Arc<Mutex<ServiceCatalog>>>, DexcostError> {
     let state = get_state()?;
     Ok(state.service_catalog.clone())
+}
+
+fn same_origin(left: &str, right: &str) -> bool {
+    match (reqwest::Url::parse(left), reqwest::Url::parse(right)) {
+        (Ok(left_url), Ok(right_url)) => left_url.origin() == right_url.origin(),
+        _ => false,
+    }
 }
 
 /// Returns a reference to the global state, or an error if not initialized.

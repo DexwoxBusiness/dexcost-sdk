@@ -11,9 +11,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
+
+const supportedSafetyPolicyVersion = "2026-07-14.2"
 
 //go:embed data/service_prices.json
 var embeddedServiceData embed.FS
@@ -97,9 +100,12 @@ func newServiceCatalogFromBytes(data []byte) (*ServiceCatalog, error) {
 		}
 		entry, err := parseServiceEntry(key, entryJSON)
 		if err != nil {
-			continue // skip malformed entries
+			return nil, fmt.Errorf("parse service catalog entry %s: %w", key, err)
 		}
 		entries[key] = entry
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("service catalog must contain at least one entry")
 	}
 
 	return &ServiceCatalog{
@@ -128,23 +134,31 @@ func parseServiceEntry(key string, data json.RawMessage) (*ServiceEntry, error) 
 
 	// Parse domains.
 	if domainsRaw, ok := fields["domains"]; ok {
-		if arr, ok := domainsRaw.([]interface{}); ok {
-			for _, d := range arr {
-				if s, ok := d.(string); ok {
-					entry.Domains = append(entry.Domains, s)
-				}
+		arr, ok := domainsRaw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("domains must be an array")
+		}
+		for _, d := range arr {
+			s, ok := d.(string)
+			if !ok || s == "" {
+				return nil, fmt.Errorf("domains must contain non-empty strings")
 			}
+			entry.Domains = append(entry.Domains, s)
 		}
 	}
 
 	// Parse endpoints.
 	if endpointsRaw, ok := fields["endpoints"]; ok {
-		if arr, ok := endpointsRaw.([]interface{}); ok {
-			for _, e := range arr {
-				if s, ok := e.(string); ok {
-					entry.Endpoints = append(entry.Endpoints, s)
-				}
+		arr, ok := endpointsRaw.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("endpoints must be an array")
+		}
+		for _, e := range arr {
+			s, ok := e.(string)
+			if !ok || s == "" {
+				return nil, fmt.Errorf("endpoints must contain non-empty strings")
 			}
+			entry.Endpoints = append(entry.Endpoints, s)
 		}
 	}
 
@@ -178,6 +192,49 @@ func parseServiceEntry(key string, data json.RawMessage) (*ServiceEntry, error) 
 	}
 	if len(rateFields) > 0 {
 		entry.RateFields = rateFields
+	}
+	if key == "" || entry.DisplayName == "" || entry.Category == "" || entry.PricingModel == "" ||
+		entry.Source == "" || entry.LastVerified == "" || len(entry.Domains) == 0 {
+		return nil, fmt.Errorf("missing required service entry fields")
+	}
+	extractionType, _ := entry.CostExtraction["type"].(string)
+	switch extractionType {
+	case "response_body", "response_header", "endpoint_match", "fixed":
+	default:
+		return nil, fmt.Errorf("invalid cost extraction type %q", extractionType)
+	}
+	if transform, exists := entry.CostExtraction["transform"]; exists {
+		transformName, ok := transform.(string)
+		if extractionType != "response_body" || !ok ||
+			(transformName != "ms_to_seconds" && transformName != "ms_to_minutes") {
+			return nil, fmt.Errorf("unsupported cost extraction transform %v", transform)
+		}
+	}
+	if extractionType == "response_body" && stringField(entry.CostExtraction, "path") == "" {
+		return nil, fmt.Errorf("response_body extraction requires a path")
+	}
+	if extractionType == "response_header" && stringField(entry.CostExtraction, "header") == "" {
+		return nil, fmt.Errorf("response_header extraction requires a header")
+	}
+	if extractionType == "endpoint_match" && len(entry.Endpoints) == 0 {
+		return nil, fmt.Errorf("endpoint_match extraction requires endpoints")
+	}
+	positiveRateCount := 0
+	for field, value := range entry.RateFields {
+		if !strings.HasPrefix(field, "cost_per_") {
+			continue
+		}
+		if !strings.HasSuffix(field, "_usd") {
+			return nil, fmt.Errorf("invalid rate field %s", field)
+		}
+		rate, err := decimal.NewFromString(fmt.Sprint(value))
+		if err != nil || !rate.IsPositive() {
+			return nil, fmt.Errorf("unsafe rate %s=%v", field, value)
+		}
+		positiveRateCount++
+	}
+	if positiveRateCount != 1 {
+		return nil, fmt.Errorf("service entry must have exactly one positive rate")
 	}
 
 	return entry, nil
@@ -461,10 +518,89 @@ func (sc *ServiceCatalog) RegisterOverride(serviceKey string, costPerUnit decima
 	}
 }
 
-// RefreshFromURL fetches a service catalog JSON from url and merges its
-// entries into the existing catalog. Existing entries are overwritten.
-func (sc *ServiceCatalog) RefreshFromURL(rawURL string) error {
-	resp, err := http.Get(rawURL) //nolint:gosec // URL is controlled by caller
+type remoteCatalogEnvelope struct {
+	Data json.RawMessage `json:"data"`
+	Meta struct {
+		CatalogVersion       string `json:"catalog_version"`
+		SafetyPolicyVersion  string `json:"safety_policy_version"`
+		Source               string `json:"source"`
+		ServiceCount         int    `json:"service_count"`
+		DisabledServiceCount int    `json:"disabled_service_count"`
+		DisabledEntries      []struct {
+			ServiceKey string `json:"service_key"`
+		} `json:"disabled_entries"`
+	} `json:"meta"`
+}
+
+func parseRemoteCatalogEnvelope(data []byte) (*ServiceCatalog, error) {
+	var envelope remoteCatalogEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("parse envelope: %w", err)
+	}
+	if len(envelope.Data) == 0 || envelope.Meta.CatalogVersion == "" ||
+		envelope.Meta.SafetyPolicyVersion != supportedSafetyPolicyVersion ||
+		envelope.Meta.Source == "" {
+		return nil, fmt.Errorf("catalog envelope metadata is incomplete")
+	}
+
+	newCatalog, err := newServiceCatalogFromBytes(envelope.Data)
+	if err != nil {
+		return nil, err
+	}
+	if envelope.Meta.ServiceCount != len(newCatalog.entries) ||
+		envelope.Meta.DisabledServiceCount != len(envelope.Meta.DisabledEntries) {
+		return nil, fmt.Errorf("catalog envelope counts are inconsistent")
+	}
+
+	disabledKeys := make(map[string]struct{}, len(envelope.Meta.DisabledEntries))
+	for _, disabled := range envelope.Meta.DisabledEntries {
+		if disabled.ServiceKey == "" {
+			return nil, fmt.Errorf("disabled catalog entry has an empty service key")
+		}
+		if _, duplicate := disabledKeys[disabled.ServiceKey]; duplicate {
+			return nil, fmt.Errorf("disabled catalog entry %s is duplicated", disabled.ServiceKey)
+		}
+		if _, present := newCatalog.entries[disabled.ServiceKey]; present {
+			return nil, fmt.Errorf("disabled catalog entry %s is present in data", disabled.ServiceKey)
+		}
+		disabledKeys[disabled.ServiceKey] = struct{}{}
+	}
+
+	dataMeta, ok := newCatalog.rawData["_meta"].(map[string]interface{})
+	if !ok || stringField(dataMeta, "version") != envelope.Meta.CatalogVersion ||
+		intJSONField(dataMeta, "service_count") != envelope.Meta.ServiceCount ||
+		intJSONField(dataMeta, "disabled_service_count") != envelope.Meta.DisabledServiceCount ||
+		stringField(dataMeta, "safety_policy_version") != envelope.Meta.SafetyPolicyVersion {
+		return nil, fmt.Errorf("catalog data metadata is inconsistent")
+	}
+	return newCatalog, nil
+}
+
+func intJSONField(fields map[string]interface{}, key string) int {
+	value, ok := fields[key].(float64)
+	if !ok || value != float64(int(value)) {
+		return -1
+	}
+	return int(value)
+}
+
+// RefreshFromURL fetches an authenticated service catalog envelope and
+// atomically replaces the active entries after conformance validation.
+func (sc *ServiceCatalog) RefreshFromURL(rawURL string, apiKey ...string) error {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("build catalog request: %w", err)
+	}
+	if len(apiKey) > 0 && apiKey[0] != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey[0])
+	}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req) //nolint:gosec // URL is controlled by caller
 	if err != nil {
 		return fmt.Errorf("fetch catalog: %w", err)
 	}
@@ -476,23 +612,14 @@ func (sc *ServiceCatalog) RefreshFromURL(rawURL string) error {
 	if err != nil {
 		return fmt.Errorf("read catalog body: %w", err)
 	}
-	newSc, err := newServiceCatalogFromBytes(data)
+	newSc, err := parseRemoteCatalogEnvelope(data)
 	if err != nil {
 		return fmt.Errorf("parse catalog: %w", err)
 	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	for k, v := range newSc.entries {
-		sc.entries[k] = v
-	}
-	if newSc.rawData != nil {
-		if sc.rawData == nil {
-			sc.rawData = make(map[string]interface{})
-		}
-		for k, v := range newSc.rawData {
-			sc.rawData[k] = v
-		}
-	}
+	sc.entries = newSc.entries
+	sc.rawData = newSc.rawData
 	return nil
 }
 

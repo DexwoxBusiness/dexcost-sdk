@@ -95,6 +95,8 @@ def test_reinit_after_fork_restarts_pricing_refresh(
     monkeypatch.setattr(sqlite_module, "SQLiteStorage", sqlite_factory)
     set_browser_storage = MagicMock()
     monkeypatch.setattr(browser_adapter, "set_storage", set_browser_storage)
+    start_catalog_refresh = MagicMock()
+    monkeypatch.setattr(dexcost, "_start_service_catalog_refresh", start_catalog_refresh)
 
     dexcost._reinit_after_fork()
 
@@ -109,6 +111,7 @@ def test_reinit_after_fork_restarts_pricing_refresh(
     child_worker.start.assert_called_once_with()
     pricing.set_api_key.assert_called_once_with(config.api_key)
     pricing.start_background_refresh.assert_called_once_with(config.endpoint)
+    start_catalog_refresh.assert_called_once_with()
     assert dexcost._pricing_engine is pricing
 
 
