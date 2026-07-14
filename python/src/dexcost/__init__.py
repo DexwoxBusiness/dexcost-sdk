@@ -296,6 +296,12 @@ def init(
         )
         return _global_config  # type: ignore[return-value]
 
+    # Refresh configuration belongs to one accepted init lifecycle. Clear it
+    # before applying the new config so track_http=False cannot inherit a URL
+    # or API key from a previous initialization.
+    _service_catalog_refresh_url = None
+    _service_catalog_refresh_api_key = None
+
     _global_config = DexcostConfig(
         api_key=api_key,
         storage=storage,
@@ -548,6 +554,10 @@ def close() -> None:
     Safe to call even if ``init()`` has not been called (no-op).
     """
     global _global_tracker, _sync_worker, _pricing_engine
+    global _service_catalog_refresh_url, _service_catalog_refresh_api_key
+    # Drop credentials first, even if flushing or worker shutdown raises.
+    _service_catalog_refresh_url = None
+    _service_catalog_refresh_api_key = None
     if _sync_worker is not None:
         _sync_worker.flush()
         _sync_worker.stop()

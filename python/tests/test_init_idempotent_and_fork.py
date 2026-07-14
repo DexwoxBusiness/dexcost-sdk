@@ -41,6 +41,31 @@ def _reset_dexcost():
     dexcost.close()
 
 
+def test_close_clears_service_catalog_refresh_credentials() -> None:
+    dexcost._service_catalog_refresh_url = "https://old-control.example/catalog"
+    dexcost._service_catalog_refresh_api_key = "dx_test_old"
+
+    dexcost.close()
+
+    assert dexcost._service_catalog_refresh_url is None
+    assert dexcost._service_catalog_refresh_api_key is None
+
+
+def test_init_without_http_clears_stale_catalog_refresh_state(tmp_path: Path) -> None:
+    dexcost._service_catalog_refresh_url = "https://old-control.example/catalog"
+    dexcost._service_catalog_refresh_api_key = "dx_test_old"
+
+    dexcost.init(
+        storage="local",
+        buffer_path=str(tmp_path / "dexcost.db"),
+        track_http=False,
+        auto_instrument=[],
+    )
+
+    assert dexcost._service_catalog_refresh_url is None
+    assert dexcost._service_catalog_refresh_api_key is None
+
+
 def test_double_init_does_not_create_orphan_threads(tmp_path: Path) -> None:
     """B10 / §2.2.4 (a): calling init() twice must not orphan the first
     SyncWorker thread.
