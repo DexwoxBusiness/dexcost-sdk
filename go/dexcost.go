@@ -22,8 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,11 +171,10 @@ func wireHTTPAdapters(cfg *Config) {
 	}
 }
 
-// setupServiceCatalog refreshes the service catalog from cfg.ServiceCatalogURL
-// (when configured) and registers it with the HTTP adapter so auto-detected
-// external costs use the remote entries (Python parity: __init__.py:181-183).
+// setupServiceCatalog installs the safe bundled catalog immediately, then
+// refreshes it in the background from a conformant control-plane envelope.
 func setupServiceCatalog(cfg *Config) {
-	if cfg.ServiceCatalogURL == "" {
+	if !cfg.TrackHTTP {
 		return
 	}
 	catalog, err := pricing.NewServiceCatalog()
@@ -181,10 +182,46 @@ func setupServiceCatalog(cfg *Config) {
 		log.Printf("[dexcost] failed to load service catalog: %v", err)
 		return
 	}
-	if refreshErr := catalog.RefreshFromURL(cfg.ServiceCatalogURL); refreshErr != nil {
-		log.Printf("[dexcost] failed to refresh service catalog: %v", refreshErr)
-	}
 	adapters.SetServiceCatalog(catalog)
+
+	catalogURL := cfg.ServiceCatalogURL
+	endpoint := cfg.resolvedEndpoint()
+	if catalogURL == "" && cfg.StorageMode() == "cloud" && !cfg.IsDev() {
+		catalogURL = strings.TrimRight(endpoint, "/") + "/v1/api/service-catalog/latest"
+	}
+	if catalogURL == "" {
+		return
+	}
+
+	apiKey := ""
+	if cfg.APIKey != "" && sameOrigin(catalogURL, endpoint) {
+		apiKey = cfg.APIKey
+	}
+	go func() {
+		if refreshErr := catalog.RefreshFromURL(catalogURL, apiKey); refreshErr != nil {
+			log.Printf("[dexcost] failed to refresh service catalog: %v", refreshErr)
+		}
+	}()
+}
+
+func sameOrigin(left, right string) bool {
+	leftURL, leftErr := url.Parse(left)
+	rightURL, rightErr := url.Parse(right)
+	if leftErr != nil || rightErr != nil || leftURL.Scheme == "" || rightURL.Scheme == "" {
+		return false
+	}
+	return leftURL.Scheme == rightURL.Scheme && leftURL.Hostname() == rightURL.Hostname() &&
+		normalizedPort(leftURL) == normalizedPort(rightURL)
+}
+
+func normalizedPort(parsed *url.URL) string {
+	if parsed.Port() != "" {
+		return parsed.Port()
+	}
+	if parsed.Scheme == "https" {
+		return "443"
+	}
+	return "80"
 }
 
 // mustTracker returns the global tracker, or nil if Init() has not

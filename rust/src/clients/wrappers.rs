@@ -932,20 +932,20 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tool_call_toolmap_to_catalog() {
+    fn test_mcp_tool_call_disabled_catalog_entry_is_unknown() {
         let mut buffer = EventBuffer::new().unwrap();
         let catalog = ServiceCatalog::new();
 
-        // No rate registry — should fall through to catalog fixed cost.
-        // "deepl_translate" maps to catalog key "deepl_translate" which has
-        // cost_per_request_usd = "0.000025" in service_prices.json.
+        // DeepL is intentionally disabled until the SDK can observe character
+        // usage. It must not convert a per-character rate into a fixed call cost.
         let event = record_mcp_tool_call(
             &mut buffer, &catalog, None,
             "task-tc-3", "deepl_translate", None, None, false,
         );
 
-        assert_eq!(event.pricing_source, Some(PricingSource::ServiceCatalog));
-        assert!(event.cost_usd >= rust_decimal::Decimal::ZERO);
+        assert_eq!(event.pricing_source, Some(PricingSource::Unknown));
+        assert_eq!(event.cost_confidence, CostConfidence::Unknown);
+        assert_eq!(event.cost_usd, rust_decimal::Decimal::ZERO);
         assert_eq!(buffer.event_count(), 1);
     }
 

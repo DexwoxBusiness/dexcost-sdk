@@ -316,7 +316,8 @@ export interface TrackerOptions {
    */
   trackHttp?: boolean;
   /**
-   * Optional URL to refresh the HTTP service catalog from on init.
+   * Optional URL for a conformant HTTP service catalog. Cloud mode defaults
+   * to the control-plane catalog endpoint.
    */
   serviceCatalogUrl?: string;
 
@@ -1042,6 +1043,20 @@ export class CostTracker {
     // default) — never from the process env. Threaded to both consumers below:
     // the pusher (telemetry POST) and the pricing refresher.
     const endpoint = resolveEndpoint(this._options.endpoint);
+    const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
+    const serviceCatalogUrl =
+      this._options.serviceCatalogUrl ??
+      (cloudMode ? `${endpoint.replace(/\/+$/, "")}/v1/api/service-catalog/latest` : undefined);
+    let serviceCatalogApiKey: string | undefined;
+    if (serviceCatalogUrl && this._config.apiKey) {
+      try {
+        if (new URL(serviceCatalogUrl).origin === new URL(endpoint).origin) {
+          serviceCatalogApiKey = this._config.apiKey;
+        }
+      } catch {
+        // Invalid custom URLs fail open during refresh and never receive credentials.
+      }
+    }
 
     // The SDK's own traffic (pusher, pricing refresh, catalog refresh)
     // must be invisible to capture — register the hosts it talks to
@@ -1051,15 +1066,14 @@ export class CostTracker {
     } catch {
       // endpoint already validated by resolveEndpoint; never fatal here
     }
-    if (this._options.serviceCatalogUrl) {
+    if (serviceCatalogUrl) {
       try {
-        _adapterRegisterInternalHost(new URL(this._options.serviceCatalogUrl).hostname);
+        _adapterRegisterInternalHost(new URL(serviceCatalogUrl).hostname);
       } catch {
         // invalid catalog URL fails later in refresh; not fatal here
       }
     }
 
-    const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
     debugLog(
       "init",
       `storage=${isDevMode() ? "dev-console" : cloudMode ? "cloud" : "local"} ` +
@@ -1118,7 +1132,7 @@ export class CostTracker {
 
     // Auto-track outgoing HTTP calls (default on, matches Python).
     if (this._options.trackHttp !== false) {
-      this._enableHttpTracking(this._options.serviceCatalogUrl);
+      this._enableHttpTracking(serviceCatalogUrl, serviceCatalogApiKey);
     }
 
     // Wire the browser adapter to durable storage so trackBrowser() cost
@@ -1137,9 +1151,9 @@ export class CostTracker {
 
   /**
    * Patch outgoing HTTP transports to auto-record external costs and,
-   * when a catalog URL is provided, refresh the service catalog.
+   * refresh the service catalog from the configured control-plane envelope.
    */
-  private _enableHttpTracking(serviceCatalogUrl?: string): void {
+  private _enableHttpTracking(serviceCatalogUrl?: string, serviceCatalogApiKey?: string): void {
     try {
       // SYNCHRONOUS on purpose. This used to be fire-and-forget async with
       // a dynamic import, which meant init() returned BEFORE globalThis.fetch
@@ -1173,7 +1187,7 @@ export class CostTracker {
         // (and best-effort). The patch above is already installed.
         const catalog = _adapterGetServiceCatalog();
         if (catalog) {
-          void catalog.refreshFromUrl(serviceCatalogUrl).catch(() => {
+          void catalog.refreshFromUrl(serviceCatalogUrl, serviceCatalogApiKey).catch(() => {
             // best-effort refresh — bundled catalog remains in use
           });
         }

@@ -7,13 +7,14 @@
 //! - User override registration
 //! - Catalog version tracking (SHA-256 hash)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 
 /// Bundled service price catalog, embedded at compile time.
 const SERVICE_PRICES_JSON: &str = include_str!("../data/service_prices.json");
+const SUPPORTED_SAFETY_POLICY_VERSION: &str = "2026-07-14.2";
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -52,6 +53,27 @@ struct Override {
     per: String,
 }
 
+#[derive(serde::Deserialize)]
+struct RemoteCatalogEnvelope {
+    data: serde_json::Value,
+    meta: RemoteCatalogMeta,
+}
+
+#[derive(serde::Deserialize)]
+struct RemoteCatalogMeta {
+    catalog_version: String,
+    safety_policy_version: String,
+    source: String,
+    service_count: usize,
+    disabled_service_count: usize,
+    disabled_entries: Vec<RemoteDisabledEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RemoteDisabledEntry {
+    service_key: String,
+}
+
 // ---------------------------------------------------------------------------
 // ServiceCatalog
 // ---------------------------------------------------------------------------
@@ -77,7 +99,16 @@ impl ServiceCatalog {
             }
         };
 
-        let entries = Self::parse_entries(&raw_data);
+        let entries = match Self::parse_entries(&raw_data) {
+            Ok(entries) => entries,
+            Err(error) => {
+                eprintln!(
+                    "[dexcost] WARNING: invalid bundled service catalog: {}",
+                    error
+                );
+                HashMap::new()
+            }
+        };
 
         Self {
             entries,
@@ -99,7 +130,13 @@ impl ServiceCatalog {
             }
         };
 
-        let entries = Self::parse_entries(&raw_data);
+        let entries = match Self::parse_entries(&raw_data) {
+            Ok(entries) => entries,
+            Err(error) => {
+                eprintln!("[dexcost] WARNING: invalid service catalog: {}", error);
+                HashMap::new()
+            }
+        };
 
         Self {
             entries,
@@ -109,45 +146,114 @@ impl ServiceCatalog {
     }
 
     /// Parse all entries from the raw JSON data.
-    fn parse_entries(data: &serde_json::Value) -> HashMap<String, ServiceEntry> {
+    fn parse_entries(data: &serde_json::Value) -> Result<HashMap<String, ServiceEntry>, String> {
         let mut entries = HashMap::new();
-        if let serde_json::Value::Object(map) = data {
-            for (key, entry_data) in map {
-                if key == "_meta" {
-                    continue;
-                }
-                if let Some(entry) = Self::parse_entry(key, entry_data) {
-                    entries.insert(key.clone(), entry);
-                }
+        let map = data
+            .as_object()
+            .ok_or_else(|| "catalog data must be an object".to_string())?;
+        for (key, entry_data) in map {
+            if key == "_meta" {
+                continue;
             }
+            if key.is_empty() {
+                return Err("catalog entry key must not be empty".to_string());
+            }
+            let entry = Self::parse_entry(key, entry_data)
+                .ok_or_else(|| format!("catalog entry {} is malformed", key))?;
+            entries.insert(key.clone(), entry);
         }
-        entries
+        if entries.is_empty() {
+            return Err("catalog must contain at least one service entry".to_string());
+        }
+        Ok(entries)
     }
 
     /// Parse a single JSON entry into a ServiceEntry.
     fn parse_entry(key: &str, data: &serde_json::Value) -> Option<ServiceEntry> {
         let obj = data.as_object()?;
 
-        let display_name = obj.get("display_name")?.as_str()?.to_string();
-        let domains: Vec<String> = obj
-            .get("domains")?
-            .as_array()?
+        let display_name = obj
+            .get("display_name")?
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .to_string();
+        let domain_values = obj.get("domains")?.as_array()?;
+        let domains: Vec<String> = domain_values
             .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-        let category = obj.get("category")?.as_str()?.to_string();
-        let pricing_model = obj.get("pricing_model")?.as_str()?.to_string();
-        let cost_extraction = obj.get("cost_extraction")?.clone();
-        let source = obj.get("source")?.as_str()?.to_string();
-        let last_verified = obj.get("last_verified")?.as_str()?.to_string();
-
-        let endpoints = obj.get("endpoints").and_then(|v| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|e| e.as_str().map(String::from))
-                    .collect()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|domain| !domain.is_empty())
+                    .map(String::from)
             })
-        });
+            .collect::<Option<Vec<_>>>()?;
+        if domains.is_empty() {
+            return None;
+        }
+        let category = obj
+            .get("category")?
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .to_string();
+        let pricing_model = obj
+            .get("pricing_model")?
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .to_string();
+        let cost_extraction = obj.get("cost_extraction")?.clone();
+        let extraction_type = cost_extraction.get("type")?.as_str()?;
+        match extraction_type {
+            "response_body" | "response_header" | "endpoint_match" | "fixed" => {}
+            _ => return None,
+        }
+        if let Some(transform) = cost_extraction.get("transform") {
+            if extraction_type != "response_body"
+                || !matches!(transform.as_str(), Some("ms_to_seconds" | "ms_to_minutes"))
+            {
+                return None;
+            }
+        }
+        let source = obj
+            .get("source")?
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .to_string();
+        let last_verified = obj
+            .get("last_verified")?
+            .as_str()
+            .filter(|value| !value.is_empty())?
+            .to_string();
+
+        let endpoints = match obj.get("endpoints") {
+            Some(value) => {
+                let values = value.as_array()?;
+                Some(
+                    values
+                        .iter()
+                        .map(|endpoint| {
+                            endpoint
+                                .as_str()
+                                .filter(|endpoint| !endpoint.is_empty())
+                                .map(String::from)
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                )
+            }
+            None => None,
+        };
+        if extraction_type == "response_body"
+            && !matches!(cost_extraction.get("path").and_then(|v| v.as_str()), Some(path) if !path.is_empty())
+        {
+            return None;
+        }
+        if extraction_type == "response_header"
+            && !matches!(cost_extraction.get("header").and_then(|v| v.as_str()), Some(header) if !header.is_empty())
+        {
+            return None;
+        }
+        if extraction_type == "endpoint_match" && endpoints.as_ref().map_or(true, Vec::is_empty) {
+            return None;
+        }
 
         let note = obj.get("note").and_then(|v| v.as_str().map(String::from));
 
@@ -164,10 +270,24 @@ impl ServiceCatalog {
             "note",
         ];
         let mut rate_fields = HashMap::new();
+        let mut positive_rate_count = 0;
         for (k, v) in obj {
             if !standard_keys.contains(&k.as_str()) {
+                if k.starts_with("cost_per_") {
+                    if !k.ends_with("_usd") {
+                        return None;
+                    }
+                    let rate = decimal_from_json_value(v)?;
+                    if rate <= Decimal::ZERO {
+                        return None;
+                    }
+                    positive_rate_count += 1;
+                }
                 rate_fields.insert(k.clone(), v.clone());
             }
+        }
+        if positive_rate_count != 1 {
+            return None;
         }
 
         Some(ServiceEntry {
@@ -442,46 +562,92 @@ impl ServiceCatalog {
         hex::encode(&digest[..8]) // first 16 hex chars
     }
 
-    /// Fetches a remote catalog JSON over HTTP and merges its entries into
-    /// this catalog. New entries are added; existing entries are updated.
-    ///
-    /// Mirrors Python `service_catalog.py` `refresh_from_url`
-    /// (`service_catalog.py:386-404`). The `_meta` key is skipped.
+    /// Fetches and atomically installs a conformant control-plane catalog.
     pub async fn refresh_from_url(
         &mut self,
         url: &str,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let resp = reqwest::Client::builder()
+        self.refresh_from_url_with_api_key(url, None).await
+    }
+
+    /// Authenticated variant used by SDK initialization for the control plane.
+    pub async fn refresh_from_url_with_api_key(
+        &mut self,
+        url: &str,
+        api_key: Option<&str>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .build()?
-            .get(url)
-            .send()
-            .await?;
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let mut request = client.get(url);
+        if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+            request = request.bearer_auth(key);
+        }
+        let resp = request.send().await?;
 
         if !resp.status().is_success() {
             return Err(format!("catalog refresh failed: HTTP {}", resp.status()).into());
         }
 
-        let remote: serde_json::Value = resp.json().await?;
-        let obj = remote
-            .as_object()
-            .ok_or("remote catalog must be a JSON object")?;
+        let envelope: RemoteCatalogEnvelope = resp.json().await?;
+        if envelope.meta.catalog_version.is_empty()
+            || envelope.meta.safety_policy_version != SUPPORTED_SAFETY_POLICY_VERSION
+            || envelope.meta.source.is_empty()
+        {
+            return Err("catalog envelope metadata is incomplete".into());
+        }
+        let entries = Self::parse_entries(&envelope.data)?;
+        if envelope.meta.service_count != entries.len()
+            || envelope.meta.disabled_service_count != envelope.meta.disabled_entries.len()
+        {
+            return Err("catalog envelope counts are inconsistent".into());
+        }
 
-        let mut merged = 0usize;
-        for (key, entry_data) in obj {
-            if key == "_meta" {
-                continue;
-            }
-            // Update the raw_data so catalog_version reflects the merge.
-            if let serde_json::Value::Object(ref mut raw_map) = self.raw_data {
-                raw_map.insert(key.clone(), entry_data.clone());
-            }
-            if let Some(entry) = Self::parse_entry(key, entry_data) {
-                self.entries.insert(key.clone(), entry);
-                merged += 1;
+        let mut disabled_keys = HashSet::new();
+        for disabled in &envelope.meta.disabled_entries {
+            if disabled.service_key.is_empty()
+                || !disabled_keys.insert(disabled.service_key.clone())
+                || entries.contains_key(&disabled.service_key)
+            {
+                return Err("disabled catalog entries are inconsistent".into());
             }
         }
-        Ok(merged)
+
+        let data_meta = envelope
+            .data
+            .get("_meta")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("catalog data metadata is missing")?;
+        if data_meta.get("version").and_then(serde_json::Value::as_str)
+            != Some(envelope.meta.catalog_version.as_str())
+            || data_meta
+                .get("service_count")
+                .and_then(serde_json::Value::as_u64)
+                != Some(envelope.meta.service_count as u64)
+            || data_meta
+                .get("disabled_service_count")
+                .and_then(serde_json::Value::as_u64)
+                != Some(envelope.meta.disabled_service_count as u64)
+            || data_meta
+                .get("safety_policy_version")
+                .and_then(serde_json::Value::as_str)
+                != Some(envelope.meta.safety_policy_version.as_str())
+        {
+            return Err("catalog data metadata is inconsistent".into());
+        }
+
+        let installed = entries.len();
+        self.entries = entries;
+        self.raw_data = envelope.data;
+        Ok(installed)
+    }
+
+    /// Replace only server-authoritative catalog data, preserving user
+    /// overrides registered on the live catalog while the refresh was in flight.
+    pub(crate) fn replace_data_from(&mut self, candidate: ServiceCatalog) {
+        self.entries = candidate.entries;
+        self.raw_data = candidate.raw_data;
     }
 
     /// Look up a service entry by its catalog key (e.g. `"tavily_search"`).
@@ -644,6 +810,7 @@ mod tests {
             !catalog.entries().is_empty(),
             "catalog should have entries from bundled JSON"
         );
+        assert_eq!(catalog.entries().len(), 73);
     }
 
     #[test]
@@ -731,20 +898,11 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_with_transform_stripe_fee() {
+    fn test_stripe_requires_final_billing_lifecycle() {
         let catalog = ServiceCatalog::new();
-        let entry = catalog.lookup("https://api.stripe.com/v1/charges").unwrap();
-
-        let body = serde_json::json!({
-            "amount": 2000 // $20.00 in cents
-        });
-
-        let result = catalog.extract_cost(entry, &HashMap::new(), Some(&body));
-        assert!(result.is_some());
-        let r = result.unwrap();
-        // $20 * 2.9% + $0.30 = $0.58 + $0.30 = $0.88
-        assert_eq!(r.confidence, "computed");
-        assert!(r.amount > Decimal::ZERO);
+        assert!(catalog
+            .lookup("https://api.stripe.com/v1/charges")
+            .is_none());
     }
 
     #[test]
@@ -881,27 +1039,42 @@ mod tests {
         assert_eq!(result, Decimal::new(42, 0));
     }
 
-    // Gap 7: refresh_from_url fetches and merges a remote catalog over HTTP.
     #[tokio::test]
-    async fn test_refresh_from_url_merges_entries() {
-        use wiremock::matchers::method;
+    async fn test_refresh_from_url_authenticates_and_replaces_entries() {
+        use wiremock::matchers::{header, method};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         let remote = serde_json::json!({
-            "_meta": {"version": "ignored"},
-            "custom_search_api": {
-                "display_name": "Custom Search",
-                "domains": ["api.customsearch.example"],
-                "category": "search",
-                "pricing_model": "per_request",
-                "cost_extraction": {"type": "fixed"},
-                "source": "test",
-                "last_verified": "2026-01-01",
-                "cost_per_request_usd": 0.01
+            "data": {
+                "_meta": {
+                    "version": "test",
+                    "service_count": 1,
+                    "disabled_service_count": 1,
+                    "safety_policy_version": "2026-07-14.2"
+                },
+                "custom_search_api": {
+                    "display_name": "Custom Search",
+                    "domains": ["api.customsearch.example"],
+                    "category": "search",
+                    "pricing_model": "per_request",
+                    "cost_extraction": {"type": "fixed"},
+                    "source": "test",
+                    "last_verified": "2026-01-01",
+                    "cost_per_request_usd": 0.01
+                }
+            },
+            "meta": {
+                "catalog_version": "test",
+                "safety_policy_version": "2026-07-14.2",
+                "source": "bundled",
+                "service_count": 1,
+                "disabled_service_count": 1,
+                "disabled_entries": [{"service_key": "unsafe_service"}]
             }
         });
         Mock::given(method("GET"))
+            .and(header("authorization", "Bearer dx_test_key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&remote))
             .mount(&server)
             .await;
@@ -909,11 +1082,12 @@ mod tests {
         let mut catalog = ServiceCatalog::new();
         assert!(catalog.get_by_key("custom_search_api").is_none());
 
-        let merged = catalog
-            .refresh_from_url(&server.uri())
+        let installed = catalog
+            .refresh_from_url_with_api_key(&server.uri(), Some("dx_test_key"))
             .await
             .expect("refresh should succeed");
-        assert_eq!(merged, 1, "_meta is skipped, one real entry merged");
+        assert_eq!(installed, 1);
+        assert!(catalog.get_by_key("tavily_search").is_none());
 
         let entry = catalog
             .get_by_key("custom_search_api")
@@ -923,6 +1097,53 @@ mod tests {
         assert!(catalog
             .lookup("https://api.customsearch.example/search")
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_rejects_synthetic_zero_without_mutation() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let remote = serde_json::json!({
+            "data": {
+                "_meta": {
+                    "version": "test",
+                    "service_count": 1,
+                    "disabled_service_count": 0,
+                    "safety_policy_version": "2026-07-14.2"
+                },
+                "synthetic_zero": {
+                    "display_name": "Synthetic Zero",
+                    "domains": ["zero.test"],
+                    "category": "test",
+                    "pricing_model": "per_request",
+                    "cost_extraction": {"type": "fixed"},
+                    "source": "test",
+                    "last_verified": "2026-07-14",
+                    "cost_per_request_usd": 0
+                }
+            },
+            "meta": {
+                "catalog_version": "test",
+                "safety_policy_version": "2026-07-14.2",
+                "source": "bundled",
+                "service_count": 1,
+                "disabled_service_count": 0,
+                "disabled_entries": []
+            }
+        });
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&remote))
+            .mount(&server)
+            .await;
+
+        let mut catalog = ServiceCatalog::new();
+        let version_before = catalog.catalog_version();
+        assert!(catalog.refresh_from_url(&server.uri()).await.is_err());
+        assert_eq!(catalog.catalog_version(), version_before);
+        assert!(catalog.get_by_key("tavily_search").is_some());
+        assert!(catalog.get_by_key("synthetic_zero").is_none());
     }
 
     #[tokio::test]

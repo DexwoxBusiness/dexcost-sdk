@@ -9,10 +9,10 @@ Loads service_prices.json (bundled or remote) and provides:
 from __future__ import annotations
 
 import decimal
-import fnmatch
 import hashlib
 import json
 import logging
+import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -20,8 +20,22 @@ from typing import Any
 from urllib.parse import urlparse
 
 _log = logging.getLogger(__name__)
+SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2"
 
 _DEFAULT_DATA_PATH = Path(__file__).parent / "data" / "service_prices.json"
+
+
+class _NoCatalogRedirects(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so catalog credentials never cross an origin boundary."""
+
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _open_catalog_request(
+    request: urllib.request.Request, timeout: int
+) -> Any:
+    return urllib.request.build_opener(_NoCatalogRedirects()).open(request, timeout=timeout)
 
 
 @dataclass
@@ -67,16 +81,17 @@ class ServiceCatalog:
         try:
             with open(self._data_path) as f:
                 data: dict[str, Any] = json.load(f)
+            entries = self._parse_catalog_entries(data)
         except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
             _log.warning("Failed to load service catalog from %s: %s", self._data_path, exc)
             data = {}
+            entries = {}
+        except (KeyError, TypeError, ValueError, decimal.InvalidOperation) as exc:
+            _log.warning("Invalid service catalog at %s: %s", self._data_path, exc)
+            data = {}
+            entries = {}
         self._raw_data = data
-        self._entries.clear()
-
-        for key, entry_data in data.items():
-            if key == "_meta":
-                continue
-            self._entries[key] = self._parse_entry(key, entry_data)
+        self._entries = entries
 
     @staticmethod
     def _parse_entry(key: str, data: dict[str, Any]) -> ServiceEntry:
@@ -101,6 +116,135 @@ class ServiceCatalog:
             rate_fields=rate_fields if rate_fields else None,
             note=data.get("note"),
         )
+
+    @classmethod
+    def _parse_catalog_entries(cls, data: dict[str, Any]) -> dict[str, ServiceEntry]:
+        if not isinstance(data, dict):
+            raise ValueError("catalog data must be an object")
+
+        entries: dict[str, ServiceEntry] = {}
+        for key, entry_data in data.items():
+            if key == "_meta":
+                continue
+            if not key or not isinstance(entry_data, dict):
+                raise ValueError(f"catalog entry {key} must be an object")
+            for field in (
+                "display_name",
+                "category",
+                "pricing_model",
+                "source",
+                "last_verified",
+            ):
+                if not isinstance(entry_data.get(field), str) or not entry_data[field]:
+                    raise ValueError(f"catalog entry {key} has invalid {field}")
+            domains = entry_data.get("domains")
+            if not isinstance(domains, list) or not domains or not all(
+                isinstance(domain, str) and domain for domain in domains
+            ):
+                raise ValueError(f"catalog entry {key} has invalid domains")
+            endpoints = entry_data.get("endpoints")
+            if endpoints is not None and (
+                not isinstance(endpoints, list)
+                or not all(isinstance(endpoint, str) and endpoint for endpoint in endpoints)
+            ):
+                raise ValueError(f"catalog entry {key} has invalid endpoints")
+            extraction = entry_data.get("cost_extraction")
+            extraction_type = extraction.get("type") if isinstance(extraction, dict) else None
+            if extraction_type not in {
+                "response_body",
+                "response_header",
+                "endpoint_match",
+                "fixed",
+            }:
+                raise ValueError(f"catalog entry {key} has invalid extraction type")
+            transform = extraction.get("transform")
+            if transform is not None and (
+                extraction_type != "response_body"
+                or transform not in {"ms_to_seconds", "ms_to_minutes"}
+            ):
+                raise ValueError(f"catalog entry {key} has unsupported transform")
+            if extraction_type == "response_body" and (
+                not isinstance(extraction.get("path"), str) or not extraction["path"]
+            ):
+                raise ValueError(f"catalog entry {key} has invalid response path")
+            if extraction_type == "response_header" and (
+                not isinstance(extraction.get("header"), str) or not extraction["header"]
+            ):
+                raise ValueError(f"catalog entry {key} has invalid response header")
+            if extraction_type == "endpoint_match" and not endpoints:
+                raise ValueError(f"catalog entry {key} has no endpoint predicate")
+            positive_rate_count = 0
+            for field, value in entry_data.items():
+                if field.startswith("cost_per_"):
+                    if not field.endswith("_usd"):
+                        raise ValueError(f"catalog entry {key} has invalid rate field {field}")
+                    rate = Decimal(str(value))
+                    if not rate.is_finite() or rate <= 0:
+                        raise ValueError(f"catalog entry {key} has unsafe rate {field}={value}")
+                    positive_rate_count += 1
+            if positive_rate_count != 1:
+                raise ValueError(f"catalog entry {key} must have exactly one positive rate")
+            entry = cls._parse_entry(key, entry_data)
+            entries[key] = entry
+
+        if not entries:
+            raise ValueError("catalog must contain at least one service entry")
+        return entries
+
+    @classmethod
+    def _parse_remote_envelope(
+        cls, payload: Any
+    ) -> tuple[dict[str, Any], dict[str, ServiceEntry]]:
+        if not isinstance(payload, dict):
+            raise ValueError("catalog response must be an object")
+        data = payload.get("data")
+        meta = payload.get("meta")
+        if not isinstance(data, dict) or not isinstance(meta, dict):
+            raise ValueError("catalog response requires data and meta objects")
+
+        entries = cls._parse_catalog_entries(data)
+        service_count = meta.get("service_count")
+        disabled_count = meta.get("disabled_service_count")
+        disabled_entries = meta.get("disabled_entries")
+        if (
+            not isinstance(meta.get("catalog_version"), str)
+            or not meta["catalog_version"]
+            or not isinstance(meta.get("safety_policy_version"), str)
+            or meta["safety_policy_version"] != SUPPORTED_SAFETY_POLICY_VERSION
+            or not isinstance(meta.get("source"), str)
+            or not meta["source"]
+            or isinstance(service_count, bool)
+            or not isinstance(service_count, int)
+            or service_count != len(entries)
+            or isinstance(disabled_count, bool)
+            or not isinstance(disabled_count, int)
+            or not isinstance(disabled_entries, list)
+            or disabled_count != len(disabled_entries)
+        ):
+            raise ValueError("catalog response metadata is inconsistent")
+
+        disabled_keys: set[str] = set()
+        for item in disabled_entries:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("service_key"), str)
+                or not item["service_key"]
+            ):
+                raise ValueError("disabled catalog entry is malformed")
+            disabled_keys.add(item["service_key"])
+        if len(disabled_keys) != len(disabled_entries) or disabled_keys.intersection(entries):
+            raise ValueError("disabled catalog entries are inconsistent")
+
+        data_meta = data.get("_meta")
+        if (
+            not isinstance(data_meta, dict)
+            or data_meta.get("version") != meta["catalog_version"]
+            or data_meta.get("service_count") != service_count
+            or data_meta.get("disabled_service_count") != disabled_count
+            or data_meta.get("safety_policy_version") != meta["safety_policy_version"]
+        ):
+            raise ValueError("catalog data metadata is inconsistent")
+        return data, entries
 
     def lookup(self, url: str) -> ServiceEntry | None:
         """Match a URL against the catalog by domain and endpoint.
@@ -383,25 +527,21 @@ class ServiceCatalog:
             "per": per,
         }
 
-    def refresh_from_url(self, url: str) -> None:
-        """Fetch a remote catalog JSON and merge with local data.
-
-        New entries are added; existing entries are updated.
-        """
-        import urllib.request
-
+    def refresh_from_url(self, url: str, api_key: str | None = None) -> bool:
+        """Atomically replace the catalog from a conformant remote envelope."""
         try:
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                remote_data: dict[str, Any] = json.loads(resp.read().decode())
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            request = urllib.request.Request(url, headers=headers)
+            with _open_catalog_request(request, timeout=10) as resp:
+                payload: Any = json.loads(resp.read().decode())
+            remote_data, entries = self._parse_remote_envelope(payload)
         except Exception:
             _log.warning("Failed to refresh catalog from %s", url, exc_info=True)
-            return
+            return False
 
-        for key, entry_data in remote_data.items():
-            if key == "_meta":
-                continue
-            self._raw_data[key] = entry_data
-            self._entries[key] = self._parse_entry(key, entry_data)
+        self._raw_data = remote_data
+        self._entries = entries
+        return True
 
     @property
     def catalog_version(self) -> str:

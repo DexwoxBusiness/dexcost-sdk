@@ -40,7 +40,7 @@ type Config struct {
 	// (e.g. http://localhost:3001 for local e2e). Values without an
 	// http://|https:// scheme are rejected and fall back to the default.
 	Endpoint string `json:"endpoint,omitempty"`
-	// ServiceCatalogURL fetches an external service catalog on init.
+	// ServiceCatalogURL fetches a conformant external service catalog on init.
 	ServiceCatalogURL string `json:"service_catalog_url,omitempty"`
 
 	// Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,

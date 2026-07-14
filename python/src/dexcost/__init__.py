@@ -10,7 +10,9 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import threading
 from typing import Any
+from urllib.parse import urlparse
 
 _log = logging.getLogger(__name__)
 
@@ -81,10 +83,48 @@ _global_config: DexcostConfig | None = None
 _sync_worker: SyncWorker | None = None
 _pricing_engine: PricingEngine | None = None
 _global_tracker: CostTracker | None = None
+_service_catalog_refresh_url: str | None = None
+_service_catalog_refresh_api_key: str | None = None
 # Sprint 1 Theme B / §2.2.4: register_at_fork must be installed exactly
 # once per process (not once per init() call) — guards against the hook
 # being registered multiple times if init() is called after close().
 _fork_hook_registered: bool = False
+
+
+def _same_origin(left: str, right: str) -> bool:
+    try:
+        left_url = urlparse(left)
+        right_url = urlparse(right)
+        left_port = left_url.port or (443 if left_url.scheme == "https" else 80)
+        right_port = right_url.port or (443 if right_url.scheme == "https" else 80)
+        return (
+            left_url.scheme,
+            left_url.hostname,
+            left_port,
+        ) == (
+            right_url.scheme,
+            right_url.hostname,
+            right_port,
+        )
+    except ValueError:
+        return False
+
+
+def _start_service_catalog_refresh() -> None:
+    if _service_catalog_refresh_url is None:
+        return
+    try:
+        from dexcost.adapters.http import get_catalog
+
+        catalog = get_catalog()
+        threading.Thread(
+            target=catalog.refresh_from_url,
+            args=(_service_catalog_refresh_url, _service_catalog_refresh_api_key),
+            name="dexcost-service-catalog-refresh",
+            daemon=True,
+        ).start()
+    except Exception:
+        pass
 
 
 def _reinit_after_fork() -> None:
@@ -139,10 +179,13 @@ def _reinit_after_fork() -> None:
             except Exception:
                 pass  # Fail-silent — bundled pricing remains available
 
+            _start_service_catalog_refresh()
+
 
 def _atexit_handler() -> None:
     """Flush pending events and close connections on process exit."""
     global _sync_worker, _global_tracker, _pricing_engine
+    global _service_catalog_refresh_url, _service_catalog_refresh_api_key
     if _sync_worker is not None:
         try:
             _sync_worker.flush()
@@ -157,6 +200,8 @@ def _atexit_handler() -> None:
     _sync_worker = None
     _global_tracker = None
     _pricing_engine = None
+    _service_catalog_refresh_url = None
+    _service_catalog_refresh_api_key = None
 
 
 def set_context(
@@ -236,6 +281,7 @@ def init(
     """
     global _global_config, _sync_worker, _global_tracker, _pricing_engine
     global _fork_hook_registered
+    global _service_catalog_refresh_url, _service_catalog_refresh_api_key
 
     # Sprint 1 Theme B / §2.2.4(a): idempotency guard. A second init()
     # call without an intervening close() would otherwise orphan the
@@ -340,7 +386,6 @@ def init(
     # Auto-track HTTP calls via service catalog
     if track_http:
         from dexcost.adapters.http import (
-            get_catalog,
             set_network_config as _set_network_config,
             set_storage as _set_http_storage,
             track_http as _track_http_fn,
@@ -354,9 +399,23 @@ def init(
         # Wire the SDK config so the adapter uses the caller's network-capture
         # settings (thresholds, on/off toggles) rather than hard-coded defaults.
         _set_network_config(_global_config)
-        if service_catalog_url:
-            catalog = get_catalog()
-            catalog.refresh_from_url(service_catalog_url)
+        catalog_url = service_catalog_url
+        if (
+            catalog_url is None
+            and _global_config.storage_mode == "cloud"
+            and not _global_config.is_dev
+        ):
+            catalog_url = f"{_global_config.endpoint.rstrip('/')}/v1/api/service-catalog/latest"
+        catalog_api_key = None
+        if (
+            catalog_url is not None
+            and _global_config.api_key
+            and _same_origin(catalog_url, _global_config.endpoint)
+        ):
+            catalog_api_key = _global_config.api_key
+        _service_catalog_refresh_url = catalog_url
+        _service_catalog_refresh_api_key = catalog_api_key
+        _start_service_catalog_refresh()
 
     return _global_config
 
