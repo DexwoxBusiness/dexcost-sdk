@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.1...rust/v0.3.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** recover skipped SDK releases ([#67](https://github.com/DexwoxBusiness/dexcost-sdk/issues/67)) ([466b332](https://github.com/DexwoxBusiness/dexcost-sdk/commit/466b332898be927be4d7aaa56544d9143fc4ffff))
+
 ## [0.3.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.0...rust/v0.3.1) (2026-06-03)
 
 
