@@ -531,6 +531,12 @@ npm run build
 npm run lint
 ```
 
+## Releases
+
+Releases are generated from Conventional Commit pull-request titles and are
+squash-merged to `main`. Use `feat(typescript): ...` for features and
+`fix(typescript): ...` for fixes. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Privacy
 
 When you connect to the Dexcost Control Layer, the SDK transmits usage data

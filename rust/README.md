@@ -147,6 +147,12 @@ let app = Router::new()
 cargo test
 ```
 
+## Releases
+
+Releases are generated from Conventional Commit pull-request titles and are
+squash-merged to `main`. Use `feat(rust): ...` for features and
+`fix(rust): ...` for fixes. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Privacy
 
 When you connect to the Dexcost Control Layer, the SDK transmits usage data

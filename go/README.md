@@ -163,6 +163,12 @@ tracker.Rates().Register("google_maps", "request", decimal.RequireFromString("0.
 go test ./... -v -count=1
 ```
 
+## Releases
+
+Releases are generated from Conventional Commit pull-request titles and are
+squash-merged to `main`. Use `feat(go): ...` for features and `fix(go): ...`
+for fixes. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Privacy
 
 When you connect to the Dexcost Control Layer, the SDK transmits usage data
