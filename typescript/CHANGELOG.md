@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.11.1...typescript/v0.12.0) (2026-07-16)
+
+
+### Features
+
+* **typescript:** emit attribution v2 events ([a9726f6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/a9726f6f12219a53b17957de056263905635811c))
+* **typescript:** emit attribution v2 events ([4d5ab69](https://github.com/DexwoxBusiness/dexcost-sdk/commit/4d5ab694aa14f607b14d865f46d6563c7eba3fea))
+
+
+### Bug Fixes
+
+* **typescript:** preserve infrastructure attribution ([0e71336](https://github.com/DexwoxBusiness/dexcost-sdk/commit/0e71336e0443a9a7300e789e0893299e02e2330e))
+
 ## [0.11.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.11.0...typescript/v0.11.1) (2026-07-02)
 
 
