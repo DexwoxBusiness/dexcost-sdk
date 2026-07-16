@@ -134,6 +134,8 @@ export function finalizeTaskNetwork(task: Task, buffer?: EventBuffer): void {
       // source detail (egress_catalog:aws:us-east-1).
       (ev.details as Record<string, unknown>).egress_pricing_source =
         isInternal ? "egress_catalog:internal" : rate.pricingSource;
+      (ev.details as Record<string, unknown>).cloud_provider = env.provider;
+      (ev.details as Record<string, unknown>).cloud_region = env.region;
 
       buffer.updateEvent(ev);
 

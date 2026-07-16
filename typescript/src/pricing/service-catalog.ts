@@ -62,6 +62,9 @@ export interface CostExtractionResult {
   confidence: string;
   serviceName: string;
   pricingSource: string;
+  /** Canonical attribution-v2 quantity extracted from the provider response. */
+  usageQuantity?: number;
+  usageMetric?: "request_count" | "page_count" | "credit_count" | "characters" | "compute_seconds";
 }
 
 /** Catalog metadata. */
@@ -212,6 +215,36 @@ function getFixedCost(entry: ServiceEntry): number | null {
     return isNaN(v) ? null : v;
   }
   return null;
+}
+
+function usageFor(
+  entry: ServiceEntry,
+  units: number = 1,
+  transform?: string,
+): Pick<CostExtractionResult, "usageMetric" | "usageQuantity"> {
+  if (transform === "ms_to_seconds" || transform === "ms_to_minutes") {
+    return { usageMetric: "compute_seconds", usageQuantity: units / 1000 };
+  }
+  if (entry.cost_per_page_usd !== undefined) {
+    return { usageMetric: "page_count", usageQuantity: units };
+  }
+  if (
+    entry.cost_per_credit_usd !== undefined ||
+    entry.cost_per_read_unit_usd !== undefined ||
+    entry.cost_per_compute_unit_usd !== undefined
+  ) {
+    return { usageMetric: "credit_count", usageQuantity: units };
+  }
+  if (entry.cost_per_1k_characters_usd !== undefined) {
+    return { usageMetric: "characters", usageQuantity: units };
+  }
+  if (entry.cost_per_second_usd !== undefined) {
+    return { usageMetric: "compute_seconds", usageQuantity: units };
+  }
+  if (entry.cost_per_minute_usd !== undefined) {
+    return { usageMetric: "compute_seconds", usageQuantity: units * 60 };
+  }
+  return { usageMetric: "request_count", usageQuantity: units };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -450,6 +483,11 @@ export class ServiceCatalog {
           confidence: "computed",
           serviceName,
           pricingSource: "user_override",
+          usageMetric: override.per.includes("page") ? "page_count"
+            : override.per.includes("credit") ? "credit_count"
+              : override.per.includes("character") ? "characters"
+                : "request_count",
+          usageQuantity: 1,
         };
       }
     }
@@ -486,6 +524,7 @@ export class ServiceCatalog {
           confidence: "exact",
           serviceName,
           pricingSource: "service_catalog",
+          ...usageFor(entry, numValue, extraction.transform),
         };
       }
 
@@ -506,6 +545,7 @@ export class ServiceCatalog {
           confidence: "exact",
           serviceName,
           pricingSource: "service_catalog",
+          ...usageFor(entry, numValue),
         };
       }
 
@@ -518,6 +558,7 @@ export class ServiceCatalog {
           confidence: "computed",
           serviceName,
           pricingSource: "service_catalog",
+          ...usageFor(entry),
         };
       }
 
@@ -616,6 +657,8 @@ export class ServiceCatalog {
         confidence: "estimated",
         serviceName,
         pricingSource: "service_catalog",
+        usageMetric: "credit_count",
+        usageQuantity: extraction.fallback_credits,
       };
     }
     // Fall back to fixed cost
@@ -626,6 +669,10 @@ export class ServiceCatalog {
       confidence: costUsd > 0 ? "estimated" : "unknown",
       serviceName,
       pricingSource: "service_catalog",
+      // The response did not expose its billable quantity. Preserve the
+      // completed request without inventing pages/characters/seconds.
+      usageMetric: "request_count",
+      usageQuantity: 1,
     };
   }
 }

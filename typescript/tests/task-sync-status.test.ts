@@ -29,6 +29,33 @@ afterEach(() => {
 });
 
 describe("Fix 2 — task sync_status", () => {
+  it("pushes a task-only lifecycle update without requiring a cost event", async () => {
+    const buffer = new EventBuffer(join(tmpDir, "task-only.db"));
+    const taskId = randomUUID();
+    buffer.upsertTask(createTask({
+      taskId,
+      taskType: "resolve",
+      status: "success",
+      endedAt: new Date("2026-07-16T10:00:00Z"),
+    }));
+
+    let payload: { events: unknown[]; tasks: Array<Record<string, unknown>> } | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, init: RequestInit) => {
+      payload = JSON.parse(init.body as string);
+      return new Response("{}", { status: 202 });
+    });
+
+    const pusher = new EventPusher(buffer, { apiKey: "dx_live_x" });
+    await pusher.flush();
+
+    expect(payload?.events).toEqual([]);
+    expect(payload?.tasks).toHaveLength(1);
+    expect(payload?.tasks[0]).not.toHaveProperty("total_cost_usd");
+    expect(buffer.pendingTaskCount).toBe(0);
+    pusher.stop();
+    buffer.close();
+  });
+
   it("marks pushed tasks synced and excludes them from the next push", async () => {
     const buffer = new EventBuffer(join(tmpDir, "t.db"));
     const taskId = randomUUID();

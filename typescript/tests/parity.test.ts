@@ -301,12 +301,12 @@ describe("EventPusher sync (gaps 1 & 3)", () => {
       }),
     );
 
-    let sentDetails: Record<string, unknown> = {};
+    let sentEvent: Record<string, unknown> = {};
     globalThis.fetch = vi.fn().mockImplementation(async (_url, init: RequestInit) => {
       const body = JSON.parse(init.body as string) as {
-        events: Array<{ details: Record<string, unknown> }>;
+        events: Array<Record<string, unknown>>;
       };
-      sentDetails = body.events[0].details;
+      sentEvent = body.events[0];
       return new Response("{}", { status: 202 });
     });
 
@@ -317,11 +317,12 @@ describe("EventPusher sync (gaps 1 & 3)", () => {
     });
     await pusher.flush();
 
-    expect(sentDetails).not.toHaveProperty("ssn");
-    expect(sentDetails["keep"]).toBe("ok");
-    // customer_id is hashed (SHA-256 hex, 64 chars), not the raw value.
-    expect(sentDetails["customer_id"]).not.toBe("cust-1");
-    expect(String(sentDetails["customer_id"])).toHaveLength(64);
+    // Attribution v2 has no arbitrary details carrier, so none of these
+    // user values can leave the process at all.
+    expect(sentEvent).not.toHaveProperty("details");
+    expect(JSON.stringify(sentEvent)).not.toContain("123-45-6789");
+    expect(JSON.stringify(sentEvent)).not.toContain("cust-1");
+    expect(JSON.stringify(sentEvent)).not.toContain("ok");
 
     pusher.stop();
     buffer.close();

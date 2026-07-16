@@ -1563,12 +1563,15 @@ async function _maybeRecordCost(
             eventType: "external_cost",
             costUsd: extractionResult.costUsd,
             costConfidence: extractionResult.confidence as CostConfidence,
-            pricingSource: "rate_registry",
+            pricingSource: "service_catalog",
+            pricingVersion: _catalog.catalogVersion,
             serviceName: extractionResult.serviceName,
             details: {
               url: urlStr,
               pricingSource: extractionResult.pricingSource,
               catalogService: entry.display_name,
+              attribution_usage_quantity: extractionResult.usageQuantity,
+              attribution_usage_metric: extractionResult.usageMetric,
               ...byteDetailsRequestOnly,
             },
           });

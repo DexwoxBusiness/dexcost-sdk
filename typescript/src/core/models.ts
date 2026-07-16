@@ -79,7 +79,7 @@ export function addCost(a: Decimal, b: DecimalLike): Decimal {
  * carry no sub-millisecond data anyway, so the pad is information-
  * preserving — it just aligns the wire string for cross-SDK parity.
  */
-function isoCanonical(d: Date): string {
+export function isoCanonical(d: Date): string {
   const iso = d.toISOString();
   // iso is `YYYY-MM-DDTHH:mm:ss.sssZ` (24 chars); pad to .sssNNNZ
   return iso.slice(0, -1) + "000Z";

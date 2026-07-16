@@ -929,13 +929,13 @@ export class TrackedTask {
    * Record a usage event priced via the rate registry.
    */
   recordUsage(service: string, units: number = 1, details?: Record<string, unknown>): CostEvent {
-    const rate = this._tracker.getRate(service);
-    if (rate === undefined) {
+    const rateEntry = this._tracker.rateRegistry.get(service);
+    if (rateEntry === undefined) {
       throw new Error(
         `No rate registered for service "${service}". Use tracker.registerRate("${service}", per, costUsd) first.`
       );
     }
-    const costUsd = toDecimal(rate).times(units);
+    const costUsd = toDecimal(rateEntry.costUsd).times(units);
     const event = createCostEvent({
       eventId: randomUUID(),
       taskId: this._task.taskId,
@@ -946,7 +946,11 @@ export class TrackedTask {
       pricingVersion: this._tracker.rateRegistry.pricingVersion,
       serviceName: service,
       isRetry: false,
-      details: details ?? {},
+      details: {
+        ...(details ?? {}),
+        attribution_usage_quantity: units,
+        attribution_usage_per: rateEntry.per,
+      },
     });
     this._events.push(event);
     this._buffer.addEvent(event);

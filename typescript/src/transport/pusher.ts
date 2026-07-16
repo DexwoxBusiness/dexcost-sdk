@@ -6,17 +6,18 @@
  */
 
 import type { CostEvent, Task } from "../core/models.js";
+import type { AttributionEventV2 } from "../attribution/types.js";
 import type { TrackerOptions } from "../core/tracker.js";
 import type { EventBuffer } from "./buffer.js";
-import { eventToDict, taskToDict } from "../core/models.js";
+import { toAttributionEventV2, toAttributionTaskIngestV1 } from "../attribution/convert.js";
 import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
 import { DEFAULT_ENDPOINT } from "../core/endpoint.js";
 
 /** Maximum backoff in milliseconds (5 minutes). */
 const MAX_BACKOFF_MS = 300_000;
 
-/** Maximum payload size in bytes — well under SQS 256KB limit. */
-const MAX_PAYLOAD_BYTES = 200_000;
+/** Leave headroom below the control-plane's 128,000-byte queue contract. */
+const MAX_PAYLOAD_BYTES = 120_000;
 
 /** Minimum interval between purge runs in milliseconds (1 hour). */
 const PURGE_INTERVAL_MS = 3_600_000;
@@ -143,24 +144,28 @@ export class EventPusher {
 
     const batchSize = this._options.batchSize ?? 100;
     const pending = this._buffer.getPendingEvents(batchSize);
-    if (pending.length === 0) {
-      return;
+    const tasks = this._buffer.getPendingTasks();
+    const wireEvents: AttributionEventV2[] = [];
+    const skippedEventIds: string[] = [];
+    for (const event of pending) {
+      const converted = this._serializeEvent(event);
+      if (converted === null) skippedEventIds.push(event.eventId);
+      else wireEvents.push(converted);
     }
+    // Observability-only signals and permanently invalid legacy rows must not
+    // poison the durable pending queue forever.
+    if (skippedEventIds.length > 0) this._buffer.markSynced(skippedEventIds);
+    if (wireEvents.length === 0 && tasks.length === 0) return;
 
     this._pushing = true;
 
     try {
-      // Only send tasks that have changed since the last successful push
-      // (sync_status = 'pending'). Sending every task on every push wastes
-      // bandwidth and re-ingests unchanged rows server-side.
-      const tasks = this._buffer.getPendingTasks();
-
-      const ok = await this.pushWithSplit(pending, tasks);
+      const ok = await this.pushWithSplit(wireEvents, tasks);
       if (ok) {
         // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
         // POST; these calls are kept as a defensive idempotent safety
         // net for any future path that returns true without splitting.
-        this._buffer.markSynced(pending.map((e) => e.eventId));
+        this._buffer.markSynced(wireEvents.map((e) => e.event_id));
         this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
         this._backoffMs = 1000; // Reset backoff on success
 
@@ -187,41 +192,11 @@ export class EventPusher {
     }
   }
 
-  /**
-   * Serialise a single event to its wire dict, applying PII redaction,
-   * customer/project hashing, and the metadata size limit to `details`.
-   *
-   * Mirrors the Python SyncWorker (`sync.py`): redactFields are stripped,
-   * customer_id/project_id in details are SHA-256 hashed when
-   * hashCustomerId is set, and oversized details are replaced with a stub.
-   */
-  private _serializeEvent(event: CostEvent): Record<string, unknown> {
-    const dict = eventToDict(event);
-    let details = dict["details"] as Record<string, unknown> | undefined | null;
-
-    if (details && typeof details === "object") {
-      // Apply PII redaction to details
-      const redactFields = this._options.redactFields;
-      if (redactFields && redactFields.length > 0) {
-        details = redactDict(details, redactFields);
-      }
-
-      // Hash customer-adjacent fields when configured
-      if (this._options.hashCustomerId) {
-        for (const key of ["customer_id", "project_id"]) {
-          const val = details[key];
-          if (typeof val === "string") {
-            details[key] = hashValue(val);
-          }
-        }
-      }
-
-      // Enforce the metadata size limit
-      details = enforceMetadataLimit(details);
-      dict["details"] = details;
-    }
-
-    return dict;
+  /** Convert durable capture into the strict, details-free v2 wire event. */
+  private _serializeEvent(event: CostEvent): AttributionEventV2 | null {
+    // Attribution v2 has no arbitrary details carrier. The converter reads
+    // only an accounting allow-list, so event metadata/PII cannot leak.
+    return toAttributionEventV2(event);
   }
 
   /**
@@ -236,7 +211,7 @@ export class EventPusher {
    * event path already guards against. Mirrors the Python SyncWorker.
    */
   private _serializeTask(task: Task): Record<string, unknown> {
-    const dict = taskToDict(task);
+    const dict = toAttributionTaskIngestV1(task) as unknown as Record<string, unknown>;
 
     let metadata = dict["metadata"] as Record<string, unknown> | undefined | null;
     if (metadata && typeof metadata === "object") {
@@ -266,27 +241,25 @@ export class EventPusher {
   /**
    * POST events with automatic batch splitting if payload exceeds size limit.
    *
-   * Recursively splits the events array in half until each chunk fits within
-   * the SQS payload limit. Tasks are sent with the first chunk only.
+   * Recursively splits events and tasks until every queue message fits the
+   * published control-plane limit. Task chunks land before dependent events.
    */
   private async pushWithSplit(
-    events: CostEvent[],
+    events: AttributionEventV2[],
     tasks: Task[],
-    depth: number = 0,
   ): Promise<boolean> {
-    const MAX_DEPTH = 5;
-
     let payload: string;
     try {
       payload = JSON.stringify({
-        events: events.map((e) => this._serializeEvent(e)),
+        events,
         tasks: tasks.map((t) => this._serializeTask(t)),
       });
     } catch {
       return false; // Unserializable payload — skip this batch
     }
 
-    if (payload.length <= MAX_PAYLOAD_BYTES || depth >= MAX_DEPTH) {
+    const payloadBytes = new TextEncoder().encode(payload).byteLength;
+    if (payloadBytes <= MAX_PAYLOAD_BYTES) {
       const ok = await this.postRaw(payload);
       if (ok) {
         // Sprint 2 Theme D / §3.2.1 (B12): mark synced at the leaf so
@@ -294,7 +267,7 @@ export class EventPusher {
         // Pre-fix the outer caller marked synced ONLY when both halves
         // returned true; first-half-OK + second-half-fail re-sent the
         // first half on the next tick → duplicates at the control plane.
-        this._buffer.markSynced(events.map((e) => e.eventId));
+        this._buffer.markSynced(events.map((e) => e.event_id));
         if (tasks.length > 0) {
           this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
         }
@@ -302,27 +275,42 @@ export class EventPusher {
       return ok;
     }
 
-    if (events.length <= 1) {
+    if (events.length > 1) {
+      const mid = Math.floor(events.length / 2);
+      const firstOk = await this.pushWithSplit(events.slice(0, mid), tasks);
+      if (!firstOk) return false;
+      return this.pushWithSplit(events.slice(mid), []);
+    }
+
+    if (tasks.length > 1) {
+      const mid = Math.floor(tasks.length / 2);
+      const firstOk = await this.pushWithSplit([], tasks.slice(0, mid));
+      if (!firstOk) return false;
+      return this.pushWithSplit(events, tasks.slice(mid));
+    }
+
+    if (events.length === 1 && tasks.length === 1) {
+      const taskOk = await this.pushWithSplit([], tasks);
+      if (!taskOk) return false;
+      return this.pushWithSplit(events, []);
+    }
+
+    if (events.length === 1) {
       // Single event too large — skip it with warning
       console.warn(
-        `[dexcost] Single event exceeds payload limit (${payload.length} bytes), skipping`,
+        `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), skipping`,
       );
+      this._buffer.markSynced([events[0].event_id]);
       return true;
     }
 
-    // Split events in half
-    const mid = Math.floor(events.length / 2);
-    const firstOk = await this.pushWithSplit(
-      events.slice(0, mid),
-      tasks,
-      depth + 1,
-    );
-    const secondOk = await this.pushWithSplit(
-      events.slice(mid),
-      [],
-      depth + 1,
-    );
-    return firstOk && secondOk;
+    if (tasks.length === 1) {
+      console.warn(
+        `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), skipping`,
+      );
+      this._buffer.markTasksSynced([tasks[0].taskId]);
+    }
+    return true;
   }
 
   /**
@@ -357,6 +345,17 @@ export class EventPusher {
     }
 
     if (response.ok) {
+      try {
+        const result = await response.json() as { rejected?: number };
+        if ((result.rejected ?? 0) > 0) {
+          console.warn(
+            `[dexcost] Control plane rejected ${result.rejected} item(s) from an attribution-v2 batch`,
+          );
+          return false;
+        }
+      } catch {
+        // Some compatible/private endpoints return an empty 2xx body.
+      }
       return true;
     }
 
