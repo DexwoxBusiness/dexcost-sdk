@@ -114,9 +114,24 @@ which SDKs still need it, and we'll help carry it across (or open tracking issue
 6. A maintainer will review. Please be responsive to feedback; we aim to be quick and kind.
 
 ### Commit & PR style
-- Keep commits logical and messages descriptive; conventional-commit prefixes
-  (`feat:`, `fix:`, `docs:`, `chore:`) are appreciated but not required.
-- One concern per PR. Large refactors are easier to review when split up.
+- PR titles must use Conventional Commit syntax because Release Please derives
+  releases from the commit that lands on `main`, for example
+  `feat(typescript): emit attribution v2 events` or
+  `fix(python): restart catalog refresh after fork`.
+- Accepted maintenance types are `perf`, `refactor`, `docs`, `test`,
+  `build`, `ci`, `chore`, `revert`, and `style`. Add `!` before the
+  colon for a breaking change.
+- Pull requests are squash-merged so the validated PR title becomes the single
+  commit Release Please evaluates. Plain-English titles are rejected because
+  Release Please otherwise succeeds without creating a release PR.
+- A repository ruleset enforces the Conventional Commit header on every new
+  commit entering `main`; `.github/scripts/validate-pr-title.mjs` is the local
+  executable form of the same policy.
+- Package scopes should normally be `python`, `typescript`, `go`, or
+  `rust`. Cross-SDK work may use a functional scope such as `release`,
+  `pricing`, or `attribution`.
+- Keep commits logical and descriptive. One concern per PR; large refactors are
+  easier to review when split up.
 - All contributions are licensed under the project's [MIT License](LICENSE). By
   submitting a PR you agree your contribution may be distributed under those terms.
 
