@@ -97,8 +97,8 @@ describe("Phase D Task 10 — task finalize", () => {
       serviceName: "api.example.com",
       details: {
         url: "https://api.example.com/x",
-        request_bytes: 0,
-        response_bytes: 1_000_000_000,
+        request_bytes: 1_000_000_000,
+        response_bytes: 0,
         is_internal_traffic: false,
         cost_pending: true,
       },
@@ -119,7 +119,33 @@ describe("Phase D Task 10 — task finalize", () => {
     expect(net.details?.egress_pricing_source).toBe(
       "egress_catalog:aws:us-east-1",
     );
+    expect(net.pricingSource).toBe("egress_catalog:aws:us-east-1");
     expect(net.pricingVersion).toBe("egress:1.0.0");
+  });
+
+  it("does not price inbound response bytes as cloud egress", () => {
+    pinCloudEnv("aws", "us-east-1");
+    const tt = startTask();
+    const ev = createCostEvent({
+      eventId: randomUUID(),
+      taskId: tt.task.taskId,
+      eventType: "network",
+      details: {
+        request_bytes: 0,
+        response_bytes: 1_000_000_000,
+        is_internal_traffic: false,
+        cost_pending: true,
+      },
+    });
+    tracker.buffer.addEvent(ev);
+    getAccountant(tt.task.taskId)!.record("api.example.com", 1_000_000_000, 0, false);
+
+    tt.end("success");
+
+    const net = tracker.buffer.queryEvents(tt.task.taskId)
+      .find((event) => event.eventType === "network")!;
+    expect(net.costUsd.toString()).toBe("0");
+    expect(net.pricingSource).toBe("egress_catalog:aws:us-east-1");
   });
 
   it("no cloud detected falls to meta default rate (Tier 3)", () => {
@@ -166,8 +192,8 @@ describe("Phase D Task 10 — task finalize", () => {
       serviceName: "api.vendor.com",
       details: {
         url: "https://api.vendor.com/x",
-        request_bytes: 0,
-        response_bytes: 500_000_000,
+        request_bytes: 500_000_000,
+        response_bytes: 0,
         is_internal_traffic: false,
       },
     });

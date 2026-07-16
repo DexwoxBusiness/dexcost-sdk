@@ -21,7 +21,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const POSITIVE_DECIMAL = /^(?=.*[1-9])(?:0|[1-9]\d{0,25})(?:\.\d{1,12})?$/;
 const CURRENCY = /^[A-Z]{3}$/;
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,6}))?(?:Z|[+-]\d{2}:\d{2})$/;
+const TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const RESOURCE_TYPES = new Set(["model", "sku", "instance", "endpoint", "session", "other"]);
 const LIFECYCLE_STATES = new Set(["pending", "provisional", "final", "voided"]);
 const EVIDENCE_SOURCES = new Set(["provider_reported", "sdk_catalog", "sdk_rate_registry", "manual"]);
@@ -63,6 +63,27 @@ function validateString(
 
 function validateTimestamp(value: unknown, path: string, issues: AttributionV2ValidationIssue[]): value is string {
   if (!validateString(value, path, issues, TIMESTAMP)) return false;
+  const match = TIMESTAMP.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[8] === undefined ? 0 : Number(match[8]);
+  const offsetMinute = match[9] === undefined ? 0 : Number(match[9]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (
+    month < 1 || month > 12
+    || day < 1 || day > daysInMonth[month - 1]
+    || hour > 23 || minute > 59 || second > 59
+    || offsetHour > 23 || offsetMinute > 59
+  ) {
+    issues.push({ path, message: "Timestamp must be a valid ISO 8601 calendar instant" });
+    return false;
+  }
   if (!Number.isFinite(Date.parse(value))) {
     issues.push({ path, message: "Timestamp must be a valid ISO 8601 instant" });
     return false;
@@ -72,7 +93,7 @@ function validateTimestamp(value: unknown, path: string, issues: AttributionV2Va
 
 function canonicalTimestamp(value: string): string {
   const match = TIMESTAMP.exec(value);
-  const fraction = (match?.[1] ?? "").padEnd(6, "0");
+  const fraction = (match?.[7] ?? "").padEnd(6, "0");
   const milliseconds = Date.parse(value);
   const base = new Date(milliseconds).toISOString().slice(0, 19);
   return `${base}.${fraction}Z`;

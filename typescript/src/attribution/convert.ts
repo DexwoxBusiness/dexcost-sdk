@@ -155,8 +155,14 @@ function evidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
   if (source === "manual" || source === "custom") {
     return { amount, currency: "USD", source: "manual", confidence: event.costConfidence };
   }
+  const isSdkCatalog = source === "service_catalog"
+    || source === "litellm"
+    || source === "tokencost"
+    || source?.startsWith("compute_catalog:") === true
+    || source?.startsWith("gpu_catalog:") === true
+    || source?.startsWith("egress_catalog:") === true;
   const mapped = source === "rate_registry" ? "sdk_rate_registry"
-    : source === "service_catalog" || source === "litellm" || source === "tokencost" ? "sdk_catalog"
+    : isSdkCatalog ? "sdk_catalog"
       : undefined;
   if (mapped === undefined || !event.pricingVersion) return undefined;
   return {
@@ -274,9 +280,13 @@ export function toAttributionEventV2(event: CostEvent): AttributionEventV2 | nul
   const evidence = evidenceFor(event);
   if (evidence !== undefined) converted.cost_evidence = evidence;
   if (event.isRetry && event.retryOf) converted.retry_of = event.retryOf;
-  if (mapped.durationSeconds !== undefined && mapped.durationSeconds > 0) {
+  const hasTimeBasedUsage = mapped.usage.some((line) => line.unit.endsWith("Seconds"));
+  if (hasTimeBasedUsage || (mapped.durationSeconds !== undefined && mapped.durationSeconds > 0)) {
+    const startOffsetMs = mapped.durationSeconds !== undefined && mapped.durationSeconds > 0
+      ? mapped.durationSeconds * 1000
+      : 0;
     converted.usage_period = {
-      start_at: isoCanonical(new Date(event.occurredAt.getTime() - mapped.durationSeconds * 1000)),
+      start_at: isoCanonical(new Date(event.occurredAt.getTime() - startOffsetMs)),
       end_at: occurredAt,
     };
   }

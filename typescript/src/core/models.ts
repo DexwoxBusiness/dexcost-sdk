@@ -115,7 +115,10 @@ export type PricingSource =
   | "custom"
   | "rate_registry"
   | "service_catalog"
-  | "unknown";
+  | "unknown"
+  | `compute_catalog:${string}`
+  | `gpu_catalog:${string}`
+  | `egress_catalog:${string}`;
 
 /**
  * A tracked business task (e.g., "resolve support ticket").

@@ -116,16 +116,20 @@ export function finalizeTaskNetwork(task: Task, buffer?: EventBuffer): void {
     for (const ev of stored) {
       if (ev.eventType !== "network") continue;
       if (ev.details?.cost_pending !== true) continue;
-      const respBytes = (ev.details?.response_bytes as number) ?? 0;
       const reqBytes = (ev.details?.request_bytes as number) ?? 0;
       const isInternal = ev.details?.is_internal_traffic === true;
-      const billable = isInternal ? 0 : respBytes + reqBytes;
+      // From the customer's HTTP-client perspective request bytes leave the
+      // cloud and response bytes enter it. Public egress rates apply only to
+      // the outbound request bytes; the server will independently price the
+      // disjoint bytes_out usage bucket.
+      const billable = isInternal ? 0 : reqBytes;
       const evCost = new Decimal(billable).dividedBy(GB_BYTES).times(ratePerGb);
 
       ev.costUsd = evCost;
       ev.costConfidence = isInternal
         ? "exact"
         : (rate.costConfidence as CostConfidence);
+      ev.pricingSource = rate.pricingSource as `egress_catalog:${string}`;
       ev.pricingVersion = pricingVersion;
       // Strip cost_pending marker so the back-filled event is no longer
       // "deferred-cost".

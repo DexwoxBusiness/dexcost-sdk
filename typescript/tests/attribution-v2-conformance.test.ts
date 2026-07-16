@@ -41,6 +41,17 @@ describe("attribution v2 shared conformance corpus", () => {
       expect(result.issues.map((issue) => issue.path)).toContain(testCase.expected_error_path);
     });
   }
+
+  it.each([
+    "2026-02-29T10:00:00Z",
+    "2026-04-31T10:00:00Z",
+  ])("rejects impossible calendar date %s", (occurredAt) => {
+    const event = structuredClone(corpus.valid[0].event) as Record<string, unknown>;
+    event.occurred_at = occurredAt;
+    const result = validateAttributionEventV2(event);
+    expect(result.success).toBe(false);
+    expect(result.issues.map((issue) => issue.path)).toContain("occurred_at");
+  });
 });
 
 describe("v1 capture to attribution v2 conversion", () => {
@@ -107,6 +118,66 @@ describe("v1 capture to attribution v2 conversion", () => {
     expect(converted?.component).toBe("compute");
     expect(converted?.usage).toContainEqual({ metric: "memory_gib_seconds", quantity: "5", unit: "GiB-Seconds" });
     expect(converted?.usage_period?.end_at).toBe(converted?.occurred_at);
+  });
+
+  it.each([
+    {
+      eventType: "compute_cost" as const,
+      pricingSource: "compute_catalog:aws:lambda:us-east-1:x86_64" as const,
+      pricingVersion: "compute:1.0.0",
+      details: { billing_model: "lambda", duration_ms: 1000, invocation_count: 1 },
+    },
+    {
+      eventType: "gpu_cost" as const,
+      pricingSource: "gpu_catalog:runpod:per_gpu_second_active:a100" as const,
+      pricingVersion: "gpu:1.0.0",
+      details: { billing_model: "per_gpu_second_active", gpu_seconds_used: 1, duration_ms: 1000 },
+    },
+    {
+      eventType: "network" as const,
+      pricingSource: "egress_catalog:aws:us-east-1" as const,
+      pricingVersion: "egress:1.0.0",
+      details: { request_bytes: 1000 },
+    },
+  ])("preserves $pricingSource as versioned SDK catalog evidence", (spec) => {
+    const converted = toAttributionEventV2(createCostEvent({
+      ...base,
+      ...spec,
+      costUsd: "0.09",
+      costConfidence: "exact",
+    }));
+    expect(converted?.cost_evidence).toEqual({
+      amount: "0.09",
+      currency: "USD",
+      source: "sdk_catalog",
+      confidence: "computed",
+      pricing_version: spec.pricingVersion,
+    });
+  });
+
+  it.each([
+    {
+      eventType: "compute_cost" as const,
+      details: { billing_model: "ec2", vcpu_seconds_used: 2.5 },
+      metric: "vcpu_seconds",
+    },
+    {
+      eventType: "gpu_cost" as const,
+      details: { billing_model: "per_gpu_second_active", gpu_seconds_used: 2.5 },
+      metric: "gpu_seconds",
+    },
+  ])("keeps $eventType with active-time usage when wall duration is unavailable", (spec) => {
+    const converted = toAttributionEventV2(createCostEvent({
+      ...base,
+      eventType: spec.eventType,
+      details: spec.details,
+    }));
+    expect(converted).not.toBeNull();
+    expect(converted?.usage.map((line) => line.metric)).toContain(spec.metric);
+    expect(converted?.usage_period).toEqual({
+      start_at: converted?.occurred_at,
+      end_at: converted?.occurred_at,
+    });
   });
 
   it("keeps network directions separate", () => {
