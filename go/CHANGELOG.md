@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.2...go/v0.2.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** recover skipped SDK releases ([#67](https://github.com/DexwoxBusiness/dexcost-sdk/issues/67)) ([466b332](https://github.com/DexwoxBusiness/dexcost-sdk/commit/466b332898be927be4d7aaa56544d9143fc4ffff))
+
 ## [0.2.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.1...go/v0.2.2) (2026-06-28)
 
 
