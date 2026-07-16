@@ -113,6 +113,7 @@ const BILLING_MODEL_FOR_RUNTIME: Record<string, string> = {
 
 export interface GpuCostDetails {
   billing_model: string;
+  cloud_provider: string | null;
   gpu_vendor: string;
   gpu_sku: string | null;
   gpu_count: number;
@@ -454,6 +455,7 @@ export class GpuAccountant {
     const details: GpuCostDetails = {
       billing_model:
         BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "per_gpu_second_active",
+      cloud_provider: this.cloudEnv.provider,
       gpu_vendor: "nvidia", // Decision #5
       gpu_sku: args.gpuSku,
       gpu_count: args.gpuCount,

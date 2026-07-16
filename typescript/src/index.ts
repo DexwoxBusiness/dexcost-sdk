@@ -51,6 +51,7 @@ export {
   toDecimal,
   canonicalDecimal,
   addCost,
+  isoCanonical,
 } from "./core/models.js";
 export type {
   Task,
@@ -61,6 +62,43 @@ export type {
   PricingSource,
   DecimalLike,
 } from "./core/models.js";
+
+// Attribution v2 public contract and v1-capture conversion boundary.
+export {
+  ATTRIBUTION_V2_CONTRACT_VERSION,
+  ATTRIBUTION_COMPONENTS,
+  ATTRIBUTION_USAGE_METRICS,
+  ATTRIBUTION_USAGE_UNITS,
+  ATTRIBUTION_UNIT_BY_METRIC,
+} from "./attribution/types.js";
+export type {
+  AttributionComponent,
+  AttributionUsageMetric,
+  AttributionUsageUnit,
+  AttributionConfidence,
+  AttributionLifecycleState,
+  AttributionCostEvidenceSource,
+  AttributionUsageLineV2,
+  AttributionProviderIdentityV2,
+  AttributionResourceV2,
+  AttributionCostEvidenceV2,
+  AttributionLifecycleV2,
+  AttributionUsagePeriodV2,
+  AttributionEventV2,
+  AttributionTaskIngestV1,
+} from "./attribution/types.js";
+export {
+  validateAttributionEventV2,
+  assertAttributionEventV2,
+} from "./attribution/validate.js";
+export type {
+  AttributionV2ValidationIssue,
+  AttributionV2ValidationResult,
+} from "./attribution/validate.js";
+export {
+  toAttributionEventV2,
+  toAttributionTaskIngestV1,
+} from "./attribution/convert.js";
 
 // Configuration / API-key validation
 export {

@@ -30,11 +30,14 @@ function makeEvent() {
     costConfidence: "exact",
     pricingSource: "litellm",
     provider: "openai",
-    model: "gpt-4",
+    model: `gpt-4-${"m".repeat(250)}`,
     inputTokens: 100,
     outputTokens: 50,
     // Enough padding so a few hundred events exceed the 200 KB payload limit.
-    details: { padding: "x".repeat(9000) },
+    details: {
+      padding: "x".repeat(9000),
+      request_id: `req_${"r".repeat(252)}`,
+    },
   });
 }
 

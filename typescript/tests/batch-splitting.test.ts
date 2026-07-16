@@ -16,7 +16,7 @@ import { createCostEvent } from "../src/core/models.js";
 import type { TrackerOptions } from "../src/core/tracker.js";
 
 /** Maximum payload size from the pusher module. */
-const MAX_PAYLOAD_BYTES = 200_000;
+const MAX_PAYLOAD_BYTES = 120_000;
 
 /**
  * Create an event with `detailsSize` bytes of padding in `details`.
@@ -35,17 +35,20 @@ function makeEvent(detailsSize: number = 100) {
     costConfidence: "exact",
     pricingSource: "litellm",
     provider: "openai",
-    model: "gpt-4",
+    model: `gpt-4-${"m".repeat(250)}`,
     inputTokens: 100,
     outputTokens: 50,
-    details: { padding: "x".repeat(detailsSize) },
+    details: {
+      padding: "x".repeat(detailsSize),
+      request_id: `req_${"r".repeat(252)}`,
+    },
   });
 }
 
 function makeOptions(overrides: Partial<TrackerOptions> = {}): TrackerOptions {
   return {
     apiKey: "dx_live_test123",
-    batchSize: 100,
+    batchSize: 500,
     flushIntervalMs: 60_000,
     ...overrides,
   };
@@ -88,7 +91,7 @@ describe("Adaptive batch splitting", () => {
   it("splits oversized batch into multiple requests", async () => {
     // ~9KB details each (survives the 10KB metadata cap); 40 events
     // ≈ 360KB > 200KB limit, so the batch must split.
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 200; i++) {
       buffer.addEvent(makeEvent(9_000));
     }
 
@@ -131,7 +134,7 @@ describe("Adaptive batch splitting", () => {
   it("tasks are only sent with the first chunk", async () => {
     // Add events large enough to trigger a split (~9KB each survives the
     // metadata cap; 40 events ≈ 360KB > 200KB limit).
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 200; i++) {
       buffer.addEvent(makeEvent(9_000));
     }
 
@@ -174,7 +177,7 @@ describe("Adaptive batch splitting", () => {
 
   it("recursive split handles very large batch", async () => {
     // 100 events * ~9KB each ≈ 900KB -- needs multiple recursive splits.
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 400; i++) {
       buffer.addEvent(makeEvent(9_000));
     }
 

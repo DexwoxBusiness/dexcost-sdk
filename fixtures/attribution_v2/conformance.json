@@ -1,0 +1,394 @@
+{
+  "contract_version": "2.0.0",
+  "valid": [
+    {
+      "name": "final_llm_with_disjoint_cache_buckets",
+      "event": {
+        "schema_version": "2",
+        "event_id": "11111111-1111-1111-1111-111111111111",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00.123456Z",
+        "observed_at": "2026-07-16T10:00:01.123456Z",
+        "component": "llm",
+        "provider": {
+          "name": "anthropic",
+          "service": "messages",
+          "record_id": "msg_123"
+        },
+        "resource": {
+          "type": "model",
+          "id": "claude-sonnet-4-5"
+        },
+        "lifecycle": {
+          "state": "final",
+          "revision": 1
+        },
+        "usage": [
+          { "metric": "input_tokens", "quantity": "100", "unit": "Tokens" },
+          { "metric": "cache_read_input_tokens", "quantity": "1000", "unit": "Tokens" },
+          { "metric": "output_tokens", "quantity": "50", "unit": "Tokens" }
+        ],
+        "cost_evidence": {
+          "amount": "0.00135",
+          "currency": "USD",
+          "source": "sdk_catalog",
+          "confidence": "computed",
+          "pricing_version": "llm:2026-07-16"
+        }
+      }
+    },
+    {
+      "name": "pending_voice_call_without_usage_or_cost",
+      "event": {
+        "schema_version": "2",
+        "event_id": "33333333-3333-3333-3333-333333333333",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:05:00Z",
+        "observed_at": "2026-07-16T10:05:00.010000Z",
+        "component": "telephony",
+        "provider": {
+          "name": "twilio",
+          "service": "voice",
+          "record_id": "CA123"
+        },
+        "resource": {
+          "type": "session",
+          "id": "CA123"
+        },
+        "lifecycle": {
+          "state": "pending",
+          "revision": 1
+        },
+        "usage_period": {
+          "start_at": "2026-07-16T10:05:00Z"
+        },
+        "usage": []
+      }
+    },
+    {
+      "name": "final_voice_call_in_canonical_seconds",
+      "event": {
+        "schema_version": "2",
+        "event_id": "33333333-3333-3333-3333-333333333333",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:05:00Z",
+        "observed_at": "2026-07-16T10:07:06Z",
+        "component": "telephony",
+        "provider": {
+          "name": "twilio",
+          "service": "voice",
+          "record_id": "CA123"
+        },
+        "resource": {
+          "type": "session",
+          "id": "CA123"
+        },
+        "lifecycle": {
+          "state": "final",
+          "revision": 2
+        },
+        "usage_period": {
+          "start_at": "2026-07-16T10:05:00Z",
+          "end_at": "2026-07-16T10:07:05Z"
+        },
+        "usage": [
+          { "metric": "connected_seconds", "quantity": "125", "unit": "Seconds" },
+          { "metric": "call_count", "quantity": "1", "unit": "Calls" }
+        ],
+        "cost_evidence": {
+          "amount": "0.042",
+          "currency": "USD",
+          "source": "provider_reported",
+          "confidence": "exact"
+        }
+      }
+    },
+    {
+      "name": "provisional_realtime_session",
+      "event": {
+        "schema_version": "2",
+        "event_id": "44444444-4444-4444-4444-444444444444",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T11:00:00Z",
+        "observed_at": "2026-07-16T11:01:31Z",
+        "component": "realtime_transport",
+        "provider": {
+          "name": "livekit",
+          "service": "agent_session",
+          "record_id": "session_123",
+          "region": "us-east"
+        },
+        "resource": {
+          "type": "session",
+          "id": "session_123"
+        },
+        "lifecycle": {
+          "state": "provisional",
+          "revision": 1
+        },
+        "usage_period": {
+          "start_at": "2026-07-16T11:00:00Z",
+          "end_at": "2026-07-16T11:01:30Z"
+        },
+        "usage": [
+          { "metric": "agent_seconds", "quantity": "90", "unit": "Seconds" }
+        ],
+        "cost_evidence": {
+          "amount": "0.015",
+          "currency": "USD",
+          "source": "sdk_rate_registry",
+          "confidence": "estimated",
+          "pricing_version": "livekit:2026-07-16"
+        }
+      }
+    },
+    {
+      "name": "final_compute_usage_with_composite_units",
+      "event": {
+        "schema_version": "2",
+        "event_id": "55555555-5555-5555-5555-555555555555",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T12:00:00Z",
+        "observed_at": "2026-07-16T12:00:03Z",
+        "component": "compute",
+        "provider": {
+          "name": "aws",
+          "service": "lambda",
+          "region": "us-east-1"
+        },
+        "resource": {
+          "type": "sku",
+          "id": "lambda-arm64"
+        },
+        "lifecycle": {
+          "state": "final",
+          "revision": 1
+        },
+        "usage_period": {
+          "start_at": "2026-07-16T12:00:00Z",
+          "end_at": "2026-07-16T12:00:02.500000Z"
+        },
+        "usage": [
+          { "metric": "vcpu_seconds", "quantity": "2.5", "unit": "vCPU-Seconds" },
+          { "metric": "memory_gib_seconds", "quantity": "5", "unit": "GiB-Seconds" },
+          { "metric": "request_count", "quantity": "1", "unit": "Requests" }
+        ]
+      }
+    },
+    {
+      "name": "voided_revision_is_a_tombstone",
+      "event": {
+        "schema_version": "2",
+        "event_id": "66666666-6666-6666-6666-666666666666",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T13:00:00Z",
+        "observed_at": "2026-07-16T13:01:00Z",
+        "component": "external",
+        "provider": {
+          "name": "tavily",
+          "service": "search"
+        },
+        "lifecycle": {
+          "state": "voided",
+          "revision": 2
+        },
+        "usage": []
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "rejects_legacy_schema_version",
+      "expected_error_path": "schema_version",
+      "event": {
+        "schema_version": "1",
+        "event_id": "71111111-1111-1111-1111-111111111111",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "llm",
+        "provider": { "name": "openai", "service": "responses" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "input_tokens", "quantity": "10", "unit": "Tokens" }]
+      }
+    },
+    {
+      "name": "rejects_zero_quantity",
+      "expected_error_path": "usage.0.quantity",
+      "event": {
+        "schema_version": "2",
+        "event_id": "72222222-2222-2222-2222-222222222222",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "llm",
+        "provider": { "name": "openai", "service": "responses" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "input_tokens", "quantity": "0", "unit": "Tokens" }]
+      }
+    },
+    {
+      "name": "rejects_noncanonical_metric_unit_pair",
+      "expected_error_path": "usage.0.unit",
+      "event": {
+        "schema_version": "2",
+        "event_id": "73333333-3333-3333-3333-333333333333",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "speech_to_text",
+        "provider": { "name": "deepgram", "service": "listen" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_period": {
+          "start_at": "2026-07-16T10:00:00Z",
+          "end_at": "2026-07-16T10:01:00Z"
+        },
+        "usage": [{ "metric": "audio_seconds", "quantity": "60", "unit": "Characters" }]
+      }
+    },
+    {
+      "name": "rejects_duplicate_usage_metric",
+      "expected_error_path": "usage.1.metric",
+      "event": {
+        "schema_version": "2",
+        "event_id": "74444444-4444-4444-4444-444444444444",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "llm",
+        "provider": { "name": "openai", "service": "responses" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [
+          { "metric": "input_tokens", "quantity": "10", "unit": "Tokens" },
+          { "metric": "input_tokens", "quantity": "20", "unit": "Tokens" }
+        ]
+      }
+    },
+    {
+      "name": "rejects_pending_usage",
+      "expected_error_path": "usage",
+      "event": {
+        "schema_version": "2",
+        "event_id": "75555555-5555-5555-5555-555555555555",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "telephony",
+        "provider": { "name": "twilio", "service": "voice" },
+        "lifecycle": { "state": "pending", "revision": 1 },
+        "usage": [{ "metric": "call_count", "quantity": "1", "unit": "Calls" }]
+      }
+    },
+    {
+      "name": "rejects_final_duration_without_closed_period",
+      "expected_error_path": "usage_period.end_at",
+      "event": {
+        "schema_version": "2",
+        "event_id": "76666666-6666-6666-6666-666666666666",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:01:01Z",
+        "component": "speech_to_text",
+        "provider": { "name": "deepgram", "service": "listen" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "audio_seconds", "quantity": "60", "unit": "Seconds" }]
+      }
+    },
+    {
+      "name": "rejects_exact_provisional_cost",
+      "expected_error_path": "cost_evidence.confidence",
+      "event": {
+        "schema_version": "2",
+        "event_id": "77777777-7777-7777-7777-777777777777",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "lifecycle": { "state": "provisional", "revision": 1 },
+        "usage": [{ "metric": "request_count", "quantity": "1", "unit": "Requests" }],
+        "cost_evidence": {
+          "amount": "0.01",
+          "currency": "USD",
+          "source": "provider_reported",
+          "confidence": "exact"
+        }
+      }
+    },
+    {
+      "name": "rejects_catalog_cost_without_pricing_version",
+      "expected_error_path": "cost_evidence.pricing_version",
+      "event": {
+        "schema_version": "2",
+        "event_id": "78888888-8888-8888-8888-888888888888",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "request_count", "quantity": "1", "unit": "Requests" }],
+        "cost_evidence": {
+          "amount": "0.01",
+          "currency": "USD",
+          "source": "sdk_catalog",
+          "confidence": "computed"
+        }
+      }
+    },
+    {
+      "name": "rejects_synthetic_zero_cost",
+      "expected_error_path": "cost_evidence.amount",
+      "event": {
+        "schema_version": "2",
+        "event_id": "79999999-9999-9999-9999-999999999999",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "request_count", "quantity": "1", "unit": "Requests" }],
+        "cost_evidence": {
+          "amount": "0.000000",
+          "currency": "USD",
+          "source": "sdk_catalog",
+          "confidence": "computed",
+          "pricing_version": "tavily:2026-07-16"
+        }
+      }
+    },
+    {
+      "name": "rejects_impossible_usage_timestamp",
+      "expected_error_path": "usage_period.start_at",
+      "event": {
+        "schema_version": "2",
+        "event_id": "7aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "telephony",
+        "provider": { "name": "twilio", "service": "voice" },
+        "lifecycle": { "state": "pending", "revision": 1 },
+        "usage_period": { "start_at": "2026-99-99T99:99:99Z" },
+        "usage": []
+      }
+    },
+    {
+      "name": "rejects_unknown_details_carrier",
+      "expected_error_path": "details",
+      "event": {
+        "schema_version": "2",
+        "event_id": "7bbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "task_id": "22222222-2222-2222-2222-222222222222",
+        "occurred_at": "2026-07-16T10:00:00Z",
+        "observed_at": "2026-07-16T10:00:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage": [{ "metric": "request_count", "quantity": "1", "unit": "Requests" }],
+        "details": { "price": "0.01" }
+      }
+    }
+  ]
+}
