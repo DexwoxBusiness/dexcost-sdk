@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.2...rust/v0.4.0) (2026-07-17)
+
+
+### Features
+
+* **rust:** add attribution v2 ingestion ([#78](https://github.com/DexwoxBusiness/dexcost-sdk/issues/78)) ([4457e1c](https://github.com/DexwoxBusiness/dexcost-sdk/commit/4457e1c13a266625b04a5f66698a4585cac046d8))
+
 ## [0.3.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.1...rust/v0.3.2) (2026-07-16)
 
 
