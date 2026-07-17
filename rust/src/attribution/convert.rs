@@ -116,7 +116,15 @@ fn component_and_usage(
 ) -> Option<(AttributionComponent, Vec<AttributionUsageLineV2>, Decimal)> {
     let mut usage = Vec::new();
     match event.event_type {
-        EventType::RetryMarker | EventType::GpuUtilizationSignal => None,
+        EventType::GpuUtilizationSignal => None,
+        EventType::RetryMarker => {
+            append_usage(
+                &mut usage,
+                AttributionUsageMetric::RequestCount,
+                Decimal::ONE,
+            );
+            Some((AttributionComponent::External, usage, Decimal::ZERO))
+        }
         EventType::LlmCall => {
             let cached = Decimal::from(event.cached_tokens.unwrap_or(0).max(0));
             let mut input = Decimal::from(event.input_tokens.unwrap_or(0).max(0));
@@ -314,6 +322,10 @@ fn provider_for(event: &CostEvent) -> AttributionProviderIdentityV2 {
                     service = canonical_name(external_service, "api");
                 }
             }
+            EventType::RetryMarker => {
+                name = "dexcost".to_string();
+                service = "retry".to_string();
+            }
             _ => {}
         }
     }
@@ -353,12 +365,30 @@ fn resource_for(event: &CostEvent) -> Option<AttributionResourceV2> {
                 resource_type: AttributionResourceType::Instance,
                 id: truncate(id, 256),
             }),
+        EventType::RetryMarker => event
+            .retry_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| AttributionResourceV2 {
+                resource_type: AttributionResourceType::Other,
+                id: truncate(reason, 256),
+            }),
         _ => None,
     }
 }
 
 fn cost_evidence_for(event: &CostEvent) -> Option<AttributionCostEvidenceV2> {
     let amount = positive_quantity(event.cost_usd)?;
+    if event.event_type == EventType::RetryMarker {
+        return Some(AttributionCostEvidenceV2 {
+            amount,
+            currency: "USD".to_string(),
+            source: AttributionCostEvidenceSource::Manual,
+            confidence: AttributionCostConfidence::Exact,
+            pricing_version: None,
+        });
+    }
     let confidence = confidence_for(&event.cost_confidence);
     match event.pricing_source.as_ref()? {
         PricingSource::ProviderResponse => Some(AttributionCostEvidenceV2 {

@@ -274,6 +274,65 @@ async fn partial_ingestion_rejection_keeps_records_pending() {
     assert_eq!(buf.pending_task_count(), 1);
 }
 
+#[tokio::test]
+async fn invalid_v2_event_stays_pending_while_valid_sibling_is_delivered() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ingest"))
+        .respond_with(ResponseTemplate::new(202).set_body_string(r#"{"accepted":1,"rejected":0}"#))
+        .mount(&server)
+        .await;
+
+    let mut buf = EventBuffer::new().unwrap();
+    let invalid = CostEvent::new("task-123", EventType::LlmCall);
+    let invalid_id = invalid.event_id.clone();
+    buf.add_event(invalid);
+    buf.add_event(CostEvent::new(
+        "11111111-1111-4111-8111-111111111111",
+        EventType::LlmCall,
+    ));
+
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
+    let error = pusher
+        .flush()
+        .await
+        .expect_err("invalid event must surface");
+    assert!(error.to_string().contains("remain pending"));
+
+    let buf = buffer.lock().await;
+    assert_eq!(buf.pending_count(), 1);
+    assert_eq!(buf.get_pending_events(10)[0].event_id, invalid_id);
+    drop(buf);
+
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json");
+    assert_eq!(body["events"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn observability_only_gpu_signal_is_acknowledged_without_upload() {
+    let server = MockServer::start().await;
+    let mut buf = EventBuffer::new().unwrap();
+    buf.add_event(CostEvent::new(
+        "11111111-1111-4111-8111-111111111111",
+        EventType::GpuUtilizationSignal,
+    ));
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()))
+        .flush()
+        .await
+        .expect("signal-only flush");
+
+    assert_eq!(buffer.lock().await.pending_count(), 0);
+    assert!(server
+        .received_requests()
+        .await
+        .expect("requests")
+        .is_empty());
+}
+
 // Fix 4 — task metadata must be redacted, and customer_id / project_id must
 // be hashed, before the task is POSTed. Previously `Task` objects were
 // serialized raw, leaking PII even when redaction / hashing were configured.

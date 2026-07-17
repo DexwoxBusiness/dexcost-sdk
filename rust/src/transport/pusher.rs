@@ -292,23 +292,29 @@ impl EventPusher {
         // bypass configured field-level redaction.
         let mut event_dicts = Vec::with_capacity(events.len());
         let mut event_ids = Vec::with_capacity(events.len());
-        let mut skipped_event_ids = Vec::new();
+        let mut observability_event_ids = Vec::new();
+        let mut failed_event_ids = Vec::new();
         for event in &events {
+            if event.event_type == crate::core::models::EventType::GpuUtilizationSignal {
+                observability_event_ids.push(event.event_id.clone());
+                continue;
+            }
             match to_attribution_event_v2(event) {
                 Some(converted) => {
                     event_ids.push(event.event_id.clone());
                     event_dicts.push(serde_json::to_value(converted)?);
                 }
-                None => skipped_event_ids.push(event.event_id.clone()),
+                None => failed_event_ids.push(event.event_id.clone()),
             }
         }
 
-        // Observability-only events and legacy records that cannot be
-        // represented by the strict contract must not poison every future
-        // flush. Their diagnostics remain in the durable local buffer.
-        if !skipped_event_ids.is_empty() {
+        // GPU utilization signals are observability-only and deliberately do
+        // not cross the attribution cost boundary. Every other conversion
+        // failure remains pending and is surfaced after valid siblings have
+        // been delivered; it must never be acknowledged as a successful POST.
+        if !observability_event_ids.is_empty() {
             let mut buf = buffer.lock().await;
-            buf.mark_synced(&skipped_event_ids);
+            buf.mark_synced(&observability_event_ids);
         }
 
         // Build the union of (pending tasks) and (tasks referenced by pending
@@ -356,7 +362,7 @@ impl EventPusher {
             .collect::<Result<_, _>>()?;
 
         if event_dicts.is_empty() && task_dicts.is_empty() {
-            return Ok(());
+            return Self::conversion_failure(&failed_event_ids);
         }
 
         // Push with adaptive splitting for oversized payloads. Sprint 2
@@ -375,7 +381,26 @@ impl EventPusher {
             auth_failed,
             api_key_override,
         )
-        .await
+        .await?;
+
+        Self::conversion_failure(&failed_event_ids)
+    }
+
+    fn conversion_failure(event_ids: &[String]) -> Result<(), DexcostError> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+        let preview = event_ids
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(DexcostError::Transport(format!(
+            "{} event(s) remain pending because they cannot be represented by attribution v2 (event IDs: {})",
+            event_ids.len(),
+            preview,
+        )))
     }
 
     /// Recursively splits oversized payloads until they fit within the queue

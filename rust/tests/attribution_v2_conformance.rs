@@ -1,6 +1,7 @@
 use dexcost::attribution::{
     to_attribution_event_v2, to_attribution_task_ingest_v1, validate_attribution_event_v2,
-    AttributionCostEvidenceSource, AttributionUsageMetric, CONTRACT_VERSION,
+    AttributionComponent, AttributionCostEvidenceSource, AttributionResourceType,
+    AttributionUsageMetric, CONTRACT_VERSION,
 };
 use dexcost::core::models::{CostConfidence, CostEvent, EventType, PricingSource, Task};
 use rust_decimal::Decimal;
@@ -131,6 +132,35 @@ fn conversion_preserves_rate_registry_quantity_and_version() {
         converted.cost_evidence.expect("cost evidence").source,
         AttributionCostEvidenceSource::SdkRateRegistry
     );
+}
+
+#[test]
+fn conversion_preserves_retry_marker_linkage_reason_and_cost() {
+    let task = Task::new("test");
+    let mut event = CostEvent::new(&task.task_id, EventType::RetryMarker);
+    event.is_retry = true;
+    event.retry_reason = Some("rate_limit".to_string());
+    event.retry_of = Some("33333333-3333-4333-8333-333333333333".to_string());
+    event.cost_usd = Decimal::new(2, 2);
+
+    let converted = to_attribution_event_v2(&event).expect("convertible retry marker");
+    assert_eq!(converted.component, AttributionComponent::External);
+    assert_eq!(converted.provider.name, "dexcost");
+    assert_eq!(converted.provider.service, "retry");
+    assert_eq!(
+        usage_quantity(&converted, AttributionUsageMetric::RequestCount),
+        Some("1")
+    );
+    let resource = converted.resource.expect("retry reason resource");
+    assert_eq!(resource.resource_type, AttributionResourceType::Other);
+    assert_eq!(resource.id, "rate_limit");
+    assert_eq!(
+        converted.retry_of.as_deref(),
+        Some("33333333-3333-4333-8333-333333333333")
+    );
+    let evidence = converted.cost_evidence.expect("manual retry cost");
+    assert_eq!(evidence.source, AttributionCostEvidenceSource::Manual);
+    assert_eq!(evidence.amount, "0.02");
 }
 
 #[test]
