@@ -321,7 +321,7 @@ class ServiceCatalog:
         if override:
             return CostExtractionResult(
                 amount=override["cost_per_unit"],
-                confidence="exact",
+                confidence="computed",
                 service_name=entry.display_name,
                 pricing_source="user_override",
             )

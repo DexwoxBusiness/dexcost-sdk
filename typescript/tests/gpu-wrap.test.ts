@@ -18,6 +18,7 @@ import {
 import { runWithTask } from "../src/core/context.js";
 import type { GpuAccountantHooks } from "../src/core/gpu-accountant.js";
 import { _resetWarningStateForTests as resetAccountantWarnings } from "../src/core/gpu-accountant.js";
+import type { UtilSample } from "../src/core/nvml-reader.js";
 
 let tmpDir: string;
 let snapshot: Record<string, string | undefined> = {};
@@ -31,15 +32,17 @@ const SELF = process.pid;
 
 function stubHooks(): GpuAccountantHooks {
   let utilCall = 0;
-  const samples: Array<Record<number, any>> = [
+  const samples: Array<Record<number, UtilSample[]>> = [
     {},
     {
-      [SELF]: {
-        pid: SELF,
-        smUtil: 50,
-        memUtil: 20,
-        timeStamp: 500_000,
-      },
+      [SELF]: [
+        {
+          pid: SELF,
+          smUtil: 50,
+          memUtil: 20,
+          timeStamp: 500_000,
+        },
+      ],
     },
   ];
   return {

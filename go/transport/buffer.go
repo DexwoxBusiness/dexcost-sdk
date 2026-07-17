@@ -229,7 +229,8 @@ func (b *SQLiteBuffer) UpdateTask(task core.Task) error {
 		llm_cost_usd = ?, external_cost_usd = ?, compute_cost_usd = ?,
 		total_cost_usd = ?,
 		total_input_tokens = ?, total_output_tokens = ?, total_cached_tokens = ?,
-		retry_count = ?, retry_cost_usd = ?, failure_count = ?
+		retry_count = ?, retry_cost_usd = ?, failure_count = ?,
+		sync_status = 'pending'
 	WHERE task_id = ?`,
 		string(task.Status),
 		endedAt,
@@ -607,7 +608,9 @@ func (b *SQLiteBuffer) Close() error {
 	return b.db.Close()
 }
 
-// QueryTasksByIDs retrieves tasks matching the given task IDs.
+// QueryTasksByIDs retrieves pending tasks matching the given task IDs. Synced
+// tasks have already been accepted by ingestion and must not be resent merely
+// because a later event for the task is being retried.
 func (b *SQLiteBuffer) QueryTasksByIDs(taskIDs []string) ([]core.Task, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -625,8 +628,28 @@ func (b *SQLiteBuffer) QueryTasksByIDs(taskIDs []string) ([]core.Task, error) {
 		llm_cost_usd, external_cost_usd, compute_cost_usd, total_cost_usd,
 		total_input_tokens, total_output_tokens, total_cached_tokens,
 		retry_count, retry_cost_usd, failure_count, schema_version
-	FROM tasks WHERE task_id IN (%s)`, strings.Join(placeholders, ","))
+	FROM tasks
+	WHERE task_id IN (%s) AND sync_status = 'pending'`, strings.Join(placeholders, ","))
 	rows, err := b.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
+// QueryPendingTasks retrieves task records that have not yet been accepted by
+// ingestion. Tasks are independently durable and must flush even when they do
+// not yet have a cost event.
+func (b *SQLiteBuffer) QueryPendingTasks(limit int) ([]core.Task, error) {
+	rows, err := b.db.Query(`SELECT
+		task_id, task_type, status, started_at, ended_at, metadata,
+		customer_id, project_id, parent_task_id,
+		experiment_id, variant,
+		llm_cost_usd, external_cost_usd, compute_cost_usd, total_cost_usd,
+		total_input_tokens, total_output_tokens, total_cached_tokens,
+		retry_count, retry_cost_usd, failure_count, schema_version
+	FROM tasks WHERE sync_status = 'pending' ORDER BY started_at LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

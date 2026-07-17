@@ -33,6 +33,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/integrations"
@@ -557,6 +558,38 @@ type ServiceCatalog = pricing.ServiceCatalog
 type CostResult = pricing.CostResult
 type SyncWorker = transport.EventPusher
 type DexcostCallbackHandler = integrations.DexcostCallbackHandler
+type AttributionComponent = attribution.Component
+type AttributionUsageMetric = attribution.UsageMetric
+type AttributionUsageUnit = attribution.UsageUnit
+type AttributionUsageLineV2 = attribution.UsageLineV2
+type AttributionProviderIdentityV2 = attribution.ProviderIdentityV2
+type AttributionResourceV2 = attribution.ResourceV2
+type AttributionCostEvidenceV2 = attribution.CostEvidenceV2
+type AttributionLifecycleV2 = attribution.LifecycleV2
+type AttributionUsagePeriodV2 = attribution.UsagePeriodV2
+type AttributionEventV2 = attribution.EventV2
+type AttributionTaskIngestV1 = attribution.TaskIngestV1
+type AttributionV2ValidationIssue = attribution.ValidationIssue
+type AttributionV2ValidationResult = attribution.ValidationResult
+
+const AttributionV2ContractVersion = attribution.ContractVersion
+
+// ValidateAttributionEventV2 performs non-throwing runtime validation against
+// the control-plane attribution-v2 ingestion contract.
+func ValidateAttributionEventV2(value interface{}) attribution.ValidationResult {
+	return attribution.ValidateEventV2(value)
+}
+
+// ToAttributionEventV2 converts durable v1 SDK capture into the details-free
+// attribution-v2 wire contract.
+func ToAttributionEventV2(event core.Event) *attribution.EventV2 {
+	return attribution.ToEventV2(event)
+}
+
+// ToAttributionTaskIngestV1 serializes only task fields accepted by ingestion.
+func ToAttributionTaskIngestV1(task core.Task) attribution.TaskIngestV1 {
+	return attribution.ToTaskIngestV1(task)
+}
 
 // InvalidAPIKeyError is an alias for ErrInvalidAPIKey.
 var InvalidAPIKeyError = ErrInvalidAPIKey

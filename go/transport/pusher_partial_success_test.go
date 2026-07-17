@@ -12,7 +12,6 @@ package transport
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,8 +33,7 @@ func TestPushWithSplit_PartialFailure_FirstHalfMarkedSynced(t *testing.T) {
 	// over `maxPayloadBytes=512_000` (probe finding in pusher.go).
 	// First split: 100 + 100. Each half is ~400 KB, fits. Two leaf
 	// POSTs result.
-	const eventCount = 200
-	const detailsSize = 4000
+	const eventCount = 400
 
 	buf, err := NewSQLiteBuffer(t.TempDir() + "/buf.db")
 	if err != nil {
@@ -52,21 +50,19 @@ func TestPushWithSplit_PartialFailure_FirstHalfMarkedSynced(t *testing.T) {
 	for i := 0; i < eventCount; i++ {
 		ev := core.NewEvent(taskID, core.EventTypeExternalCost)
 		ev.CostUSD = decimal.NewFromFloat(0.001)
-		ev.Details = map[string]interface{}{
-			"padding": strings.Repeat("x", detailsSize),
-		}
 		if err := buf.InsertEvent(ev); err != nil {
 			t.Fatalf("insert event %d: %v", i, err)
 		}
 	}
 
-	// HTTP test server: first request 200, second request 500.
+	// The task-only dependency request and first event leaf succeed; the next
+	// event leaf fails.
 	var callCount int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&callCount, 1)
-		if n == 1 {
+		if n <= 2 {
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"queued": 100}`))
+			_, _ = w.Write([]byte(`{"queued": 200}`))
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
@@ -82,8 +78,8 @@ func TestPushWithSplit_PartialFailure_FirstHalfMarkedSynced(t *testing.T) {
 	})
 	p.Flush()
 
-	if calls := atomic.LoadInt32(&callCount); calls < 2 {
-		t.Fatalf("expected at least 2 POSTs (split into halves), got %d", calls)
+	if calls := atomic.LoadInt32(&callCount); calls < 3 {
+		t.Fatalf("expected task dependency plus split event POSTs, got %d", calls)
 	}
 
 	// Verify: after partial failure, exactly the first-half count of

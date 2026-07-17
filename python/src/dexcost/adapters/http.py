@@ -652,9 +652,14 @@ def _handle_domain_rate(
         )
     event = Event(
         task_id=task.task_id, event_type="external_cost",
-        cost_usd=rate["cost_usd"], cost_confidence="exact",
-        pricing_source="rate_registry", service_name=domain,
-        details={"url": url, "per": rate["per"], **byte_details},
+        cost_usd=rate["cost_usd"], cost_confidence="computed",
+        pricing_source="manual", service_name=domain,
+        details={
+            "url": url,
+            "attribution_usage_quantity": 1,
+            "attribution_usage_per": rate["per"],
+            **byte_details,
+        },
     )
     _persist_event(event)
     return True

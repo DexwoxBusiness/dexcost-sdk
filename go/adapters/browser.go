@@ -71,7 +71,9 @@ func (s *BrowserSession) End() {
 	event.ServiceName = "playwright_browser"
 	event.CostUSD = costUSD
 	event.CostConfidence = core.CostConfidenceComputed
-	event.PricingSource = core.PricingSourceRateRegistry
+	// The rate is supplied by the caller (or the SDK default), not selected
+	// from the versioned rate registry. Attribute it as manual evidence.
+	event.PricingSource = core.PricingSourceManual
 	event.Details["wall_clock_seconds"] = elapsed.Seconds()
 	event.Details["rate_per_minute"] = s.ratePerMinute.String()
 	event.Details["page_url"] = security.ScrubURL(s.pageURL)

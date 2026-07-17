@@ -105,6 +105,21 @@ def test_subtracts_openai_cached_tokens_from_inclusive_input() -> None:
     ]
 
 
+def test_retains_user_catalog_override_as_manual_evidence() -> None:
+    converted = to_attribution_event_v2(
+        _event(
+            event_type="external_cost",
+            cost_usd=Decimal("0.05"),
+            cost_confidence="computed",
+            pricing_source="user_override",
+            service_name="search",
+        )
+    )
+    assert converted is not None
+    assert converted["cost_evidence"]["source"] == "manual"
+    assert converted["cost_evidence"]["amount"] == "0.05"
+
+
 def test_promotes_compute_quantities_and_closes_usage_period() -> None:
     converted = to_attribution_event_v2(
         _event(

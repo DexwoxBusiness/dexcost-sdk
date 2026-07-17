@@ -162,8 +162,8 @@ func TestTrackHTTP_DomainRatePrecedence(t *testing.T) {
 	if !events[0].CostUSD.Equal(decimal.RequireFromString("0.99")) {
 		t.Errorf("user rate should win: expected 0.99, got %s", events[0].CostUSD)
 	}
-	if events[0].PricingSource != core.PricingSourceRateRegistry {
-		t.Errorf("pricing_source: expected rate_registry, got %s", events[0].PricingSource)
+	if events[0].PricingSource != core.PricingSourceManual {
+		t.Errorf("pricing_source: expected manual, got %s", events[0].PricingSource)
 	}
 }
 
