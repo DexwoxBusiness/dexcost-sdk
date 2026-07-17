@@ -14,9 +14,14 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from email.message import Message
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from dexcost.attribution.convert import (
+    to_attribution_event_v2,
+    to_attribution_task_ingest_v1,
+)
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 
 if TYPE_CHECKING:
@@ -28,7 +33,11 @@ _log = logging.getLogger(__name__)
 _INITIAL_BACKOFF: float = 1.0
 _MAX_BACKOFF: float = 300.0  # 5 minutes
 _PURGE_INTERVAL: float = 3600.0  # 1 hour between purge runs
-_MAX_PAYLOAD_BYTES: int = 200_000  # 200KB — well under SQS 256KB limit
+_MAX_PAYLOAD_BYTES: int = 120_000  # Headroom below the control-plane 128KB queue limit
+
+
+class _AttributionBatchRejectedError(RuntimeError):
+    """The control plane did not accept every record in a prepared leaf."""
 
 
 class SyncWorker:
@@ -131,6 +140,7 @@ class SyncWorker:
         """Main loop for the background thread."""
         storage = self._open_thread_storage()
         while not self._stop_event.is_set():
+            wait_seconds = self._config.flush_interval_seconds
             try:
                 sent = self._sync_batch(storage=storage)
                 if sent:
@@ -151,16 +161,20 @@ class SyncWorker:
                         self._flush_done.set()
                 # Back off
                 self._backoff = min(self._backoff * 2, _MAX_BACKOFF)
+                wait_seconds = self._backoff
 
-            # Wait for the configured interval or until woken
-            self._wake_event.wait(timeout=self._config.flush_interval_seconds)
+            if self._stop_event.is_set():
+                break
+            # Idle workers wait for the flush interval. Failed workers use the
+            # exponential backoff computed above.
+            self._wake_event.wait(timeout=wait_seconds)
             self._wake_event.clear()
 
     def _sync_batch(self, storage: StorageBackend | None = None) -> bool:
         """Attempt to push one batch of events.
 
-        Returns ``True`` if events were sent, ``False`` if there were
-        no pending events.
+        Returns ``True`` if records were sent and ``False`` if there were no
+        pending records or sync was permanently disabled by authentication.
 
         Raises on HTTP/network errors so the caller can back off.
 
@@ -173,13 +187,20 @@ class SyncWorker:
         """
         st = storage if storage is not None else self._storage
         events = st.query_events_for_sync(limit=self._config.batch_size)
-        if not events:
-            return False
 
-        # Prepare event payload with redaction
-        event_dicts: list[dict[str, Any]] = [
-            self._prepare_event_dict(event) for event in events
-        ]
+        # Convert durable v1 capture into strict attribution-v2 wire records.
+        # Observability-only signals and permanently invalid legacy rows are
+        # acknowledged locally so they cannot poison the pending queue forever.
+        event_dicts: list[dict[str, Any]] = []
+        skipped_event_ids: list[str] = []
+        for event in events:
+            converted = self._prepare_event_dict(event)
+            if converted is None:
+                skipped_event_ids.append(str(event.event_id))
+            else:
+                event_dicts.append(converted)
+        if skipped_event_ids:
+            st.mark_synced(skipped_event_ids)
 
         # Gather pending (not-yet-synced) tasks for the ingest payload.
         # Only pending tasks are pushed, so synced tasks are never re-POSTed
@@ -194,20 +215,27 @@ class SyncWorker:
             # Backend without task sync tracking — fall back to task IDs
             # referenced by this event batch.
             tasks = st.query_tasks_for_sync(list({str(e.task_id) for e in events}))
-        # The set of task IDs actually included in this payload — exactly
-        # these are marked synced after a successful POST.
-        synced_task_ids = list({str(t.task_id) for t in tasks})
-        task_dicts: list[dict[str, Any]] = [
-            self._prepare_task_dict(t) for t in tasks
-        ]
+        task_dicts: list[dict[str, Any]] = [self._prepare_task_dict(t) for t in tasks]
 
-        self._post_with_split(event_dicts, task_dicts)
+        if not event_dicts and not task_dicts:
+            return False
 
-        # Mark synced on success
-        event_ids = [str(e.event_id) for e in events]
+        posted = self._post_with_split(event_dicts, task_dicts, storage=st)
+        if not posted:
+            if self._stop_event.is_set():
+                return False
+            raise _AttributionBatchRejectedError(
+                "control plane did not accept the complete attribution batch"
+            )
+
+        # Leaf POSTs mark their own rows so a successful half is not replayed
+        # when a later sibling fails. These calls are a defensive idempotent
+        # safety net for any future path that returns success without a leaf.
+        event_ids = [event["event_id"] for event in event_dicts]
         st.mark_synced(event_ids)
-        if synced_task_ids:
-            st.mark_tasks_synced(synced_task_ids)
+        task_ids = [task["task_id"] for task in task_dicts]
+        if task_ids:
+            st.mark_tasks_synced(task_ids)
 
         _log.info(
             "Synced %d events and %d tasks to %s",
@@ -253,23 +281,13 @@ class SyncWorker:
                 if isinstance(val, str):
                     container[key] = hash_value(val)
 
-    def _prepare_event_dict(self, event: Any) -> dict[str, Any]:
-        """Serialise an event and apply redaction / hashing / size limits."""
-        d = event.to_dict()
+    def _prepare_event_dict(self, event: Any) -> dict[str, Any] | None:
+        """Convert one event to the strict, details-free v2 wire contract.
 
-        # Apply PII redaction to details
-        if self._config.redact_fields and d.get("details"):
-            d["details"] = redact_dict(d["details"], self._config.redact_fields)
-
-        # Hash customer-adjacent fields in details (events carry task_id;
-        # customer_id itself lives on the task).
-        self._hash_pii(d)
-
-        # Enforce metadata size limit
-        if d.get("details"):
-            d["details"] = enforce_metadata_limit(d["details"])
-
-        return d
+        Arbitrary ``details`` never cross the process boundary. The converter
+        reads only the accounting allow-list needed by attribution v2.
+        """
+        return cast(dict[str, Any] | None, to_attribution_event_v2(event))
 
     def _prepare_task_dict(self, task: Any) -> dict[str, Any]:
         """Serialise a task and apply the same redaction policy as events.
@@ -279,7 +297,7 @@ class SyncWorker:
         when ``hash_customer_id`` is configured — closing a PII leak where
         task metadata and customer ids were previously POSTed raw.
         """
-        d = task.to_dict()
+        d = cast(dict[str, Any], to_attribution_task_ingest_v1(task))
 
         # Redact configured PII fields from task metadata.
         if self._config.redact_fields and d.get("metadata"):
@@ -300,47 +318,84 @@ class SyncWorker:
         events: list[dict[str, Any]],
         tasks: list[dict[str, Any]],
         depth: int = 0,
-    ) -> None:
-        """POST events with automatic batch splitting if payload exceeds size limit.
+        storage: StorageBackend | None = None,
+    ) -> bool:
+        """POST records, splitting both arrays to stay below the queue limit.
 
-        Recursively splits the events array in half until each chunk fits within
-        the SQS payload limit.  Tasks are sent with the first chunk only.
+        Successful leaves are acknowledged immediately. This prevents a later
+        sibling failure from replaying records the control plane already
+        accepted. Tasks are sent before events when they must be separated.
         """
-        _MAX_DEPTH = 5  # Prevent infinite recursion
-
         payload: dict[str, Any] = {"events": events, "tasks": tasks}
         body = json.dumps(payload).encode("utf-8")
 
-        if len(body) <= _MAX_PAYLOAD_BYTES or depth >= _MAX_DEPTH:
-            self._post_raw(body)
-            return
+        if len(body) <= _MAX_PAYLOAD_BYTES:
+            posted = self._post_raw(body)
+            if posted and storage is not None:
+                event_ids = [str(event["event_id"]) for event in events]
+                task_ids = [str(task["task_id"]) for task in tasks]
+                if event_ids:
+                    storage.mark_synced(event_ids)
+                if task_ids:
+                    storage.mark_tasks_synced(task_ids)
+            return posted
 
-        if len(events) <= 1:
-            # Single event too large — skip it with warning
+        if len(events) > 1:
+            mid = len(events) // 2
+            _log.info(
+                "Batch too large (%d bytes, %d events), splitting events",
+                len(body),
+                len(events),
+            )
+            first_posted = self._post_with_split(events[:mid], tasks, depth + 1, storage)
+            if not first_posted:
+                return False
+            return self._post_with_split(events[mid:], [], depth + 1, storage)
+
+        if len(tasks) > 1:
+            mid = len(tasks) // 2
+            _log.info(
+                "Batch too large (%d bytes, %d tasks), splitting tasks",
+                len(body),
+                len(tasks),
+            )
+            first_posted = self._post_with_split([], tasks[:mid], depth + 1, storage)
+            if not first_posted:
+                return False
+            return self._post_with_split(events, tasks[mid:], depth + 1, storage)
+
+        if len(events) == 1 and len(tasks) == 1:
+            task_posted = self._post_with_split([], tasks, depth + 1, storage)
+            if not task_posted:
+                return False
+            return self._post_with_split(events, [], depth + 1, storage)
+
+        if len(events) == 1:
+            # A permanently oversized record cannot be delivered. Acknowledge
+            # it locally so it does not poison every future batch.
             _log.warning(
                 "Single event exceeds payload limit (%d bytes), skipping",
                 len(body),
             )
-            return
+            if storage is not None:
+                storage.mark_synced([str(events[0]["event_id"])])
+            return True
 
-        # Split events in half
-        mid = len(events) // 2
-        _log.info(
-            "Batch too large (%d bytes, %d events), splitting into 2 chunks",
-            len(body),
-            len(events),
-        )
+        if len(tasks) == 1:
+            _log.warning(
+                "Single task exceeds payload limit (%d bytes), skipping",
+                len(body),
+            )
+            if storage is not None:
+                storage.mark_tasks_synced([str(tasks[0]["task_id"])])
+        return True
 
-        # First half gets the tasks, second half gets empty tasks
-        self._post_with_split(events[:mid], tasks, depth + 1)
-        self._post_with_split(events[mid:], [], depth + 1)
-
-    def _post_raw(self, body: bytes) -> None:
+    def _post_raw(self, body: bytes) -> bool:
         """POST pre-encoded payload to the cloud ingest endpoint.
 
         Uses :mod:`urllib.request` (stdlib) to avoid adding an external
-        dependency.  Treats 2xx (including 202 Accepted) as success.
-        Raises on non-2xx responses.
+        dependency. Returns ``True`` only when the whole leaf was accepted.
+        Network and retryable HTTP failures still raise so the worker backs off.
         """
         url = f"{self._config.endpoint}/v1/ingest"
         req = urllib.request.Request(
@@ -358,15 +413,33 @@ class SyncWorker:
                 status: int = resp.status
                 if status >= 300:
                     raise urllib.error.HTTPError(
-                        url, status, f"Unexpected status {status}", {}, None  # type: ignore[arg-type]
+                        url,
+                        status,
+                        f"Unexpected status {status}",
+                        Message(),
+                        None,
                     )
+                try:
+                    result = json.loads(resp.read())
+                    rejected = result.get("rejected", 0)
+                    if isinstance(rejected, (int, float)) and rejected > 0:
+                        _log.warning(
+                            "Control plane rejected %s item(s) from an attribution-v2 batch",
+                            rejected,
+                        )
+                        return False
+                except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
+                    # Some compatible/private endpoints return an empty body.
+                    pass
+                return True
         except urllib.error.HTTPError as exc:
             if exc.code == 413:
                 _log.warning("Server returned 413 despite pre-split check")
+                return False
             if exc.code in (401, 403):
                 _log.error("API key rejected (HTTP %d) — disabling sync", exc.code)
                 self._stop_event.set()  # Stop retrying permanently
-                return
+                return False
             _log.warning("POST to %s failed: %s (backoff=%.1fs)", url, exc, self._backoff)
             raise
         except urllib.error.URLError as exc:
@@ -377,9 +450,9 @@ class SyncWorker:
         self,
         events: list[dict[str, Any]],
         tasks: list[dict[str, Any]] | None = None,
-    ) -> None:
+    ) -> bool:
         """POST events and tasks to the cloud ingest endpoint.
 
         Backward-compatible wrapper that delegates to :meth:`_post_with_split`.
         """
-        self._post_with_split(events, tasks or [])
+        return self._post_with_split(events, tasks or [])

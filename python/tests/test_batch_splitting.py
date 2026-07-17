@@ -3,21 +3,20 @@
 Verifies that oversized batches are automatically split before pushing
 to the server, preventing SQS 256KB payload limit issues.
 """
+
 from __future__ import annotations
 
 import json
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
-import uuid
-
-import pytest
 
 from dexcost.config import DexcostConfig
 from dexcost.models.event import Event
 from dexcost.storage.sqlite import SQLiteStorage
-from dexcost.sync import SyncWorker, _MAX_PAYLOAD_BYTES
+from dexcost.sync import _MAX_PAYLOAD_BYTES, SyncWorker
 
 
 def _make_config(**overrides: Any) -> DexcostConfig:
@@ -79,9 +78,7 @@ class TestBatchSplitting:
 
         with patch.object(worker, "_post_raw") as mock_post:
             worker._post_with_split(events, tasks)
-            assert mock_post.call_count >= 2, (
-                f"Expected >=2 calls, got {mock_post.call_count}"
-            )
+            assert mock_post.call_count >= 2, f"Expected >=2 calls, got {mock_post.call_count}"
 
     def test_single_oversized_event_is_skipped(self, tmp_path: Path) -> None:
         """A single event exceeding the limit is skipped, not retried forever."""
@@ -109,8 +106,9 @@ class TestBatchSplitting:
 
         payloads_sent: list[dict[str, Any]] = []
 
-        def capture_post(body: bytes) -> None:
+        def capture_post(body: bytes) -> bool:
             payloads_sent.append(json.loads(body.decode("utf-8")))
+            return True
 
         with patch.object(worker, "_post_raw", side_effect=capture_post):
             worker._post_with_split(events, tasks)
@@ -137,8 +135,8 @@ class TestBatchSplitting:
 
     def test_max_payload_bytes_constant_exists(self) -> None:
         """The MAX_PAYLOAD_BYTES constant is set correctly."""
-        assert _MAX_PAYLOAD_BYTES == 200_000
-        assert _MAX_PAYLOAD_BYTES < 256_000  # Must be under SQS limit
+        assert _MAX_PAYLOAD_BYTES == 120_000
+        assert _MAX_PAYLOAD_BYTES < 128_000  # Must stay below the published queue limit
 
     def test_all_events_included_across_chunks(self, tmp_path: Path) -> None:
         """Every event from the original batch appears in exactly one chunk."""
@@ -151,31 +149,35 @@ class TestBatchSplitting:
 
         sent_ids: set[str] = set()
 
-        def capture_post(body: bytes) -> None:
+        def capture_post(body: bytes) -> bool:
             payload = json.loads(body.decode("utf-8"))
             for ev in payload["events"]:
                 sent_ids.add(ev["event_id"])
+            return True
 
         with patch.object(worker, "_post_raw", side_effect=capture_post):
             worker._post_with_split(events, [])
 
         assert sent_ids == original_ids, "Not all events were sent after splitting"
 
-    def test_depth_limit_prevents_infinite_recursion(self, tmp_path: Path) -> None:
-        """Splitting stops at max depth even if payload is still too large."""
+    def test_depth_argument_never_bypasses_payload_limit(self, tmp_path: Path) -> None:
+        """Every emitted leaf stays under the limit even after deep recursion."""
         config = _make_config()
         storage = SQLiteStorage(db_path=tmp_path / "test.db")
         worker = SyncWorker(config=config, storage=storage)
 
-        # 2 events each > MAX_PAYLOAD_BYTES individually, but with 2 events
-        # it will split to single events then hit the single-event skip path.
-        # Use depth parameter directly to test the depth guard.
         events = [_make_large_event(size_bytes=100000).to_dict() for _ in range(4)]
+        payload_sizes: list[int] = []
 
-        with patch.object(worker, "_post_raw") as mock_post:
-            # Call at depth 5 (the max) — should post raw regardless of size
-            worker._post_with_split(events, [], depth=5)
-            assert mock_post.call_count == 1
+        def capture_post(body: bytes) -> bool:
+            payload_sizes.append(len(body))
+            return True
+
+        with patch.object(worker, "_post_raw", side_effect=capture_post):
+            assert worker._post_with_split(events, [], depth=5) is True
+
+        assert len(payload_sizes) == 4
+        assert all(size <= _MAX_PAYLOAD_BYTES for size in payload_sizes)
 
     def test_empty_batch_sends_single_request(self, tmp_path: Path) -> None:
         """An empty events list still sends one request (with tasks)."""
@@ -197,12 +199,72 @@ class TestBatchSplitting:
 
         events = [_make_large_event(size_bytes=30000).to_dict() for _ in range(10)]
 
-        def validate_post(body: bytes) -> None:
+        def validate_post(body: bytes) -> bool:
             payload = json.loads(body.decode("utf-8"))
             assert "events" in payload
             assert "tasks" in payload
             assert isinstance(payload["events"], list)
             assert isinstance(payload["tasks"], list)
+            return True
 
         with patch.object(worker, "_post_raw", side_effect=validate_post):
             worker._post_with_split(events, [])
+
+    def test_large_task_only_batch_is_split_without_loss(self, tmp_path: Path) -> None:
+        """Task-only sync splits tasks instead of dropping the whole batch."""
+        storage = SQLiteStorage(db_path=tmp_path / "test.db")
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        tasks = [
+            {
+                "task_id": str(uuid.uuid4()),
+                "task_type": "test",
+                "metadata": {"padding": "x" * 70_000},
+            }
+            for _ in range(2)
+        ]
+        sent_ids: set[str] = set()
+
+        def capture_post(body: bytes) -> bool:
+            payload = json.loads(body.decode("utf-8"))
+            sent_ids.update(task["task_id"] for task in payload["tasks"])
+            return True
+
+        with patch.object(worker, "_post_raw", side_effect=capture_post):
+            assert worker._post_with_split([], tasks) is True
+
+        assert sent_ids == {task["task_id"] for task in tasks}
+
+    def test_successful_split_leaf_is_acknowledged_before_sibling_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A later leaf failure must not cause an accepted leaf to replay."""
+        storage = MagicMock()
+        worker = SyncWorker(
+            config=_make_config(),
+            storage=SQLiteStorage(db_path=tmp_path / "test.db"),
+        )
+        events = [_make_large_event(size_bytes=70_000).to_dict() for _ in range(2)]
+
+        with patch.object(worker, "_post_raw", side_effect=[True, False]):
+            assert worker._post_with_split(events, [], storage=storage) is False
+
+        storage.mark_synced.assert_called_once_with([events[0]["event_id"]])
+
+    def test_single_oversized_task_is_acknowledged(self, tmp_path: Path) -> None:
+        """An undeliverable task cannot poison every later task-only batch."""
+        storage = MagicMock()
+        worker = SyncWorker(
+            config=_make_config(),
+            storage=SQLiteStorage(db_path=tmp_path / "test.db"),
+        )
+        task = {
+            "task_id": str(uuid.uuid4()),
+            "task_type": "test",
+            "metadata": {"padding": "x" * 130_000},
+        }
+
+        with patch.object(worker, "_post_raw") as mock_post:
+            assert worker._post_with_split([], [task], storage=storage) is True
+
+        mock_post.assert_not_called()
+        storage.mark_tasks_synced.assert_called_once_with([task["task_id"]])
