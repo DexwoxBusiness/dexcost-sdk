@@ -185,21 +185,26 @@ class TrackedTask:
         Raises:
             ValueError: If no rate is registered for *service*.
         """
-        rate = self._tracker.get_rate(service)
-        if rate is None:
+        rate_entry = self._tracker.rate_registry.get(service)
+        if rate_entry is None:
             raise ValueError(
                 f"No rate registered for service {service!r}. "
                 f"Use tracker.register_rate(service={service!r}, per=..., cost_usd=...) first."
             )
-        cost = rate * Decimal(str(units))
+        cost = rate_entry.cost_usd * Decimal(str(units))
         pricing_version = self._tracker.rate_registry.pricing_version
+        attribution_details = {
+            **(details or {}),
+            "attribution_usage_quantity": units,
+            "attribution_usage_per": rate_entry.per,
+        }
         event = self.record_cost(
             service=service,
             cost_usd=cost,
             cost_confidence="computed",
             pricing_source="rate_registry",
             pricing_version=pricing_version,
-            details=details,
+            details=attribution_details,
         )
         return event
 

@@ -17,8 +17,14 @@ import pytest
 
 from dexcost.config import DexcostConfig
 from dexcost.models.event import Event
+from dexcost.models.task import Task
 from dexcost.storage.sqlite import SQLiteStorage
-from dexcost.sync import _INITIAL_BACKOFF, _MAX_BACKOFF, SyncWorker
+from dexcost.sync import (
+    _INITIAL_BACKOFF,
+    _MAX_BACKOFF,
+    SyncWorker,
+    _AttributionBatchRejectedError,
+)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -157,9 +163,7 @@ class TestSyncBatch:
     """
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_pending_events_posted(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_pending_events_posted(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Pending events are batched and POSTed to the endpoint."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
@@ -202,9 +206,7 @@ class TestSyncBatch:
         assert len(pending) == 0
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_events_stay_pending_on_failure(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_events_stay_pending_on_failure(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Failed POST leaves events in pending state."""
         mock_urlopen.side_effect = _mock_urlopen_failure()
         config = _make_config()
@@ -219,9 +221,43 @@ class TestSyncBatch:
         assert len(pending) == 3
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_no_events_returns_false(
+    def test_auth_rejection_stops_worker_without_acknowledging_events(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
+        """A rejected API key disables sync but preserves buffered records."""
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://api.dexcost.io/v1/ingest",
+            401,
+            "Unauthorized",
+            {},
+            None,
+        )
+        storage = _make_storage(tmp_path)
+        _insert_events(storage)
+        worker = SyncWorker(config=_make_config(), storage=storage)
+
+        assert worker._sync_batch() is False
+        assert worker._stop_event.is_set()
+        assert len(storage.query_events_for_sync()) == 1
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_partial_control_plane_rejection_keeps_leaf_pending(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        """A 202 with rejected records is not treated as full acceptance."""
+        response = _mock_urlopen_success()
+        response.read.return_value = b'{"queued": 0, "rejected": 1}'
+        mock_urlopen.return_value = response
+        storage = _make_storage(tmp_path)
+        _insert_events(storage)
+        worker = SyncWorker(config=_make_config(), storage=storage)
+
+        with pytest.raises(_AttributionBatchRejectedError):
+            worker._sync_batch()
+        assert len(storage.query_events_for_sync()) == 1
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_no_events_returns_false(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """_sync_batch returns False when there are no pending events."""
         config = _make_config()
         storage = _make_storage(tmp_path)
@@ -233,9 +269,41 @@ class TestSyncBatch:
         mock_urlopen.assert_not_called()
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_batch_size_respected(
+    def test_pending_task_without_events_is_still_posted(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
+        """Task attribution metadata must not wait for a cost event to exist."""
+        mock_urlopen.return_value = _mock_urlopen_success()
+        storage = _make_storage(tmp_path)
+        task = _make_task(customer_id="customer-1")
+        storage.insert_task(task)
+
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        assert worker._sync_batch() is True
+
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assert body["events"] == []
+        assert [item["task_id"] for item in body["tasks"]] == [str(task.task_id)]
+        assert storage.query_pending_tasks_for_sync() == []
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_observability_only_event_is_acknowledged_without_post(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        """Non-billable signals cannot poison the durable pending queue."""
+        storage = _make_storage(tmp_path)
+        event = _make_event()
+        event.event_type = "gpu_utilization_signal"
+        storage.insert_event(event)
+
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        assert worker._sync_batch() is False
+
+        assert storage.query_events_for_sync() == []
+        mock_urlopen.assert_not_called()
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_batch_size_respected(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Only batch_size events are sent per batch."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(batch_size=5)
@@ -255,10 +323,10 @@ class TestSyncBatch:
         assert len(pending) == 7
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_events_serialized_via_to_dict(
+    def test_events_serialized_as_attribution_v2(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
-        """Events in the payload match the Event.to_dict() format."""
+        """Durable v1 events are converted to the strict v2 wire format."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
         storage = _make_storage(tmp_path)
@@ -269,17 +337,23 @@ class TestSyncBatch:
 
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode("utf-8"))
-        # Compare key fields
-        assert body["events"][0]["event_type"] == "llm_call"
-        assert body["events"][0]["cost_usd"] == str(events[0].cost_usd)
-        assert body["events"][0]["provider"] == "openai"
-        assert body["events"][0]["model"] == "gpt-4"
-        assert body["events"][0]["schema_version"] == "1"
+        wire = body["events"][0]
+        assert wire["event_id"] == str(events[0].event_id)
+        assert wire["component"] == "llm"
+        assert wire["provider"] == {"name": "openai", "service": "responses"}
+        assert wire["resource"] == {"type": "model", "id": "gpt-4"}
+        assert wire["schema_version"] == "2"
+        assert wire["cost_evidence"] == {
+            "amount": "0.05",
+            "currency": "USD",
+            "source": "manual",
+            "confidence": "exact",
+        }
+        assert "details" not in wire
+        assert "cost_usd" not in wire
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_payload_is_ingest_format(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_payload_is_ingest_format(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """POST payload is a JSON object with events and tasks arrays."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
@@ -297,9 +371,7 @@ class TestSyncBatch:
         assert len(body["events"]) == 2
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_authorization_header(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_authorization_header(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """POST includes Bearer authorization header."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(api_key="dx_live_mykey789")
@@ -316,10 +388,29 @@ class TestSyncBatch:
 class TestBackoff:
     """Tests for exponential backoff on failure."""
 
+    def test_run_uses_backoff_as_failure_wait(self, tmp_path: Path) -> None:
+        """The computed backoff controls retry timing, not only logging."""
+        worker = SyncWorker(config=_make_config(), storage=_make_storage(tmp_path))
+        attempts = 0
+
+        def sync_once_then_stop(storage: Any = None) -> bool:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise urllib.error.URLError("temporary failure")
+            worker._stop_event.set()
+            return False
+
+        with (
+            patch.object(worker, "_sync_batch", side_effect=sync_once_then_stop),
+            patch.object(worker._wake_event, "wait") as mock_wait,
+        ):
+            worker._run()
+
+        mock_wait.assert_called_once_with(timeout=2.0)
+
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_backoff_increases_on_failure(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_backoff_increases_on_failure(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Backoff doubles on each failure."""
         mock_urlopen.side_effect = _mock_urlopen_failure()
         config = _make_config(flush_interval=60.0)
@@ -355,9 +446,7 @@ class TestBackoff:
         assert worker._backoff == _MAX_BACKOFF  # 300.0, not 512.0
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_backoff_resets_on_success(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_backoff_resets_on_success(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Backoff resets to initial value after a successful sync."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
@@ -382,9 +471,7 @@ class TestFlush:
     """
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_flush_forces_immediate_sync(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_flush_forces_immediate_sync(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """flush() triggers an immediate sync cycle and blocks."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(flush_interval=60.0)  # Long interval
@@ -405,9 +492,7 @@ class TestFlush:
         worker.stop()
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_flush_with_no_events(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_flush_with_no_events(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """flush() completes even if there are no pending events."""
         config = _make_config(flush_interval=60.0)
         db = _db_path(tmp_path)
@@ -423,13 +508,11 @@ class TestFlush:
 
 
 class TestRedaction:
-    """Tests for PII redaction before push."""
+    """Attribution v2 transmits no arbitrary event details."""
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_redact_fields_applied(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
-        """Configured redact_fields are stripped from event details."""
+    def test_redact_fields_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+        """Configured PII cannot escape through the removed details carrier."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(redact_fields=["email", "password"])
         storage = _make_storage(tmp_path)
@@ -441,14 +524,12 @@ class TestRedaction:
 
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode("utf-8"))
-        assert "email" not in body["events"][0]["details"]
-        assert body["events"][0]["details"]["model_name"] == "gpt-4"
+        assert "details" not in body["events"][0]
+        assert "email" not in json.dumps(body["events"][0])
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_hash_customer_id_applied(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
-        """hash_customer_id hashes customer_id in event details."""
+    def test_hash_customer_id_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+        """Customer-adjacent details are omitted instead of transmitted."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(hash_customer_id=True)
         storage = _make_storage(tmp_path)
@@ -460,18 +541,12 @@ class TestRedaction:
 
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode("utf-8"))
-        # customer_id should be hashed (SHA-256 hex)
-        cid = body["events"][0]["details"]["customer_id"]
-        assert cid != "cust-123"
-        assert len(cid) == 64  # SHA-256 hex digest length
-        # Non-hashed field unchanged
-        assert body["events"][0]["details"]["note"] == "test"
+        assert "details" not in body["events"][0]
+        assert "cust-123" not in json.dumps(body["events"][0])
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_enforce_metadata_limit_applied(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
-        """Details exceeding 10KB are truncated."""
+    def test_enforce_metadata_limit_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+        """Large arbitrary details do not inflate the v2 wire payload."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
         storage = _make_storage(tmp_path)
@@ -485,8 +560,8 @@ class TestRedaction:
 
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode("utf-8"))
-        assert body["events"][0]["details"]["_truncated"] is True
-        assert "_original_size_bytes" in body["events"][0]["details"]
+        assert "details" not in body["events"][0]
+        assert len(json.dumps(body["events"][0]).encode("utf-8")) < 10_000
 
 
 class TestInitIntegration:
@@ -504,9 +579,7 @@ class TestInitIntegration:
         uninstrument_litellm()
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_cloud_mode_starts_worker(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_cloud_mode_starts_worker(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """init() with an API key starts the SyncWorker."""
         import dexcost
 
@@ -576,9 +649,7 @@ class TestInitIntegration:
             dexcost._global_tracker = old_tracker
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_flush_pushes_events(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_flush_pushes_events(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """flush() via the module-level function pushes pending events."""
         mock_urlopen.return_value = _mock_urlopen_success()
         import dexcost
@@ -612,9 +683,7 @@ class TestEndToEnd:
     """End-to-end scenario tests using the background thread."""
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_50_events_batch_post_fires(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_50_events_batch_post_fires(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """50 events recorded -> batch POST fires -> events marked synced."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(batch_size=100, flush_interval=0.1)
@@ -641,16 +710,14 @@ class TestEndToEnd:
         assert len(body["events"]) == 50
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_server_down_then_recovery(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_server_down_then_recovery(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Server down -> events stay buffered -> server back -> delivered."""
         call_count = 0
 
         def side_effect(*args: Any, **kwargs: Any) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            if call_count <= 2:
+            if call_count == 1:
                 raise urllib.error.URLError("Connection refused")
             return _mock_urlopen_success()
 
@@ -665,7 +732,7 @@ class TestEndToEnd:
         worker.start()
 
         # Wait for retries and eventual success
-        time.sleep(5.0)
+        time.sleep(3.0)
         worker.stop()
 
         # Events should eventually be synced
@@ -704,10 +771,8 @@ def _make_task(
     customer_id: str | None = None,
     project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
-) -> "Task":
+) -> Task:
     """Create a test Task."""
-    from dexcost.models.task import Task
-
     return Task(
         task_id=task_id or uuid.uuid4(),
         task_type="resolve_ticket",
@@ -722,9 +787,7 @@ class TestTaskSyncStatus:
     """A task pushed once must not be re-POSTed on subsequent sync cycles."""
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_synced_task_not_repushed(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_synced_task_not_repushed(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """After a task is synced, a later sync cycle does not include it again."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
@@ -745,10 +808,7 @@ class TestTaskSyncStatus:
         assert str(task_a.task_id) in first_task_ids
 
         # Task A is now marked synced in storage.
-        assert all(
-            t.task_id != task_a.task_id
-            for t in storage.query_pending_tasks_for_sync()
-        )
+        assert all(t.task_id != task_a.task_id for t in storage.query_pending_tasks_for_sync())
 
         # A new event for a *new* task B arrives.
         task_b = _make_task()
@@ -781,9 +841,7 @@ class TestTaskMetadataRedaction:
     """Task metadata / customer ids must be redacted + hashed before POST (Fix 4)."""
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_task_metadata_redacted_on_push(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_task_metadata_redacted_on_push(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Configured redact_fields are stripped from task metadata."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config(redact_fields=["email", "ssn"])

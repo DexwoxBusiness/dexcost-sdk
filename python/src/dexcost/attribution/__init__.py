@@ -1,0 +1,61 @@
+"""Attribution-v2 public contract, validation, and conversion helpers."""
+
+from dexcost.attribution.convert import (
+    to_attribution_event_v2,
+    to_attribution_task_ingest_v1,
+)
+from dexcost.attribution.types import (
+    ATTRIBUTION_COMPONENTS,
+    ATTRIBUTION_UNIT_BY_METRIC,
+    ATTRIBUTION_USAGE_METRICS,
+    ATTRIBUTION_USAGE_UNITS,
+    ATTRIBUTION_V2_CONTRACT_VERSION,
+    AttributionComponent,
+    AttributionConfidence,
+    AttributionCostEvidenceSource,
+    AttributionCostEvidenceV2,
+    AttributionEventV2,
+    AttributionLifecycleState,
+    AttributionLifecycleV2,
+    AttributionProviderIdentityV2,
+    AttributionResourceV2,
+    AttributionTaskIngestV1,
+    AttributionUsageLineV2,
+    AttributionUsageMetric,
+    AttributionUsagePeriodV2,
+    AttributionUsageUnit,
+)
+from dexcost.attribution.validate import (
+    AttributionV2ValidationIssue,
+    AttributionV2ValidationResult,
+    assert_attribution_event_v2,
+    validate_attribution_event_v2,
+)
+
+__all__ = [
+    "ATTRIBUTION_COMPONENTS",
+    "ATTRIBUTION_UNIT_BY_METRIC",
+    "ATTRIBUTION_USAGE_METRICS",
+    "ATTRIBUTION_USAGE_UNITS",
+    "ATTRIBUTION_V2_CONTRACT_VERSION",
+    "AttributionComponent",
+    "AttributionConfidence",
+    "AttributionCostEvidenceSource",
+    "AttributionCostEvidenceV2",
+    "AttributionEventV2",
+    "AttributionLifecycleState",
+    "AttributionLifecycleV2",
+    "AttributionProviderIdentityV2",
+    "AttributionResourceV2",
+    "AttributionTaskIngestV1",
+    "AttributionUsageLineV2",
+    "AttributionUsageMetric",
+    "AttributionUsagePeriodV2",
+    "AttributionUsageUnit",
+    "AttributionV2ValidationIssue",
+    "AttributionV2ValidationResult",
+    "assert_attribution_event_v2",
+    "to_attribution_event_v2",
+    "to_attribution_task_ingest_v1",
+    "validate_attribution_event_v2",
+]

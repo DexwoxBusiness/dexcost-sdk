@@ -300,6 +300,8 @@ class TestRecordUsageWithRates:
         assert event.pricing_source == "rate_registry"
         assert event.pricing_version is not None
         assert len(event.pricing_version) == 12
+        assert event.details["attribution_usage_quantity"] == 1
+        assert event.details["attribution_usage_per"] == "request"
 
         tasks = storage.query_tasks(task_type="usage_single")
         t = tasks[0]
@@ -318,6 +320,8 @@ class TestRecordUsageWithRates:
         assert event.cost_usd == Decimal("0.03")
         assert event.service_name == "ocr-api.com"
         assert event.pricing_source == "rate_registry"
+        assert event.details["attribution_usage_quantity"] == 3
+        assert event.details["attribution_usage_per"] == "page"
 
         tasks = storage.query_tasks(task_type="usage_multi")
         t = tasks[0]
@@ -367,7 +371,11 @@ class TestRecordUsageWithRates:
         with tracker.task(task_type="usage_details") as task:
             event = task.record_usage(service="svc", units=2, details={"region": "us-east-1"})
 
-        assert event.details == {"region": "us-east-1"}
+        assert event.details == {
+            "region": "us-east-1",
+            "attribution_usage_quantity": 2,
+            "attribution_usage_per": "call",
+        }
         assert event.cost_usd == Decimal("0.02")
 
     def test_record_usage_in_manual_task(
