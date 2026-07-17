@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.3...go/v0.3.0) (2026-07-17)
+
+
+### Features
+
+* **go:** add attribution v2 ingestion ([#74](https://github.com/DexwoxBusiness/dexcost-sdk/issues/74)) ([655931d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/655931d446ad1986f5e9b1aaeb93a32faf6524a4))
+
 ## [0.2.3](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.2...go/v0.2.3) (2026-07-16)
 
 
