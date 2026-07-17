@@ -199,6 +199,10 @@ func (p *EventPusher) pushBatch() error {
 	if err != nil {
 		return err
 	}
+	// Redact before attribution conversion because the v2 converter promotes
+	// selected detail fields (for example request_id and gpu_sku) into typed
+	// provider/resource fields on the wire payload.
+	p.redactEventDetails(events)
 
 	eventDicts := make([]map[string]interface{}, 0, len(events))
 	skippedEventIDs := make([]string, 0)

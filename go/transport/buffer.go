@@ -229,7 +229,8 @@ func (b *SQLiteBuffer) UpdateTask(task core.Task) error {
 		llm_cost_usd = ?, external_cost_usd = ?, compute_cost_usd = ?,
 		total_cost_usd = ?,
 		total_input_tokens = ?, total_output_tokens = ?, total_cached_tokens = ?,
-		retry_count = ?, retry_cost_usd = ?, failure_count = ?
+		retry_count = ?, retry_cost_usd = ?, failure_count = ?,
+		sync_status = 'pending'
 	WHERE task_id = ?`,
 		string(task.Status),
 		endedAt,
