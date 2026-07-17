@@ -43,6 +43,55 @@ func TestPusherFlushesTaskWithoutEvents(t *testing.T) {
 	}
 }
 
+func TestPusherDoesNotResendSyncedTaskForLaterEvent(t *testing.T) {
+	var received []map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		received = append(received, payload)
+		_ = json.NewEncoder(w).Encode(map[string]int{"queued": 1, "rejected": 0})
+	}))
+	defer server.Close()
+
+	buffer, err := NewSQLiteBuffer(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Close()
+	task := core.NewTask("synced_dependency")
+	if err := buffer.InsertTask(task); err != nil {
+		t.Fatal(err)
+	}
+	pusher := NewEventPusher(PusherOptions{Buffer: buffer, Endpoint: server.URL, APIKey: "test", Interval: time.Hour})
+	defer pusher.Stop()
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	event := core.NewEvent(task.TaskID, core.EventTypeLLMCall)
+	event.Provider = "openai"
+	inputTokens := 1
+	event.InputTokens = &inputTokens
+	if err := buffer.InsertEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(received) != 2 {
+		t.Fatalf("expected task-only and event-only uploads, got %d", len(received))
+	}
+	if tasks := received[1]["tasks"].([]interface{}); len(tasks) != 0 {
+		t.Fatalf("synced task was resent with later event: %+v", received[1])
+	}
+	if events := received[1]["events"].([]interface{}); len(events) != 1 {
+		t.Fatalf("expected later event to be uploaded once: %+v", received[1])
+	}
+}
+
 func TestPusherSendsStrictAttributionV2AndIngestionOnlyTask(t *testing.T) {
 	var received map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

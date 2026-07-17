@@ -608,7 +608,9 @@ func (b *SQLiteBuffer) Close() error {
 	return b.db.Close()
 }
 
-// QueryTasksByIDs retrieves tasks matching the given task IDs.
+// QueryTasksByIDs retrieves pending tasks matching the given task IDs. Synced
+// tasks have already been accepted by ingestion and must not be resent merely
+// because a later event for the task is being retried.
 func (b *SQLiteBuffer) QueryTasksByIDs(taskIDs []string) ([]core.Task, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -626,7 +628,8 @@ func (b *SQLiteBuffer) QueryTasksByIDs(taskIDs []string) ([]core.Task, error) {
 		llm_cost_usd, external_cost_usd, compute_cost_usd, total_cost_usd,
 		total_input_tokens, total_output_tokens, total_cached_tokens,
 		retry_count, retry_cost_usd, failure_count, schema_version
-	FROM tasks WHERE task_id IN (%s)`, strings.Join(placeholders, ","))
+	FROM tasks
+	WHERE task_id IN (%s) AND sync_status = 'pending'`, strings.Join(placeholders, ","))
 	rows, err := b.db.Query(query, args...)
 	if err != nil {
 		return nil, err
