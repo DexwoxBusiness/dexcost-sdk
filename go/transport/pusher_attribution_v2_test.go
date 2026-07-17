@@ -222,9 +222,14 @@ func TestPusherRequeuesTaskAfterDurableStateChange(t *testing.T) {
 	if err := pusher.Flush(); err != nil {
 		t.Fatal(err)
 	}
+	// A successful task acknowledgement uses MarkTasksSynced, not UpdateTask.
+	// A later periodic/manual flush must therefore have nothing to resend.
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(received) != 2 {
-		t.Fatalf("expected running and completed task uploads, got %d", len(received))
+		t.Fatalf("expected only running and completed task uploads, got %d", len(received))
 	}
 	firstTask := received[0]["tasks"].([]interface{})[0].(map[string]interface{})
 	secondTask := received[1]["tasks"].([]interface{})[0].(map[string]interface{})
