@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.3.0...python/v0.4.0) (2026-07-17)
+
+
+### Features
+
+* **go:** add attribution v2 ingestion ([#74](https://github.com/DexwoxBusiness/dexcost-sdk/issues/74)) ([655931d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/655931d446ad1986f5e9b1aaeb93a32faf6524a4))
+
 ## [0.3.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.2.2...python/v0.3.0) (2026-07-17)
 
 
