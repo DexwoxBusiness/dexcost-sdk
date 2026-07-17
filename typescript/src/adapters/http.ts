@@ -1454,10 +1454,15 @@ async function _maybeRecordCost(
         taskId: task.taskId,
         eventType: "external_cost",
         costUsd: rate.costUsd,
-        costConfidence: "exact",
-        pricingSource: "rate_registry",
+        costConfidence: "computed",
+        pricingSource: "manual",
         serviceName: domain,
-        details: { url: urlStr, per: rate.per, ...byteDetailsRequestOnly },
+        details: {
+          url: urlStr,
+          attribution_usage_quantity: 1,
+          attribution_usage_per: rate.per,
+          ...byteDetailsRequestOnly,
+        },
       });
 
       _pushRecordedEvent(event);
@@ -1557,14 +1562,15 @@ async function _maybeRecordCost(
         }
 
         if (extractionResult) {
+          const isUserOverride = extractionResult.pricingSource === "user_override";
           const event = createCostEvent({
             eventId: randomUUID(),
             taskId: task.taskId,
             eventType: "external_cost",
             costUsd: extractionResult.costUsd,
             costConfidence: extractionResult.confidence as CostConfidence,
-            pricingSource: "service_catalog",
-            pricingVersion: _catalog.catalogVersion,
+            pricingSource: isUserOverride ? "manual" : "service_catalog",
+            pricingVersion: isUserOverride ? undefined : _catalog.catalogVersion,
             serviceName: extractionResult.serviceName,
             details: {
               url: urlStr,

@@ -243,10 +243,11 @@ class TestTrackHttp:
         assert event.event_type == "external_cost"
         assert event.service_name == "ocr.example.com"
         assert event.task_id == task.task_id
-        assert event.cost_confidence == "exact"
-        assert event.pricing_source == "rate_registry"
+        assert event.cost_confidence == "computed"
+        assert event.pricing_source == "manual"
         assert event.details["url"] == "https://ocr.example.com/process"
-        assert event.details["per"] == "page"
+        assert event.details["attribution_usage_quantity"] == 1
+        assert event.details["attribution_usage_per"] == "page"
 
 
 class TestStoragePersistence:
@@ -272,7 +273,7 @@ class TestStoragePersistence:
         assert len(events) == 1, "event was not persisted to storage"
         assert events[0].event_type == "external_cost"
         assert events[0].cost_usd == Decimal("0.01")
-        assert events[0].pricing_source == "rate_registry"
+        assert events[0].pricing_source == "manual"
         # Still available via the in-memory list for lightweight setups.
         assert len(get_recorded_events()) == 1
         storage.close()

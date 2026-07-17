@@ -634,6 +634,25 @@ func (b *SQLiteBuffer) QueryTasksByIDs(taskIDs []string) ([]core.Task, error) {
 	return scanTasks(rows)
 }
 
+// QueryPendingTasks retrieves task records that have not yet been accepted by
+// ingestion. Tasks are independently durable and must flush even when they do
+// not yet have a cost event.
+func (b *SQLiteBuffer) QueryPendingTasks(limit int) ([]core.Task, error) {
+	rows, err := b.db.Query(`SELECT
+		task_id, task_type, status, started_at, ended_at, metadata,
+		customer_id, project_id, parent_task_id,
+		experiment_id, variant,
+		llm_cost_usd, external_cost_usd, compute_cost_usd, total_cost_usd,
+		total_input_tokens, total_output_tokens, total_cached_tokens,
+		retry_count, retry_cost_usd, failure_count, schema_version
+	FROM tasks WHERE sync_status = 'pending' ORDER BY started_at LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 // MarkTasksSynced updates sync_status to 'synced' for the given task IDs.
 func (b *SQLiteBuffer) MarkTasksSynced(taskIDs []string) error {
 	if len(taskIDs) == 0 {

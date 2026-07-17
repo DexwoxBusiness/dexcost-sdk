@@ -191,7 +191,7 @@ def _evidence_for(event: Event) -> AttributionCostEvidenceV2 | None:
             "source": "provider_reported",
             "confidence": "exact" if event.cost_confidence == "exact" else "estimated",
         }
-    if source in {"manual", "custom", "rate_per_minute"}:
+    if source in {"manual", "custom", "rate_per_minute", "user_override"}:
         return {
             "amount": amount,
             "currency": "USD",

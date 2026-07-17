@@ -88,11 +88,12 @@ describe("trackHttp / fetch interception", () => {
     expect(event.eventType).toBe("external_cost");
     expect(event.serviceName).toBe("api.example.com");
     expect(event.costUsd.toNumber()).toBe(0.005);
-    expect(event.costConfidence).toBe("exact");
-    expect(event.pricingSource).toBe("rate_registry");
+    expect(event.costConfidence).toBe("computed");
+    expect(event.pricingSource).toBe("manual");
     expect(event.taskId).toBe(task.taskId);
     expect(event.details["url"]).toBe("https://api.example.com/v1/data");
-    expect(event.details["per"]).toBe("request");
+    expect(event.details["attribution_usage_quantity"]).toBe(1);
+    expect(event.details["attribution_usage_per"]).toBe("request");
     expect(event.eventId).toBeTruthy();
   });
 

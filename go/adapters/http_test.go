@@ -95,14 +95,14 @@ func TestTrackHTTP_RecordsEventWithActiveTask(t *testing.T) {
 	if !ev.CostUSD.Equal(decimal.NewFromFloat(0.002)) {
 		t.Errorf("expected cost 0.002, got %s", ev.CostUSD)
 	}
-	if ev.CostConfidence != core.CostConfidenceExact {
-		t.Errorf("expected cost_confidence exact, got %s", ev.CostConfidence)
+	if ev.CostConfidence != core.CostConfidenceComputed {
+		t.Errorf("expected cost_confidence computed, got %s", ev.CostConfidence)
 	}
-	if ev.PricingSource != core.PricingSourceRateRegistry {
-		t.Errorf("expected pricing_source rate_registry, got %s", ev.PricingSource)
+	if ev.PricingSource != core.PricingSourceManual {
+		t.Errorf("expected pricing_source manual, got %s", ev.PricingSource)
 	}
-	if ev.Details["per"] != "request" {
-		t.Errorf("expected details.per=request, got %v", ev.Details["per"])
+	if ev.Details["attribution_usage_per"] != "request" {
+		t.Errorf("expected canonical attribution usage per=request, got %v", ev.Details["attribution_usage_per"])
 	}
 }
 

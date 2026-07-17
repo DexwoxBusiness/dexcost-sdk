@@ -331,7 +331,7 @@ func (sc *ServiceCatalog) ExtractCost(
 	if override != nil {
 		return &CostExtractionResult{
 			Amount:        override.CostPerUnit,
-			Confidence:    "exact",
+			Confidence:    "computed",
 			ServiceName:   entry.DisplayName,
 			PricingSource: "user_override",
 		}

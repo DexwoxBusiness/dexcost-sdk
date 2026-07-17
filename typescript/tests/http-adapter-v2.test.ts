@@ -18,8 +18,10 @@ import {
   untrackHttp,
   getRecordedEvents,
   clearRecordedEvents,
+  getServiceCatalog,
   resetServiceCatalog,
 } from "../src/adapters/http.js";
+import { toAttributionEventV2 } from "../src/attribution/convert.js";
 
 let tmpDir: string;
 let buffer: EventBuffer;
@@ -46,6 +48,18 @@ afterEach(() => {
 });
 
 describe("HTTP adapter v2 — catalog cost extraction", () => {
+  it("attributes a user catalog override as manual evidence", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }))));
+    trackHttp(buffer);
+    getServiceCatalog()?.registerOverride("tavily_search", 0.05, "request");
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+    await runWithTask(task, async () => { await fetch("https://api.tavily.com/search"); });
+    const event = getRecordedEvents()[0];
+    expect(event.pricingSource).toBe("manual");
+    expect(event.pricingVersion).toBeUndefined();
+    expect(toAttributionEventV2(event)?.cost_evidence).toMatchObject({ source: "manual", amount: "0.05" });
+  });
+
   it("extracts cost from response body for known service", async () => {
     // Mock fetch returning Tavily-like response with credits used
     const responseBody = { results: [], usage: { credits: 2 } };
@@ -206,7 +220,7 @@ describe("HTTP adapter v2 — override precedence", () => {
     expect(events).toHaveLength(1);
     // Should use the registered rate, NOT catalog extraction
     expect(events[0].costUsd.toNumber()).toBe(0.05);
-    expect(events[0].pricingSource).toBe("rate_registry");
+    expect(events[0].pricingSource).toBe("manual");
     expect(events[0].serviceName).toBe("api.tavily.com");
   });
 });

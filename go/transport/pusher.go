@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/security"
 )
@@ -22,8 +23,7 @@ const (
 	defaultFlushInterval = 5 * time.Second
 	initialBackoff       = 1 * time.Second
 	maxBackoff           = 300 * time.Second
-	maxPayloadBytes      = 200_000 // 200KB — well under SQS 256KB limit
-	maxSplitDepth        = 5
+	maxPayloadBytes      = 120_000
 	purgeRetention       = 7 * 24 * time.Hour
 )
 
@@ -31,6 +31,7 @@ const (
 type taskSyncBuffer interface {
 	core.Buffer
 	QueryTasksByIDs(taskIDs []string) ([]core.Task, error)
+	QueryPendingTasks(limit int) ([]core.Task, error)
 	MarkTasksSynced(taskIDs []string) error
 	PurgeSyncedEvents(before time.Time) (int64, error)
 	PurgeOldPendingEvents(before time.Time) (int64, error)
@@ -198,62 +199,72 @@ func (p *EventPusher) pushBatch() error {
 	if err != nil {
 		return err
 	}
-	if len(events) == 0 {
+
+	eventDicts := make([]map[string]interface{}, 0, len(events))
+	skippedEventIDs := make([]string, 0)
+	taskIDSet := make(map[string]struct{})
+	for _, e := range events {
+		taskIDSet[e.TaskID.String()] = struct{}{}
+		converted := attribution.ToEventV2(e)
+		if converted == nil {
+			skippedEventIDs = append(skippedEventIDs, e.EventID.String())
+			continue
+		}
+		wire, err := toMap(converted)
+		if err != nil {
+			return fmt.Errorf("serialize attribution event %s: %w", e.EventID, err)
+		}
+		eventDicts = append(eventDicts, wire)
+	}
+	if err := p.buffer.MarkSynced(skippedEventIDs); err != nil {
+		return err
+	}
+
+	taskDicts := make([]map[string]interface{}, 0)
+	if tsb, ok := p.buffer.(taskSyncBuffer); ok {
+		dependencyIDs := make([]string, 0, len(taskIDSet))
+		for tid := range taskIDSet {
+			dependencyIDs = append(dependencyIDs, tid)
+		}
+		pendingTasks, err := tsb.QueryPendingTasks(p.batchSize)
+		if err != nil {
+			return err
+		}
+		dependencyTasks, err := tsb.QueryTasksByIDs(dependencyIDs)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]core.Task, len(pendingTasks)+len(dependencyTasks))
+		for _, task := range pendingTasks {
+			byID[task.TaskID.String()] = task
+		}
+		for _, task := range dependencyTasks {
+			byID[task.TaskID.String()] = task
+		}
+		tasks := make([]core.Task, 0, len(byID))
+		for _, task := range byID {
+			tasks = append(tasks, task)
+		}
+		p.redactTaskMetadata(tasks)
+		for _, task := range tasks {
+			wire, err := toMap(attribution.ToTaskIngestV1(task))
+			if err != nil {
+				return fmt.Errorf("serialize task %s: %w", task.TaskID, err)
+			}
+			taskDicts = append(taskDicts, wire)
+		}
+	}
+	if len(eventDicts) == 0 && len(taskDicts) == 0 {
 		return nil
 	}
 
-	// Apply PII redaction before serialization.
-	p.redactEventDetails(events)
-
-	// Serialize events to JSON dicts and collect IDs for sync marking.
-	eventDicts := make([]map[string]interface{}, len(events))
-	eventIDs := make([]string, len(events))
-	taskIDSet := make(map[string]struct{})
-	for i, e := range events {
-		eventDicts[i] = e.ToDict()
-		eventIDs[i] = e.EventID.String()
-		taskIDSet[e.TaskID.String()] = struct{}{}
-	}
-
-	// Gather tasks for sync if the buffer supports it.
-	var taskDicts []map[string]interface{}
-	var taskIDs []string
-	if tsb, ok := p.buffer.(taskSyncBuffer); ok {
-		for tid := range taskIDSet {
-			taskIDs = append(taskIDs, tid)
-		}
-		tasks, err := tsb.QueryTasksByIDs(taskIDs)
-		if err == nil {
-			p.redactTaskMetadata(tasks)
-			taskDicts = make([]map[string]interface{}, len(tasks))
-			for i := range tasks {
-				taskDicts[i] = tasks[i].ToDict()
-			}
-		}
-	}
-
-	// Push with adaptive splitting for oversized payloads. Sprint 2
-	// Theme D / §3.2.1 (B12): pushWithSplit now marks events / tasks
-	// synced INSIDE each leaf POST that succeeds, so a partial failure
-	// (first half OK, second half 5xx) doesn't cause the first half to
-	// be re-sent next tick → no duplicates at the control plane.
 	if err := p.pushWithSplit(eventDicts, taskDicts, 0); err != nil {
 		return err
 	}
 
-	// Outer MarkSynced retained as a no-op safety net: if pushWithSplit
-	// reached the leaf and marked everything synced, this is a no-op;
-	// if a future code path returns nil without splitting, this still
-	// ensures the marker call fires. Idempotent.
-	if err := p.buffer.MarkSynced(eventIDs); err != nil {
-		return err
-	}
-
-	// Mark tasks synced and purge old events if supported.
+	// Successful leaves already marked exactly the records accepted by the
+	// control plane. Purging remains best-effort maintenance.
 	if tsb, ok := p.buffer.(taskSyncBuffer); ok {
-		if err := tsb.MarkTasksSynced(taskIDs); err != nil {
-			log.Printf("[dexcost] failed to mark tasks synced: %v", err)
-		}
 		if n, err := tsb.PurgeSyncedEvents(time.Now().UTC().Add(-purgeRetention)); err != nil {
 			log.Printf("[dexcost] failed to purge old events: %v", err)
 		} else if n > 0 {
@@ -315,9 +326,18 @@ func (p *EventPusher) redactTaskMetadata(tasks []core.Task) {
 	}
 }
 
-// pushWithSplit recursively splits oversized payloads until they fit within
-// maxPayloadBytes. Tasks are only sent with the first half to avoid duplication.
+// pushWithSplit recursively splits oversized payloads until every POST fits
+// under the control-plane queue contract. Task records are sent before events.
 func (p *EventPusher) pushWithSplit(events []map[string]interface{}, tasks []map[string]interface{}, depth int) error {
+	if len(events) == 0 && len(tasks) == 0 {
+		return nil
+	}
+	if events == nil {
+		events = []map[string]interface{}{}
+	}
+	if tasks == nil {
+		tasks = []map[string]interface{}{}
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"events": events,
 		"tasks":  tasks,
@@ -326,12 +346,10 @@ func (p *EventPusher) pushWithSplit(events []map[string]interface{}, tasks []map
 		return fmt.Errorf("marshal events: %w", err)
 	}
 
-	if len(payload) <= maxPayloadBytes || depth >= maxSplitDepth {
+	if len(payload) <= maxPayloadBytes {
 		if err := p.postRaw(payload); err != nil {
 			return err
 		}
-		// Sprint 2 Theme D / §3.2.1 (B12) — mark synced at the leaf so
-		// a sibling-half failure does not unwind work that succeeded.
 		ids := make([]string, 0, len(events))
 		for _, e := range events {
 			if id, ok := e["event_id"].(string); ok {
@@ -355,18 +373,46 @@ func (p *EventPusher) pushWithSplit(events []map[string]interface{}, tasks []map
 		return nil
 	}
 
-	if len(events) <= 1 {
-		log.Printf("[dexcost] Single event exceeds payload limit (%d bytes), skipping", len(payload))
-		return nil
+	// Splitting tasks separately prevents duplication and guarantees that a
+	// dependent task is accepted before its event.
+	if len(tasks) > 0 && len(events) > 0 {
+		if err := p.pushWithSplit(nil, tasks, depth+1); err != nil {
+			return err
+		}
+		return p.pushWithSplit(events, nil, depth+1)
+	}
+	if len(events) > 1 {
+		mid := len(events) / 2
+		log.Printf("[dexcost] batch too large (%d bytes, %d events), splitting", len(payload), len(events))
+		if err := p.pushWithSplit(events[:mid], nil, depth+1); err != nil {
+			return err
+		}
+		return p.pushWithSplit(events[mid:], nil, depth+1)
+	}
+	if len(tasks) > 1 {
+		mid := len(tasks) / 2
+		if err := p.pushWithSplit(nil, tasks[:mid], depth+1); err != nil {
+			return err
+		}
+		return p.pushWithSplit(nil, tasks[mid:], depth+1)
 	}
 
-	mid := len(events) / 2
-	log.Printf("[dexcost] Batch too large (%d bytes, %d events), splitting", len(payload), len(events))
-
-	if err := p.pushWithSplit(events[:mid], tasks, depth+1); err != nil {
-		return err
+	// A singleton that is too large can never succeed. Acknowledge it locally
+	// so it cannot poison every later flush.
+	log.Printf("[dexcost] single attribution record exceeds payload limit (%d bytes), dropping", len(payload))
+	if len(events) == 1 {
+		if id, ok := events[0]["event_id"].(string); ok {
+			return p.buffer.MarkSynced([]string{id})
+		}
 	}
-	return p.pushWithSplit(events[mid:], nil, depth+1)
+	if len(tasks) == 1 {
+		if tsb, ok := p.buffer.(taskSyncBuffer); ok {
+			if id, ok := tasks[0]["task_id"].(string); ok {
+				return tsb.MarkTasksSynced([]string{id})
+			}
+		}
+	}
+	return nil
 }
 
 // postRaw sends a pre-serialized JSON payload to the ingestion endpoint.
@@ -413,6 +459,10 @@ func (p *EventPusher) postRaw(body []byte) error {
 			log.Printf("[dexcost] ingest response unreadable: %v", err)
 		}
 		log.Printf("[dexcost] ingest accepted=%d rejected=%d status=%d", summary.Queued, summary.Rejected, resp.StatusCode)
+		if summary.Rejected > 0 {
+			p.increaseBackoff()
+			return fmt.Errorf("ingest rejected %d record(s)", summary.Rejected)
+		}
 		p.resetBackoff()
 		return nil
 	}
@@ -442,6 +492,18 @@ func (p *EventPusher) postRaw(body []byte) error {
 	// Server error: increase backoff.
 	p.increaseBackoff()
 	return fmt.Errorf("push failed with status %d", resp.StatusCode)
+}
+
+func toMap(value interface{}) (map[string]interface{}, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]interface{})
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (p *EventPusher) increaseBackoff() {

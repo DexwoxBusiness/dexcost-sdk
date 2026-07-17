@@ -317,10 +317,11 @@ func (t *trackingTransport) recordDomainRate(
 	event := core.NewEvent(taskID, core.EventTypeExternalCost)
 	event.ServiceName = domain
 	event.CostUSD = rate.CostUSD
-	event.CostConfidence = core.CostConfidenceExact
-	event.PricingSource = core.PricingSourceRateRegistry
+	event.CostConfidence = core.CostConfidenceComputed
+	event.PricingSource = core.PricingSourceManual
 	event.Details["url"] = security.ScrubURL(req.URL.String())
-	event.Details["per"] = rate.Per
+	event.Details["attribution_usage_quantity"] = 1
+	event.Details["attribution_usage_per"] = rate.Per
 	for k, v := range byteDetails {
 		event.Details[k] = v
 	}

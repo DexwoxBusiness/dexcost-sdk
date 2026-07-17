@@ -2,6 +2,7 @@ package transport
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -70,17 +71,11 @@ func setupSplitPusher(t *testing.T, handler http.HandlerFunc) (*SQLiteBuffer, *E
 // ---------------------------------------------------------------------------
 
 func TestMaxPayloadBytesConstant(t *testing.T) {
-	if maxPayloadBytes != 200_000 {
-		t.Errorf("expected maxPayloadBytes=200000, got %d", maxPayloadBytes)
+	if maxPayloadBytes != 120_000 {
+		t.Errorf("expected maxPayloadBytes=120000, got %d", maxPayloadBytes)
 	}
-	if maxPayloadBytes >= 256_000 {
-		t.Error("maxPayloadBytes must be under SQS 256KB limit")
-	}
-}
-
-func TestMaxSplitDepthConstant(t *testing.T) {
-	if maxSplitDepth != 5 {
-		t.Errorf("expected maxSplitDepth=5, got %d", maxSplitDepth)
+	if maxPayloadBytes >= 128_000 {
+		t.Error("maxPayloadBytes must leave headroom under the 128KB queue limit")
 	}
 }
 
@@ -141,7 +136,7 @@ func TestPushWithSplit_SmallBatch_SingleRequest(t *testing.T) {
 //
 // EnforceMetadataLimit caps details at 10KB per event, so we use 8KB padding
 // (under the limit) and 25 events to reach ~207KB total > 200KB threshold.
-func TestPushWithSplit_LargeBatch_MultipleRequests(t *testing.T) {
+func TestPushBatch_DropsV1DetailsBeforeSizing(t *testing.T) {
 	var mu sync.Mutex
 	requestCount := 0
 	var totalEvents int
@@ -179,8 +174,8 @@ func TestPushWithSplit_LargeBatch_MultipleRequests(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if requestCount < 2 {
-		t.Errorf("expected >=2 HTTP requests (split), got %d", requestCount)
+	if requestCount != 1 {
+		t.Errorf("expected v1 details to be excluded from one strict payload, got %d requests", requestCount)
 	}
 	if totalEvents != 25 {
 		t.Errorf("expected 25 events total across splits, got %d", totalEvents)
@@ -470,5 +465,36 @@ func TestPushWithSplit_TasksOnlyInFirstHalf(t *testing.T) {
 		if requests[i].tasks != 0 {
 			t.Errorf("request %d should have 0 tasks, got %d", i, requests[i].tasks)
 		}
+	}
+}
+
+func TestPushWithSplit_SplitsTaskOnlyPayloadAsArrays(t *testing.T) {
+	var requestCount, totalTasks int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]interface{}
+		_ = json.Unmarshal(body, &payload)
+		requestCount++
+		events, eventsOK := payload["events"].([]interface{})
+		tasks, tasksOK := payload["tasks"].([]interface{})
+		if !eventsOK || !tasksOK || len(events) != 0 {
+			t.Errorf("split leaf must carry array-valued events/tasks: %+v", payload)
+		}
+		totalTasks += len(tasks)
+		w.WriteHeader(http.StatusOK)
+	}
+	_, p, _ := setupSplitPusher(t, handler)
+	tasks := make([]map[string]interface{}, 10)
+	for i := range tasks {
+		tasks[i] = map[string]interface{}{
+			"task_id":  fmt.Sprintf("%08d-1111-1111-1111-111111111111", i),
+			"metadata": map[string]interface{}{"padding": strings.Repeat("x", 30_000)},
+		}
+	}
+	if err := p.pushWithSplit(nil, tasks, 0); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount < 2 || totalTasks != len(tasks) {
+		t.Fatalf("task splitting lost records: requests=%d tasks=%d", requestCount, totalTasks)
 	}
 }

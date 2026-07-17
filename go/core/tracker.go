@@ -424,7 +424,7 @@ func (tt *TrackedTask) RecordUsage(service string, units int) error {
 		event.CostUSD = decimal.Zero
 		event.CostConfidence = CostConfidenceUnknown
 		event.PricingSource = PricingSourceUnknown
-		event.Details["units"] = units
+		event.Details["attribution_usage_quantity"] = units
 		return tt.tracker.buffer.InsertEvent(event)
 	}
 
@@ -435,8 +435,8 @@ func (tt *TrackedTask) RecordUsage(service string, units int) error {
 	event.CostConfidence = CostConfidenceComputed
 	event.PricingSource = PricingSourceRateRegistry
 	event.PricingVersion = tt.tracker.rates.PricingVersion()
-	event.Details["units"] = units
-	event.Details["per"] = rate.Per
+	event.Details["attribution_usage_quantity"] = units
+	event.Details["attribution_usage_per"] = rate.Per
 	return tt.tracker.buffer.InsertEvent(event)
 }
 

@@ -338,6 +338,13 @@ func TestTracker_RecordUsage_WithRate(t *testing.T) {
 	if !tt.Task.ExternalCostUSD.Equal(expected) {
 		t.Errorf("expected external_cost=%s, got %s", expected, tt.Task.ExternalCostUSD)
 	}
+	events, err := tr.buffer.QueryEvents(tt.Task.TaskID.String())
+	if err != nil || len(events) != 1 {
+		t.Fatalf("query usage event: %v (%d events)", err, len(events))
+	}
+	if events[0].Details["attribution_usage_quantity"] != 10 || events[0].Details["attribution_usage_per"] != "request" {
+		t.Fatalf("canonical usage metadata missing: %+v", events[0].Details)
+	}
 }
 
 func TestTracker_RecordUsage_UnknownService(t *testing.T) {

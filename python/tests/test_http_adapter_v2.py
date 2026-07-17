@@ -260,7 +260,7 @@ class TestDomainRateOverride:
         assert len(events) == 1
         # Should use the override rate, not the catalog
         assert events[0].cost_usd == Decimal("0.50")
-        assert events[0].pricing_source == "rate_registry"
+        assert events[0].pricing_source == "manual"
 
 
 # ---------------------------------------------------------------------------
