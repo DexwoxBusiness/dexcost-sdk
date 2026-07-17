@@ -214,6 +214,55 @@ def test_keeps_network_directions_separate() -> None:
     ]
 
 
+def test_preserves_rate_registry_quantity_and_unit_semantics() -> None:
+    converted = to_attribution_event_v2(
+        _event(
+            event_type="external_cost",
+            service_name="ocr-api.com",
+            cost_usd=Decimal("0.03"),
+            cost_confidence="computed",
+            pricing_source="rate_registry",
+            pricing_version="rates:example",
+            details={
+                "attribution_usage_quantity": 3,
+                "attribution_usage_per": "page",
+            },
+        )
+    )
+    assert converted is not None
+    assert converted["usage"] == [{"metric": "page_count", "quantity": "3", "unit": "Pages"}]
+    assert converted["cost_evidence"] == {
+        "amount": "0.03",
+        "currency": "USD",
+        "source": "sdk_rate_registry",
+        "confidence": "computed",
+        "pricing_version": "rates:example",
+    }
+
+
+def test_preserves_browser_rate_per_minute_cost_evidence() -> None:
+    converted = to_attribution_event_v2(
+        _event(
+            event_type="compute_cost",
+            service_name="playwright_browser",
+            cost_usd=Decimal("0.02"),
+            cost_confidence="computed",
+            pricing_source="rate_per_minute",
+            details={"wall_clock_seconds": 120, "rate_per_minute": "0.01"},
+        )
+    )
+    assert converted is not None
+    assert converted["usage"] == [
+        {"metric": "compute_seconds", "quantity": "120", "unit": "Seconds"}
+    ]
+    assert converted["cost_evidence"] == {
+        "amount": "0.02",
+        "currency": "USD",
+        "source": "manual",
+        "confidence": "computed",
+    }
+
+
 @pytest.mark.parametrize("event_type", ["retry_marker", "gpu_utilization_signal"])
 def test_drops_overlapping_or_observability_only_events(event_type: str) -> None:
     assert to_attribution_event_v2(_event(event_type=event_type)) is None
