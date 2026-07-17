@@ -319,7 +319,10 @@ async fn test_record_usage() {
     assert_eq!(event.cost_usd, "0.05".parse::<Decimal>().unwrap());
     assert_eq!(event.cost_confidence, CostConfidence::Computed);
     assert_eq!(event.pricing_source, Some(PricingSource::RateRegistry));
+    assert!(event.pricing_version.is_some());
     assert_eq!(event.details["units"], serde_json::json!(10));
+    assert_eq!(event.details["attribution_usage_quantity"], serde_json::json!(10));
+    assert_eq!(event.details["attribution_usage_per"], serde_json::json!("per_sms"));
     assert!(event.details.contains_key("pricing_version"));
 
     // Should aggregate into external_cost_usd

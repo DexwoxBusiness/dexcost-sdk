@@ -44,6 +44,9 @@ pub struct CostExtractionResult {
     pub confidence: String,
     pub service_name: String,
     pub pricing_source: String,
+    /// Canonical attribution-v2 usage extracted from the provider response.
+    pub usage_quantity: Decimal,
+    pub usage_metric: String,
 }
 
 /// A user override for a service entry.
@@ -372,6 +375,8 @@ impl ServiceCatalog {
                 confidence: "exact".to_string(),
                 service_name: entry.display_name.clone(),
                 pricing_source: "user_override".to_string(),
+                usage_quantity: Decimal::ONE,
+                usage_metric: metric_for_per(&ov.per).to_string(),
             });
         }
 
@@ -430,6 +435,8 @@ impl ServiceCatalog {
                             confidence,
                             service_name: entry.display_name.clone(),
                             pricing_source: "service_catalog".to_string(),
+                            usage_quantity: usage_for(entry, raw_value, transform).1,
+                            usage_metric: usage_for(entry, raw_value, transform).0.to_string(),
                         })
                     }
                     None => {
@@ -461,6 +468,8 @@ impl ServiceCatalog {
             confidence: "estimated".to_string(),
             service_name: entry.display_name.clone(),
             pricing_source: "service_catalog".to_string(),
+            usage_quantity: fallback_val,
+            usage_metric: "credit_count".to_string(),
         })
     }
 
@@ -492,6 +501,8 @@ impl ServiceCatalog {
             confidence: "computed".to_string(),
             service_name: entry.display_name.clone(),
             pricing_source: "service_catalog".to_string(),
+            usage_quantity: usage_for(entry, raw_value, None).1,
+            usage_metric: usage_for(entry, raw_value, None).0.to_string(),
         })
     }
 
@@ -503,6 +514,8 @@ impl ServiceCatalog {
             confidence: "exact".to_string(),
             service_name: entry.display_name.clone(),
             pricing_source: "service_catalog".to_string(),
+            usage_quantity: usage_for(entry, Decimal::ONE, None).1,
+            usage_metric: usage_for(entry, Decimal::ONE, None).0.to_string(),
         })
     }
 
@@ -514,6 +527,8 @@ impl ServiceCatalog {
             confidence: "exact".to_string(),
             service_name: entry.display_name.clone(),
             pricing_source: "service_catalog".to_string(),
+            usage_quantity: usage_for(entry, Decimal::ONE, None).1,
+            usage_metric: usage_for(entry, Decimal::ONE, None).0.to_string(),
         })
     }
 
@@ -742,6 +757,57 @@ fn decimal_from_json_value(v: &serde_json::Value) -> Option<Decimal> {
     }
 }
 
+fn has_rate_field(entry: &ServiceEntry, field: &str) -> bool {
+    entry
+        .rate_fields
+        .as_ref()
+        .is_some_and(|fields| fields.contains_key(field))
+}
+
+fn metric_for_per(per: &str) -> &'static str {
+    let per = per.to_ascii_lowercase();
+    if per.contains("page") {
+        "page_count"
+    } else if per.contains("credit") || per.contains("unit") {
+        "credit_count"
+    } else if per.contains("character") {
+        "characters"
+    } else if per.contains("second") || per.contains("minute") {
+        "compute_seconds"
+    } else {
+        "request_count"
+    }
+}
+
+fn usage_for(
+    entry: &ServiceEntry,
+    units: Decimal,
+    transform: Option<&str>,
+) -> (&'static str, Decimal) {
+    if matches!(transform, Some("ms_to_seconds" | "ms_to_minutes")) {
+        return ("compute_seconds", units / Decimal::from(1000_i64));
+    }
+    if has_rate_field(entry, "cost_per_page_usd") {
+        return ("page_count", units);
+    }
+    if has_rate_field(entry, "cost_per_credit_usd")
+        || has_rate_field(entry, "cost_per_read_unit_usd")
+        || has_rate_field(entry, "cost_per_compute_unit_usd")
+    {
+        return ("credit_count", units);
+    }
+    if has_rate_field(entry, "cost_per_1k_characters_usd") {
+        return ("characters", units);
+    }
+    if has_rate_field(entry, "cost_per_second_usd") {
+        return ("compute_seconds", units);
+    }
+    if has_rate_field(entry, "cost_per_minute_usd") {
+        return ("compute_seconds", units * Decimal::from(60_i64));
+    }
+    ("request_count", units)
+}
+
 /// Get the per-unit rate from the entry's rate fields.
 fn get_rate(entry: &ServiceEntry) -> Option<Decimal> {
     let rate_fields = entry.rate_fields.as_ref()?;
@@ -858,6 +924,8 @@ mod tests {
         let r = result.unwrap();
         assert_eq!(r.confidence, "exact");
         assert_eq!(r.pricing_source, "service_catalog");
+        assert_eq!(r.usage_metric, "request_count");
+        assert_eq!(r.usage_quantity, Decimal::ONE);
     }
 
     #[test]

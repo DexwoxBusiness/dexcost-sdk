@@ -95,6 +95,7 @@ fn task_status_to_str(s: &TaskStatus) -> &'static str {
 
 fn task_status_from_str(s: &str) -> TaskStatus {
     match s {
+        "running" => TaskStatus::Running,
         "success" => TaskStatus::Success,
         "failed" => TaskStatus::Failed,
         _ => TaskStatus::Pending,
@@ -657,7 +658,8 @@ impl EventBuffer {
             .unwrap_or(0) as usize
     }
 
-    /// Returns tasks matching the given IDs.
+    /// Returns pending tasks matching the given IDs. Tasks already accepted by
+    /// ingestion must not be resent merely because a later event is retried.
     pub fn get_tasks_by_ids(&self, task_ids: &[String]) -> Vec<Task> {
         if task_ids.is_empty() {
             return vec![];
@@ -673,7 +675,9 @@ impl EventBuffer {
                     total_input_tokens, total_output_tokens, total_cached_tokens,
                     retry_count, retry_cost_usd, failure_count,
                     customer_id, project_id, parent_task_id, experiment_id, variant
-             FROM tasks WHERE task_id IN ({}) ORDER BY started_at ASC",
+             FROM tasks
+             WHERE task_id IN ({}) AND sync_status = 'pending'
+             ORDER BY started_at ASC",
             placeholders.join(", ")
         );
         let mut stmt = match self.conn.prepare(&sql) {

@@ -55,6 +55,15 @@ async fn flush_includes_non_empty_tasks_array_when_task_pending() {
         .and_then(|v| v.as_array())
         .expect("tasks array");
     assert_eq!(tasks.len(), 1, "tasks array should not be empty");
+    let events = body
+        .get("events")
+        .and_then(|v| v.as_array())
+        .expect("events array");
+    assert_eq!(events[0]["schema_version"], "2");
+    assert!(events[0].get("details").is_none());
+    assert!(events[0].get("cost_usd").is_none());
+    assert!(tasks[0].get("total_cost_usd").is_none());
+    assert!(tasks[0].get("total_input_tokens").is_none());
 
     // Task is now marked synced — pending_task_count drops to zero.
     let buf = buffer.lock().await;
@@ -177,6 +186,8 @@ async fn second_flush_after_task_update_resends_task() {
 
     // Second flush — task is re-sent.
     pusher.flush().await.expect("second flush");
+    // A successful sync must stay synced until another task mutation.
+    pusher.flush().await.expect("third no-op flush");
 
     let received = server.received_requests().await.expect("requests recorded");
     assert_eq!(received.len(), 2, "task lifecycle update triggered a flush");
@@ -191,6 +202,135 @@ async fn second_flush_after_task_update_resends_task() {
         tasks[0].get("task_id").and_then(|v| v.as_str()),
         Some(task_id.as_str())
     );
+}
+
+#[tokio::test]
+async fn event_redaction_happens_before_v2_field_promotion() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ingest"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&server)
+        .await;
+
+    let mut event = CostEvent::new(&uuid::Uuid::new_v4().to_string(), EventType::GpuCost);
+    event
+        .details
+        .insert("gpu_seconds_used".into(), serde_json::json!(1));
+    event.details.insert(
+        "request_id".into(),
+        serde_json::json!("provider-secret-record"),
+    );
+    event
+        .details
+        .insert("gpu_sku".into(), serde_json::json!("secret-gpu-sku"));
+
+    let mut buf = EventBuffer::new().unwrap();
+    buf.add_event(event);
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    let config = Config {
+        api_key: Some("dx_test_abc".into()),
+        endpoint: Some(server.uri()),
+        redact_fields: vec!["request_id".into(), "gpu_sku".into()],
+        ..Config::default()
+    };
+    EventPusher::new(buffer, config)
+        .flush()
+        .await
+        .expect("flush");
+
+    let requests = server.received_requests().await.expect("requests");
+    let body_text = String::from_utf8_lossy(&requests[0].body);
+    assert!(!body_text.contains("provider-secret-record"));
+    assert!(!body_text.contains("secret-gpu-sku"));
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json");
+    let sent = &body["events"][0];
+    assert!(sent["provider"].get("record_id").is_none());
+    assert!(sent.get("resource").is_none());
+}
+
+#[tokio::test]
+async fn partial_ingestion_rejection_keeps_records_pending() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ingest"))
+        .respond_with(
+            ResponseTemplate::new(202)
+                .set_body_string(r#"{"accepted":1,"rejected":1,"errors":[]}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let mut buf = EventBuffer::new().unwrap();
+    let task = Task::new("partial-rejection");
+    buf.add_event(CostEvent::new(&task.task_id, EventType::LlmCall));
+    buf.upsert_task(task);
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
+
+    assert!(pusher.flush().await.is_err());
+    let buf = buffer.lock().await;
+    assert_eq!(buf.pending_count(), 1);
+    assert_eq!(buf.pending_task_count(), 1);
+}
+
+#[tokio::test]
+async fn invalid_v2_event_stays_pending_while_valid_sibling_is_delivered() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ingest"))
+        .respond_with(ResponseTemplate::new(202).set_body_string(r#"{"accepted":1,"rejected":0}"#))
+        .mount(&server)
+        .await;
+
+    let mut buf = EventBuffer::new().unwrap();
+    let invalid = CostEvent::new("task-123", EventType::LlmCall);
+    let invalid_id = invalid.event_id.clone();
+    buf.add_event(invalid);
+    buf.add_event(CostEvent::new(
+        "11111111-1111-4111-8111-111111111111",
+        EventType::LlmCall,
+    ));
+
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
+    let error = pusher
+        .flush()
+        .await
+        .expect_err("invalid event must surface");
+    assert!(error.to_string().contains("remain pending"));
+
+    let buf = buffer.lock().await;
+    assert_eq!(buf.pending_count(), 1);
+    assert_eq!(buf.get_pending_events(10)[0].event_id, invalid_id);
+    drop(buf);
+
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json");
+    assert_eq!(body["events"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn observability_only_gpu_signal_is_acknowledged_without_upload() {
+    let server = MockServer::start().await;
+    let mut buf = EventBuffer::new().unwrap();
+    buf.add_event(CostEvent::new(
+        "11111111-1111-4111-8111-111111111111",
+        EventType::GpuUtilizationSignal,
+    ));
+    let buffer = Arc::new(AsyncMutex::new(buf));
+    EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()))
+        .flush()
+        .await
+        .expect("signal-only flush");
+
+    assert_eq!(buffer.lock().await.pending_count(), 0);
+    assert!(server
+        .received_requests()
+        .await
+        .expect("requests")
+        .is_empty());
 }
 
 // Fix 4 — task metadata must be redacted, and customer_id / project_id must
@@ -276,8 +416,14 @@ async fn flush_redacts_and_hashes_task_metadata_before_post() {
     );
 
     // Redacted field must be dropped from metadata, top-level and nested.
-    let meta = sent.get("metadata").and_then(|v| v.as_object()).expect("metadata");
-    assert!(!meta.contains_key("email"), "top-level `email` must be redacted");
+    let meta = sent
+        .get("metadata")
+        .and_then(|v| v.as_object())
+        .expect("metadata");
+    assert!(
+        !meta.contains_key("email"),
+        "top-level `email` must be redacted"
+    );
     assert_eq!(
         meta.get("region").and_then(|v| v.as_str()),
         Some("eu-west-1"),
@@ -332,7 +478,10 @@ async fn flush_leaves_task_metadata_intact_when_unconfigured() {
         Some("acme-corp"),
         "customer_id must be untouched when hashing is disabled"
     );
-    let meta = sent.get("metadata").and_then(|v| v.as_object()).expect("metadata");
+    let meta = sent
+        .get("metadata")
+        .and_then(|v| v.as_object())
+        .expect("metadata");
     assert_eq!(
         meta.get("email").and_then(|v| v.as_str()),
         Some("alice@example.com"),

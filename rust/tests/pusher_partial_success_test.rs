@@ -51,22 +51,16 @@ async fn first_half_events_marked_synced_when_second_half_fails() {
 
     let mut buf = EventBuffer::new().expect("buffer");
     let task = Task::new("partial-fail");
-    buf.upsert_task(task.clone());
-    // Seed enough events to force a split. Each event carries ~9 KB
-    // of details padding so 200 events ≈ 1.8 MB, well over the
-    // 200 KB MAX_PAYLOAD_BYTES threshold.
-    let padding = "x".repeat(9000);
-    for _ in 0..200 {
-        let mut ev = CostEvent::new(&task.task_id, EventType::LlmCall);
-        ev.details.insert(
-            "padding".to_string(),
-            serde_json::Value::String(padding.clone()),
-        );
+    // Attribution v2 intentionally drops arbitrary details, so volume—not
+    // padding—must force the split. Keep this event-only to exercise sibling
+    // event leaves without the task-first dependency request.
+    for _ in 0..1000 {
+        let ev = CostEvent::new(&task.task_id, EventType::LlmCall);
         buf.add_event(ev);
     }
 
     let initial_pending = buf.pending_count();
-    assert_eq!(initial_pending, 200);
+    assert_eq!(initial_pending, 1000);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
     let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
@@ -79,7 +73,7 @@ async fn first_half_events_marked_synced_when_second_half_fails() {
     let buf = buffer.lock().await;
     let remaining = buf.pending_count();
     assert!(
-        remaining < 200,
+        remaining < 1000,
         "B12 regression: ALL {} events still pending after partial \
          failure; first-half POST succeeded but was not marked synced",
         remaining,
@@ -90,7 +84,7 @@ async fn first_half_events_marked_synced_when_second_half_fails() {
          events still pending"
     );
     eprintln!(
-        "partial-failure: {}/200 events pending after flush",
+        "partial-failure: {}/1000 events pending after flush",
         remaining
     );
 }

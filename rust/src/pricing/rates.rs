@@ -208,6 +208,19 @@ impl RateRegistry {
             return v.clone();
         }
 
+        let version = self.pricing_version_snapshot();
+        self.version = Some(version.clone());
+        version
+    }
+
+    /// Returns the deterministic pricing version without mutating the cache.
+    /// This is used by synchronous adapters that receive a shared registry
+    /// reference but still need to attach authoritative cost evidence.
+    pub fn pricing_version_snapshot(&self) -> String {
+        if let Some(ref version) = self.version {
+            return version.clone();
+        }
+
         // Sort keys for deterministic ordering
         let mut keys: Vec<&String> = self.rates.keys().collect();
         keys.sort();
@@ -224,10 +237,7 @@ impl RateRegistry {
         let mut hasher = Sha256::new();
         hasher.update(payload.as_bytes());
         let hash = hasher.finalize();
-        let version = hex::encode(&hash[..6]); // first 12 hex chars
-
-        self.version = Some(version.clone());
-        version
+        hex::encode(&hash[..6]) // first 12 hex chars
     }
 }
 
@@ -287,6 +297,15 @@ mod tests {
         r2.register("stripe", "per_transaction", d("0.029"));
 
         assert_eq!(r1.pricing_version(), r2.pricing_version());
+    }
+
+    #[test]
+    fn test_readonly_pricing_version_matches_cached_version() {
+        let mut registry = RateRegistry::new();
+        registry.register("twilio", "per_sms", d("0.0075"));
+        let snapshot = registry.pricing_version_snapshot();
+        assert_eq!(snapshot, registry.pricing_version());
+        assert_eq!(snapshot, registry.pricing_version_snapshot());
     }
 
     // 5. Version invalidates on new registration

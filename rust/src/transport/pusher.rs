@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 
+use crate::attribution::{to_attribution_event_v2, to_attribution_task_ingest_v1};
 use crate::config::Config;
 use crate::error::DexcostError;
 use crate::security::redaction::{enforce_metadata_limit, hash_value, redact_map};
 use crate::transport::buffer::EventBuffer;
 
-const MAX_PAYLOAD_BYTES: usize = 200_000; // 200KB — well under SQS 256KB limit
-const MAX_SPLIT_DEPTH: usize = 5;
+const MAX_PAYLOAD_BYTES: usize = 120_000;
 
 /// How often the sync loop runs buffer purges (mirrors Python `_PURGE_INTERVAL`).
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
@@ -149,7 +149,14 @@ impl EventPusher {
 
     /// Triggers an immediate flush.
     pub async fn flush(&self) -> Result<(), DexcostError> {
-        Self::push_batch(&self.buffer, &self.config, &self.client, &self.auth_failed, &self.api_key_override).await
+        Self::push_batch(
+            &self.buffer,
+            &self.config,
+            &self.client,
+            &self.auth_failed,
+            &self.api_key_override,
+        )
+        .await
     }
 
     /// Signals the background loop to stop.
@@ -239,8 +246,6 @@ impl EventPusher {
             return Ok(());
         }
 
-        let event_ids: Vec<String> = events.iter().map(|e| e.event_id.clone()).collect();
-
         // Apply redaction / hashing / metadata limits before serialization.
         let redact_refs: Vec<&str> = config.redact_fields.iter().map(|s| s.as_str()).collect();
         const MAX_METADATA_BYTES: usize = 10240;
@@ -281,7 +286,36 @@ impl EventPusher {
             event.details = map.into_iter().collect();
         }
 
-        let event_dicts: Vec<serde_json::Value> = events.iter().map(|e| e.to_dict()).collect();
+        // Conversion happens only after redaction. Attribution v2 promotes
+        // selected detail fields (for example request_id and gpu_sku) into
+        // typed provider/resource fields, so converting raw events would
+        // bypass configured field-level redaction.
+        let mut event_dicts = Vec::with_capacity(events.len());
+        let mut event_ids = Vec::with_capacity(events.len());
+        let mut observability_event_ids = Vec::new();
+        let mut failed_event_ids = Vec::new();
+        for event in &events {
+            if event.event_type == crate::core::models::EventType::GpuUtilizationSignal {
+                observability_event_ids.push(event.event_id.clone());
+                continue;
+            }
+            match to_attribution_event_v2(event) {
+                Some(converted) => {
+                    event_ids.push(event.event_id.clone());
+                    event_dicts.push(serde_json::to_value(converted)?);
+                }
+                None => failed_event_ids.push(event.event_id.clone()),
+            }
+        }
+
+        // GPU utilization signals are observability-only and deliberately do
+        // not cross the attribution cost boundary. Every other conversion
+        // failure remains pending and is surfaced after valid siblings have
+        // been delivered; it must never be acknowledged as a successful POST.
+        if !observability_event_ids.is_empty() {
+            let mut buf = buffer.lock().await;
+            buf.mark_synced(&observability_event_ids);
+        }
 
         // Build the union of (pending tasks) and (tasks referenced by pending
         // events that are not already in pending_tasks). The latter covers
@@ -321,8 +355,15 @@ impl EventPusher {
             Self::sanitize_task(task, config, &redact_refs, MAX_METADATA_BYTES);
         }
 
-        let task_dicts: Vec<serde_json::Value> =
-            tasks_to_send.iter().map(|t| t.to_dict()).collect();
+        let task_dicts: Vec<serde_json::Value> = tasks_to_send
+            .iter()
+            .map(to_attribution_task_ingest_v1)
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>()?;
+
+        if event_dicts.is_empty() && task_dicts.is_empty() {
+            return Self::conversion_failure(&failed_event_ids);
+        }
 
         // Push with adaptive splitting for oversized payloads. Sprint 2
         // Theme D / §3.2.1 (B12): push_with_split marks events/tasks
@@ -339,23 +380,33 @@ impl EventPusher {
             client,
             auth_failed,
             api_key_override,
-            0,
         )
         .await?;
 
-        // Outer mark_synced retained as a defensive idempotent
-        // no-op safety net for any future code path that returns Ok
-        // without recursing into the leaf.
-        let mut buf = buffer.lock().await;
-        buf.mark_synced(&event_ids);
-        buf.mark_tasks_synced(&task_ids_sent);
-        Ok(())
+        Self::conversion_failure(&failed_event_ids)
     }
 
-    /// Recursively splits oversized payloads until they fit within
-    /// MAX_PAYLOAD_BYTES. Tasks are only sent with the first half to avoid
-    /// duplication. Uses `Box::pin` because recursive async fns require
-    /// indirection to avoid infinitely-sized futures.
+    fn conversion_failure(event_ids: &[String]) -> Result<(), DexcostError> {
+        if event_ids.is_empty() {
+            return Ok(());
+        }
+        let preview = event_ids
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(DexcostError::Transport(format!(
+            "{} event(s) remain pending because they cannot be represented by attribution v2 (event IDs: {})",
+            event_ids.len(),
+            preview,
+        )))
+    }
+
+    /// Recursively splits oversized payloads until they fit within the queue
+    /// contract. When a mixed payload is too large, tasks are accepted first
+    /// so no event can reference a task that has not reached ingestion yet.
+    /// Successful leaves are acknowledged immediately and independently.
     #[allow(clippy::too_many_arguments)]
     fn push_with_split<'a>(
         events: &'a [serde_json::Value],
@@ -367,7 +418,6 @@ impl EventPusher {
         client: &'a reqwest::Client,
         auth_failed: &'a Arc<AtomicBool>,
         api_key_override: &'a Arc<parking_lot::RwLock<Option<String>>>,
-        depth: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DexcostError>> + Send + 'a>>
     {
         Box::pin(async move {
@@ -376,62 +426,125 @@ impl EventPusher {
                 "tasks": tasks,
             }))?;
 
-            if payload.len() <= MAX_PAYLOAD_BYTES || depth >= MAX_SPLIT_DEPTH {
+            if payload.len() <= MAX_PAYLOAD_BYTES {
                 Self::post_raw(&payload, config, client, auth_failed, api_key_override).await?;
-                // Sprint 2 Theme D / §3.2.1 (B12) — mark synced at the
-                // leaf so a sibling-half failure does not re-send
-                // already-POSTed events.
                 let mut buf = buffer.lock().await;
                 buf.mark_synced(event_ids);
                 buf.mark_tasks_synced(task_ids);
                 return Ok(());
             }
 
-            if events.len() <= 1 {
+            if !events.is_empty() && !tasks.is_empty() {
+                Self::push_with_split(
+                    &[],
+                    tasks,
+                    &[],
+                    task_ids,
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await?;
+                return Self::push_with_split(
+                    events,
+                    &[],
+                    event_ids,
+                    &[],
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await;
+            }
+
+            if events.len() > 1 {
+                let mid = events.len() / 2;
+                eprintln!(
+                    "[dexcost] Batch too large ({} bytes, {} events), splitting",
+                    payload.len(),
+                    events.len()
+                );
+                Self::push_with_split(
+                    &events[..mid],
+                    &[],
+                    &event_ids[..mid],
+                    &[],
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await?;
+                return Self::push_with_split(
+                    &events[mid..],
+                    &[],
+                    &event_ids[mid..],
+                    &[],
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await;
+            }
+
+            if tasks.len() > 1 {
+                let mid = tasks.len() / 2;
+                eprintln!(
+                    "[dexcost] Batch too large ({} bytes, {} tasks), splitting",
+                    payload.len(),
+                    tasks.len()
+                );
+                Self::push_with_split(
+                    &[],
+                    &tasks[..mid],
+                    &[],
+                    &task_ids[..mid],
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await?;
+                return Self::push_with_split(
+                    &[],
+                    &tasks[mid..],
+                    &[],
+                    &task_ids[mid..],
+                    buffer,
+                    config,
+                    client,
+                    auth_failed,
+                    api_key_override,
+                )
+                .await;
+            }
+
+            // A single record cannot be made smaller without changing its
+            // meaning. Drop it from the retry queue after retaining the local
+            // durable copy, otherwise it blocks every subsequent batch.
+            if !events.is_empty() {
                 eprintln!(
                     "[dexcost] Single event exceeds payload limit ({} bytes), skipping",
                     payload.len()
                 );
-                return Ok(());
+            } else {
+                eprintln!(
+                    "[dexcost] Single task exceeds payload limit ({} bytes), skipping",
+                    payload.len()
+                );
             }
-
-            let mid = events.len() / 2;
-            let mid_id = event_ids.len() / 2;
-            eprintln!(
-                "[dexcost] Batch too large ({} bytes, {} events), splitting",
-                payload.len(),
-                events.len()
-            );
-
-            // First half carries the tasks (Tasks are only sent with
-            // the first chunk to avoid duplication); second half: no
-            // tasks (so empty task_ids for the leaf mark).
-            Self::push_with_split(
-                &events[..mid],
-                tasks,
-                &event_ids[..mid_id],
-                task_ids,
-                buffer,
-                config,
-                client,
-                auth_failed,
-                api_key_override,
-                depth + 1,
-            )
-            .await?;
-            Self::push_with_split(
-                &events[mid..],
-                &[],
-                &event_ids[mid_id..],
-                &[],
-                buffer,
-                config,
-                client,
-                auth_failed,
-                api_key_override,
-                depth + 1,
-            )
-            .await
+            let mut buf = buffer.lock().await;
+            buf.mark_synced(event_ids);
+            buf.mark_tasks_synced(task_ids);
+            Ok(())
         })
     }
 
@@ -474,9 +587,7 @@ impl EventPusher {
 
         // 401/403: the API key is rejected. Stop the pusher permanently
         // instead of retrying a key the server will never accept.
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             eprintln!(
                 "[dexcost] ERROR: API key rejected (HTTP {}) — disabling sync permanently",
                 status.as_u16()
@@ -489,6 +600,21 @@ impl EventPusher {
         }
 
         if status.is_success() {
+            let response_body = resp.text().await?;
+            if !response_body.trim().is_empty() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response_body) {
+                    let rejected = value
+                        .get("rejected")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    if rejected > 0 {
+                        return Err(DexcostError::Transport(format!(
+                            "ingestion rejected {} record(s)",
+                            rejected
+                        )));
+                    }
+                }
+            }
             Ok(())
         } else {
             Err(DexcostError::Transport(format!(

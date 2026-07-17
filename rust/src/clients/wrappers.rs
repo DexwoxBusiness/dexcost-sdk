@@ -56,6 +56,10 @@ pub async fn record_openai_response(
         .get("prompt_tokens_details")
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|v| v.as_i64());
+    let reasoning_tokens = usage
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_i64());
 
     let cost_result = pricing
         .get_cost(
@@ -76,6 +80,13 @@ pub async fn record_openai_response(
     event.cost_usd = cost_result.cost_usd;
     event.cost_confidence = cost_result.cost_confidence;
     event.pricing_source = Some(cost_result.pricing_source);
+    event.pricing_version = Some(cost_result.pricing_version);
+    if let Some(reasoning_tokens) = reasoning_tokens {
+        event.details.insert(
+            "reasoning_output_tokens".to_string(),
+            serde_json::Value::from(reasoning_tokens),
+        );
+    }
 
     buffer.add_event(event.clone());
 
@@ -143,6 +154,13 @@ pub async fn record_anthropic_response(
     event.cost_usd = cost_result.cost_usd;
     event.cost_confidence = cost_result.cost_confidence;
     event.pricing_source = Some(cost_result.pricing_source);
+    event.pricing_version = Some(cost_result.pricing_version);
+    if let Some(cache_creation_tokens) = cache_creation_tokens {
+        event.details.insert(
+            "cache_creation_input_tokens".to_string(),
+            serde_json::Value::from(cache_creation_tokens),
+        );
+    }
 
     buffer.add_event(event.clone());
 
@@ -208,6 +226,7 @@ pub async fn record_gemini_response(
     event.cost_usd = cost_result.cost_usd;
     event.cost_confidence = cost_result.cost_confidence;
     event.pricing_source = Some(cost_result.pricing_source);
+    event.pricing_version = Some(cost_result.pricing_version);
 
     buffer.add_event(event.clone());
 
@@ -277,6 +296,15 @@ pub fn record_mcp_response(
                 _ => CostConfidence::Unknown,
             };
             event.pricing_source = Some(PricingSource::ServiceCatalog);
+            event.pricing_version = Some(catalog.catalog_version());
+            event.details.insert(
+                "attribution_usage_quantity".to_string(),
+                serde_json::Value::String(extracted.usage_quantity.normalize().to_string()),
+            );
+            event.details.insert(
+                "attribution_usage_metric".to_string(),
+                serde_json::Value::String(extracted.usage_metric),
+            );
         } else {
             event.service_name = Some(entry.display_name.clone());
             event.cost_confidence = CostConfidence::Unknown;
@@ -284,7 +312,7 @@ pub fn record_mcp_response(
         }
     } else {
         event.cost_confidence = CostConfidence::Unknown;
-        event.pricing_source = Some(PricingSource::RateRegistry);
+        event.pricing_source = Some(PricingSource::Unknown);
     }
 
     buffer.add_event(event.clone());
@@ -553,6 +581,15 @@ pub fn record_mcp_tool_call(
             event.cost_usd = entry.cost_usd;
             event.cost_confidence = CostConfidence::Computed;
             event.pricing_source = Some(PricingSource::RateRegistry);
+            event.pricing_version = Some(rates.pricing_version_snapshot());
+            event.details.insert(
+                "attribution_usage_quantity".to_string(),
+                serde_json::json!(1),
+            );
+            event.details.insert(
+                "attribution_usage_per".to_string(),
+                serde_json::Value::String(entry.per.clone()),
+            );
             buffer.add_event(event.clone());
             return event;
         }
@@ -563,6 +600,15 @@ pub fn record_mcp_tool_call(
                 event.cost_usd = entry.cost_usd;
                 event.cost_confidence = CostConfidence::Computed;
                 event.pricing_source = Some(PricingSource::RateRegistry);
+                event.pricing_version = Some(rates.pricing_version_snapshot());
+                event.details.insert(
+                    "attribution_usage_quantity".to_string(),
+                    serde_json::json!(1),
+                );
+                event.details.insert(
+                    "attribution_usage_per".to_string(),
+                    serde_json::Value::String(entry.per.clone()),
+                );
                 buffer.add_event(event.clone());
                 return event;
             }
@@ -581,6 +627,15 @@ pub fn record_mcp_tool_call(
                     _ => CostConfidence::Unknown,
                 };
                 event.pricing_source = Some(PricingSource::ServiceCatalog);
+                event.pricing_version = Some(catalog.catalog_version());
+                event.details.insert(
+                    "attribution_usage_quantity".to_string(),
+                    serde_json::Value::String(extracted.usage_quantity.normalize().to_string()),
+                );
+                event.details.insert(
+                    "attribution_usage_metric".to_string(),
+                    serde_json::Value::String(extracted.usage_metric),
+                );
                 buffer.add_event(event.clone());
                 return event;
             }
@@ -644,6 +699,9 @@ mod tests {
                 "completion_tokens": 400,
                 "prompt_tokens_details": {
                     "cached_tokens": 600
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 120
                 }
             }
         });
@@ -652,6 +710,7 @@ mod tests {
             .await
             .expect("should succeed with cached tokens");
         assert_eq!(event.cached_tokens, Some(600));
+        assert_eq!(event.details["reasoning_output_tokens"], serde_json::json!(120));
         assert_eq!(buffer.event_count(), 1);
     }
 
@@ -879,7 +938,7 @@ mod tests {
             None,
         );
         assert_eq!(event.cost_confidence, CostConfidence::Unknown);
-        assert_eq!(event.pricing_source, Some(PricingSource::RateRegistry));
+        assert_eq!(event.pricing_source, Some(PricingSource::Unknown));
         assert!(event.cost_usd == rust_decimal::Decimal::ZERO);
         assert_eq!(buffer.event_count(), 1);
     }

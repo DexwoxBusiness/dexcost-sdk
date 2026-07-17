@@ -179,8 +179,18 @@ pub fn resolve_http_cost_event(
         event.event_id = Uuid::new_v4().to_string();
         event.cost_usd = rate.cost_usd;
         event.cost_confidence = CostConfidence::Computed;
-        event.pricing_source = Some(PricingSource::RateRegistry);
+        // Domain rates are customer-authored overrides, not a versioned SDK
+        // registry snapshot. Treat them as manual evidence.
+        event.pricing_source = Some(PricingSource::Manual);
         event.service_name = Some(hostname);
+        event.details.insert(
+            "attribution_usage_quantity".to_string(),
+            serde_json::Value::Number(1.into()),
+        );
+        event.details.insert(
+            "attribution_usage_per".to_string(),
+            serde_json::Value::String(rate.per),
+        );
         return Some(event);
     }
 
@@ -204,7 +214,18 @@ pub fn resolve_http_cost_event(
                 "user_override" => PricingSource::UserOverride,
                 _ => PricingSource::ServiceCatalog,
             });
+            if event.pricing_source == Some(PricingSource::ServiceCatalog) {
+                event.pricing_version = Some(catalog.catalog_version());
+            }
             event.service_name = Some(extraction.service_name.clone());
+            event.details.insert(
+                "attribution_usage_quantity".to_string(),
+                serde_json::Value::String(extraction.usage_quantity.normalize().to_string()),
+            );
+            event.details.insert(
+                "attribution_usage_metric".to_string(),
+                serde_json::Value::String(extraction.usage_metric.clone()),
+            );
             event
         })
 }
@@ -338,7 +359,7 @@ mod tests {
         assert_eq!(ev.cost_usd, d("0.003"));
         assert_eq!(ev.event_type, EventType::ExternalCost);
         assert_eq!(ev.cost_confidence, CostConfidence::Computed);
-        assert_eq!(ev.pricing_source, Some(PricingSource::RateRegistry));
+        assert_eq!(ev.pricing_source, Some(PricingSource::Manual));
         assert_eq!(ev.service_name.as_deref(), Some("api.openai.com"));
     }
 
@@ -385,7 +406,7 @@ mod tests {
         let events = get_recorded_events();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].cost_usd, d("0.123"));
-        assert_eq!(events[0].pricing_source, Some(PricingSource::RateRegistry));
+        assert_eq!(events[0].pricing_source, Some(PricingSource::Manual));
     }
 
     #[test]
