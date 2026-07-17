@@ -507,13 +507,14 @@ impl TrackedTask {
             return Err(DexcostError::TaskAlreadyEnded);
         }
 
-        let (cost_usd, pricing_version) = if let Some(ref registry) = self.rate_registry {
+        let (cost_usd, pricing_version, rate_per) = if let Some(ref registry) = self.rate_registry {
             let mut reg = registry.lock().await;
             match reg.get(service) {
                 Some(entry) => {
                     let cost = entry.cost_usd * Decimal::from(units);
+                    let per = entry.per.clone();
                     let version = reg.pricing_version();
-                    (cost, version)
+                    (cost, version, per)
                 }
                 None => {
                     return Err(DexcostError::Config(format!(
@@ -531,9 +532,18 @@ impl TrackedTask {
         event.cost_usd = cost_usd;
         event.cost_confidence = CostConfidence::Computed;
         event.pricing_source = Some(PricingSource::RateRegistry);
+        event.pricing_version = Some(pricing_version.clone());
         event
             .details
             .insert("units".to_string(), serde_json::Value::Number(units.into()));
+        event.details.insert(
+            "attribution_usage_quantity".to_string(),
+            serde_json::Value::Number(units.into()),
+        );
+        event.details.insert(
+            "attribution_usage_per".to_string(),
+            serde_json::Value::String(rate_per),
+        );
         event.details.insert(
             "pricing_version".to_string(),
             serde_json::Value::String(pricing_version),

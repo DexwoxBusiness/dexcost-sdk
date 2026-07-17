@@ -42,12 +42,13 @@ use reqwest::{Body, Request, Response};
 use reqwest_middleware::{Middleware, Next};
 use rust_decimal::Decimal;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::adapters::http as dexcost_http;
 use crate::adapters::netbytes::{classify_destination, measure_bytes_from_headers};
 use crate::adapters::network_accountant::{get_accountant, NetworkAccountant};
 use crate::core::context::is_network_event_suppressed;
-use crate::core::models::{CostConfidence, CostEvent, EventType};
+use crate::core::models::{CostConfidence, CostEvent, EventType, Task, TaskStatus};
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::service_catalog::{CostExtractionResult, ServiceCatalog};
 use crate::security::redaction::scrub_url;
@@ -95,16 +96,15 @@ impl DexcostMiddleware {
         req.url().host_str().map(|s| s.to_lowercase())
     }
 
-    /// Returns the task_id to attribute events to. Falls back to the URL
-    /// host so each invocation still produces a non-empty event.
+    /// Returns the task_id to attribute events to. Auto-instrumented calls use
+    /// a real UUID because attribution v2 intentionally rejects synthetic
+    /// identifiers such as `auto:host`.
     fn effective_task_id(&self, req: &Request) -> String {
         if let Some(ref t) = self.task_id {
             return t.clone();
         }
-        match Self::host_of(req) {
-            Some(host) => format!("auto:{}", host),
-            None => "auto:unknown".to_string(),
-        }
+        let _ = req;
+        Uuid::new_v4().to_string()
     }
 
     fn record_extraction(
@@ -128,6 +128,17 @@ impl DexcostMiddleware {
             "service_catalog" => Some(crate::core::models::PricingSource::ServiceCatalog),
             _ => Some(crate::core::models::PricingSource::ServiceCatalog),
         };
+        if event.pricing_source == Some(crate::core::models::PricingSource::ServiceCatalog) {
+            event.pricing_version = Some(self.catalog.catalog_version());
+        }
+        event.details.insert(
+            "attribution_usage_quantity".to_string(),
+            serde_json::Value::String(extraction.usage_quantity.normalize().to_string()),
+        );
+        event.details.insert(
+            "attribution_usage_metric".to_string(),
+            serde_json::Value::String(extraction.usage_metric.clone()),
+        );
         event.service_name = Some(extraction.service_name.clone());
         if event.service_name.is_none() {
             event.service_name = Some(host.to_string());
@@ -161,7 +172,14 @@ impl DexcostMiddleware {
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
                 let cached = usage
-                    .get("cached_tokens")
+                    .get("prompt_tokens_details")
+                    .and_then(|details| details.get("cached_tokens"))
+                    .or_else(|| usage.get("cached_tokens"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let reasoning = usage
+                    .get("completion_tokens_details")
+                    .and_then(|details| details.get("reasoning_tokens"))
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
                 let cost = self.pricing.get_cost_sync(model, input, output, cached, 0);
@@ -170,9 +188,17 @@ impl DexcostMiddleware {
                 ev.model = Some(model.to_string());
                 ev.input_tokens = Some(input);
                 ev.output_tokens = Some(output);
+                ev.cached_tokens = (cached > 0).then_some(cached);
                 ev.cost_usd = cost.cost_usd;
                 ev.cost_confidence = cost.cost_confidence;
                 ev.pricing_source = Some(cost.pricing_source);
+                ev.pricing_version = Some(cost.pricing_version);
+                if reasoning > 0 {
+                    ev.details.insert(
+                        "reasoning_output_tokens".to_string(),
+                        serde_json::Value::from(reasoning),
+                    );
+                }
                 stamp_byte_details(&mut ev, byte_details);
                 events.add_event(ev);
                 return true;
@@ -208,9 +234,17 @@ impl DexcostMiddleware {
                 ev.model = Some(model.to_string());
                 ev.input_tokens = Some(input);
                 ev.output_tokens = Some(output);
+                ev.cached_tokens = (cache_read > 0).then_some(cache_read);
                 ev.cost_usd = cost.cost_usd;
                 ev.cost_confidence = cost.cost_confidence;
                 ev.pricing_source = Some(cost.pricing_source);
+                ev.pricing_version = Some(cost.pricing_version);
+                if cache_creation > 0 {
+                    ev.details.insert(
+                        "cache_creation_input_tokens".to_string(),
+                        serde_json::Value::from(cache_creation),
+                    );
+                }
                 stamp_byte_details(&mut ev, byte_details);
                 events.add_event(ev);
                 return true;
@@ -233,6 +267,18 @@ impl Middleware for DexcostMiddleware {
         let protocol = url.scheme().to_string();
         let method = req.method().to_string();
         let task_id = self.effective_task_id(&req);
+        let mut auto_task = if self.task_id.is_none() {
+            let mut task = Task::new(&format!(
+                "http:{}",
+                if host.is_empty() { "unknown" } else { &host }
+            ));
+            task.task_id = task_id.clone();
+            task.status = TaskStatus::Running;
+            self.buffer.lock().await.upsert_task(task.clone());
+            Some(task)
+        } else {
+            None
+        };
 
         // ── v1 byte measurement — request side ──────────────────────────
         // Compute request bytes BEFORE next.run consumes the Request.
@@ -258,7 +304,17 @@ impl Middleware for DexcostMiddleware {
             request_body_len,
         );
 
-        let response = next.run(req, extensions).await?;
+        let response = match next.run(req, extensions).await {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(task) = auto_task.as_mut() {
+                    task.status = TaskStatus::Failed;
+                    task.ended_at = Some(chrono::Utc::now());
+                    self.buffer.lock().await.upsert_task(task.clone());
+                }
+                return Err(error);
+            }
+        };
 
         // Capture status + headers for reconstruction below.
         let status = response.status();
@@ -276,6 +332,16 @@ impl Middleware for DexcostMiddleware {
             .collect::<HashMap<String, String>>();
         let is_internal = classify_destination(&host);
         let response_is_streaming = is_streaming_response(response.headers());
+
+        if let Some(task) = auto_task.as_mut() {
+            task.status = if status.is_success() {
+                TaskStatus::Success
+            } else {
+                TaskStatus::Failed
+            };
+            task.ended_at = Some(chrono::Utc::now());
+            self.buffer.lock().await.upsert_task(task.clone());
+        }
 
         let mut builder = HttpResponse::builder().status(status).version(version);
         for (k, v) in response.headers().iter() {
@@ -322,7 +388,14 @@ impl Middleware for DexcostMiddleware {
         // ── Buffered branch — read body for cost extraction + byte count ─
         let body_bytes = match response.bytes().await {
             Ok(b) => b,
-            Err(e) => return Err(reqwest_middleware::Error::Reqwest(e)),
+            Err(e) => {
+                if let Some(task) = auto_task.as_mut() {
+                    task.status = TaskStatus::Failed;
+                    task.ended_at = Some(chrono::Utc::now());
+                    self.buffer.lock().await.upsert_task(task.clone());
+                }
+                return Err(reqwest_middleware::Error::Reqwest(e));
+            }
         };
         let response_bytes = measure_bytes_from_headers(
             "",
@@ -720,7 +793,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn middleware_uses_task_id_or_host_fallback() {
+    async fn middleware_uses_uuid_for_auto_task() {
         let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
         let (catalog, pricing, buffer) = fixtures();
         let mw = DexcostMiddleware::new(catalog, pricing, buffer, None);
@@ -730,8 +803,82 @@ mod tests {
             "https://api.openai.com/v1/models".parse().unwrap(),
         );
         let id = mw.effective_task_id(&req);
-        assert!(id.starts_with("auto:"));
-        assert!(id.contains("openai.com"));
+        assert!(Uuid::parse_str(&id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn middleware_persists_completed_auto_task() {
+        let _guard = crate::adapters::http::GLOBAL_HTTP_TEST_LOCK.lock().await;
+        let (catalog, pricing, buffer) = fixtures();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let mw = DexcostMiddleware::new(catalog, pricing, buffer.clone(), None);
+        let client = ClientBuilder::new(reqwest::Client::new()).with(mw).build();
+        client.get(format!("{}/ok", server.uri())).send().await.unwrap();
+
+        let tasks = buffer.lock().await.get_pending_tasks(10);
+        assert_eq!(tasks.len(), 1);
+        assert!(Uuid::parse_str(&tasks[0].task_id).is_ok());
+        assert_eq!(tasks[0].status, TaskStatus::Success);
+        assert!(tasks[0].ended_at.is_some());
+    }
+
+    #[test]
+    fn llm_extraction_preserves_cache_and_reasoning_usage() {
+        let (catalog, pricing, buffer) = fixtures();
+        let mw = DexcostMiddleware::new(catalog, pricing, buffer, None);
+        let mut events = EventBuffer::new().unwrap();
+        let byte_details = serde_json::json!({});
+
+        assert!(mw.try_record_llm(
+            "api.openai.com",
+            "11111111-1111-4111-8111-111111111111",
+            &serde_json::json!({
+                "model": "gpt-4o",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 40,
+                    "prompt_tokens_details": { "cached_tokens": 25 },
+                    "completion_tokens_details": { "reasoning_tokens": 10 }
+                }
+            }),
+            &byte_details,
+            &mut events,
+        ));
+        let openai = events.get_pending_events(10).pop().unwrap();
+        assert_eq!(openai.cached_tokens, Some(25));
+        assert_eq!(openai.details["reasoning_output_tokens"], serde_json::json!(10));
+
+        assert!(mw.try_record_llm(
+            "api.anthropic.com",
+            "11111111-1111-4111-8111-111111111111",
+            &serde_json::json!({
+                "model": "claude-3-5-sonnet-20241022",
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 40,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 5
+                }
+            }),
+            &byte_details,
+            &mut events,
+        ));
+        let anthropic = events
+            .get_pending_events(10)
+            .into_iter()
+            .find(|event| event.provider.as_deref() == Some("anthropic"))
+            .unwrap();
+        assert_eq!(anthropic.cached_tokens, Some(20));
+        assert_eq!(
+            anthropic.details["cache_creation_input_tokens"],
+            serde_json::json!(5)
+        );
     }
 
     /// The middleware's domain-rate fallback must persist events to the durable

@@ -33,6 +33,7 @@
 //! for the Python ↔ Rust parity matrix and a list of idiomatic differences.
 
 pub mod adapters;
+pub mod attribution;
 pub mod clients;
 pub mod cloud_detect;
 pub mod config;
