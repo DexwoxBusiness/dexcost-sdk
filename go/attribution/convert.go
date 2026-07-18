@@ -320,7 +320,12 @@ func componentAndUsage(event core.Event) (Component, []UsageLineV2, decimal.Deci
 				metric = MetricCharacters
 			}
 		}
-		return ComponentExternal, appendUsage(nil, metric, quantity), decimal.Zero, true
+		component := ComponentExternal
+		if stringDetail(details, "attribution_component") == string(ComponentSpeechToText) {
+			component = ComponentSpeechToText
+		}
+		duration, _ := decimalDetail(details, "attribution_usage_duration_seconds")
+		return component, appendUsage(nil, metric, quantity), duration, true
 	default:
 		return "", nil, decimal.Zero, false
 	}

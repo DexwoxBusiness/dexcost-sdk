@@ -33,6 +33,7 @@ import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { debugLog } from "../core/debug.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
+import { serviceUsageObservers } from "../pricing/service-usage-observers.js";
 import {
   SessionManager,
   setAmbientSessions,
@@ -1589,6 +1590,52 @@ async function _maybeRecordCost(
           if (ctx) ctx._matchedCatalog = true;
           return;
         }
+      }
+    }
+
+    // 2.5. Usage-only observation for safety-disabled services. These
+    // definitions deliberately contain no rates: the SDK reports provider-
+    // owned quantities and the control plane decides whether they are priced.
+    if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
+      try {
+        const observation = serviceUsageObservers?.observe(
+          urlStr,
+          response.headers,
+          await response.clone().json(),
+        );
+        if (observation != null) {
+          const duration = observation.metric === "audio_seconds"
+            ? { attribution_usage_duration_seconds: observation.quantity }
+            : {};
+          const event = createCostEvent({
+            eventId: randomUUID(),
+            taskId: task.taskId,
+            eventType: "external_cost",
+            costUsd: 0,
+            costConfidence: "unknown",
+            pricingSource: "unknown",
+            provider: observation.providerName,
+            model: observation.resourceId,
+            serviceName: observation.providerService,
+            details: {
+              url: urlStr,
+              provider_record_id: observation.providerRecordId,
+              attribution_component: observation.component,
+              attribution_usage_quantity: observation.quantity,
+              attribution_usage_metric: observation.metric,
+              attribution_observer_version: observation.manifestVersion,
+              attribution_observer_service: observation.serviceKey,
+              ...duration,
+              ...byteDetailsRequestOnly,
+            },
+          });
+          _pushRecordedEvent(event);
+          if (_buffer) _buffer.addEvent(event);
+          if (ctx) ctx._matchedCatalog = true;
+          return;
+        }
+      } catch {
+        // Observation is fail-open. Network accounting continues below.
       }
     }
 

@@ -54,6 +54,7 @@ jobs:
           python -m pytest tests/
           --ignore=tests/test_cross_sdk_parity.py
           --ignore=tests/test_attribution_v2_conformance.py
+          --ignore=tests/test_service_usage_observer_conformance.py
           -v
 
   go:
@@ -71,7 +72,7 @@ jobs:
         # -skip introduced in Go 1.20.
         run: >-
           go test -race
-          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2)'
+          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)'
           ./...
 
   typescript:
@@ -98,7 +99,7 @@ jobs:
         working-directory: typescript
         run: >-
           npx vitest run
-          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v2-pusher-conformance}.test.ts'
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v2-pusher-conformance,service-usage-observer-conformance}.test.ts'
       - name: Build + runtime smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs
@@ -175,7 +176,8 @@ jobs:
           for t in tests/*.rs; do
             name=$(basename "$t" .rs)
             if [ "$name" != "cross_sdk_parity" ] && \
-               [ "$name" != "attribution_v2_conformance" ]; then
+               [ "$name" != "attribution_v2_conformance" ] && \
+               [ "$name" != "service_usage_observer_conformance" ]; then
               cargo test --test "$name"
             fi
           done
@@ -222,7 +224,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . pytest pytest-asyncio
-          python -m pytest tests/test_cross_sdk_parity.py tests/test_attribution_v2_conformance.py -v
+          python -m pytest \
+            tests/test_cross_sdk_parity.py \
+            tests/test_attribution_v2_conformance.py \
+            tests/test_service_usage_observer_conformance.py \
+            -v
 
       - name: Run cross-SDK conformance (go)
         if: matrix.sdk == 'go'
@@ -230,6 +236,7 @@ jobs:
         run: |
           go test -v -run '^TestCrossSDK' .
           go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2)' ./attribution
+          go test -v -run '^(TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)' ./pricing
 
       - name: Run cross-SDK conformance (typescript)
         if: matrix.sdk == 'typescript'
@@ -239,7 +246,8 @@ jobs:
           npx vitest run \
             tests/cross-sdk-parity.test.ts \
             tests/attribution-v2-conformance.test.ts \
-            tests/attribution-v2-pusher-conformance.test.ts
+            tests/attribution-v2-pusher-conformance.test.ts \
+            tests/service-usage-observer-conformance.test.ts
 
       - name: Run cross-SDK conformance (rust)
         if: matrix.sdk == 'rust'
@@ -247,3 +255,4 @@ jobs:
         run: |
           cargo test --test cross_sdk_parity
           cargo test --test attribution_v2_conformance
+          cargo test --test service_usage_observer_conformance

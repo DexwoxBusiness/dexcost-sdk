@@ -2,16 +2,95 @@ package adapters_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 	"github.com/shopspring/decimal"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestTrackHTTP_ObservesEmbeddingUsageWithoutSyntheticCost(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"req-17"}},
+			Body:       io.NopCloser(strings.NewReader(`{"model":"text-embedding-3-small","usage":{"prompt_tokens":17,"total_tokens":17}}`)),
+			Request:    req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("embedding")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	events := adapters.GetRecordedEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected one usage event, got %d", len(events))
+	}
+	if !events[0].CostUSD.IsZero() || events[0].CostConfidence != core.CostConfidenceUnknown {
+		t.Fatalf("observer asserted money: %+v", events[0])
+	}
+	wire := attribution.ToEventV2(events[0])
+	if wire == nil || len(wire.Usage) != 1 || wire.Usage[0].Metric != attribution.MetricInputTokens || wire.Usage[0].Quantity != "17" {
+		t.Fatalf("unexpected attribution event: %+v", wire)
+	}
+	if wire.CostEvidence != nil || wire.Provider.Name != "openai" || wire.Provider.Service != "embeddings" || wire.Provider.RecordID != "req-17" {
+		t.Fatalf("unexpected provider/evidence: %+v", wire)
+	}
+}
+
+func TestTrackHTTP_DoesNotObserveFailedProviderResponse(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"total_tokens":17}}`)),
+			Request:    req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("embedding")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	for _, event := range adapters.GetRecordedEvents() {
+		if event.Details["attribution_observer_service"] == "openai_embeddings" {
+			t.Fatalf("failed response produced a usage observation: %+v", event)
+		}
+	}
+}
 
 // Test 1: RegisterDomainRate and GetDomainRates
 func TestRegisterAndGetDomainRates(t *testing.T) {

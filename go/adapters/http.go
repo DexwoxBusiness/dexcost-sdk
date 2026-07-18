@@ -280,6 +280,28 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	// at close AND, if not suppressed and the call is notable, emits a
 	// `network` event with cost_pending=true (v2 §6.4 — back-filled at
 	// task finalize).
+	// Usage-only observation for services withheld from SDK pricing. Buffer
+	// only known observer responses and never attach a monetary rate.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && pricing.HasServiceUsageObserver(req.URL.String()) {
+		headers := flattenHeaders(resp.Header)
+		body, replaced, bodyByteCount := readAndReplaceBodyCounted(resp)
+		if replaced != nil {
+			resp.Body = replaced
+		}
+		if observation := pricing.ObserveServiceUsage(req.URL.String(), headers, body); observation != nil {
+			responseBytes := responseHeaderBytes + bodyByteCount
+			if accountant != nil {
+				accountant.Record(host, responseBytes, requestBytes, isInternal)
+			}
+			byteDetails := map[string]interface{}{
+				"protocol": protocol, "request_bytes": requestBytes,
+				"response_bytes": responseBytes, "is_internal_traffic": isInternalToValue(isInternal),
+			}
+			t.recordUsageObservation(req, observation, byteDetails)
+			return resp, nil
+		}
+	}
+
 	statusCode := resp.StatusCode
 	emit := !suppress && ok
 	resp.Body = wrapBodyForRecording(resp.Body, &bodyRecorder{
@@ -368,6 +390,37 @@ func (t *trackingTransport) recordCatalogEntry(
 		event.PricingVersion = cat.CatalogVersion()
 	}
 
+	persistEvent(event, autoTask)
+}
+
+func (t *trackingTransport) recordUsageObservation(
+	req *http.Request,
+	observation *pricing.ServiceUsageObservation,
+	byteDetails map[string]interface{},
+) {
+	taskID, autoTask, ok := resolveTaskID(req)
+	if !ok {
+		return
+	}
+	event := core.NewEvent(taskID, core.EventTypeExternalCost)
+	event.Provider = observation.ProviderName
+	event.ServiceName = observation.ProviderService
+	event.Model = observation.ResourceID
+	event.CostUSD = decimal.Zero
+	event.CostConfidence = core.CostConfidenceUnknown
+	event.Details["url"] = security.ScrubURL(req.URL.String())
+	event.Details["provider_record_id"] = observation.ProviderRecordID
+	event.Details["attribution_component"] = observation.Component
+	event.Details["attribution_usage_quantity"] = observation.Quantity.String()
+	event.Details["attribution_usage_metric"] = observation.Metric
+	event.Details["attribution_observer_version"] = observation.ManifestVersion
+	event.Details["attribution_observer_service"] = observation.ServiceKey
+	if observation.Metric == "audio_seconds" {
+		event.Details["attribution_usage_duration_seconds"] = observation.Quantity.String()
+	}
+	for key, value := range byteDetails {
+		event.Details[key] = value
+	}
 	persistEvent(event, autoTask)
 }
 

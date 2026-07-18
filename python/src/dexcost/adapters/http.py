@@ -33,6 +33,7 @@ from dexcost.context import get_current_task, is_network_event_suppressed
 from dexcost.models.event import Event
 from dexcost.redaction import scrub_url
 from dexcost.service_catalog import ServiceCatalog
+from dexcost.service_usage_observers import get_service_usage_observers
 from dexcost.session import get_session_manager
 
 _log = logging.getLogger(__name__)
@@ -710,6 +711,63 @@ def _handle_catalog_entry(
     return True
 
 
+def _handle_usage_observer(
+    url: str,
+    domain: str,
+    track_network: bool,
+    bytes_in: int,
+    bytes_out: int,
+    response_headers: dict[str, str],
+    response: Any,
+    status_code: int,
+    byte_details: dict[str, Any],
+) -> bool:
+    """Record provider-owned usage without asserting an SDK-side price."""
+    if status_code < 200 or status_code >= 300:
+        return False
+    observers = get_service_usage_observers()
+    if observers is None or not observers.matches(url):
+        return False
+    observation = observers.observe(url, response_headers, _get_response_body(response))
+    if observation is None:
+        return False
+    task = _resolve_task()
+    if task is None:
+        return True
+    if track_network:
+        task._network.record(
+            domain,
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
+            is_internal=byte_details.get("is_internal_traffic"),
+        )
+    details: dict[str, Any] = {
+        "url": url,
+        "provider_record_id": observation.provider_record_id,
+        "attribution_component": observation.component,
+        "attribution_usage_quantity": str(observation.quantity),
+        "attribution_usage_metric": observation.metric,
+        "attribution_observer_version": observation.manifest_version,
+        "attribution_observer_service": observation.service_key,
+        **byte_details,
+    }
+    if observation.metric == "audio_seconds":
+        details["attribution_usage_duration_seconds"] = str(observation.quantity)
+    event = Event(
+        task_id=task.task_id,
+        event_type="external_cost",
+        cost_usd=Decimal("0"),
+        cost_confidence="unknown",
+        pricing_source=None,
+        provider=observation.provider_name,
+        model=observation.resource_id,
+        service_name=observation.provider_service,
+        details=details,
+    )
+    _persist_event(event)
+    return True
+
+
 def _handle_uncataloged(
     url: str, method: str, domain: str,
     bytes_in: int, bytes_out: int, status_code: int, latency_ms: int,
@@ -787,6 +845,14 @@ def _handle_http_call_inner(
     if _handle_catalog_entry(
         url, domain, track_network, bytes_in, bytes_out,
         response_headers, response, byte_details,
+    ):
+        return
+
+    # Usage-only observers contain no rates and remain active even when
+    # notable-network event emission is disabled.
+    if _handle_usage_observer(
+        url, domain, track_network, bytes_in, bytes_out,
+        response_headers, response, status_code, byte_details,
     ):
         return
 

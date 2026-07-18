@@ -18,7 +18,7 @@ import (
 
 const supportedSafetyPolicyVersion = "2026-07-14.2"
 
-//go:embed data/service_prices.json
+//go:embed data/service_prices.json data/service_usage_observers.json
 var embeddedServiceData embed.FS
 
 // ServiceEntry represents a single service entry from the catalog.

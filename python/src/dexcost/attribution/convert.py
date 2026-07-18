@@ -323,6 +323,7 @@ def _component_and_usage(
         return None
     explicit_quantity = _decimal_detail(details, "attribution_usage_quantity")
     explicit_metric = _string_detail(details, "attribution_usage_metric")
+    explicit_component = _string_detail(details, "attribution_component")
     per = _canonical_name(_string_detail(details, "attribution_usage_per"), "request")
     inferred_metric: AttributionUsageMetric
     if "page" in per:
@@ -342,7 +343,11 @@ def _component_and_usage(
         if explicit_metric in ATTRIBUTION_UNIT_BY_METRIC
         else inferred_metric
     )
-    return "external", _compact_usage([_usage_line(metric, explicit_quantity or 1)]), None
+    component: AttributionComponent = (
+        "speech_to_text" if explicit_component == "speech_to_text" else "external"
+    )
+    duration = _decimal_detail(details, "attribution_usage_duration_seconds")
+    return component, _compact_usage([_usage_line(metric, explicit_quantity or 1)]), duration
 
 
 def to_attribution_event_v2(event: Event) -> AttributionEventV2 | None:
