@@ -133,7 +133,9 @@ function _recordBrowserEvent(
     eventType: "compute_cost",
     costUsd,
     costConfidence: "computed",
-    pricingSource: "rate_registry",
+    // The rate is supplied by the caller (or the SDK default), not selected
+    // from the versioned rate registry. Attribute it as manual evidence.
+    pricingSource: "manual",
     serviceName: "playwright_browser",
     isRetry: false,
     details: {

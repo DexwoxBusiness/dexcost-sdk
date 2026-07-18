@@ -104,6 +104,9 @@ function providerFor(event: CostEvent): AttributionProviderIdentityV2 {
     } else if (event.eventType === "network") {
       name = canonicalName(stringDetail(event.details, "cloud_provider") ?? event.provider, "internet");
       service = "egress";
+    } else if (event.eventType === "retry_marker") {
+      name = "dexcost";
+      service = "retry";
     } else {
       const rawService = serviceName ?? "external";
       if (rawService.startsWith("mcp:")) {
@@ -137,12 +140,19 @@ function resourceFor(event: CostEvent): AttributionResourceV2 | undefined {
     const instance = stringDetail(event.details, "instance_type", "architecture");
     if (instance) return { type: "instance", id: instance.slice(0, 256) };
   }
+  if (event.eventType === "retry_marker") {
+    const reason = event.retryReason?.trim();
+    if (reason) return { type: "other", id: reason.slice(0, 256) };
+  }
   return undefined;
 }
 
 function evidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
   const amount = positiveQuantity(event.costUsd);
   if (amount === undefined) return undefined;
+  if (event.eventType === "retry_marker") {
+    return { amount, currency: "USD", source: "manual", confidence: "exact" };
+  }
   const source = event.pricingSource;
   if (source === "provider_response") {
     return {
@@ -181,9 +191,13 @@ function componentAndUsage(event: CostEvent): {
 } | null {
   const details = event.details;
   switch (event.eventType) {
-    case "retry_marker":
     case "gpu_utilization_signal":
       return null;
+    case "retry_marker":
+      return {
+        component: "external",
+        usage: [usageLine("request_count", 1)!],
+      };
     case "llm_call": {
       const cached = event.cachedTokens ?? 0;
       const provider = (event.provider ?? "").toLowerCase();

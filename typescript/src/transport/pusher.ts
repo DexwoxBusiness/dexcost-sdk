@@ -82,7 +82,7 @@ export class EventPusher {
     }
     const intervalMs = this._options.flushIntervalMs ?? 30000;
     this._interval = setInterval(() => {
-      void this.push();
+      void this.push(false);
     }, intervalMs);
 
     // Allow the process to exit even if the interval is running
@@ -124,7 +124,7 @@ export class EventPusher {
    * Force an immediate flush of all pending events.
    */
   async flush(): Promise<void> {
-    await this.push();
+    await this.push(true);
   }
 
   /**
@@ -133,7 +133,7 @@ export class EventPusher {
    * Uses exponential backoff on failure, capping at MAX_BACKOFF_MS.
    * Resets backoff on success.
    */
-  private async push(): Promise<void> {
+  private async push(surfaceConversionErrors: boolean): Promise<void> {
     if (this._pushing) {
       return; // Avoid concurrent pushes
     }
@@ -146,16 +146,25 @@ export class EventPusher {
     const pending = this._buffer.getPendingEvents(batchSize);
     const tasks = this._buffer.getPendingTasks();
     const wireEvents: AttributionEventV2[] = [];
-    const skippedEventIds: string[] = [];
+    const observabilityEventIds: string[] = [];
+    const failedEventIds: string[] = [];
     for (const event of pending) {
+      if (event.eventType === "gpu_utilization_signal") {
+        observabilityEventIds.push(event.eventId);
+        continue;
+      }
       const converted = this._serializeEvent(event);
-      if (converted === null) skippedEventIds.push(event.eventId);
+      if (converted === null) failedEventIds.push(event.eventId);
       else wireEvents.push(converted);
     }
-    // Observability-only signals and permanently invalid legacy rows must not
-    // poison the durable pending queue forever.
-    if (skippedEventIds.length > 0) this._buffer.markSynced(skippedEventIds);
-    if (wireEvents.length === 0 && tasks.length === 0) return;
+    // Only explicit observability signals are acknowledged without upload.
+    // Every other conversion failure remains pending; acknowledging it would
+    // silently destroy attribution data from old or malformed local rows.
+    if (observabilityEventIds.length > 0) this._buffer.markSynced(observabilityEventIds);
+    if (wireEvents.length === 0 && tasks.length === 0) {
+      this._handleConversionFailures(failedEventIds, surfaceConversionErrors);
+      return;
+    }
 
     this._pushing = true;
 
@@ -190,6 +199,19 @@ export class EventPusher {
     } finally {
       this._pushing = false;
     }
+
+    this._handleConversionFailures(failedEventIds, surfaceConversionErrors);
+  }
+
+  private _handleConversionFailures(eventIds: string[], surface: boolean): void {
+    if (eventIds.length === 0) return;
+    this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+    const preview = eventIds.slice(0, 3).join(", ");
+    const error = new Error(
+      `${eventIds.length} event(s) remain pending because they cannot be represented by attribution v2 (event IDs: ${preview})`,
+    );
+    if (surface) throw error;
+    console.warn(`[dexcost] ${error.message}`);
   }
 
   /** Convert durable capture into the strict, details-free v2 wire event. */
