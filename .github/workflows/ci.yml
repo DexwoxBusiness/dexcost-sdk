@@ -5,7 +5,7 @@ name: CI
 # 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
 #    that SDK's existing test suite (including bundled catalog drift checks
 #    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
-#    excludes the parity files that are exercised once in the shared gate.
+#    excludes the parity/conformance files exercised once in the shared gate.
 #
 # 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
 #    and pricing parity suites and the attribution-v2 contract corpus in all
@@ -48,9 +48,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
-      - name: Test (excluding cross-SDK parity)
+      - name: Test (excluding shared conformance gate files)
         working-directory: python
-        run: python -m pytest tests/ --ignore=tests/test_cross_sdk_parity.py -v
+        run: >-
+          python -m pytest tests/
+          --ignore=tests/test_cross_sdk_parity.py
+          --ignore=tests/test_attribution_v2_conformance.py
+          -v
 
   go:
     name: go tests
@@ -61,11 +65,14 @@ jobs:
         with:
           go-version: "1.21"
           cache-dependency-path: go/go.sum
-      - name: Test with -race (excluding cross-SDK parity)
+      - name: Test with -race (excluding shared conformance gate tests)
         working-directory: go
         # -race catches B13 session race + transport pusher accounting bugs.
         # -skip introduced in Go 1.20.
-        run: go test -race -skip '^TestCrossSDK' ./...
+        run: >-
+          go test -race
+          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2)'
+          ./...
 
   typescript:
     name: typescript tests (node ${{ matrix.node-version }})
@@ -87,9 +94,11 @@ jobs:
       - name: Lint (tsc --noEmit)
         working-directory: typescript
         run: npm run lint
-      - name: Test (excluding cross-SDK parity)
+      - name: Test (excluding shared conformance gate files)
         working-directory: typescript
-        run: npx vitest run --exclude 'tests/cross-sdk-parity.test.ts'
+        run: >-
+          npx vitest run
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v2-pusher-conformance}.test.ts'
       - name: Build + runtime smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs
@@ -157,15 +166,16 @@ jobs:
         working-directory: rust
         continue-on-error: true
         run: cargo clippy --all-targets -- -W clippy::all
-      - name: Test (lib + bins + non-parity integration tests)
+      - name: Test (lib + bins + non-gate integration tests)
         working-directory: rust
-        # Each integration test in tests/*.rs is its own binary; run all
-        # EXCEPT cross_sdk_parity which is tracked in the conformance gate.
+        # Each integration test in tests/*.rs is its own binary; the two
+        # shared-gate binaries run only in cross-sdk-conformance below.
         run: |
           cargo test --lib --bins
           for t in tests/*.rs; do
             name=$(basename "$t" .rs)
-            if [ "$name" != "cross_sdk_parity" ]; then
+            if [ "$name" != "cross_sdk_parity" ] && \
+               [ "$name" != "attribution_v2_conformance" ]; then
               cargo test --test "$name"
             fi
           done
