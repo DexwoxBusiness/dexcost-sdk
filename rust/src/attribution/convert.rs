@@ -345,6 +345,22 @@ fn provider_for(event: &CostEvent) -> AttributionProviderIdentityV2 {
 }
 
 fn resource_for(event: &CostEvent) -> Option<AttributionResourceV2> {
+    // Retry markers can carry model data copied from the failed call. Preserve
+    // the retry reason as the marker identity instead of letting the generic
+    // model resource hide it.
+    if event.event_type == EventType::RetryMarker {
+        if let Some(reason) = event
+            .retry_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        {
+            return Some(AttributionResourceV2 {
+                resource_type: AttributionResourceType::Other,
+                id: truncate(reason, 256),
+            });
+        }
+    }
     if let Some(model) = event.model.as_deref().filter(|value| !value.is_empty()) {
         return Some(AttributionResourceV2 {
             resource_type: AttributionResourceType::Model,
@@ -365,15 +381,7 @@ fn resource_for(event: &CostEvent) -> Option<AttributionResourceV2> {
                 resource_type: AttributionResourceType::Instance,
                 id: truncate(id, 256),
             }),
-        EventType::RetryMarker => event
-            .retry_reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty())
-            .map(|reason| AttributionResourceV2 {
-                resource_type: AttributionResourceType::Other,
-                id: truncate(reason, 256),
-            }),
+        EventType::RetryMarker => None,
         _ => None,
     }
 }

@@ -138,6 +138,7 @@ fn conversion_preserves_rate_registry_quantity_and_version() {
 fn conversion_preserves_retry_marker_linkage_reason_and_cost() {
     let task = Task::new("test");
     let mut event = CostEvent::new(&task.task_id, EventType::RetryMarker);
+    event.model = Some("gpt-5".to_string());
     event.is_retry = true;
     event.retry_reason = Some("rate_limit".to_string());
     event.retry_of = Some("33333333-3333-4333-8333-333333333333".to_string());

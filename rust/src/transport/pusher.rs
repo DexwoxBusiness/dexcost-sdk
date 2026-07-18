@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,6 +13,9 @@ use crate::security::redaction::{enforce_metadata_limit, hash_value, redact_map}
 use crate::transport::buffer::EventBuffer;
 
 const MAX_PAYLOAD_BYTES: usize = 120_000;
+const MAX_CONVERSION_SCAN: usize = 1_000;
+const CONVERSION_SCAN_MULTIPLIER: usize = 10;
+const CONVERSION_WARNING_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// How often the sync loop runs buffer purges (mirrors Python `_PURGE_INTERVAL`).
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
@@ -88,6 +92,7 @@ impl EventPusher {
         tokio::spawn(async move {
             let interval = Duration::from_secs(config.flush_interval_secs);
             let mut backoff = Duration::from_secs(0);
+            let mut last_conversion_warning: Option<(String, Instant)> = None;
             // Run an initial purge after one interval; tracked via Instant.
             let mut last_purge = Instant::now();
 
@@ -108,7 +113,18 @@ impl EventPusher {
                     }
                     _ = tokio::time::sleep(interval + backoff) => {
                         match Self::push_batch(&buffer, &config, &client, &auth_failed, &api_key_override).await {
-                            Ok(_) => backoff = Duration::from_secs(0),
+                            Ok(_) => {
+                                backoff = Duration::from_secs(0);
+                                last_conversion_warning = None;
+                            }
+                            Err(DexcostError::AttributionConversion(event_ids)) => {
+                                // Local contract failures are quarantined and must not make a
+                                // healthy control plane look like a transport outage.
+                                backoff = Duration::from_secs(0);
+                                if Self::should_warn_conversion(&mut last_conversion_warning, &event_ids) {
+                                    eprintln!("[dexcost] {}", DexcostError::AttributionConversion(event_ids));
+                                }
+                            }
                             Err(_) => {
                                 if backoff.is_zero() {
                                     backoff = Duration::from_secs(1);
@@ -145,6 +161,27 @@ impl EventPusher {
                 pending, PURGE_MAX_PENDING_DAYS
             );
         }
+    }
+
+    fn should_warn_conversion(
+        last_warning: &mut Option<(String, Instant)>,
+        event_ids: &[String],
+    ) -> bool {
+        let mut sorted = event_ids.to_vec();
+        sorted.sort();
+        let key = sorted.join("\0");
+        let now = Instant::now();
+        let should_warn = match last_warning {
+            Some((previous_key, warned_at)) => {
+                previous_key != &key
+                    || now.duration_since(*warned_at) >= CONVERSION_WARNING_INTERVAL
+            }
+            None => true,
+        };
+        if should_warn {
+            *last_warning = Some((key, now));
+        }
+        should_warn
     }
 
     /// Triggers an immediate flush.
@@ -208,6 +245,36 @@ impl EventPusher {
         }
     }
 
+    fn sanitize_event(
+        event: &mut crate::core::models::CostEvent,
+        config: &Config,
+        redact_refs: &[&str],
+        max_metadata_bytes: usize,
+    ) {
+        if event.details.is_empty() {
+            return;
+        }
+        let mut map: serde_json::Map<String, serde_json::Value> = event
+            .details
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if !config.redact_fields.is_empty() {
+            map = redact_map(&map, redact_refs);
+        }
+        if config.hash_customer_id {
+            if let Some(customer_id) = map.get("customer_id").and_then(|value| value.as_str()) {
+                map.insert(
+                    "customer_id".to_string(),
+                    serde_json::Value::String(hash_value(customer_id)),
+                );
+            }
+        }
+        event.details = enforce_metadata_limit(&map, max_metadata_bytes)
+            .into_iter()
+            .collect();
+    }
+
     /// Pushes a batch of pending events and pending tasks to the control layer.
     /// Applies PII redaction, customer_id / project_id hashing, and metadata
     /// size limits to both events and tasks before serialization.
@@ -228,108 +295,92 @@ impl EventPusher {
         if auth_failed.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let buf = buffer.lock().await;
+        let batch_size = config.batch_size.max(1);
+        let pending = buffer.lock().await.pending_count();
         // Log a warning if the buffer is growing unboundedly (backpressure signal).
-        let pending = buf.pending_count();
         if pending > 10_000 {
             eprintln!(
                 "[dexcost] WARNING: {} pending events in buffer — push may be failing or too slow",
                 pending,
             );
         }
-        let mut events = buf.get_pending_events(config.batch_size);
-        let pending_tasks = buf.get_pending_tasks(config.batch_size);
-        drop(buf);
-
-        // Skip flush only when both queues are empty.
-        if events.is_empty() && pending_tasks.is_empty() {
-            return Ok(());
-        }
-
-        // Apply redaction / hashing / metadata limits before serialization.
-        let redact_refs: Vec<&str> = config.redact_fields.iter().map(|s| s.as_str()).collect();
-        const MAX_METADATA_BYTES: usize = 10240;
-
-        for event in &mut events {
-            if event.details.is_empty() {
-                continue;
-            }
-
-            // Convert HashMap -> serde_json::Map for the redaction API
-            let mut map: serde_json::Map<String, serde_json::Value> = event
-                .details
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-
-            // 1. Redact configured fields
-            if !config.redact_fields.is_empty() {
-                map = redact_map(&map, &redact_refs);
-            }
-
-            // 2. Hash customer_id if present
-            if config.hash_customer_id {
-                if let Some(cid) = map.get("customer_id") {
-                    if let Some(s) = cid.as_str() {
-                        map.insert(
-                            "customer_id".to_string(),
-                            serde_json::Value::String(hash_value(s)),
-                        );
-                    }
-                }
-            }
-
-            // 3. Enforce metadata size limit
-            map = enforce_metadata_limit(&map, MAX_METADATA_BYTES);
-
-            // Convert back to HashMap
-            event.details = map.into_iter().collect();
-        }
+        let pending_tasks = buffer.lock().await.get_pending_tasks(batch_size);
 
         // Conversion happens only after redaction. Attribution v2 promotes
-        // selected detail fields (for example request_id and gpu_sku) into
-        // typed provider/resource fields, so converting raw events would
-        // bypass configured field-level redaction.
-        let mut event_dicts = Vec::with_capacity(events.len());
-        let mut event_ids = Vec::with_capacity(events.len());
-        let mut observability_event_ids = Vec::new();
+        // selected detail fields into typed provider/resource fields, so raw
+        // details must never reach the converter.
+        let redact_refs: Vec<&str> = config.redact_fields.iter().map(|s| s.as_str()).collect();
+        const MAX_METADATA_BYTES: usize = 10240;
+        let mut event_dicts = Vec::with_capacity(batch_size);
+        let mut event_ids = Vec::with_capacity(batch_size);
+        let mut event_task_ids = HashSet::new();
         let mut failed_event_ids = Vec::new();
-        for event in &events {
-            if event.event_type == crate::core::models::EventType::GpuUtilizationSignal {
-                observability_event_ids.push(event.event_id.clone());
-                continue;
-            }
-            match to_attribution_event_v2(event) {
-                Some(converted) => {
-                    event_ids.push(event.event_id.clone());
-                    event_dicts.push(serde_json::to_value(converted)?);
-                }
-                None => failed_event_ids.push(event.event_id.clone()),
-            }
-        }
+        let mut seen_event_ids = HashSet::new();
+        let scan_limit = batch_size
+            .max(MAX_CONVERSION_SCAN.min(batch_size.saturating_mul(CONVERSION_SCAN_MULTIPLIER)));
+        let mut scanned = 0;
 
-        // GPU utilization signals are observability-only and deliberately do
-        // not cross the attribution cost boundary. Every other conversion
-        // failure remains pending and is surfaced after valid siblings have
-        // been delivered; it must never be acknowledged as a successful POST.
-        if !observability_event_ids.is_empty() {
+        // Quarantine malformed pages as they are encountered, then fetch the
+        // next pending page. A complete invalid prefix can no longer starve valid
+        // attribution records that were captured later.
+        while event_dicts.len() < batch_size && scanned < scan_limit {
+            let page_limit = (batch_size - event_dicts.len()).min(scan_limit - scanned);
+            let mut events = buffer.lock().await.get_pending_events(page_limit);
+            if events.is_empty() {
+                break;
+            }
+            let page_len = events.len();
+            let mut newly_scanned = 0;
+            let mut observability_event_ids = Vec::new();
+            let mut page_failed_event_ids = Vec::new();
+            for event in &mut events {
+                if !seen_event_ids.insert(event.event_id.clone()) {
+                    continue;
+                }
+                newly_scanned += 1;
+                scanned += 1;
+                Self::sanitize_event(event, config, &redact_refs, MAX_METADATA_BYTES);
+                if event.event_type == crate::core::models::EventType::GpuUtilizationSignal {
+                    observability_event_ids.push(event.event_id.clone());
+                    continue;
+                }
+                match to_attribution_event_v2(event) {
+                    Some(converted) => {
+                        event_ids.push(event.event_id.clone());
+                        event_task_ids.insert(event.task_id.clone());
+                        event_dicts.push(serde_json::to_value(converted)?);
+                    }
+                    None => page_failed_event_ids.push(event.event_id.clone()),
+                }
+            }
+
             let mut buf = buffer.lock().await;
             buf.mark_synced(&observability_event_ids);
+            if !page_failed_event_ids.is_empty() {
+                let quarantined = buf.mark_quarantined(&page_failed_event_ids);
+                if quarantined != page_failed_event_ids.len() {
+                    return Err(DexcostError::Storage(format!(
+                        "quarantined {quarantined} of {} attribution conversion failures",
+                        page_failed_event_ids.len()
+                    )));
+                }
+                failed_event_ids.extend(page_failed_event_ids);
+            }
+            drop(buf);
+            if newly_scanned == 0 || page_len < page_limit {
+                break;
+            }
         }
 
         // Build the union of (pending tasks) and (tasks referenced by pending
         // events that are not already in pending_tasks). The latter covers
         // resilience: if an earlier task flush failed, the next event flush
         // re-includes the relevant tasks.
-        use std::collections::HashSet;
         let mut tasks_to_send: Vec<crate::core::models::Task> = pending_tasks;
         let already_included: HashSet<String> =
             tasks_to_send.iter().map(|t| t.task_id.clone()).collect();
 
-        let event_task_ids: Vec<String> = events
-            .iter()
-            .map(|e| e.task_id.clone())
-            .collect::<HashSet<_>>()
+        let event_task_ids: Vec<String> = event_task_ids
             .into_iter()
             .filter(|id| !already_included.contains(id))
             .collect();
@@ -390,17 +441,7 @@ impl EventPusher {
         if event_ids.is_empty() {
             return Ok(());
         }
-        let preview = event_ids
-            .iter()
-            .take(3)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        Err(DexcostError::Transport(format!(
-            "{} event(s) remain pending because they cannot be represented by attribution v2 (event IDs: {})",
-            event_ids.len(),
-            preview,
-        )))
+        Err(DexcostError::AttributionConversion(event_ids.to_vec()))
     }
 
     /// Recursively splits oversized payloads until they fit within the queue
@@ -622,5 +663,35 @@ impl EventPusher {
                 status
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversion_warnings_are_keyed_throttled_and_expire() {
+        let mut last_warning = None;
+        let first = vec!["b".to_string(), "a".to_string()];
+        assert!(EventPusher::should_warn_conversion(
+            &mut last_warning,
+            &first
+        ));
+        assert!(!EventPusher::should_warn_conversion(
+            &mut last_warning,
+            &["a".to_string(), "b".to_string()]
+        ));
+
+        last_warning.as_mut().expect("warning state").1 =
+            Instant::now() - CONVERSION_WARNING_INTERVAL;
+        assert!(EventPusher::should_warn_conversion(
+            &mut last_warning,
+            &first
+        ));
+        assert!(EventPusher::should_warn_conversion(
+            &mut last_warning,
+            &["different".to_string()]
+        ));
     }
 }

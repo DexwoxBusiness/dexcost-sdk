@@ -448,6 +448,53 @@ impl EventBuffer {
         }
     }
 
+    /// Moves unrepresentable events out of the normal pending delivery window
+    /// without claiming that the control plane accepted them. Returns the
+    /// number of rows transitioned so the pusher can detect storage failures
+    /// instead of spinning on the same malformed prefix.
+    pub fn mark_quarantined(&mut self, event_ids: &[String]) -> usize {
+        let mut updated = 0;
+        for id in event_ids {
+            match self.conn.execute(
+                "UPDATE events SET sync_status = 'quarantined' \
+                 WHERE sync_status = 'pending' AND event_id = ?1",
+                params![id],
+            ) {
+                Ok(count) => updated += count,
+                Err(e) => eprintln!("[dexcost] failed to quarantine event: {}", e),
+            }
+        }
+        updated
+    }
+
+    /// Returns quarantined attribution conversion failures, oldest first, for
+    /// diagnostics. Quarantined rows remain durable until retention cleanup.
+    pub fn get_quarantined_events(&self, limit: usize) -> Vec<CostEvent> {
+        let mut stmt = match self.conn.prepare(
+            "SELECT event_id, task_id, event_type, provider, model,
+                    input_tokens, output_tokens, cached_tokens, service_name,
+                    cost_usd, latency_ms, cost_confidence, pricing_source,
+                    pricing_version, is_retry, retry_reason, retry_of,
+                    details, timestamp
+             FROM events WHERE sync_status = 'quarantined'
+             ORDER BY timestamp ASC
+             LIMIT ?1",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "[dexcost] query prepare failed (get_quarantined_events): {}",
+                    e
+                );
+                return vec![];
+            }
+        };
+
+        stmt.query_map(params![limit as i64], row_to_event)
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    }
+
     /// Returns a Task by ID, or None.
     pub fn get_task(&self, task_id: &str) -> Option<Task> {
         self.conn
@@ -718,15 +765,16 @@ impl EventBuffer {
         deleted
     }
 
-    /// Deletes pending events older than `max_age_days` and runs `VACUUM` when
-    /// rows were removed. Safety net for events that can never be synced (e.g.
-    /// an invalid API key). Returns the number of deleted rows.
+    /// Deletes pending or quarantined events older than `max_age_days` and
+    /// runs `VACUUM` when rows were removed. Quarantined rows remain available
+    /// for diagnosis during the normal retention window.
     ///
     /// Mirrors Python `storage/sqlite.py` `purge_old_pending` (default 7 days).
     pub fn purge_old_pending(&mut self, max_age_days: i64) -> usize {
         let cutoff = (Utc::now() - chrono::Duration::days(max_age_days)).to_rfc3339();
         let deleted = match self.conn.execute(
-            "DELETE FROM events WHERE sync_status = 'pending' AND timestamp < ?1",
+            "DELETE FROM events WHERE sync_status IN ('pending', 'quarantined') \
+             AND timestamp < ?1",
             params![cutoff],
         ) {
             Ok(n) => n,
@@ -1024,20 +1072,25 @@ mod tests {
         buffer.mark_synced(&[old.event_id.clone(), recent.event_id.clone()]);
 
         let deleted = buffer.purge_synced(48);
-        assert_eq!(deleted, 1, "only the 100h-old synced event should be purged");
+        assert_eq!(
+            deleted, 1,
+            "only the 100h-old synced event should be purged"
+        );
         assert_eq!(buffer.event_count(), 2);
         // The pending event is untouched.
         assert_eq!(buffer.pending_count(), 1);
     }
 
-    // Gap 4: purge_old_pending removes very old pending events.
+    // Gap 4: purge_old_pending removes very old pending/quarantined events.
     #[test]
     fn test_purge_old_pending() {
         let mut buffer = EventBuffer::new().unwrap();
 
         let old = CostEvent::new("task-1", EventType::LlmCall);
+        let old_quarantined = CostEvent::new("task-1", EventType::LlmCall);
         let fresh = CostEvent::new("task-1", EventType::LlmCall);
         buffer.add_event(old.clone());
+        buffer.add_event(old_quarantined.clone());
         buffer.add_event(fresh.clone());
 
         // Backdate `old` 10 days into the past.
@@ -1049,9 +1102,21 @@ mod tests {
                 params![old_ts, old.event_id],
             )
             .unwrap();
+        buffer
+            .conn
+            .execute(
+                "UPDATE events SET timestamp = ?1 WHERE event_id = ?2",
+                params![old_ts, old_quarantined.event_id],
+            )
+            .unwrap();
+        assert_eq!(
+            buffer.mark_quarantined(std::slice::from_ref(&old_quarantined.event_id)),
+            1
+        );
+        assert_eq!(buffer.get_quarantined_events(10).len(), 1);
 
         let deleted = buffer.purge_old_pending(7);
-        assert_eq!(deleted, 1);
+        assert_eq!(deleted, 2);
         assert_eq!(buffer.event_count(), 1);
         assert_eq!(buffer.pending_count(), 1);
     }
