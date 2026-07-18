@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.3.1...go/v0.4.0) (2026-07-18)
+
+
+### Features
+
+* **attribution:** observe unpriced service usage across SDKs ([#89](https://github.com/DexwoxBusiness/dexcost-sdk/issues/89)) ([93109e3](https://github.com/DexwoxBusiness/dexcost-sdk/commit/93109e348f4b339e0c532a5bed7e03a1be43ee40))
+
 ## [0.3.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.3.0...go/v0.3.1) (2026-07-18)
 
 
