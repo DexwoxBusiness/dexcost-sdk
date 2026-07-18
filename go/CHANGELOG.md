@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.3.0...go/v0.3.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **go:** preserve attribution v2 delivery ([#84](https://github.com/DexwoxBusiness/dexcost-sdk/issues/84)) ([8a8113b](https://github.com/DexwoxBusiness/dexcost-sdk/commit/8a8113b134d821292554fdeb228ee212b6551132))
+
 ## [0.3.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.2.3...go/v0.3.0) (2026-07-17)
 
 
