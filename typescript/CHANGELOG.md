@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.14.0...typescript/v0.15.0) (2026-07-18)
+
+
+### Features
+
+* **attribution:** capture observer billing dimensions across SDKs ([#95](https://github.com/DexwoxBusiness/dexcost-sdk/issues/95)) ([c4d7f71](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c4d7f7104412b697d1c77c04ff89f30ff50aa95d))
+
 ## [0.14.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.13.1...typescript/v0.14.0) (2026-07-18)
 
 

@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.6.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.5.0...python/v0.6.0) (2026-07-18)
+
+
+### Features
+
+* **attribution:** capture observer billing dimensions across SDKs ([#95](https://github.com/DexwoxBusiness/dexcost-sdk/issues/95)) ([c4d7f71](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c4d7f7104412b697d1c77c04ff89f30ff50aa95d))
+
 ## [0.5.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.4.1...python/v0.5.0) (2026-07-18)
 
 
