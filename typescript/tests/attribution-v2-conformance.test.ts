@@ -193,9 +193,34 @@ describe("v1 capture to attribution v2 conversion", () => {
     ]);
   });
 
-  it("drops overlapping retry markers and observability-only GPU signals", () => {
-    expect(toAttributionEventV2(createCostEvent({ ...base, eventType: "retry_marker" }))).toBeNull();
+  it("drops observability-only GPU signals", () => {
     expect(toAttributionEventV2(createCostEvent({ ...base, eventType: "gpu_utilization_signal" }))).toBeNull();
+  });
+
+  it("preserves retry linkage, reason, usage, and caller-supplied cost", () => {
+    const retryOf = randomUUID();
+    const converted = toAttributionEventV2(createCostEvent({
+      ...base,
+      eventType: "retry_marker",
+      isRetry: true,
+      retryReason: "rate_limit",
+      retryOf,
+      costUsd: "0.02",
+      costConfidence: "exact",
+    }));
+    expect(converted).toMatchObject({
+      component: "external",
+      provider: { name: "dexcost", service: "retry" },
+      resource: { type: "other", id: "rate_limit" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "0.02",
+        currency: "USD",
+        source: "manual",
+        confidence: "exact",
+      },
+      retry_of: retryOf,
+    });
   });
 
   it("uses a stable observed_at and never transmits arbitrary details", () => {
