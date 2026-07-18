@@ -2,10 +2,30 @@ package pricing
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"reflect"
 	"testing"
 )
+
+func TestObserverQueryMatchesPreservesBlankPresentValue(t *testing.T) {
+	predicate := []usageQueryPredicate{{Parameter: "keyterm", Operator: "present"}}
+	parsed, err := url.Parse("https://api.deepgram.com/v1/listen?keyterm=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observerQueryMatches(parsed.Query(), predicate) {
+		t.Fatal("blank keyterm value must satisfy the present predicate")
+	}
+
+	prefixed, err := url.Parse("https://api.deepgram.com/v1/listen?notkeyterm=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observerQueryMatches(prefixed.Query(), predicate) {
+		t.Fatal("a different query parameter must not satisfy the keyterm predicate")
+	}
+}
 
 func TestSharedServiceUsageObserverConformance(t *testing.T) {
 	raw, err := os.ReadFile("../../fixtures/service_usage_observation_conformance.json")

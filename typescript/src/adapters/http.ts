@@ -502,7 +502,7 @@ function _buildInstrumentedFetch(
     const requestHeaders = _resolveRequestHeaders(input, init);
     const requestBodyLen = _resolveRequestBodyLen(input, init);
     const observerRequestBody = serviceUsageObservers?.needsRequestBody(urlStr) === true
-      ? await _resolveObserverRequestBody(input, init)
+      ? _resolveObserverRequestBody(init)
       : undefined;
     const requestBytes = measureBytesFromHeaders(
       method,
@@ -1091,10 +1091,7 @@ function _resolveRequestBodyLen(
 
 const MAX_OBSERVER_REQUEST_BODY_BYTES = 1_048_576;
 
-async function _resolveObserverRequestBody(
-  input: string | URL | Request,
-  init?: RequestInit,
-): Promise<unknown> {
+function _resolveObserverRequestBody(init?: RequestInit): unknown {
   try {
     const body = init?.body;
     if (typeof body === "string") {
@@ -1108,13 +1105,11 @@ async function _resolveObserverRequestBody(
       if (bytes.byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
       return JSON.parse(new TextDecoder().decode(bytes));
     }
-    if (input instanceof Request && body === undefined && !input.bodyUsed) {
-      const declared = Number(input.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
-      const text = await input.clone().text();
-      if (Buffer.byteLength(text, "utf-8") > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
-      return JSON.parse(text);
-    }
+    // A Request exposes its body only as a stream, whose declared length can
+    // be absent or untrustworthy. Optional instrumentation must never clone
+    // and drain that stream before the provider fetch. Callers using a
+    // Request still emit provider-owned usage; only request-derived resource
+    // identity is omitted unless an explicit, bounded init.body is supplied.
   } catch {
     // Request metadata is fail-open; provider usage can still be observed.
   }

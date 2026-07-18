@@ -110,6 +110,40 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("does not pre-read opaque Request streams for observer metadata", async () => {
+    const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "cohere-stream",
+      meta: { billed_units: { input_tokens: 11 } },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"model":"embed-v4.0"'));
+        // Deliberately never close: instrumentation must not wait for this
+        // optional metadata stream before invoking the real fetch.
+      },
+    });
+    const request = new Request("https://api.cohere.com/v2/embed", {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    await runWithTask(task, async () => { await fetch(request); });
+    await request.body?.cancel();
+
+    expect(baseFetch).toHaveBeenCalledOnce();
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      provider: { name: "cohere", service: "embed", record_id: "cohere-stream" },
+      usage: [{ metric: "input_tokens", quantity: "11", unit: "Tokens" }],
+    });
+    expect(wire?.resource).toBeUndefined();
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
   it("emits Deepgram duration as speech-to-text seconds", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       metadata: { request_id: "dg-25", duration: 25.933313 },
