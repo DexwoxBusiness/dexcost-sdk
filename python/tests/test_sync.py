@@ -24,6 +24,7 @@ from dexcost.sync import (
     _MAX_BACKOFF,
     SyncWorker,
     _AttributionBatchRejectedError,
+    _AttributionConversionError,
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -303,6 +304,58 @@ class TestSyncBatch:
         mock_urlopen.assert_not_called()
 
     @patch("dexcost.sync.urllib.request.urlopen")
+    def test_malformed_head_event_is_quarantined_while_valid_sibling_is_delivered(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
+        storage = _make_storage(tmp_path)
+        invalid = _make_event()
+        invalid.event_type = "future_internal_signal"
+        valid = _make_event()
+        storage.insert_event(invalid)
+        storage.insert_event(valid)
+
+        worker = SyncWorker(config=_make_config(batch_size=1), storage=storage)
+        with pytest.raises(_AttributionConversionError, match="were quarantined"):
+            worker._sync_batch()
+
+        assert storage.query_events_for_sync() == []
+        assert [event.event_id for event in storage.query_quarantined_events()] == [
+            invalid.event_id
+        ]
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assert [event["event_id"] for event in body["events"]] == [str(valid.event_id)]
+
+    def test_duplicate_conversion_warnings_are_throttled(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        worker = SyncWorker(config=_make_config(), storage=_make_storage(tmp_path))
+        first = _AttributionConversionError(["event-a"])
+        second = _AttributionConversionError(["event-b"])
+
+        with patch("dexcost.sync.time.monotonic", return_value=1000.0):
+            worker._warn_conversion_failure(first)
+            worker._warn_conversion_failure(first)
+            worker._warn_conversion_failure(second)
+
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 2
+
+    def test_stale_quarantine_is_purged_without_a_successful_upload(
+        self, tmp_path: Path
+    ) -> None:
+        storage = _make_storage(tmp_path)
+        stale = _make_event()
+        stale.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        storage.insert_event(stale)
+        storage.mark_quarantined([str(stale.event_id)])
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        worker._last_purge = -3600.0
+
+        assert worker._sync_batch() is False
+        assert storage.query_quarantined_events() == []
+
+    @patch("dexcost.sync.urllib.request.urlopen")
     def test_batch_size_respected(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Only batch_size events are sent per batch."""
         mock_urlopen.return_value = _mock_urlopen_success()
@@ -512,11 +565,11 @@ class TestRedaction:
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_redact_fields_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
-        """Configured PII cannot escape through the removed details carrier."""
+        """Configured allow-listed identifiers cannot bypass redaction."""
         mock_urlopen.return_value = _mock_urlopen_success()
-        config = _make_config(redact_fields=["email", "password"])
+        config = _make_config(redact_fields=["request_id", "password"])
         storage = _make_storage(tmp_path)
-        ev = _make_event(details={"email": "user@test.com", "model_name": "gpt-4"})
+        ev = _make_event(details={"request_id": "req_sensitive", "model_name": "gpt-4"})
         storage.insert_event(ev)
 
         worker = SyncWorker(config=config, storage=storage)
@@ -525,7 +578,8 @@ class TestRedaction:
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode("utf-8"))
         assert "details" not in body["events"][0]
-        assert "email" not in json.dumps(body["events"][0])
+        assert "record_id" not in body["events"][0]["provider"]
+        assert "req_sensitive" not in json.dumps(body["events"][0])
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_hash_customer_id_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:

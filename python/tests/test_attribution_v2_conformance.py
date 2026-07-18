@@ -278,9 +278,36 @@ def test_preserves_browser_rate_per_minute_cost_evidence() -> None:
     }
 
 
-@pytest.mark.parametrize("event_type", ["retry_marker", "gpu_utilization_signal"])
-def test_drops_overlapping_or_observability_only_events(event_type: str) -> None:
-    assert to_attribution_event_v2(_event(event_type=event_type)) is None
+def test_preserves_retry_linkage_reason_usage_and_cost() -> None:
+    retry_of = uuid.uuid4()
+    converted = to_attribution_event_v2(
+        _event(
+            event_type="retry_marker",
+            model="partial-response-model",
+            is_retry=True,
+            retry_reason="rate_limit",
+            retry_of=retry_of,
+            cost_usd=Decimal("0.0042"),
+        )
+    )
+    assert converted is not None
+    assert converted["component"] == "external"
+    assert converted["provider"] == {"name": "dexcost", "service": "retry"}
+    assert converted["resource"] == {"type": "other", "id": "rate_limit"}
+    assert converted["usage"] == [
+        {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+    ]
+    assert converted["retry_of"] == str(retry_of)
+    assert converted["cost_evidence"] == {
+        "amount": "0.0042",
+        "currency": "USD",
+        "source": "manual",
+        "confidence": "exact",
+    }
+
+
+def test_drops_observability_only_events() -> None:
+    assert to_attribution_event_v2(_event(event_type="gpu_utilization_signal")) is None
 
 
 def test_drops_unknown_event_types_instead_of_misattributing_external_cost() -> None:

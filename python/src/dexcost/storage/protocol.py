@@ -75,6 +75,14 @@ class StorageBackend(Protocol):
         """Transition events from pending to synced."""
         ...
 
+    def mark_quarantined(self, event_ids: list[str]) -> None:
+        """Retain unrepresentable events outside the normal pending queue."""
+        ...
+
+    def query_quarantined_events(self, limit: int = 100) -> list[Event]:
+        """Return quarantined conversion failures, oldest first."""
+        ...
+
     def query_tasks_for_sync(self, task_ids: list[str]) -> list[Task]:
         """Return tasks matching the given IDs (for inclusion in sync payloads)."""
         ...
@@ -95,7 +103,7 @@ class StorageBackend(Protocol):
         ...
 
     def purge_old_pending(self, max_age_days: int = 7) -> int:
-        """Remove pending events older than *max_age_days*.
+        """Remove pending or quarantined events older than *max_age_days*.
 
         Safety net for events that can never be synced (invalid API key, etc.).
         Returns the number of deleted rows.

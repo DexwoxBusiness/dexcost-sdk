@@ -521,6 +521,34 @@ class SQLiteStorage:
             self._conn.execute(sql, event_ids)
             self._conn.commit()
 
+    def mark_quarantined(self, event_ids: list[str]) -> None:
+        """Retain unrepresentable events outside the pending sync scan.
+
+        Quarantine is deliberately distinct from ``synced``: the control
+        plane did not receive these records. A later :meth:`update_event`
+        moves a corrected record back to ``pending``.
+        """
+        if not event_ids:
+            return
+        placeholders = ",".join("?" for _ in event_ids)
+        sql = (
+            "UPDATE events SET sync_status = 'quarantined' "
+            "WHERE sync_status = 'pending' AND event_id IN (" + placeholders + ")"
+        )
+        with self._lock:
+            self._conn.execute(sql, event_ids)
+            self._conn.commit()
+
+    def query_quarantined_events(self, limit: int = 100) -> list[Event]:
+        """Return quarantined conversion failures, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM events WHERE sync_status = 'quarantined' "
+                "ORDER BY timestamp ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
     def query_tasks_for_sync(self, task_ids: list[str]) -> list[Task]:
         """Return tasks matching the given IDs (for inclusion in sync payloads)."""
         if not task_ids:
@@ -581,7 +609,7 @@ class SQLiteStorage:
         return deleted
 
     def purge_old_pending(self, max_age_days: int = 7) -> int:
-        """Remove pending events older than *max_age_days*.
+        """Remove pending or quarantined events older than *max_age_days*.
 
         Safety net for events that can never be synced (invalid API key, etc.).
         Returns the number of deleted rows.
@@ -591,7 +619,8 @@ class SQLiteStorage:
                 datetime.now(timezone.utc) - timedelta(days=max_age_days)
             ).isoformat()
             cursor = self._conn.execute(
-                "DELETE FROM events WHERE sync_status = 'pending' AND timestamp < ?",
+                "DELETE FROM events "
+                "WHERE sync_status IN ('pending', 'quarantined') AND timestamp < ?",
                 (cutoff,),
             )
             deleted = cursor.rowcount

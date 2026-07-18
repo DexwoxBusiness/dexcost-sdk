@@ -1,13 +1,14 @@
 """Background event push to Control Layer (US-016).
 
 A daemon thread batches pending events from the local SQLite buffer and
-pushes them to the cloud endpoint via HTTPS POST.  Exponential backoff
-on failure ensures no data loss; events stay buffered until successfully
-delivered.
+pushes them to the cloud endpoint via HTTPS POST. Exponential backoff keeps
+retryable failures pending, while locally unrepresentable records are retained
+in a separate quarantine for diagnosis and bounded cleanup.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
@@ -34,10 +35,25 @@ _INITIAL_BACKOFF: float = 1.0
 _MAX_BACKOFF: float = 300.0  # 5 minutes
 _PURGE_INTERVAL: float = 3600.0  # 1 hour between purge runs
 _MAX_PAYLOAD_BYTES: int = 120_000  # Headroom below the control-plane 128KB queue limit
+_MAX_CONVERSION_SCAN: int = 1000
+_CONVERSION_SCAN_MULTIPLIER: int = 10
+_CONVERSION_WARNING_INTERVAL: float = 3600.0
 
 
 class _AttributionBatchRejectedError(RuntimeError):
     """The control plane did not accept every record in a prepared leaf."""
+
+
+class _AttributionConversionError(RuntimeError):
+    """One or more durable events cannot be represented by attribution v2."""
+
+    def __init__(self, event_ids: list[str]) -> None:
+        self.event_ids = tuple(sorted(event_ids))
+        preview = ", ".join(event_ids[:3])
+        super().__init__(
+            f"{len(event_ids)} event(s) were quarantined because they cannot be "
+            f"represented by attribution v2 (event IDs: {preview})"
+        )
 
 
 class SyncWorker:
@@ -87,6 +103,8 @@ class SyncWorker:
 
         self._backoff: float = _INITIAL_BACKOFF
         self._last_purge: float = 0.0
+        self._last_conversion_warning_at: float = 0.0
+        self._last_conversion_warning_key: tuple[str, ...] = ()
 
         self._thread: threading.Thread | None = None
 
@@ -152,6 +170,16 @@ class SyncWorker:
                     if self._flush_requested:
                         self._flush_requested = False
                         self._flush_done.set()
+            except _AttributionConversionError as exc:
+                # A conversion failure is local data state, not a transport
+                # outage. Quarantined rows leave the normal pending scan; if
+                # storage could not persist quarantine, suppress log floods.
+                self._warn_conversion_failure(exc)
+                self._backoff = _INITIAL_BACKOFF
+                with self._flush_lock:
+                    if self._flush_requested:
+                        self._flush_requested = False
+                        self._flush_done.set()
             except Exception:
                 _log.exception("SyncWorker error during batch push")
                 # Signal flush done even on error so caller doesn't hang
@@ -186,21 +214,55 @@ class SyncWorker:
             ``_storage`` is used (suitable for same-thread calls).
         """
         st = storage if storage is not None else self._storage
-        events = st.query_events_for_sync(limit=self._config.batch_size)
+        self._purge_if_due(st)
+        batch_size = max(1, self._config.batch_size)
 
-        # Convert durable v1 capture into strict attribution-v2 wire records.
-        # Observability-only signals and permanently invalid legacy rows are
-        # acknowledged locally so they cannot poison the pending queue forever.
+        # Quarantine failed conversion pages before reading the next page, so
+        # malformed legacy rows cannot block newer valid attribution data.
         event_dicts: list[dict[str, Any]] = []
-        skipped_event_ids: list[str] = []
-        for event in events:
-            converted = self._prepare_event_dict(event)
-            if converted is None:
-                skipped_event_ids.append(str(event.event_id))
-            else:
-                event_dicts.append(converted)
-        if skipped_event_ids:
-            st.mark_synced(skipped_event_ids)
+        failed_event_ids: list[str] = []
+        seen_event_ids: set[str] = set()
+        scan_limit = max(
+            batch_size,
+            min(_MAX_CONVERSION_SCAN, batch_size * _CONVERSION_SCAN_MULTIPLIER),
+        )
+        scanned = 0
+
+        while len(event_dicts) < batch_size and scanned < scan_limit:
+            page_limit = min(batch_size - len(event_dicts), scan_limit - scanned)
+            events = st.query_events_for_sync(limit=page_limit)
+            if not events:
+                break
+
+            observability_event_ids: list[str] = []
+            page_failed_event_ids: list[str] = []
+            newly_scanned = 0
+            for event in events:
+                event_id = str(event.event_id)
+                if event_id in seen_event_ids:
+                    continue
+                seen_event_ids.add(event_id)
+                newly_scanned += 1
+                scanned += 1
+                if event.event_type == "gpu_utilization_signal":
+                    observability_event_ids.append(event_id)
+                    continue
+                converted = self._prepare_event_dict(event)
+                if converted is None:
+                    page_failed_event_ids.append(event_id)
+                else:
+                    event_dicts.append(converted)
+
+            if observability_event_ids:
+                st.mark_synced(observability_event_ids)
+            if page_failed_event_ids:
+                st.mark_quarantined(page_failed_event_ids)
+                failed_event_ids.extend(page_failed_event_ids)
+
+            # If quarantine could not advance storage, the next query returns
+            # the same rows. Stop this cycle rather than spinning forever.
+            if newly_scanned == 0 or len(events) < page_limit:
+                break
 
         # Gather pending (not-yet-synced) tasks for the ingest payload.
         # Only pending tasks are pushed, so synced tasks are never re-POSTed
@@ -214,10 +276,13 @@ class SyncWorker:
         else:
             # Backend without task sync tracking — fall back to task IDs
             # referenced by this event batch.
-            tasks = st.query_tasks_for_sync(list({str(e.task_id) for e in events}))
+            tasks = st.query_tasks_for_sync(
+                list({str(event["task_id"]) for event in event_dicts})
+            )
         task_dicts: list[dict[str, Any]] = [self._prepare_task_dict(t) for t in tasks]
 
         if not event_dicts and not task_dicts:
+            self._raise_conversion_failure(failed_event_ids)
             return False
 
         posted = self._post_with_split(event_dicts, task_dicts, storage=st)
@@ -244,26 +309,45 @@ class SyncWorker:
             self._config.endpoint,
         )
 
-        # Purge old synced events (throttled to once per hour)
-        now = time.monotonic()
-        if now - self._last_purge >= _PURGE_INTERVAL:
-            try:
-                deleted = st.purge_synced()
-                if deleted:
-                    _log.info("Purged %d old synced events", deleted)
-                self._last_purge = now
-            except Exception:
-                _log.warning("purge_synced failed", exc_info=True)
-
-            # Also purge very old pending events (safety net)
-            try:
-                old_pending = st.purge_old_pending(max_age_days=7)
-                if old_pending:
-                    _log.info("Purged %d old pending events (>7 days)", old_pending)
-            except Exception:
-                pass
-
+        self._raise_conversion_failure(failed_event_ids)
         return True
+
+    def _purge_if_due(self, storage: StorageBackend) -> None:
+        """Run age-based cleanup even when there is nothing to upload."""
+        now = time.monotonic()
+        if now - self._last_purge < _PURGE_INTERVAL:
+            return
+        self._last_purge = now
+        try:
+            deleted = storage.purge_synced()
+            if deleted:
+                _log.info("Purged %d old synced events", deleted)
+        except Exception:
+            _log.warning("purge_synced failed", exc_info=True)
+
+        try:
+            stale = storage.purge_old_pending(max_age_days=7)
+            if stale:
+                _log.info("Purged %d old pending/quarantined events (>7 days)", stale)
+        except Exception:
+            _log.warning("purge_old_pending failed", exc_info=True)
+
+    def _warn_conversion_failure(self, exc: _AttributionConversionError) -> None:
+        """Throttle duplicate background warnings for the same event set."""
+        now = time.monotonic()
+        if (
+            exc.event_ids != self._last_conversion_warning_key
+            or now - self._last_conversion_warning_at >= _CONVERSION_WARNING_INTERVAL
+        ):
+            _log.warning("%s", exc)
+            self._last_conversion_warning_key = exc.event_ids
+            self._last_conversion_warning_at = now
+
+    @staticmethod
+    def _raise_conversion_failure(event_ids: list[str]) -> None:
+        if not event_ids:
+            return
+        raise _AttributionConversionError(event_ids)
 
     def _hash_pii(self, d: dict[str, Any]) -> None:
         """Hash ``customer_id`` / ``project_id`` keys in-place, if configured.
@@ -287,7 +371,15 @@ class SyncWorker:
         Arbitrary ``details`` never cross the process boundary. The converter
         reads only the accounting allow-list needed by attribution v2.
         """
-        return cast(dict[str, Any] | None, to_attribution_event_v2(event))
+        sanitized = event
+        if self._config.redact_fields and isinstance(event.details, dict):
+            # Do not mutate durable capture: a later config may permit fields
+            # that this push redacts. Conversion must only see the sanitized
+            # allow-list so request/call/resource identifiers cannot bypass
+            # configured field-level redaction.
+            sanitized = copy.copy(event)
+            sanitized.details = redact_dict(event.details, self._config.redact_fields)
+        return cast(dict[str, Any] | None, to_attribution_event_v2(sanitized))
 
     def _prepare_task_dict(self, task: Any) -> dict[str, Any]:
         """Serialise a task and apply the same redaction policy as events.

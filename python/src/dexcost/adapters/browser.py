@@ -159,7 +159,9 @@ def _record_browser_event(
         event_type="compute_cost",
         cost_usd=cost_usd,
         cost_confidence="computed",
-        pricing_source="rate_per_minute",
+        # The rate is supplied by the caller (or the SDK default), not selected
+        # from the versioned rate registry. Attribute it as manual evidence.
+        pricing_source="manual",
         service_name="playwright_browser",
         details={
             "wall_clock_seconds": str(round(elapsed_seconds, 6)),
