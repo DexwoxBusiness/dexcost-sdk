@@ -6,6 +6,7 @@ use dexcost::attribution::{
 use dexcost::core::models::{CostConfidence, CostEvent, EventType, PricingSource, Task};
 use rust_decimal::Decimal;
 use serde_json::Value;
+use std::collections::HashSet;
 
 fn usage_quantity(
     event: &dexcost::attribution::AttributionEventV2,
@@ -25,6 +26,17 @@ fn shared_attribution_v2_conformance() {
     ))
     .expect("valid shared fixture");
     assert_eq!(fixture["contract_version"], CONTRACT_VERSION);
+
+    let cases = fixture["valid"]
+        .as_array()
+        .expect("valid cases")
+        .iter()
+        .chain(fixture["invalid"].as_array().expect("invalid cases"));
+    let mut names = HashSet::new();
+    for case in cases {
+        let name = case["name"].as_str().expect("case name");
+        assert!(names.insert(name), "duplicate conformance case name {name}");
+    }
 
     for case in fixture["valid"].as_array().expect("valid cases") {
         let name = case["name"].as_str().expect("case name");

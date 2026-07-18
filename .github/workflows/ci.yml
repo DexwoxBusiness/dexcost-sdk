@@ -1,17 +1,15 @@
 name: CI
 
-# Bootstraps the dexcost-sdk CI matrix. Two-tier strategy:
+# DexCost SDK CI uses two blocking layers:
 #
 # 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
 #    that SDK's existing test suite (including bundled catalog drift checks
 #    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
-#    EXCLUDES the cross-SDK parity test, which is intentionally RED today.
+#    excludes the parity/conformance files exercised once in the shared gate.
 #
-# 2. cross-sdk-parity job is allowed to fail (continue-on-error). It runs the
-#    four cross_sdk_parity test files (Python canonical + Go/TS/Rust RED-state
-#    consumers) and surfaces RED -> GREEN transitions per-commit as Sprint 1+
-#    bug fixes land. Failure here is the live remediation backlog, not a
-#    merge blocker.
+# 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
+#    and pricing parity suites and the attribution-v2 contract corpus in all
+#    four languages. A contract regression in any SDK blocks merge.
 #
 # Per-SDK hardening flags pin specific audit findings:
 #   - Go    : -race (catches B13 session race, race conditions in pusher)
@@ -50,9 +48,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
-      - name: Test (excluding cross-SDK parity)
+      - name: Test (excluding shared conformance gate files)
         working-directory: python
-        run: python -m pytest tests/ --ignore=tests/test_cross_sdk_parity.py -v
+        run: >-
+          python -m pytest tests/
+          --ignore=tests/test_cross_sdk_parity.py
+          --ignore=tests/test_attribution_v2_conformance.py
+          -v
 
   go:
     name: go tests
@@ -63,11 +65,14 @@ jobs:
         with:
           go-version: "1.21"
           cache-dependency-path: go/go.sum
-      - name: Test with -race (excluding cross-SDK parity)
+      - name: Test with -race (excluding shared conformance gate tests)
         working-directory: go
         # -race catches B13 session race + transport pusher accounting bugs.
         # -skip introduced in Go 1.20.
-        run: go test -race -skip '^TestCrossSDK' ./...
+        run: >-
+          go test -race
+          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2)'
+          ./...
 
   typescript:
     name: typescript tests (node ${{ matrix.node-version }})
@@ -89,9 +94,11 @@ jobs:
       - name: Lint (tsc --noEmit)
         working-directory: typescript
         run: npm run lint
-      - name: Test (excluding cross-SDK parity)
+      - name: Test (excluding shared conformance gate files)
         working-directory: typescript
-        run: npx vitest run --exclude 'tests/cross-sdk-parity.test.ts'
+        run: >-
+          npx vitest run
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v2-pusher-conformance}.test.ts'
       - name: Build + runtime smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs
@@ -159,26 +166,23 @@ jobs:
         working-directory: rust
         continue-on-error: true
         run: cargo clippy --all-targets -- -W clippy::all
-      - name: Test (lib + bins + non-parity integration tests)
+      - name: Test (lib + bins + non-gate integration tests)
         working-directory: rust
-        # Each integration test in tests/*.rs is its own binary; run all
-        # EXCEPT cross_sdk_parity which is tracked in the parity job.
+        # Each integration test in tests/*.rs is its own binary; the two
+        # shared-gate binaries run only in cross-sdk-conformance below.
         run: |
           cargo test --lib --bins
           for t in tests/*.rs; do
             name=$(basename "$t" .rs)
-            if [ "$name" != "cross_sdk_parity" ]; then
+            if [ "$name" != "cross_sdk_parity" ] && \
+               [ "$name" != "attribution_v2_conformance" ]; then
               cargo test --test "$name"
             fi
           done
 
-  cross-sdk-parity:
-    name: cross-SDK parity (RED-tracking, non-blocking)
+  cross-sdk-conformance:
+    name: cross-SDK attribution conformance
     runs-on: ubuntu-latest
-    # This job intentionally allows failure. Each failing sub-test pins an
-    # audit finding scheduled for Sprint 1+. As bugs are fixed, sub-tests
-    # flip green; the suite must be fully green by the close of Sprint 4.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -212,27 +216,34 @@ jobs:
         if: matrix.sdk == 'python'
         run: bash scripts/check_cost_map_drift.sh
 
-      - name: Run cross-SDK parity (python)
+      - name: Run cross-SDK conformance (python)
         if: matrix.sdk == 'python'
         working-directory: python
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . pytest pytest-asyncio
-          python -m pytest tests/test_cross_sdk_parity.py -v
+          python -m pytest tests/test_cross_sdk_parity.py tests/test_attribution_v2_conformance.py -v
 
-      - name: Run cross-SDK parity (go)
+      - name: Run cross-SDK conformance (go)
         if: matrix.sdk == 'go'
         working-directory: go
-        run: go test -v -run '^TestCrossSDK' .
+        run: |
+          go test -v -run '^TestCrossSDK' .
+          go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2)' ./attribution
 
-      - name: Run cross-SDK parity (typescript)
+      - name: Run cross-SDK conformance (typescript)
         if: matrix.sdk == 'typescript'
         working-directory: typescript
         run: |
           npm ci || npm install
-          npx vitest run tests/cross-sdk-parity.test.ts
+          npx vitest run \
+            tests/cross-sdk-parity.test.ts \
+            tests/attribution-v2-conformance.test.ts \
+            tests/attribution-v2-pusher-conformance.test.ts
 
-      - name: Run cross-SDK parity (rust)
+      - name: Run cross-SDK conformance (rust)
         if: matrix.sdk == 'rust'
         working-directory: rust
-        run: cargo test --test cross_sdk_parity
+        run: |
+          cargo test --test cross_sdk_parity
+          cargo test --test attribution_v2_conformance

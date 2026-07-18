@@ -29,6 +29,19 @@ func TestSharedAttributionV2Conformance(t *testing.T) {
 	if fixture.ContractVersion != ContractVersion {
 		t.Fatalf("fixture version %s != %s", fixture.ContractVersion, ContractVersion)
 	}
+	names := make(map[string]struct{}, len(fixture.Valid)+len(fixture.Invalid))
+	for _, test := range fixture.Valid {
+		if _, exists := names[test.Name]; exists {
+			t.Fatalf("duplicate conformance case name %q", test.Name)
+		}
+		names[test.Name] = struct{}{}
+	}
+	for _, test := range fixture.Invalid {
+		if _, exists := names[test.Name]; exists {
+			t.Fatalf("duplicate conformance case name %q", test.Name)
+		}
+		names[test.Name] = struct{}{}
+	}
 	for _, test := range fixture.Valid {
 		t.Run("valid/"+test.Name, func(t *testing.T) {
 			result := ValidateEventV2(test.Event)
