@@ -106,6 +106,15 @@ const SENSITIVE_QUERY_PARAMS: ReadonlySet<string> = new Set([
   "x-amz-credential",
   "x-amz-security-token",
   "session",
+  "keyterm",
+  "keywords",
+  "custom_topic",
+  "custom_intent",
+  "search",
+  "replace",
+  "tag",
+  "extra",
+  "callback",
 ]);
 
 const USERINFO_RE = /^(https?:\/\/)([^@/?#]+@)?(.+)$/;

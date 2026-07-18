@@ -86,6 +86,15 @@ var sensitiveQueryParams = map[string]struct{}{
 	"x-amz-credential":     {},
 	"x-amz-security-token": {},
 	"session":              {},
+	"keyterm":              {},
+	"keywords":             {},
+	"custom_topic":         {},
+	"custom_intent":        {},
+	"search":               {},
+	"replace":              {},
+	"tag":                  {},
+	"extra":                {},
+	"callback":             {},
 }
 
 var userinfoRegex = regexp.MustCompile(`^(https?://)([^@/?#]+@)?(.+)$`)

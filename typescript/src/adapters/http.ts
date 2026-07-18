@@ -501,6 +501,9 @@ function _buildInstrumentedFetch(
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
     const requestBodyLen = _resolveRequestBodyLen(input, init);
+    const observerRequestBody = serviceUsageObservers?.needsRequestBody(urlStr) === true
+      ? await _resolveObserverRequestBody(input, init)
+      : undefined;
     const requestBytes = measureBytesFromHeaders(
       method,
       urlStr,
@@ -553,6 +556,7 @@ function _buildInstrumentedFetch(
       suppressed,
       responseHeaderBytes: _measureResponseHeaderBytes(response),
       llmStreamFormat,
+      observerRequestBody,
     };
 
     // Wrap the response body in a TransformStream that counts bytes as
@@ -997,6 +1001,8 @@ interface _HttpCallContext {
   suppressed: boolean;
   /** LLM response format detected for this call (for SSE stream parsing). */
   llmStreamFormat?: LlmFormat;
+  /** Bounded JSON request metadata used only for observer billing identity. */
+  observerRequestBody?: unknown;
   /** Response BODY bytes, known once the counting stream has drained.
    *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
    *  llm_call path, whose extraction drains the body via clone()) can
@@ -1081,6 +1087,38 @@ function _resolveRequestBodyLen(
   if (body instanceof Blob) return body.size;
   // FormData / ReadableStream — size unknown without consuming.
   return 0;
+}
+
+const MAX_OBSERVER_REQUEST_BODY_BYTES = 1_048_576;
+
+async function _resolveObserverRequestBody(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<unknown> {
+  try {
+    const body = init?.body;
+    if (typeof body === "string") {
+      if (Buffer.byteLength(body, "utf-8") > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
+      return JSON.parse(body);
+    }
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      const bytes = body instanceof ArrayBuffer
+        ? new Uint8Array(body)
+        : new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+      if (bytes.byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+    if (input instanceof Request && body === undefined && !input.bodyUsed) {
+      const declared = Number(input.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
+      const text = await input.clone().text();
+      if (Buffer.byteLength(text, "utf-8") > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
+      return JSON.parse(text);
+    }
+  } catch {
+    // Request metadata is fail-open; provider usage can still be observed.
+  }
+  return undefined;
 }
 
 function _measureResponseHeaderBytes(response: Response): number {
@@ -1598,39 +1636,44 @@ async function _maybeRecordCost(
     // owned quantities and the control plane decides whether they are priced.
     if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
       try {
-        const observation = serviceUsageObservers?.observe(
+        const observations = serviceUsageObservers?.observe(
           urlStr,
           response.headers,
           await response.clone().json(),
-        );
-        if (observation != null) {
-          const duration = observation.metric === "audio_seconds"
-            ? { attribution_usage_duration_seconds: observation.quantity }
-            : {};
-          const event = createCostEvent({
-            eventId: randomUUID(),
-            taskId: task.taskId,
-            eventType: "external_cost",
-            costUsd: 0,
-            costConfidence: "unknown",
-            pricingSource: "unknown",
-            provider: observation.providerName,
-            model: observation.resourceId,
-            serviceName: observation.providerService,
-            details: {
-              url: urlStr,
-              provider_record_id: observation.providerRecordId,
-              attribution_component: observation.component,
-              attribution_usage_quantity: observation.quantity,
-              attribution_usage_metric: observation.metric,
-              attribution_observer_version: observation.manifestVersion,
-              attribution_observer_service: observation.serviceKey,
-              ...duration,
-              ...byteDetailsRequestOnly,
-            },
-          });
-          _pushRecordedEvent(event);
-          if (_buffer) _buffer.addEvent(event);
+          ctx?.observerRequestBody,
+        ) ?? [];
+        if (observations.length > 0) {
+          for (const observation of observations) {
+            const duration = observation.metric === "audio_seconds"
+              ? { attribution_usage_duration_seconds: observation.quantity }
+              : {};
+            const event = createCostEvent({
+              eventId: randomUUID(),
+              taskId: task.taskId,
+              eventType: "external_cost",
+              costUsd: 0,
+              costConfidence: "unknown",
+              pricingSource: "unknown",
+              provider: observation.providerName,
+              model: observation.resourceType === "model" ? observation.resourceId : undefined,
+              serviceName: observation.providerService,
+              details: {
+                url: urlStr,
+                provider_record_id: observation.providerRecordId,
+                attribution_component: observation.component,
+                attribution_resource_type: observation.resourceType,
+                attribution_resource_id: observation.resourceId,
+                attribution_usage_quantity: observation.quantity,
+                attribution_usage_metric: observation.metric,
+                attribution_observer_version: observation.manifestVersion,
+                attribution_observer_service: observation.serviceKey,
+                ...duration,
+                ...byteDetailsRequestOnly,
+              },
+            });
+            _pushRecordedEvent(event);
+            if (_buffer) _buffer.addEvent(event);
+          }
           if (ctx) ctx._matchedCatalog = true;
           return;
         }

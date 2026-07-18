@@ -5,6 +5,19 @@ import { Decimal } from "../core/models.js";
 
 export type ObservedUsageMetric = "input_tokens" | "audio_seconds";
 export type ObservedAttributionComponent = "external" | "speech_to_text";
+export type ObservedResourceType = "model" | "sku";
+
+interface QueryPredicate {
+  parameter: string;
+  operator: "present" | "truthy";
+}
+
+interface ResourceVariant {
+  query_parameter: string;
+  equals: string;
+  matched_suffix: string;
+  default_suffix: string;
+}
 
 interface UsageObserverDefinition {
   service_key: string;
@@ -15,7 +28,16 @@ interface UsageObserverDefinition {
   endpoints: string[];
   response_path: string;
   usage_metric: ObservedUsageMetric;
+  resource_type?: ObservedResourceType;
   resource_path?: string;
+  request_resource_path?: string;
+  resource_query_parameter?: string;
+  default_resource_id?: string;
+  fixed_resource_id?: string;
+  resource_variant?: ResourceVariant;
+  query_any?: QueryPredicate[];
+  quantity_multiplier_path?: string;
+  quantity_multiplier_query_parameter?: string;
   record_id_path?: string;
   record_id_header?: string;
   source_url: string;
@@ -33,6 +55,7 @@ export interface ServiceUsageObservation {
   component: ObservedAttributionComponent;
   metric: ObservedUsageMetric;
   quantity: string;
+  resourceType?: ObservedResourceType;
   resourceId?: string;
   providerRecordId?: string;
   manifestVersion: string;
@@ -41,6 +64,7 @@ export interface ServiceUsageObservation {
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds"]);
 const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text"]);
+const RESOURCE_TYPES = new Set<ObservedResourceType>(["model", "sku"]);
 
 function resolvePath(value: unknown, path: string): unknown {
   let current = value;
@@ -72,6 +96,17 @@ function endpointMatches(pathname: string, endpoint: string): boolean {
   return pathname === endpoint || pathname.startsWith(`${endpoint}/`);
 }
 
+function queryValueIsTruthy(value: string | null): boolean {
+  if (value === null) return false;
+  return !new Set(["", "0", "false", "no", "off"]).has(value.trim().toLowerCase());
+}
+
+function predicateMatches(url: URL, predicate: QueryPredicate): boolean {
+  return predicate.operator === "present"
+    ? url.searchParams.has(predicate.parameter)
+    : url.searchParams.getAll(predicate.parameter).some(queryValueIsTruthy);
+}
+
 function validateManifest(raw: unknown): UsageObserverManifest {
   if (raw === null || typeof raw !== "object") throw new Error("usage observer manifest must be an object");
   const manifest = raw as Partial<UsageObserverManifest>;
@@ -86,6 +121,20 @@ function validateManifest(raw: unknown): UsageObserverManifest {
   }
   const keys = new Set<string>();
   for (const observer of manifest.observers) {
+    const optionalStrings = [
+      observer.resource_path,
+      observer.request_resource_path,
+      observer.resource_query_parameter,
+      observer.default_resource_id,
+      observer.fixed_resource_id,
+      observer.quantity_multiplier_path,
+      observer.quantity_multiplier_query_parameter,
+      observer.record_id_path,
+      observer.record_id_header,
+    ];
+    const hasResourceSelector = optionalStrings.slice(0, 5).some(
+      (value) => value !== undefined,
+    );
     if (
       observer === null ||
       typeof observer !== "object" ||
@@ -102,6 +151,29 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
       typeof observer.response_path !== "string" ||
       observer.response_path.length === 0 ||
+      optionalStrings.some(
+        (value) => value !== undefined && (typeof value !== "string" || value.length === 0),
+      ) ||
+      (observer.resource_type !== undefined && !RESOURCE_TYPES.has(observer.resource_type)) ||
+      (hasResourceSelector && observer.resource_type === undefined) ||
+      ((observer.quantity_multiplier_path === undefined) !==
+        (observer.quantity_multiplier_query_parameter === undefined)) ||
+      (observer.query_any !== undefined && (
+        !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
+        !observer.query_any.every((predicate) =>
+          typeof predicate.parameter === "string" && predicate.parameter.length > 0 &&
+          (predicate.operator === "present" || predicate.operator === "truthy"))
+      )) ||
+      (observer.resource_variant !== undefined && (
+        typeof observer.resource_variant.query_parameter !== "string" ||
+        observer.resource_variant.query_parameter.length === 0 ||
+        typeof observer.resource_variant.equals !== "string" ||
+        observer.resource_variant.equals.length === 0 ||
+        typeof observer.resource_variant.matched_suffix !== "string" ||
+        observer.resource_variant.matched_suffix.length === 0 ||
+        typeof observer.resource_variant.default_suffix !== "string"
+        || observer.resource_variant.default_suffix.length === 0
+      )) ||
       typeof observer.source_url !== "string" ||
       !observer.source_url.startsWith("https://") ||
       keys.has(observer.service_key)
@@ -124,48 +196,92 @@ export class ServiceUsageObservers {
     this.observers = manifest.observers;
   }
 
-  private lookup(url: string): UsageObserverDefinition | undefined {
+  private lookup(url: string): { parsed: URL; observers: UsageObserverDefinition[] } | undefined {
     let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
       return undefined;
     }
-    return this.observers.find(
+    const observers = this.observers.filter(
       (candidate) => candidate.domains.includes(parsed.hostname) &&
-        candidate.endpoints.some((endpoint) => endpointMatches(parsed.pathname, endpoint)),
+        candidate.endpoints.some((endpoint) => endpointMatches(parsed.pathname, endpoint)) &&
+        (candidate.query_any === undefined ||
+          candidate.query_any.some((predicate) => predicateMatches(parsed, predicate))),
     );
+    return observers.length === 0 ? undefined : { parsed, observers };
   }
 
   matches(url: string): boolean {
     return this.lookup(url) !== undefined;
   }
 
-  observe(url: string, headers: Headers, responseBody: unknown): ServiceUsageObservation | null {
-    const observer = this.lookup(url);
-    if (observer === undefined) return null;
-    const quantity = positiveDecimal(resolvePath(responseBody, observer.response_path));
-    if (quantity === undefined) return null;
-    const recordFromBody = observer.record_id_path === undefined
-      ? undefined
-      : boundedString(resolvePath(responseBody, observer.record_id_path));
-    const recordFromHeader = observer.record_id_header === undefined
-      ? undefined
-      : boundedString(headers.get(observer.record_id_header));
-    const resourceId = observer.resource_path === undefined
-      ? undefined
-      : boundedString(resolvePath(responseBody, observer.resource_path));
-    return {
-      serviceKey: observer.service_key,
-      providerName: observer.provider_name,
-      providerService: observer.provider_service,
-      component: observer.component,
-      metric: observer.usage_metric,
-      quantity,
-      resourceId,
-      providerRecordId: recordFromBody ?? recordFromHeader,
-      manifestVersion: this.manifestVersion,
-    };
+  needsRequestBody(url: string): boolean {
+    return this.lookup(url)?.observers.some(
+      (observer) => observer.request_resource_path !== undefined,
+    ) === true;
+  }
+
+  observe(
+    url: string,
+    headers: Headers,
+    responseBody: unknown,
+    requestBody?: unknown,
+  ): ServiceUsageObservation[] {
+    const matched = this.lookup(url);
+    if (matched === undefined) return [];
+    const observations: ServiceUsageObservation[] = [];
+    for (const observer of matched.observers) {
+      const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path));
+      if (rawQuantity === undefined) continue;
+      let quantity = new Decimal(rawQuantity);
+      if (
+        observer.quantity_multiplier_path !== undefined &&
+        observer.quantity_multiplier_query_parameter !== undefined &&
+        matched.parsed.searchParams.getAll(observer.quantity_multiplier_query_parameter)
+          .some(queryValueIsTruthy)
+      ) {
+        const multiplier = positiveDecimal(resolvePath(responseBody, observer.quantity_multiplier_path));
+        if (multiplier !== undefined) quantity = quantity.mul(multiplier);
+      }
+      const recordFromBody = observer.record_id_path === undefined
+        ? undefined
+        : boundedString(resolvePath(responseBody, observer.record_id_path));
+      const recordFromHeader = observer.record_id_header === undefined
+        ? undefined
+        : boundedString(headers.get(observer.record_id_header));
+      let resourceId = observer.resource_path === undefined
+        ? undefined
+        : boundedString(resolvePath(responseBody, observer.resource_path));
+      resourceId ??= observer.request_resource_path === undefined
+        ? undefined
+        : boundedString(resolvePath(requestBody, observer.request_resource_path));
+      resourceId ??= observer.resource_query_parameter === undefined
+        ? undefined
+        : boundedString(matched.parsed.searchParams.get(observer.resource_query_parameter));
+      resourceId ??= boundedString(observer.fixed_resource_id);
+      resourceId ??= boundedString(observer.default_resource_id);
+      if (resourceId !== undefined && observer.resource_variant !== undefined) {
+        const variant = observer.resource_variant;
+        resourceId += matched.parsed.searchParams.get(variant.query_parameter) === variant.equals
+          ? variant.matched_suffix
+          : variant.default_suffix;
+        resourceId = resourceId.slice(0, 256);
+      }
+      observations.push({
+        serviceKey: observer.service_key,
+        providerName: observer.provider_name,
+        providerService: observer.provider_service,
+        component: observer.component,
+        metric: observer.usage_metric,
+        quantity: quantity.toFixed().replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1"),
+        resourceType: resourceId === undefined ? undefined : observer.resource_type,
+        resourceId,
+        providerRecordId: recordFromBody ?? recordFromHeader,
+        manifestVersion: this.manifestVersion,
+      });
+    }
+    return observations;
   }
 }
 

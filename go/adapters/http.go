@@ -203,6 +203,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		protocol = "https"
 	}
 	requestBytes := measureRequestBytes(req)
+	observerRequestBody := readObserverRequestBody(req)
 	isInternal := ClassifyDestination(host)
 	suppress := core.IsNetworkEventSuppressed(req.Context())
 
@@ -288,7 +289,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		if replaced != nil {
 			resp.Body = replaced
 		}
-		if observation := pricing.ObserveServiceUsage(req.URL.String(), headers, body); observation != nil {
+		if observations := pricing.ObserveServiceUsage(req.URL.String(), headers, body, observerRequestBody); len(observations) > 0 {
 			responseBytes := responseHeaderBytes + bodyByteCount
 			if accountant != nil {
 				accountant.Record(host, responseBytes, requestBytes, isInternal)
@@ -297,7 +298,9 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 				"protocol": protocol, "request_bytes": requestBytes,
 				"response_bytes": responseBytes, "is_internal_traffic": isInternalToValue(isInternal),
 			}
-			t.recordUsageObservation(req, observation, byteDetails)
+			for i := range observations {
+				t.recordUsageObservation(req, &observations[i], byteDetails)
+			}
 			return resp, nil
 		}
 	}
@@ -320,6 +323,28 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		url:                 security.ScrubURL(req.URL.String()),
 	})
 	return resp, nil
+}
+
+func readObserverRequestBody(req *http.Request) map[string]interface{} {
+	if req == nil || req.URL == nil || req.GetBody == nil ||
+		!pricing.ServiceUsageObserverNeedsRequestBody(req.URL.String()) {
+		return nil
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil
+	}
+	defer body.Close()
+	limited := io.LimitReader(body, maxResponseBodySize+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil || len(raw) > maxResponseBodySize {
+		return nil
+	}
+	var decoded map[string]interface{}
+	if json.Unmarshal(raw, &decoded) != nil {
+		return nil
+	}
+	return decoded
 }
 
 // recordDomainRate records an external_cost event from a user-registered rate.
@@ -405,12 +430,16 @@ func (t *trackingTransport) recordUsageObservation(
 	event := core.NewEvent(taskID, core.EventTypeExternalCost)
 	event.Provider = observation.ProviderName
 	event.ServiceName = observation.ProviderService
-	event.Model = observation.ResourceID
+	if observation.ResourceType == "model" {
+		event.Model = observation.ResourceID
+	}
 	event.CostUSD = decimal.Zero
 	event.CostConfidence = core.CostConfidenceUnknown
 	event.Details["url"] = security.ScrubURL(req.URL.String())
 	event.Details["provider_record_id"] = observation.ProviderRecordID
 	event.Details["attribution_component"] = observation.Component
+	event.Details["attribution_resource_type"] = observation.ResourceType
+	event.Details["attribution_resource_id"] = observation.ResourceID
 	event.Details["attribution_usage_quantity"] = observation.Quantity.String()
 	event.Details["attribution_usage_metric"] = observation.Metric
 	event.Details["attribution_observer_version"] = observation.ManifestVersion

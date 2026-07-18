@@ -131,6 +131,15 @@ function providerFor(event: CostEvent): AttributionProviderIdentityV2 {
 }
 
 function resourceFor(event: CostEvent): AttributionResourceV2 | undefined {
+  const explicitType = stringDetail(event.details, "attribution_resource_type");
+  const explicitId = stringDetail(event.details, "attribution_resource_id");
+  if (
+    explicitId !== undefined &&
+    explicitType !== undefined &&
+    ["model", "sku", "instance", "endpoint", "session", "other"].includes(explicitType)
+  ) {
+    return { type: explicitType as AttributionResourceV2["type"], id: explicitId.slice(0, 256) };
+  }
   if (event.model) return { type: "model", id: event.model.slice(0, 256) };
   if (event.eventType === "gpu_cost") {
     const sku = stringDetail(event.details, "gpu_sku", "instance_type");

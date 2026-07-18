@@ -18,6 +18,7 @@ Implements US-035.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -348,6 +349,7 @@ def _requests_wrapper(
         headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
         _handle_http_call(url, method=str(getattr(req, "method", "GET")),
                           request_headers=headers, request_body_len=body_len,
+                          request_body=body,
                           response=response, latency_ms=latency_ms)
     return response
 
@@ -371,6 +373,7 @@ def _httpx_wrapper(
         headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
         _handle_http_call(url, method=str(getattr(req, "method", "GET")),
                           request_headers=headers, request_body_len=body_len,
+                          request_body=content,
                           response=response, latency_ms=latency_ms)
     return response
 
@@ -389,8 +392,10 @@ async def _aiohttp_wrapper(
     method = str(args[0]) if args else str(kwargs.get("method", "GET"))
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
+    request_body = kwargs.get("json", kwargs.get("data"))
     _handle_http_call(url, method=method, request_headers={},
-                      request_body_len=0, response=response, latency_ms=latency_ms)
+                      request_body_len=0, request_body=request_body,
+                      response=response, latency_ms=latency_ms)
     return response
 
 
@@ -416,6 +421,7 @@ def _botocore_wrapper(
         body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
         _handle_http_call(url, method=str(getattr(req, "method", "GET")),
                           request_headers={}, request_body_len=body_len,
+                          request_body=body,
                           response=response, latency_ms=latency_ms)
     return response
 
@@ -450,7 +456,8 @@ def _urllib3_wrapper(
         full_url = f"{scheme}://{host}{url_path}"
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     _handle_http_call(full_url, method=req_method, request_headers={},
-                      request_body_len=0, response=response, latency_ms=latency_ms)
+                      request_body_len=0, request_body=kwargs.get("body"),
+                      response=response, latency_ms=latency_ms)
     return response
 
 
@@ -566,6 +573,7 @@ def _handle_http_call(
     method: str = "GET",
     request_headers: dict[str, Any] | None = None,
     request_body_len: int = 0,
+    request_body: Any = None,
     response: Any = None,
     latency_ms: int = 0,
 ) -> None:
@@ -580,8 +588,23 @@ def _handle_http_call(
     # between extraction and event creation.
     url = scrub_url(url)
     try:
+        observer_request_body: dict[str, Any] | None = None
+        observers = get_service_usage_observers()
+        if observers is not None and observers.needs_request_body(url):
+            if isinstance(request_body, dict):
+                observer_request_body = request_body
+            elif isinstance(request_body, (str, bytes, bytearray)):
+                raw = request_body.encode() if isinstance(request_body, str) else bytes(request_body)
+                if len(raw) <= 1_048_576:
+                    try:
+                        decoded = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        decoded = None
+                    if isinstance(decoded, dict):
+                        observer_request_body = decoded
         _handle_http_call_inner(
-            url, method, request_headers or {}, request_body_len, response, latency_ms
+            url, method, request_headers or {}, request_body_len, observer_request_body,
+            response, latency_ms
         )
     except Exception:  # broad catch intentional: must never break the caller's HTTP call
         global _network_error_count
@@ -721,6 +744,7 @@ def _handle_usage_observer(
     response: Any,
     status_code: int,
     byte_details: dict[str, Any],
+    request_body: dict[str, Any] | None,
 ) -> bool:
     """Record provider-owned usage without asserting an SDK-side price."""
     if status_code < 200 or status_code >= 300:
@@ -728,8 +752,10 @@ def _handle_usage_observer(
     observers = get_service_usage_observers()
     if observers is None or not observers.matches(url):
         return False
-    observation = observers.observe(url, response_headers, _get_response_body(response))
-    if observation is None:
+    observations = observers.observe(
+        url, response_headers, _get_response_body(response), request_body
+    )
+    if not observations:
         return False
     task = _resolve_task()
     if task is None:
@@ -741,30 +767,33 @@ def _handle_usage_observer(
             bytes_out=bytes_out,
             is_internal=byte_details.get("is_internal_traffic"),
         )
-    details: dict[str, Any] = {
-        "url": url,
-        "provider_record_id": observation.provider_record_id,
-        "attribution_component": observation.component,
-        "attribution_usage_quantity": str(observation.quantity),
-        "attribution_usage_metric": observation.metric,
-        "attribution_observer_version": observation.manifest_version,
-        "attribution_observer_service": observation.service_key,
-        **byte_details,
-    }
-    if observation.metric == "audio_seconds":
-        details["attribution_usage_duration_seconds"] = str(observation.quantity)
-    event = Event(
-        task_id=task.task_id,
-        event_type="external_cost",
-        cost_usd=Decimal("0"),
-        cost_confidence="unknown",
-        pricing_source=None,
-        provider=observation.provider_name,
-        model=observation.resource_id,
-        service_name=observation.provider_service,
-        details=details,
-    )
-    _persist_event(event)
+    for observation in observations:
+        details: dict[str, Any] = {
+            "url": url,
+            "provider_record_id": observation.provider_record_id,
+            "attribution_component": observation.component,
+            "attribution_resource_type": observation.resource_type,
+            "attribution_resource_id": observation.resource_id,
+            "attribution_usage_quantity": str(observation.quantity),
+            "attribution_usage_metric": observation.metric,
+            "attribution_observer_version": observation.manifest_version,
+            "attribution_observer_service": observation.service_key,
+            **byte_details,
+        }
+        if observation.metric == "audio_seconds":
+            details["attribution_usage_duration_seconds"] = str(observation.quantity)
+        event = Event(
+            task_id=task.task_id,
+            event_type="external_cost",
+            cost_usd=Decimal("0"),
+            cost_confidence="unknown",
+            pricing_source=None,
+            provider=observation.provider_name,
+            model=observation.resource_id if observation.resource_type == "model" else None,
+            service_name=observation.provider_service,
+            details=details,
+        )
+        _persist_event(event)
     return True
 
 
@@ -817,6 +846,7 @@ def _handle_http_call_inner(
     method: str,
     request_headers: dict[str, Any],
     request_body_len: int,
+    request_body: dict[str, Any] | None,
     response: Any,
     latency_ms: int,
 ) -> None:
@@ -853,6 +883,7 @@ def _handle_http_call_inner(
     if _handle_usage_observer(
         url, domain, track_network, bytes_in, bytes_out,
         response_headers, response, status_code, byte_details,
+        request_body,
     ):
         return
 

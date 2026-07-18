@@ -19,10 +19,34 @@ struct ObserverDefinition {
     endpoints: Vec<String>,
     response_path: String,
     usage_metric: String,
+    resource_type: Option<String>,
     resource_path: Option<String>,
+    request_resource_path: Option<String>,
+    resource_query_parameter: Option<String>,
+    default_resource_id: Option<String>,
+    fixed_resource_id: Option<String>,
+    resource_variant: Option<ResourceVariant>,
+    #[serde(default)]
+    query_any: Vec<QueryPredicate>,
+    quantity_multiplier_path: Option<String>,
+    quantity_multiplier_query_parameter: Option<String>,
     record_id_path: Option<String>,
     record_id_header: Option<String>,
     source_url: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct QueryPredicate {
+    parameter: String,
+    operator: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct ResourceVariant {
+    query_parameter: String,
+    equals: String,
+    matched_suffix: String,
+    default_suffix: String,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +74,7 @@ pub struct ServiceUsageObservation {
     pub component: String,
     pub metric: String,
     pub quantity: Decimal,
+    pub resource_type: Option<String>,
     pub resource_id: Option<String>,
     pub provider_record_id: Option<String>,
     pub manifest_version: String,
@@ -81,6 +106,18 @@ fn bounded_string(value: Option<&serde_json::Value>) -> Option<String> {
     Some(value.chars().take(256).collect())
 }
 
+fn bounded_text(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    (!value.is_empty()).then(|| value.chars().take(256).collect())
+}
+
+fn query_value_is_truthy(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "no" | "off"
+    )
+}
+
 impl ServiceUsageObservers {
     fn load() -> Option<Self> {
         let manifest: Manifest = serde_json::from_str(MANIFEST_JSON).ok()?;
@@ -91,6 +128,11 @@ impl ServiceUsageObservers {
         }
         let mut keys = HashSet::new();
         for observer in &manifest.observers {
+            let has_resource_selector = observer.resource_path.is_some()
+                || observer.request_resource_path.is_some()
+                || observer.resource_query_parameter.is_some()
+                || observer.default_resource_id.is_some()
+                || observer.fixed_resource_id.is_some();
             if observer.service_key.is_empty()
                 || !keys.insert(observer.service_key.clone())
                 || observer.provider_name.is_empty()
@@ -111,6 +153,23 @@ impl ServiceUsageObservers {
                     .iter()
                     .any(|endpoint| !endpoint.starts_with('/'))
                 || observer.response_path.is_empty()
+                || observer
+                    .resource_type
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "model" | "sku"))
+                || (has_resource_selector && observer.resource_type.is_none())
+                || (observer.quantity_multiplier_path.is_some()
+                    != observer.quantity_multiplier_query_parameter.is_some())
+                || observer.query_any.iter().any(|predicate| {
+                    predicate.parameter.is_empty()
+                        || !matches!(predicate.operator.as_str(), "present" | "truthy")
+                })
+                || observer.resource_variant.as_ref().is_some_and(|variant| {
+                    variant.query_parameter.is_empty()
+                        || variant.equals.is_empty()
+                        || variant.matched_suffix.is_empty()
+                        || variant.default_suffix.is_empty()
+                })
                 || !observer.source_url.starts_with("https://")
             {
                 return None;
@@ -127,46 +186,141 @@ impl ServiceUsageObservers {
         raw_url: &str,
         headers: &HashMap<String, String>,
         body: &serde_json::Value,
-    ) -> Option<ServiceUsageObservation> {
-        let parsed = reqwest::Url::parse(raw_url).ok()?;
-        let observer = self.observers.iter().find(|observer| {
-            observer
-                .domains
-                .iter()
-                .any(|domain| parsed.host_str() == Some(domain))
+        request_body: Option<&serde_json::Value>,
+    ) -> Vec<ServiceUsageObservation> {
+        let Ok(parsed) = reqwest::Url::parse(raw_url) else {
+            return Vec::new();
+        };
+        let query: HashMap<String, Vec<String>> =
+            parsed
+                .query_pairs()
+                .fold(HashMap::new(), |mut values, (key, value)| {
+                    values
+                        .entry(key.into_owned())
+                        .or_default()
+                        .push(value.into_owned());
+                    values
+                });
+        self.observers
+            .iter()
+            .filter(|observer| {
+                observer
+                    .domains
+                    .iter()
+                    .any(|domain| parsed.host_str() == Some(domain))
+                    && observer.endpoints.iter().any(|endpoint| {
+                        parsed.path() == endpoint
+                            || parsed.path().starts_with(&format!("{endpoint}/"))
+                    })
+                    && (observer.query_any.is_empty()
+                        || observer.query_any.iter().any(|predicate| {
+                            query.get(&predicate.parameter).is_some_and(|values| {
+                                predicate.operator == "present"
+                                    || values.iter().any(|value| query_value_is_truthy(value))
+                            })
+                        }))
+            })
+            .filter_map(|observer| {
+                let mut quantity = positive_decimal(resolve_path(body, &observer.response_path)?)?;
+                if let (Some(path), Some(parameter)) = (
+                    observer.quantity_multiplier_path.as_deref(),
+                    observer.quantity_multiplier_query_parameter.as_deref(),
+                ) {
+                    if query.get(parameter).is_some_and(|values| {
+                        values.iter().any(|value| query_value_is_truthy(value))
+                    }) {
+                        if let Some(multiplier) =
+                            resolve_path(body, path).and_then(positive_decimal)
+                        {
+                            quantity *= multiplier;
+                        }
+                    }
+                }
+                let mut provider_record_id = observer
+                    .record_id_path
+                    .as_deref()
+                    .and_then(|path| bounded_string(resolve_path(body, path)));
+                if provider_record_id.is_none() {
+                    if let Some(header) = observer.record_id_header.as_deref() {
+                        provider_record_id = headers
+                            .iter()
+                            .find(|(key, _)| key.eq_ignore_ascii_case(header))
+                            .map(|(_, value)| value.trim())
+                            .filter(|value| !value.is_empty())
+                            .map(|value| value.chars().take(256).collect());
+                    }
+                }
+                let mut resource_id = observer
+                    .resource_path
+                    .as_deref()
+                    .and_then(|path| bounded_string(resolve_path(body, path)));
+                if resource_id.is_none() {
+                    resource_id = observer.request_resource_path.as_deref().and_then(|path| {
+                        request_body.and_then(|request| bounded_string(resolve_path(request, path)))
+                    });
+                }
+                if resource_id.is_none() {
+                    resource_id =
+                        observer
+                            .resource_query_parameter
+                            .as_deref()
+                            .and_then(|parameter| {
+                                query
+                                    .get(parameter)
+                                    .and_then(|values| values.first())
+                                    .and_then(|value| bounded_text(Some(value)))
+                            });
+                }
+                if resource_id.is_none() {
+                    resource_id = bounded_text(observer.fixed_resource_id.as_deref());
+                }
+                if resource_id.is_none() {
+                    resource_id = bounded_text(observer.default_resource_id.as_deref());
+                }
+                if let (Some(resource), Some(variant)) =
+                    (resource_id.as_mut(), observer.resource_variant.as_ref())
+                {
+                    let suffix = if query
+                        .get(&variant.query_parameter)
+                        .and_then(|values| values.first())
+                        .is_some_and(|value| value == &variant.equals)
+                    {
+                        &variant.matched_suffix
+                    } else {
+                        &variant.default_suffix
+                    };
+                    resource.push_str(suffix);
+                    *resource = resource.chars().take(256).collect();
+                }
+                Some(ServiceUsageObservation {
+                    service_key: observer.service_key.clone(),
+                    provider_name: observer.provider_name.clone(),
+                    provider_service: observer.provider_service.clone(),
+                    component: observer.component.clone(),
+                    metric: observer.usage_metric.clone(),
+                    quantity,
+                    resource_type: resource_id.as_ref().and(observer.resource_type.clone()),
+                    resource_id,
+                    provider_record_id,
+                    manifest_version: self.version.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn needs_request_body(&self, raw_url: &str) -> bool {
+        let Ok(parsed) = reqwest::Url::parse(raw_url) else {
+            return false;
+        };
+        self.observers.iter().any(|observer| {
+            observer.request_resource_path.is_some()
+                && observer
+                    .domains
+                    .iter()
+                    .any(|domain| parsed.host_str() == Some(domain))
                 && observer.endpoints.iter().any(|endpoint| {
                     parsed.path() == endpoint || parsed.path().starts_with(&format!("{endpoint}/"))
                 })
-        })?;
-        let quantity = positive_decimal(resolve_path(body, &observer.response_path)?)?;
-        let mut provider_record_id = observer
-            .record_id_path
-            .as_deref()
-            .and_then(|path| bounded_string(resolve_path(body, path)));
-        if provider_record_id.is_none() {
-            if let Some(header) = observer.record_id_header.as_deref() {
-                provider_record_id = headers
-                    .iter()
-                    .find(|(key, _)| key.eq_ignore_ascii_case(header))
-                    .map(|(_, value)| value.trim())
-                    .filter(|value| !value.is_empty())
-                    .map(|value| value.chars().take(256).collect());
-            }
-        }
-        let resource_id = observer
-            .resource_path
-            .as_deref()
-            .and_then(|path| bounded_string(resolve_path(body, path)));
-        Some(ServiceUsageObservation {
-            service_key: observer.service_key.clone(),
-            provider_name: observer.provider_name.clone(),
-            provider_service: observer.provider_service.clone(),
-            component: observer.component.clone(),
-            metric: observer.usage_metric.clone(),
-            quantity,
-            resource_id,
-            provider_record_id,
-            manifest_version: self.version.clone(),
         })
     }
 }

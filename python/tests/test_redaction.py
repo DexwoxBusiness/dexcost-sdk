@@ -164,3 +164,13 @@ class TestScrubUrl:
         out = scrub_url(url)
         assert "debug" in out
         assert "token=REDACTED" in out
+
+    def test_deepgram_free_form_values_are_redacted(self) -> None:
+        url = (
+            "https://api.deepgram.com/v1/listen?model=nova-3&language=multi"
+            "&keyterm=Acme%20Secret&custom_topic=Roadmap"
+        )
+        assert scrub_url(url) == (
+            "https://api.deepgram.com/v1/listen?model=nova-3&language=multi"
+            "&keyterm=REDACTED&custom_topic=REDACTED"
+        )

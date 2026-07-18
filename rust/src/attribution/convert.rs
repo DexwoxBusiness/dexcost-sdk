@@ -244,11 +244,8 @@ fn component_and_usage(
             } else {
                 AttributionComponent::External
             };
-            let duration = decimal_detail(
-                &event.details,
-                &["attribution_usage_duration_seconds"],
-            )
-            .unwrap_or(Decimal::ZERO);
+            let duration = decimal_detail(&event.details, &["attribution_usage_duration_seconds"])
+                .unwrap_or(Decimal::ZERO);
             Some((component, usage, duration))
         }
     }
@@ -357,6 +354,26 @@ fn provider_for(event: &CostEvent) -> AttributionProviderIdentityV2 {
 }
 
 fn resource_for(event: &CostEvent) -> Option<AttributionResourceV2> {
+    if let (Some(resource_type), Some(id)) = (
+        string_detail(&event.details, &["attribution_resource_type"]),
+        string_detail(&event.details, &["attribution_resource_id"]),
+    ) {
+        let resource_type = match resource_type {
+            "model" => Some(AttributionResourceType::Model),
+            "sku" => Some(AttributionResourceType::Sku),
+            "instance" => Some(AttributionResourceType::Instance),
+            "endpoint" => Some(AttributionResourceType::Endpoint),
+            "session" => Some(AttributionResourceType::Session),
+            "other" => Some(AttributionResourceType::Other),
+            _ => None,
+        };
+        if let Some(resource_type) = resource_type {
+            return Some(AttributionResourceV2 {
+                resource_type,
+                id: truncate(id, 256),
+            });
+        }
+    }
     // Retry markers can carry model data copied from the failed call. Preserve
     // the retry reason as the marker identity instead of letting the generic
     // model resource hide it.

@@ -186,8 +186,51 @@ class TestKnownServiceExtraction:
             {"metric": "audio_seconds", "quantity": "25.933313", "unit": "Seconds"}
         ]
         assert wire["provider"]["record_id"] == "dg-25"
+        assert wire["provider"]["service"] == "speech_to_text_pre_recorded"
+        assert wire["resource"] == {"type": "sku", "id": "base-general:monolingual"}
         assert wire["usage_period"]["end_at"] is not None
         assert "cost_evidence" not in wire
+
+    def test_cohere_request_model_reaches_attribution_v2(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            body={"id": "cohere-29", "meta": {"billed_units": {"input_tokens": 29}}}
+        )
+        with task_context(task):
+            _handle_http_call(
+                "https://api.cohere.com/v2/embed",
+                method="POST",
+                request_body={"model": "embed-v4.0", "texts": ["hello"]},
+                response=response,
+            )
+        wire = to_attribution_event_v2(get_recorded_events()[0])
+        assert wire is not None
+        assert wire["resource"] == {"type": "model", "id": "embed-v4.0"}
+
+    def test_deepgram_addons_are_separate_channel_second_lines(self) -> None:
+        task = _make_task("transcription")
+        response = _make_response(
+            body={"metadata": {"request_id": "dg-addon", "duration": 10, "channels": 2}}
+        )
+        url = (
+            "https://api.deepgram.com/v1/listen?model=nova-3&language=multi"
+            "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme"
+        )
+        with task_context(task):
+            _handle_http_call(url, method="POST", response=response)
+        wires = [to_attribution_event_v2(event) for event in get_recorded_events()]
+        assert len(wires) == 4
+        assert [wire["resource"]["id"] for wire in wires if wire is not None] == [
+            "nova-3:multilingual",
+            "speaker_diarization",
+            "redaction",
+            "keyterm_prompting",
+        ]
+        assert all(
+            wire is not None and wire["usage"][0]["quantity"] == "20"
+            and "cost_evidence" not in wire
+            for wire in wires
+        )
 
     def test_tavily_cost_from_response_body(self) -> None:
         """Tavily: cost extracted from response_body.usage.credits."""

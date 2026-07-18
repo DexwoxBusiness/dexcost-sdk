@@ -20,7 +20,9 @@ _MAX_DETAILS_BYTES = 10 * 1024  # 10 KB per US-018
 _SENSITIVE_QUERY_PARAMS = frozenset({
     "api_key", "apikey", "access_token", "token", "auth", "password",
     "secret", "signature", "x-amz-signature", "x-amz-credential",
-    "x-amz-security-token", "session",
+    "x-amz-security-token", "session", "keyterm", "keywords",
+    "custom_topic", "custom_intent", "search", "replace", "tag", "extra",
+    "callback",
 })
 
 _USERINFO_RE = re.compile(r"^(https?://)([^@/?#]+@)?(.+)$")

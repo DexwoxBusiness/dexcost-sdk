@@ -1,68 +1,102 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
       "url": "https://api.openai.com/v1/embeddings",
       "headers": { "x-request-id": "req_openai_123" },
       "response": { "model": "text-embedding-3-small", "usage": { "prompt_tokens": 17, "total_tokens": 17 } },
-      "expected": { "service_key": "openai_embeddings", "provider_name": "openai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "17", "resource_id": "text-embedding-3-small", "provider_record_id": "req_openai_123" }
+      "expected": [{ "service_key": "openai_embeddings", "provider_name": "openai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "17", "resource_type": "model", "resource_id": "text-embedding-3-small", "provider_record_id": "req_openai_123" }]
     },
     {
-      "name": "cohere_embed_uses_billed_not_generic_tokens",
+      "name": "cohere_embed_uses_billed_tokens_and_request_model",
       "url": "https://api.cohere.com/v2/embed",
       "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "search_document" },
       "response": { "id": "cohere-1", "meta": { "billed_units": { "input_tokens": 29 }, "tokens": { "input_tokens": 31 } } },
-      "expected": { "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "provider_record_id": "cohere-1" }
+      "expected": [{ "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-1" }]
     },
     {
       "name": "voyage_contextualized_embeddings_are_observed",
       "url": "https://api.voyageai.com/v1/contextualizedembeddings",
       "headers": {},
       "response": { "model": "voyage-context-3", "usage": { "total_tokens": 41 } },
-      "expected": { "service_key": "voyage_ai", "provider_name": "voyageai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "41", "resource_id": "voyage-context-3" }
+      "expected": [{ "service_key": "voyage_ai", "provider_name": "voyageai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "41", "resource_type": "model", "resource_id": "voyage-context-3" }]
     },
     {
       "name": "jina_embeddings_are_observed",
       "url": "https://api.jina.ai/v1/embeddings",
       "headers": {},
       "response": { "model": "jina-embeddings-v3", "usage": { "total_tokens": 53, "prompt_tokens": 53 } },
-      "expected": { "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_id": "jina-embeddings-v3" }
+      "expected": [{ "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_type": "model", "resource_id": "jina-embeddings-v3" }]
     },
     {
-      "name": "deepgram_duration_stays_in_seconds",
-      "url": "https://api.deepgram.com/v1/listen?model=nova-3",
+      "name": "deepgram_default_model_is_a_monolingual_batch_sku",
+      "url": "https://api.deepgram.com/v1/listen",
       "headers": {},
-      "response": { "metadata": { "request_id": "dg-1", "duration": 25.933313 } },
-      "expected": { "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "25.933313", "provider_record_id": "dg-1" }
+      "response": { "metadata": { "request_id": "dg-1", "duration": 25.933313, "channels": 1 } },
+      "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "25.933313", "resource_type": "sku", "resource_id": "base-general:monolingual", "provider_record_id": "dg-1" }]
+    },
+    {
+      "name": "deepgram_eu_regional_endpoint_is_observed",
+      "url": "https://api.eu.deepgram.com/v1/listen?model=nova-3",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-eu", "duration": 3.5, "channels": 1 } },
+      "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "3.5", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-eu" }]
+    },
+    {
+      "name": "deepgram_au_regional_endpoint_is_observed",
+      "url": "https://api.au.deepgram.com/v1/listen?model=nova-3&language=multi",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-au", "duration": 2, "channels": 1 } },
+      "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "2", "resource_type": "sku", "resource_id": "nova-3:multilingual", "provider_record_id": "dg-au" }]
+    },
+    {
+      "name": "deepgram_emits_base_and_billable_addons_with_channel_seconds",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-2", "duration": 10, "channels": 2 } },
+      "expected": [
+        { "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "nova-3:multilingual", "provider_record_id": "dg-2" },
+        { "service_key": "deepgram_diarization", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "speaker_diarization", "provider_record_id": "dg-2" },
+        { "service_key": "deepgram_redaction", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "redaction", "provider_record_id": "dg-2" },
+        { "service_key": "deepgram_keyterm_prompting", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "keyterm_prompting", "provider_record_id": "dg-2" }
+      ]
+    },
+    {
+      "name": "false_deepgram_addon_flags_do_not_create_lines",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&diarize=false&redact=false",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-3", "duration": 4, "channels": 2 } },
+      "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "4", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-3" }]
     },
     {
       "name": "wrong_endpoint_is_not_observed",
       "url": "https://api.openai.com/v1/chat/completions",
       "headers": {},
       "response": { "usage": { "total_tokens": 17 } },
-      "expected": null
+      "expected": []
     },
     {
       "name": "endpoint_prefix_collision_is_not_observed",
       "url": "https://api.openai.com/v1/embeddings-preview",
       "headers": {},
       "response": { "usage": { "total_tokens": 17 } },
-      "expected": null
+      "expected": []
     },
     {
       "name": "missing_usage_is_not_invented",
       "url": "https://api.deepgram.com/v1/listen",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-pending" } },
-      "expected": null
+      "expected": []
     },
     {
       "name": "zero_usage_is_not_a_billable_observation",
       "url": "https://api.jina.ai/v1/embeddings",
       "headers": {},
       "response": { "usage": { "total_tokens": 0 } },
-      "expected": null
+      "expected": []
     }
   ]
 }

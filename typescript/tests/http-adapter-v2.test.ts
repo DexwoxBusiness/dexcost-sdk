@@ -88,6 +88,28 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     )).toBe(false);
   });
 
+  it("carries the Cohere request model into attribution v2", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "cohere-29",
+      meta: { billed_units: { input_tokens: 29 } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.cohere.com/v2/embed", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "embed-v4.0", texts: ["hello"] }),
+      });
+    });
+
+    expect(toAttributionEventV2(getRecordedEvents()[0])).toMatchObject({
+      provider: { name: "cohere", service: "embed", record_id: "cohere-29" },
+      resource: { type: "model", id: "embed-v4.0" },
+      usage: [{ metric: "input_tokens", quantity: "29", unit: "Tokens" }],
+    });
+  });
+
   it("emits Deepgram duration as speech-to-text seconds", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       metadata: { request_id: "dg-25", duration: 25.933313 },
@@ -99,11 +121,34 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     const wire = toAttributionEventV2(getRecordedEvents()[0]);
     expect(wire).toMatchObject({
       component: "speech_to_text",
-      provider: { name: "deepgram", service: "speech_to_text", record_id: "dg-25" },
+      provider: { name: "deepgram", service: "speech_to_text_pre_recorded", record_id: "dg-25" },
+      resource: { type: "sku", id: "base-general:monolingual" },
       usage: [{ metric: "audio_seconds", quantity: "25.933313", unit: "Seconds" }],
     });
     expect(wire?.usage_period?.end_at).toBeDefined();
     expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("emits separate Deepgram base and add-on attribution lines", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      metadata: { request_id: "dg-addon", duration: 10, channels: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
+    const url = "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
+      "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme";
+    await runWithTask(task, async () => { await fetch(url, { method: "POST" }); });
+
+    const wires = getRecordedEvents().map(toAttributionEventV2);
+    expect(wires).toHaveLength(4);
+    expect(wires.map((wire) => wire?.resource?.id)).toEqual([
+      "nova-3:multilingual",
+      "speaker_diarization",
+      "redaction",
+      "keyterm_prompting",
+    ]);
+    expect(wires.every((wire) => wire?.usage[0].quantity === "20")).toBe(true);
+    expect(wires.every((wire) => wire?.cost_evidence === undefined)).toBe(true);
   });
 
   it("attributes a user catalog override as manual evidence", async () => {
