@@ -345,6 +345,35 @@ class TestSyncLifecycle:
         assert len(pending) == 1
         assert pending[0].event_id == e2.event_id
 
+    def test_quarantined_events_are_retained_outside_pending_scan(
+        self, storage: SQLiteStorage
+    ) -> None:
+        """Conversion failures remain inspectable without blocking delivery."""
+        event = Event(event_type="llm_call", cost_usd=Decimal("0.01"))
+        storage.insert_event(event)
+
+        storage.mark_quarantined([str(event.event_id)])
+
+        assert storage.query_events_for_sync() == []
+        assert [item.event_id for item in storage.query_quarantined_events()] == [
+            event.event_id
+        ]
+
+    def test_update_event_requeues_a_corrected_quarantined_event(
+        self, storage: SQLiteStorage
+    ) -> None:
+        event = Event(event_type="future_internal_signal", cost_usd=Decimal("0.01"))
+        storage.insert_event(event)
+        storage.mark_quarantined([str(event.event_id)])
+
+        event.event_type = "llm_call"
+        storage.update_event(event)
+
+        assert [item.event_id for item in storage.query_events_for_sync()] == [
+            event.event_id
+        ]
+        assert storage.query_quarantined_events() == []
+
     def test_mark_synced_empty_list_is_noop(self, storage: SQLiteStorage) -> None:
         """Passing an empty list to mark_synced should not raise."""
         storage.mark_synced([])  # should not raise

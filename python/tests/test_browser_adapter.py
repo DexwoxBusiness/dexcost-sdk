@@ -208,7 +208,7 @@ class TestTrackBrowser:
 
         events = get_recorded_events()
         assert events[0].cost_confidence == "computed"
-        assert events[0].pricing_source == "rate_per_minute"
+        assert events[0].pricing_source == "manual"
 
 
 class TestStoragePersistence:

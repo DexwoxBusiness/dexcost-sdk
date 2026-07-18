@@ -143,6 +143,8 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
                 _string_detail(event.details, "cloud_provider") or event.provider, "internet"
             )
             service = "egress"
+        elif event.event_type == "retry_marker":
+            name, service = "dexcost", "retry"
         else:
             raw_service = service_name or "external"
             if raw_service.startswith("mcp:"):
@@ -176,6 +178,10 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
         instance = _string_detail(event.details, "instance_type", "architecture")
         if instance:
             return {"type": "instance", "id": instance[:256]}
+    if event.event_type == "retry_marker" and event.retry_reason:
+        reason = event.retry_reason.strip()
+        if reason:
+            return {"type": "other", "id": reason[:256]}
     return None
 
 
@@ -183,6 +189,13 @@ def _evidence_for(event: Event) -> AttributionCostEvidenceV2 | None:
     amount = _positive_quantity(event.cost_usd)
     if amount is None:
         return None
+    if event.event_type == "retry_marker":
+        return {
+            "amount": amount,
+            "currency": "USD",
+            "source": "manual",
+            "confidence": "exact",
+        }
     source = event.pricing_source
     if source == "provider_response":
         return {
@@ -225,8 +238,14 @@ def _component_and_usage(
     event: Event,
 ) -> tuple[AttributionComponent, list[AttributionUsageLineV2], Decimal | None] | None:
     details = event.details
-    if event.event_type in {"retry_marker", "gpu_utilization_signal"}:
+    if event.event_type == "gpu_utilization_signal":
         return None
+    if event.event_type == "retry_marker":
+        return (
+            "external",
+            _compact_usage([_usage_line("request_count", 1)]),
+            None,
+        )
     if event.event_type == "llm_call":
         cached = event.cached_tokens or 0
         provider = (event.provider or "").lower()
