@@ -1,6 +1,6 @@
 [package]
 name = "dexcost"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 description = "Agent Unit Economics SDK for Rust — track end-to-end business-task costs for AI agents."
 license = "MIT"
