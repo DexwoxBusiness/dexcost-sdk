@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.4.0...go/v0.5.0) (2026-07-18)
+
+
+### Features
+
+* **attribution:** capture observer billing dimensions across SDKs ([#95](https://github.com/DexwoxBusiness/dexcost-sdk/issues/95)) ([c4d7f71](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c4d7f7104412b697d1c77c04ff89f30ff50aa95d))
+
 ## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.3.1...go/v0.4.0) (2026-07-18)
 
 
