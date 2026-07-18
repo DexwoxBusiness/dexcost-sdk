@@ -48,6 +48,64 @@ afterEach(() => {
 });
 
 describe("HTTP adapter v2 — catalog cost extraction", () => {
+  it("emits OpenAI embedding tokens without synthetic cost evidence", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      model: "text-embedding-3-small",
+      usage: { prompt_tokens: 17, total_tokens: 17 },
+    }), { status: 200, headers: { "content-type": "application/json", "x-request-id": "req-17" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    await runWithTask(task, async () => { await fetch("https://api.openai.com/v1/embeddings"); });
+
+    const event = getRecordedEvents()[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingVersion).toBeUndefined();
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      component: "external",
+      provider: { name: "openai", service: "embeddings", record_id: "req-17" },
+      resource: { type: "model", id: "text-embedding-3-small" },
+      usage: [{ metric: "input_tokens", quantity: "17", unit: "Tokens" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("does not observe usage from failed provider responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      model: "text-embedding-3-small",
+      usage: { total_tokens: 17 },
+    }), { status: 500, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.openai.com/v1/embeddings");
+      await response.text();
+    });
+
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "openai_embeddings",
+    )).toBe(false);
+  });
+
+  it("emits Deepgram duration as speech-to-text seconds", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      metadata: { request_id: "dg-25", duration: 25.933313 },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
+    await runWithTask(task, async () => { await fetch("https://api.deepgram.com/v1/listen"); });
+
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      component: "speech_to_text",
+      provider: { name: "deepgram", service: "speech_to_text", record_id: "dg-25" },
+      usage: [{ metric: "audio_seconds", quantity: "25.933313", unit: "Seconds" }],
+    });
+    expect(wire?.usage_period?.end_at).toBeDefined();
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
   it("attributes a user catalog override as manual evidence", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [] }))));
     trackHttp(buffer);

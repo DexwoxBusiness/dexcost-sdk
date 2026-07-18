@@ -273,9 +273,14 @@ export class EventPusher {
 
   /** Convert durable capture into the strict, details-free v2 wire event. */
   private _serializeEvent(event: CostEvent): AttributionEventV2 | null {
-    // Attribution v2 has no arbitrary details carrier. The converter reads
-    // only an accounting allow-list, so event metadata/PII cannot leak.
-    return toAttributionEventV2(event);
+    // The converter promotes selected detail fields into typed provider and
+    // resource fields. Redact before conversion so configured identifiers
+    // cannot bypass the field-level policy. Keep durable capture untouched.
+    const redactFields = this._options.redactFields;
+    const sanitized = redactFields && redactFields.length > 0
+      ? { ...event, details: redactDict(event.details, redactFields) }
+      : event;
+    return toAttributionEventV2(sanitized);
   }
 
   /**

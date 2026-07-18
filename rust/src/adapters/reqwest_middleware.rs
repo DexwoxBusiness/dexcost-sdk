@@ -51,6 +51,9 @@ use crate::core::context::is_network_event_suppressed;
 use crate::core::models::{CostConfidence, CostEvent, EventType, Task, TaskStatus};
 use crate::pricing::engine::PricingEngine;
 use crate::pricing::service_catalog::{CostExtractionResult, ServiceCatalog};
+use crate::pricing::service_usage_observers::{
+    default_service_usage_observers, ServiceUsageObservation,
+};
 use crate::security::redaction::scrub_url;
 use crate::transport::buffer::EventBuffer;
 
@@ -142,6 +145,55 @@ impl DexcostMiddleware {
         event.service_name = Some(extraction.service_name.clone());
         if event.service_name.is_none() {
             event.service_name = Some(host.to_string());
+        }
+        stamp_byte_details(&mut event, byte_details);
+        events.add_event(event);
+    }
+
+    fn record_usage_observation(
+        &self,
+        task_id: &str,
+        observation: &ServiceUsageObservation,
+        byte_details: &serde_json::Value,
+        events: &mut EventBuffer,
+    ) {
+        let mut event = CostEvent::new(task_id, EventType::ExternalCost);
+        event.cost_usd = Decimal::ZERO;
+        event.cost_confidence = CostConfidence::Unknown;
+        event.provider = Some(observation.provider_name.clone());
+        event.service_name = Some(observation.provider_service.clone());
+        event.model = observation.resource_id.clone();
+        if let Some(record_id) = &observation.provider_record_id {
+            event.details.insert(
+                "provider_record_id".to_string(),
+                serde_json::Value::String(record_id.clone()),
+            );
+        }
+        event.details.insert(
+            "attribution_component".to_string(),
+            serde_json::Value::String(observation.component.clone()),
+        );
+        event.details.insert(
+            "attribution_usage_quantity".to_string(),
+            serde_json::Value::String(observation.quantity.normalize().to_string()),
+        );
+        event.details.insert(
+            "attribution_usage_metric".to_string(),
+            serde_json::Value::String(observation.metric.clone()),
+        );
+        event.details.insert(
+            "attribution_observer_version".to_string(),
+            serde_json::Value::String(observation.manifest_version.clone()),
+        );
+        event.details.insert(
+            "attribution_observer_service".to_string(),
+            serde_json::Value::String(observation.service_key.clone()),
+        );
+        if observation.metric == "audio_seconds" {
+            event.details.insert(
+                "attribution_usage_duration_seconds".to_string(),
+                serde_json::Value::String(observation.quantity.normalize().to_string()),
+            );
         }
         stamp_byte_details(&mut event, byte_details);
         events.add_event(event);
@@ -443,6 +495,22 @@ impl Middleware for DexcostMiddleware {
                 }
             }
 
+            if !recorded && status.is_success() {
+                if let Some(observation) = default_service_usage_observers()
+                    .and_then(|observers| {
+                        observers.observe(url.as_str(), &response_headers_map, &body_json)
+                    })
+                {
+                    self.record_usage_observation(
+                        &task_id,
+                        &observation,
+                        &byte_details,
+                        &mut buf,
+                    );
+                    recorded = true;
+                }
+            }
+
             if !recorded {
                 recorded = self.try_record_llm(
                     &host,
@@ -725,6 +793,41 @@ mod tests {
             Arc::new(PricingEngine::new()),
             Arc::new(Mutex::new(EventBuffer::new().expect("buffer"))),
         )
+    }
+
+    #[tokio::test]
+    async fn usage_observation_emits_v2_quantity_without_cost_evidence() {
+        let (catalog, pricing, buffer) = fixtures();
+        let middleware = DexcostMiddleware::new(catalog, pricing, buffer.clone(), None);
+        let task_id = Uuid::new_v4().to_string();
+        let observation = ServiceUsageObservation {
+            service_key: "openai_embeddings".to_string(),
+            provider_name: "openai".to_string(),
+            provider_service: "embeddings".to_string(),
+            component: "external".to_string(),
+            metric: "input_tokens".to_string(),
+            quantity: Decimal::from(17),
+            resource_id: Some("text-embedding-3-small".to_string()),
+            provider_record_id: Some("req-17".to_string()),
+            manifest_version: "1.0.0".to_string(),
+        };
+        {
+            let mut events = buffer.lock().await;
+            middleware.record_usage_observation(
+                &task_id,
+                &observation,
+                &serde_json::json!({}),
+                &mut events,
+            );
+        }
+        let event = buffer.lock().await.get_pending_events(1).pop().unwrap();
+        let wire = crate::attribution::to_attribution_event_v2(&event).unwrap();
+        assert_eq!(wire.provider.name, "openai");
+        assert_eq!(wire.provider.service, "embeddings");
+        assert_eq!(wire.provider.record_id.as_deref(), Some("req-17"));
+        assert_eq!(wire.usage.len(), 1);
+        assert_eq!(wire.usage[0].quantity, "17");
+        assert!(wire.cost_evidence.is_none());
     }
 
     #[tokio::test]

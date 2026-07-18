@@ -255,6 +255,7 @@ function componentAndUsage(event: CostEvent): {
     case "external_cost": {
       const explicitQuantity = numberDetail(details, "attribution_usage_quantity");
       const explicitMetric = stringDetail(details, "attribution_usage_metric");
+      const explicitComponent = stringDetail(details, "attribution_component");
       const per = canonicalName(stringDetail(details, "attribution_usage_per"), "request");
       const inferredMetric: AttributionUsageMetric = per.includes("page") ? "page_count"
         : per.includes("credit") ? "credit_count"
@@ -265,7 +266,14 @@ function componentAndUsage(event: CostEvent): {
       const metric = explicitMetric !== undefined && explicitMetric in ATTRIBUTION_UNIT_BY_METRIC
         ? explicitMetric as AttributionUsageMetric
         : inferredMetric;
-      return { component: "external", usage: compactUsage([usageLine(metric, explicitQuantity ?? 1)]) };
+      const component: AttributionComponent = explicitComponent === "speech_to_text"
+        ? "speech_to_text"
+        : "external";
+      return {
+        component,
+        durationSeconds: numberDetail(details, "attribution_usage_duration_seconds"),
+        usage: compactUsage([usageLine(metric, explicitQuantity ?? 1)]),
+      };
     }
   }
 }

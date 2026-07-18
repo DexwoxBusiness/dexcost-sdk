@@ -21,10 +21,10 @@ from dexcost.adapters.http import (
     set_catalog,
     untrack_http,
 )
-from dexcost.context import clear_context, set_context, set_current_task, task_context
+from dexcost.attribution.convert import to_attribution_event_v2
+from dexcost.context import clear_context, set_current_task, task_context
 from dexcost.models.task import Task
 from dexcost.session import reset_session_manager
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -60,9 +60,12 @@ def _make_response(
     body: dict[str, Any] | None = None,
     content_type: str = "application/json",
     content_length: int | None = None,
+    status_code: int = 200,
 ) -> MagicMock:
     """Create a mock HTTP response."""
     response = MagicMock()
+    response.status_code = status_code
+    response.status = status_code
 
     # Build headers dict
     h: dict[str, str] = {}
@@ -96,6 +99,95 @@ def _make_response(
 
 class TestKnownServiceExtraction:
     """HTTP calls to known services extract cost from response."""
+
+    def test_openai_embedding_usage_has_no_synthetic_cost(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            headers={"x-request-id": "req-17"},
+            body={
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 17, "total_tokens": 17},
+            },
+        )
+        with task_context(task):
+            _handle_http_call("https://api.openai.com/v1/embeddings", response=response)
+        event = get_recorded_events()[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "openai", "service": "embeddings", "record_id": "req-17"
+        }
+        assert wire["usage"] == [
+            {"metric": "input_tokens", "quantity": "17", "unit": "Tokens"}
+        ]
+        assert "cost_evidence" not in wire
+
+    def test_failed_provider_response_is_not_observed(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            body={"model": "text-embedding-3-small", "usage": {"total_tokens": 17}},
+            status_code=500,
+        )
+        with task_context(task):
+            _handle_http_call("https://api.openai.com/v1/embeddings", response=response)
+        assert not any(
+            event.details.get("attribution_observer_service") == "openai_embeddings"
+            for event in get_recorded_events()
+        )
+
+    @pytest.mark.parametrize(
+        ("url", "body", "observer_service", "provider"),
+        [
+            (
+                "https://api.cohere.com/v2/embed",
+                {"id": "cohere-1", "meta": {"billed_units": {"input_tokens": 29}}},
+                "cohere_embed",
+                "cohere",
+            ),
+            (
+                "https://api.jina.ai/v1/embeddings",
+                {"model": "jina-embeddings-v3", "usage": {"total_tokens": 53}},
+                "jina_embeddings",
+                "jina",
+            ),
+        ],
+    )
+    def test_observer_endpoint_is_not_claimed_by_rerank_catalog_fallback(
+        self,
+        url: str,
+        body: dict[str, Any],
+        observer_service: str,
+        provider: str,
+    ) -> None:
+        task = _make_task("embedding")
+        with task_context(task):
+            _handle_http_call(url, response=_make_response(body=body))
+        event = get_recorded_events()[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.details["attribution_observer_service"] == observer_service
+        assert wire is not None
+        assert wire["provider"]["name"] == provider
+        assert "cost_evidence" not in wire
+
+    def test_deepgram_duration_is_speech_to_text_seconds(self) -> None:
+        task = _make_task("transcription")
+        response = _make_response(
+            body={"metadata": {"request_id": "dg-25", "duration": 25.933313}}
+        )
+        with task_context(task):
+            _handle_http_call("https://api.deepgram.com/v1/listen", response=response)
+        wire = to_attribution_event_v2(get_recorded_events()[0])
+        assert wire is not None
+        assert wire["component"] == "speech_to_text"
+        assert wire["usage"] == [
+            {"metric": "audio_seconds", "quantity": "25.933313", "unit": "Seconds"}
+        ]
+        assert wire["provider"]["record_id"] == "dg-25"
+        assert wire["usage_period"]["end_at"] is not None
+        assert "cost_evidence" not in wire
 
     def test_tavily_cost_from_response_body(self) -> None:
         """Tavily: cost extracted from response_body.usage.credits."""

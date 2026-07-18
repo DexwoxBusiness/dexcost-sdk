@@ -2,16 +2,187 @@ package adapters_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/transport"
 	"github.com/shopspring/decimal"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestTrackHTTP_ObservesEmbeddingUsageWithoutSyntheticCost(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"req-17"}},
+			Body:       io.NopCloser(strings.NewReader(`{"model":"text-embedding-3-small","usage":{"prompt_tokens":17,"total_tokens":17}}`)),
+			Request:    req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("embedding")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	events := adapters.GetRecordedEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected one usage event, got %d", len(events))
+	}
+	if !events[0].CostUSD.IsZero() || events[0].CostConfidence != core.CostConfidenceUnknown {
+		t.Fatalf("observer asserted money: %+v", events[0])
+	}
+	wire := attribution.ToEventV2(events[0])
+	if wire == nil || len(wire.Usage) != 1 || wire.Usage[0].Metric != attribution.MetricInputTokens || wire.Usage[0].Quantity != "17" {
+		t.Fatalf("unexpected attribution event: %+v", wire)
+	}
+	if wire.CostEvidence != nil || wire.Provider.Name != "openai" || wire.Provider.Service != "embeddings" || wire.Provider.RecordID != "req-17" {
+		t.Fatalf("unexpected provider/evidence: %+v", wire)
+	}
+}
+
+func TestTrackHTTP_DoesNotObserveFailedProviderResponse(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"total_tokens":17}}`)),
+			Request:    req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("embedding")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	for _, event := range adapters.GetRecordedEvents() {
+		if event.Details["attribution_observer_service"] == "openai_embeddings" {
+			t.Fatalf("failed response produced a usage observation: %+v", event)
+		}
+	}
+}
+
+func TestTrackHTTP_ObserverEndpointsBypassUnrelatedRerankCatalogEntries(t *testing.T) {
+	testCases := []struct {
+		name, rawURL, body, observerService, provider string
+	}{
+		{
+			name: "cohere", rawURL: "https://api.cohere.com/v2/embed",
+			body:            `{"id":"cohere-1","meta":{"billed_units":{"input_tokens":29}}}`,
+			observerService: "cohere_embed", provider: "cohere",
+		},
+		{
+			name: "jina", rawURL: "https://api.jina.ai/v1/embeddings",
+			body:            `{"model":"jina-embeddings-v3","usage":{"total_tokens":53}}`,
+			observerService: "jina_embeddings", provider: "jina",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			adapters.ClearDomainRates()
+			adapters.ClearRecordedEvents()
+			base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(testCase.body)),
+					Request:    req,
+				}, nil
+			})
+			client := adapters.TrackHTTP(&http.Client{Transport: base})
+			task := core.NewTask("embedding")
+			req, _ := http.NewRequestWithContext(
+				core.WithTask(context.Background(), &task),
+				http.MethodPost,
+				testCase.rawURL,
+				nil,
+			)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			events := adapters.GetRecordedEvents()
+			if len(events) != 1 {
+				t.Fatalf("expected one observer event, got %d", len(events))
+			}
+			event := events[0]
+			if !event.CostUSD.IsZero() || event.Provider != testCase.provider ||
+				event.Details["attribution_observer_service"] != testCase.observerService {
+				t.Fatalf("observer endpoint was misclassified: %+v", event)
+			}
+			if wire := attribution.ToEventV2(event); wire == nil || wire.CostEvidence != nil {
+				t.Fatalf("unexpected attribution evidence: %+v", wire)
+			}
+		})
+	}
+}
+
+func TestTrackHTTP_MissingObserverUsageStillAttributesNotableNetwork(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	adapters.SetNetworkEventThreshold(0)
+	defer adapters.SetNetworkEventThreshold(102_400)
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"model":"text-embedding-3-small"}`)),
+			Request:    req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("embedding")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	events := adapters.GetRecordedEvents()
+	if len(events) != 1 || events[0].EventType != core.EventTypeNetwork {
+		t.Fatalf("missing provider usage should preserve network attribution: %+v", events)
+	}
+	if events[0].Details["cost_pending"] != true {
+		t.Fatalf("network attribution must remain pending: %+v", events[0])
+	}
+}
 
 // Test 1: RegisterDomainRate and GetDomainRates
 func TestRegisterAndGetDomainRates(t *testing.T) {

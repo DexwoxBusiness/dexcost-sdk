@@ -1,0 +1,70 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "observer_count": 5,
+    "purpose": "Provider-owned usage observations only; this manifest contains no prices."
+  },
+  "observers": [
+    {
+      "service_key": "openai_embeddings",
+      "provider_name": "openai",
+      "provider_service": "embeddings",
+      "component": "external",
+      "domains": ["api.openai.com"],
+      "endpoints": ["/v1/embeddings"],
+      "response_path": "usage.total_tokens",
+      "usage_metric": "input_tokens",
+      "resource_path": "model",
+      "record_id_header": "x-request-id",
+      "source_url": "https://platform.openai.com/docs/api-reference/embeddings/create"
+    },
+    {
+      "service_key": "cohere_embed",
+      "provider_name": "cohere",
+      "provider_service": "embed",
+      "component": "external",
+      "domains": ["api.cohere.com"],
+      "endpoints": ["/v1/embed", "/v2/embed"],
+      "response_path": "meta.billed_units.input_tokens",
+      "usage_metric": "input_tokens",
+      "record_id_path": "id",
+      "source_url": "https://docs.cohere.com/v2/reference/embed"
+    },
+    {
+      "service_key": "voyage_ai",
+      "provider_name": "voyageai",
+      "provider_service": "embeddings",
+      "component": "external",
+      "domains": ["api.voyageai.com"],
+      "endpoints": ["/v1/embeddings", "/v1/contextualizedembeddings"],
+      "response_path": "usage.total_tokens",
+      "usage_metric": "input_tokens",
+      "resource_path": "model",
+      "source_url": "https://docs.voyageai.com/reference/embeddings-api"
+    },
+    {
+      "service_key": "jina_embeddings",
+      "provider_name": "jina",
+      "provider_service": "embeddings",
+      "component": "external",
+      "domains": ["api.jina.ai"],
+      "endpoints": ["/v1/embeddings"],
+      "response_path": "usage.total_tokens",
+      "usage_metric": "input_tokens",
+      "resource_path": "model",
+      "source_url": "https://api.jina.ai/scalar"
+    },
+    {
+      "service_key": "deepgram_transcription",
+      "provider_name": "deepgram",
+      "provider_service": "speech_to_text",
+      "component": "speech_to_text",
+      "domains": ["api.deepgram.com"],
+      "endpoints": ["/v1/listen"],
+      "response_path": "metadata.duration",
+      "usage_metric": "audio_seconds",
+      "record_id_path": "metadata.request_id",
+      "source_url": "https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded"
+    }
+  ]
+}
