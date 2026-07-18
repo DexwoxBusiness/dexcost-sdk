@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.4.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.4.0...python/v0.4.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **python:** preserve attribution v2 delivery ([#82](https://github.com/DexwoxBusiness/dexcost-sdk/issues/82)) ([774f263](https://github.com/DexwoxBusiness/dexcost-sdk/commit/774f2637ccfbe0b2bb213a4cd4f9edf812e67aac))
+
 ## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.3.0...python/v0.4.0) (2026-07-17)
 
 
