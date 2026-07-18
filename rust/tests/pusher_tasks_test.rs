@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use chrono::{Duration as ChronoDuration, Utc};
 use dexcost::config::Config;
 use dexcost::core::models::{CostEvent, EventType, Task};
 use dexcost::transport::buffer::EventBuffer;
@@ -275,7 +276,7 @@ async fn partial_ingestion_rejection_keeps_records_pending() {
 }
 
 #[tokio::test]
-async fn invalid_v2_event_stays_pending_while_valid_sibling_is_delivered() {
+async fn invalid_v2_prefix_is_quarantined_while_valid_sibling_is_delivered() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/ingest"))
@@ -284,25 +285,34 @@ async fn invalid_v2_event_stays_pending_while_valid_sibling_is_delivered() {
         .await;
 
     let mut buf = EventBuffer::new().unwrap();
-    let invalid = CostEvent::new("task-123", EventType::LlmCall);
+    let mut invalid = CostEvent::new("task-123", EventType::LlmCall);
+    let mut second_invalid = CostEvent::new("task-456", EventType::LlmCall);
+    let mut valid = CostEvent::new("11111111-1111-4111-8111-111111111111", EventType::LlmCall);
+    invalid.occurred_at = Utc::now() - ChronoDuration::minutes(1);
+    second_invalid.occurred_at = invalid.occurred_at + ChronoDuration::seconds(1);
+    valid.occurred_at = second_invalid.occurred_at + ChronoDuration::seconds(1);
     let invalid_id = invalid.event_id.clone();
+    let second_invalid_id = second_invalid.event_id.clone();
     buf.add_event(invalid);
-    buf.add_event(CostEvent::new(
-        "11111111-1111-4111-8111-111111111111",
-        EventType::LlmCall,
-    ));
+    buf.add_event(second_invalid);
+    buf.add_event(valid);
 
     let buffer = Arc::new(AsyncMutex::new(buf));
-    let pusher = EventPusher::new(buffer.clone(), fast_flush_config(&server.uri()));
+    let mut config = fast_flush_config(&server.uri());
+    config.batch_size = 2;
+    let pusher = EventPusher::new(buffer.clone(), config);
     let error = pusher
         .flush()
         .await
         .expect_err("invalid event must surface");
-    assert!(error.to_string().contains("remain pending"));
+    assert!(error.to_string().contains("were quarantined"));
 
     let buf = buffer.lock().await;
-    assert_eq!(buf.pending_count(), 1);
-    assert_eq!(buf.get_pending_events(10)[0].event_id, invalid_id);
+    assert_eq!(buf.pending_count(), 0);
+    let quarantined = buf.get_quarantined_events(10);
+    assert_eq!(quarantined.len(), 2);
+    assert_eq!(quarantined[0].event_id, invalid_id);
+    assert_eq!(quarantined[1].event_id, second_invalid_id);
     drop(buf);
 
     let requests = server.received_requests().await.expect("requests");

@@ -19,6 +19,9 @@ pub enum DexcostError {
     Config(String),
     /// A storage error occurred (SQLite).
     Storage(String),
+    /// Durable records that could not satisfy the attribution v2 contract.
+    /// These are quarantined locally and are not transport failures.
+    AttributionConversion(Vec<String>),
 }
 
 impl fmt::Display for DexcostError {
@@ -47,6 +50,20 @@ impl fmt::Display for DexcostError {
             }
             DexcostError::Storage(msg) => {
                 write!(f, "dexcost: storage error: {}", msg)
+            }
+            DexcostError::AttributionConversion(event_ids) => {
+                let preview = event_ids
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(
+                    f,
+                    "dexcost: {} event(s) were quarantined because they cannot be represented by attribution v2 (event IDs: {})",
+                    event_ids.len(),
+                    preview
+                )
             }
         }
     }
