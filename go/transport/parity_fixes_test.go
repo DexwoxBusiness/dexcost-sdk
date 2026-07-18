@@ -76,9 +76,17 @@ func TestSQLiteBuffer_PurgeOldPendingEvents(t *testing.T) {
 
 	oldEvent := core.NewEvent(task.TaskID, core.EventTypeExternalCost)
 	oldEvent.OccurredAt = time.Now().UTC().Add(-30 * 24 * time.Hour)
+	oldQuarantined := core.NewEvent(task.TaskID, core.EventType("legacy_unrepresentable"))
+	oldQuarantined.OccurredAt = oldEvent.OccurredAt.Add(time.Second)
 	freshEvent := core.NewEvent(task.TaskID, core.EventTypeExternalCost)
 	if err := buf.InsertEvent(oldEvent); err != nil {
 		t.Fatalf("insert old event: %v", err)
+	}
+	if err := buf.InsertEvent(oldQuarantined); err != nil {
+		t.Fatalf("insert old quarantined event: %v", err)
+	}
+	if err := buf.MarkQuarantined([]string{oldQuarantined.EventID.String()}); err != nil {
+		t.Fatalf("quarantine old event: %v", err)
 	}
 	if err := buf.InsertEvent(freshEvent); err != nil {
 		t.Fatalf("insert fresh event: %v", err)
@@ -88,8 +96,8 @@ func TestSQLiteBuffer_PurgeOldPendingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 stale pending event purged, got %d", n)
+	if n != 2 {
+		t.Errorf("expected stale pending and quarantined events purged, got %d", n)
 	}
 	remaining, _ := buf.QueryEvents(task.TaskID.String())
 	if len(remaining) != 1 {

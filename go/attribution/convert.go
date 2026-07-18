@@ -141,6 +141,8 @@ func providerFor(event core.Event) ProviderIdentityV2 {
 		case core.EventTypeNetwork:
 			provider.Name = canonicalName(firstNonEmpty(stringDetail(event.Details, "cloud_provider"), event.Provider), "internet")
 			provider.Service = "egress"
+		case core.EventTypeRetryMarker:
+			provider.Name, provider.Service = "dexcost", "retry"
 		default:
 			service := firstNonEmpty(event.ServiceName, "external")
 			if strings.HasPrefix(service, "mcp:") {
@@ -162,6 +164,14 @@ func providerFor(event core.Event) ProviderIdentityV2 {
 }
 
 func resourceFor(event core.Event) *ResourceV2 {
+	// Retry markers may also carry model data copied from the failed call.
+	// Keep the retry reason as the marker's identity instead of allowing the
+	// generic model branch to hide it.
+	if event.EventType == core.EventTypeRetryMarker {
+		if reason := strings.TrimSpace(event.RetryReason); reason != "" {
+			return &ResourceV2{Type: "other", ID: truncate(reason, 256)}
+		}
+	}
 	if event.Model != "" {
 		return &ResourceV2{Type: "model", ID: truncate(event.Model, 256)}
 	}
@@ -182,6 +192,9 @@ func evidenceFor(event core.Event) *CostEvidenceV2 {
 	amount, ok := positiveQuantity(event.CostUSD)
 	if !ok {
 		return nil
+	}
+	if event.EventType == core.EventTypeRetryMarker {
+		return &CostEvidenceV2{Amount: amount, Currency: "USD", Source: "manual", Confidence: "exact"}
 	}
 	source := string(event.PricingSource)
 	if source == "" && event.EventType == core.EventTypeNetwork {
@@ -217,8 +230,11 @@ func evidenceFor(event core.Event) *CostEvidenceV2 {
 func componentAndUsage(event core.Event) (Component, []UsageLineV2, decimal.Decimal, bool) {
 	details := event.Details
 	switch event.EventType {
-	case core.EventTypeRetryMarker, core.EventTypeGPUUtilizationSignal:
+	case core.EventTypeGPUUtilizationSignal:
 		return "", nil, decimal.Zero, false
+	case core.EventTypeRetryMarker:
+		usage := appendUsage(nil, MetricRequestCount, decimal.NewFromInt(1))
+		return ComponentExternal, usage, decimal.Zero, true
 	case core.EventTypeLLMCall:
 		usage := []UsageLineV2{}
 		cached := decimal.NewFromInt(int64(intValue(event.CachedTokens)))
