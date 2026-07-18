@@ -135,6 +135,20 @@ describe("EventBuffer — in-memory store round-trips events and tasks", () => {
     expect(buf.getAllEvents()).toHaveLength(2);
   });
 
+  test("quarantine retains failed events outside the pending scan", () => {
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const buf = new EventBuffer();
+
+    buf.addEvent(makeEvent("e1", "t1"));
+    buf.addEvent(makeEvent("e2", "t1"));
+    buf.markQuarantined(["e1"]);
+
+    expect(buf.getPendingEvents().map((event) => event.eventId)).toEqual(["e2"]);
+    expect(buf.getQuarantinedEvents().map((event) => event.eventId)).toEqual(["e1"]);
+    expect(buf.getAllEvents()).toHaveLength(2);
+  });
+
   test("queryEvents returns events filtered by taskId", () => {
     EventBuffer._forceFallbackForTest = true;
     vi.spyOn(console, "warn").mockImplementation(() => {});

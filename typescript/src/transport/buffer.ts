@@ -288,7 +288,7 @@ const MEM_BUFFER_MAX_TASKS = 10_000;
 
 interface MemEventEntry {
   event: CostEvent;
-  syncStatus: "pending" | "synced";
+  syncStatus: "pending" | "quarantined" | "synced";
   capturedAt: Date;
   syncedAt: Date | null;
 }
@@ -359,6 +359,25 @@ class MemoryBufferStore {
     }
   }
 
+  markQuarantined(eventIds: string[]): void {
+    for (const id of eventIds) {
+      const entry = this._events.get(id);
+      if (entry != null && entry.syncStatus === "pending") {
+        entry.syncStatus = "quarantined";
+      }
+    }
+  }
+
+  getQuarantinedEvents(limit: number): CostEvent[] {
+    const out: CostEvent[] = [];
+    for (const entry of this._events.values()) {
+      if (entry.syncStatus !== "quarantined") continue;
+      out.push(entry.event);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   getTask(taskId: string): Task | undefined {
     return this._tasks.get(taskId)?.task;
   }
@@ -427,7 +446,8 @@ class MemoryBufferStore {
     const cutoff = Date.now() - maxAgeDays * 24 * 3600 * 1000;
     let removed = 0;
     for (const [id, entry] of this._events) {
-      if (entry.syncStatus === "pending" && entry.capturedAt.getTime() < cutoff) {
+      if ((entry.syncStatus === "pending" || entry.syncStatus === "quarantined") &&
+          entry.capturedAt.getTime() < cutoff) {
         this._events.delete(id);
         removed += 1;
       }
@@ -801,6 +821,43 @@ export class EventBuffer {
   }
 
   /**
+   * Retain unrepresentable events outside the normal pending scan.
+   *
+   * Quarantine is deliberately distinct from `synced`: the event was not
+   * delivered, remains inspectable through `queryEvents`/`getQuarantinedEvents`,
+   * and is removed only by the same age-based safety purge as stale pending
+   * records. Keeping it out of `getPendingEvents` prevents head-of-line
+   * blocking without pretending ingestion succeeded.
+   */
+  markQuarantined(eventIds: string[]): void {
+    if (this._mem) { this._mem.markQuarantined(eventIds); return; }
+    if (!this._db || eventIds.length === 0) return;
+    try {
+      const placeholders = eventIds.map(() => "?").join(", ");
+      this._db
+        .prepare(
+          `UPDATE events SET sync_status = 'quarantined'
+           WHERE sync_status = 'pending' AND event_id IN (${placeholders})`,
+        )
+        .run(...eventIds);
+    } catch {
+      // SQLite error (disk full, locked) — keep rows pending and retry later.
+    }
+  }
+
+  /** Return quarantined conversion failures for diagnostics. */
+  getQuarantinedEvents(limit: number = 100): CostEvent[] {
+    if (this._mem) return this._mem.getQuarantinedEvents(limit);
+    if (!this._db) return [];
+    const rows = this._db
+      .prepare(
+        `SELECT * FROM events WHERE sync_status = 'quarantined' ORDER BY timestamp ASC LIMIT ?`,
+      )
+      .all(limit) as EventRow[];
+    return rows.map(rowToEvent);
+  }
+
+  /**
    * Retrieve a task by ID, or undefined if not found.
    */
   getTask(taskId: string): Task | undefined {
@@ -985,7 +1042,7 @@ export class EventBuffer {
   }
 
   /**
-   * Delete pending events older than `maxAgeDays` and VACUUM.
+   * Delete pending or quarantined events older than `maxAgeDays` and VACUUM.
    *
    * Safety net for events that can never be synced (rejected API key,
    * permanently-down endpoint, etc.) so the local buffer cannot grow
@@ -998,7 +1055,10 @@ export class EventBuffer {
     try {
       const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
       const result = this._db
-        .prepare(`DELETE FROM events WHERE sync_status = 'pending' AND timestamp < ?`)
+        .prepare(
+          `DELETE FROM events
+           WHERE sync_status IN ('pending', 'quarantined') AND timestamp < ?`,
+        )
         .run(cutoff);
       const deleted = result.changes;
       if (deleted > 0) {

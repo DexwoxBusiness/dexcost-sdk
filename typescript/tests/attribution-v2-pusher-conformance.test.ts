@@ -22,9 +22,10 @@ describe("attribution v2 pusher conformance", () => {
     buffer.close();
     rmSync(tempDir, { recursive: true, force: true });
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
-  it("keeps an unrepresentable event pending while delivering valid siblings", async () => {
+  it("quarantines a malformed head row and delivers the valid event behind it", async () => {
     const invalid = createCostEvent({
       eventId: randomUUID(),
       taskId: "task-123",
@@ -42,11 +43,11 @@ describe("attribution v2 pusher conformance", () => {
       new Response(JSON.stringify({ accepted: 1, rejected: 0 }), { status: 202 }),
     );
 
-    const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 }, "https://api.dexcost.test");
-    await expect(pusher.flush()).rejects.toThrow("remain pending");
+    const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 1 }, "https://api.dexcost.test");
+    await expect(pusher.flush()).rejects.toThrow("were quarantined");
 
-    expect(buffer.getPendingEvents()).toHaveLength(1);
-    expect(buffer.getPendingEvents()[0]?.eventId).toBe(invalid.eventId);
+    expect(buffer.getPendingEvents()).toHaveLength(0);
+    expect(buffer.getQuarantinedEvents().map((event) => event.eventId)).toEqual([invalid.eventId]);
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1];
     const body = JSON.parse(String(request?.body)) as { events: Array<{ event_id: string }> };
@@ -66,5 +67,21 @@ describe("attribution v2 pusher conformance", () => {
 
     expect(buffer.pendingCount).toBe(0);
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("throttles duplicate background warnings by failing event-set fingerprint", () => {
+    const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 });
+    const internal = pusher as unknown as {
+      _handleConversionFailures(eventIds: string[], surface: boolean): void;
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+    internal._handleConversionFailures(["event-a"], false);
+    internal._handleConversionFailures(["event-a"], false);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    internal._handleConversionFailures(["event-b"], false);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });

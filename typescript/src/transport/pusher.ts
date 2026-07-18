@@ -22,6 +22,22 @@ const MAX_PAYLOAD_BYTES = 120_000;
 /** Minimum interval between purge runs in milliseconds (1 hour). */
 const PURGE_INTERVAL_MS = 3_600_000;
 
+/** Bound extra work while scanning past quarantined conversion failures. */
+const MAX_CONVERSION_SCAN = 1_000;
+const CONVERSION_SCAN_MULTIPLIER = 10;
+
+/** Emit at most one background warning per failing event set per hour. */
+const CONVERSION_WARN_INTERVAL_MS = 3_600_000;
+
+function conversionFailureFingerprint(eventIds: string[]): string {
+  let hash = 0x811c9dc5;
+  for (const character of [...eventIds].sort().join("\u0000")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 /**
  * Pushes buffered events to a remote endpoint on a periodic interval.
  *
@@ -44,6 +60,8 @@ export class EventPusher {
   private _endpoint: string;
   private _pushing = false;
   private _lastPurgeMs = 0;
+  private _lastConversionWarnMs = 0;
+  private _lastConversionWarnFingerprint = "";
   /** Set permanently when the API key is rejected (HTTP 401/403). */
   private _authFailed = false;
 
@@ -142,25 +160,52 @@ export class EventPusher {
       return;
     }
 
-    const batchSize = this._options.batchSize ?? 100;
-    const pending = this._buffer.getPendingEvents(batchSize);
+    const batchSize = Math.max(1, this._options.batchSize ?? 100);
     const tasks = this._buffer.getPendingTasks();
     const wireEvents: AttributionEventV2[] = [];
-    const observabilityEventIds: string[] = [];
     const failedEventIds: string[] = [];
-    for (const event of pending) {
-      if (event.eventType === "gpu_utilization_signal") {
-        observabilityEventIds.push(event.eventId);
-        continue;
+    const seenEventIds = new Set<string>();
+    const scanLimit = Math.max(
+      batchSize,
+      Math.min(MAX_CONVERSION_SCAN, batchSize * CONVERSION_SCAN_MULTIPLIER),
+    );
+    let scanned = 0;
+
+    // Quarantine failed pages as we go, then fetch the next oldest pending
+    // page. This lets one flush reach valid events behind a malformed prefix.
+    while (wireEvents.length < batchSize && scanned < scanLimit) {
+      const pageLimit = Math.min(batchSize - wireEvents.length, scanLimit - scanned);
+      const pending = this._buffer.getPendingEvents(pageLimit);
+      if (pending.length === 0) break;
+
+      const observabilityEventIds: string[] = [];
+      const pageFailedEventIds: string[] = [];
+      let newlyScanned = 0;
+      for (const event of pending) {
+        if (seenEventIds.has(event.eventId)) continue;
+        seenEventIds.add(event.eventId);
+        newlyScanned++;
+        scanned++;
+        if (event.eventType === "gpu_utilization_signal") {
+          observabilityEventIds.push(event.eventId);
+          continue;
+        }
+        const converted = this._serializeEvent(event);
+        if (converted === null) pageFailedEventIds.push(event.eventId);
+        else wireEvents.push(converted);
       }
-      const converted = this._serializeEvent(event);
-      if (converted === null) failedEventIds.push(event.eventId);
-      else wireEvents.push(converted);
+
+      if (observabilityEventIds.length > 0) this._buffer.markSynced(observabilityEventIds);
+      if (pageFailedEventIds.length > 0) {
+        this._buffer.markQuarantined(pageFailedEventIds);
+        failedEventIds.push(...pageFailedEventIds);
+      }
+
+      // A storage failure may leave the same rows pending. Do not spin inside
+      // one flush; the throttled background path can retry later.
+      if (newlyScanned === 0 || pending.length < pageLimit) break;
     }
-    // Only explicit observability signals are acknowledged without upload.
-    // Every other conversion failure remains pending; acknowledging it would
-    // silently destroy attribution data from old or malformed local rows.
-    if (observabilityEventIds.length > 0) this._buffer.markSynced(observabilityEventIds);
+
     if (wireEvents.length === 0 && tasks.length === 0) {
       this._handleConversionFailures(failedEventIds, surfaceConversionErrors);
       return;
@@ -204,14 +249,26 @@ export class EventPusher {
   }
 
   private _handleConversionFailures(eventIds: string[], surface: boolean): void {
-    if (eventIds.length === 0) return;
-    this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+    if (eventIds.length === 0) {
+      this._lastConversionWarnFingerprint = "";
+      return;
+    }
     const preview = eventIds.slice(0, 3).join(", ");
     const error = new Error(
-      `${eventIds.length} event(s) remain pending because they cannot be represented by attribution v2 (event IDs: ${preview})`,
+      `${eventIds.length} event(s) were quarantined because they cannot be represented by attribution v2 (event IDs: ${preview})`,
     );
     if (surface) throw error;
-    console.warn(`[dexcost] ${error.message}`);
+
+    const now = Date.now();
+    const fingerprint = conversionFailureFingerprint(eventIds);
+    if (
+      fingerprint !== this._lastConversionWarnFingerprint ||
+      now - this._lastConversionWarnMs >= CONVERSION_WARN_INTERVAL_MS
+    ) {
+      console.warn(`[dexcost] ${error.message}`);
+      this._lastConversionWarnFingerprint = fingerprint;
+      this._lastConversionWarnMs = now;
+    }
   }
 
   /** Convert durable capture into the strict, details-free v2 wire event. */
