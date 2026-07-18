@@ -89,6 +89,12 @@ describe("ServiceCatalog", () => {
     expect(entry).toBeNull();
   });
 
+  it("does not price another API when a sole domain candidate is endpoint-restricted", () => {
+    const catalog = new ServiceCatalog();
+    expect(catalog.lookup("https://api.cohere.com/v2/embed")).toBeNull();
+    expect(catalog.lookup("https://api.jina.ai/v1/embeddings")).toBeNull();
+  });
+
   // -----------------------------------------------------------------------
   // Unknown domain
   // -----------------------------------------------------------------------

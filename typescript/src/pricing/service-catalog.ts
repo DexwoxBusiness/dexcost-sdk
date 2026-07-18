@@ -437,7 +437,8 @@ export class ServiceCatalog {
 
     if (candidates.length === 0) return null;
 
-    // If any candidate has endpoint restrictions, prefer exact endpoint match
+    // Endpoint predicates are billing predicates, even when the domain has
+    // only one catalog entry. Never price another API on that host.
     for (const { entry } of candidates) {
       if (entry.endpoints && entry.endpoints.length > 0) {
         for (const ep of entry.endpoints) {

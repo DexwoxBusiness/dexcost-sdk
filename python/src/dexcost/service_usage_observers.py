@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
 _METRICS = {"input_tokens", "audio_seconds"}
 _COMPONENTS = {"external", "speech_to_text"}
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -181,7 +183,8 @@ class ServiceUsageObservers:
 
 try:
     _DEFAULT_OBSERVERS: ServiceUsageObservers | None = ServiceUsageObservers()
-except (OSError, ValueError, json.JSONDecodeError):
+except (OSError, ValueError, json.JSONDecodeError) as exc:
+    _LOG.warning("bundled service usage observers disabled: %s", exc)
     _DEFAULT_OBSERVERS = None
 
 

@@ -172,7 +172,8 @@ export class ServiceUsageObservers {
 export const serviceUsageObservers: ServiceUsageObservers | null = (() => {
   try {
     return new ServiceUsageObservers();
-  } catch {
+  } catch (error) {
+    console.warn("[dexcost] bundled service usage observers disabled", error);
     return null;
   }
 })();

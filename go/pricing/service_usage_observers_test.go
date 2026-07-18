@@ -69,3 +69,18 @@ func TestServiceUsageObserverManifestMatchesCanonical(t *testing.T) {
 		t.Fatal("packaged observer manifest drifted from canonical")
 	}
 }
+
+func TestCatalogDoesNotClaimObserverEndpointsByDomainFallback(t *testing.T) {
+	catalog, err := NewServiceCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rawURL := range []string{
+		"https://api.cohere.com/v2/embed",
+		"https://api.jina.ai/v1/embeddings",
+	} {
+		if entry := catalog.Lookup(rawURL); entry != nil {
+			t.Fatalf("%s incorrectly matched priced catalog entry %s", rawURL, entry.Key)
+		}
+	}
+}

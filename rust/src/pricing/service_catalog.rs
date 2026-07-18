@@ -315,8 +315,8 @@ impl ServiceCatalog {
     /// Match a URL against the catalog by domain and endpoint.
     ///
     /// Wildcard domains like `*.pinecone.io` are supported.
-    /// When multiple entries share the same domain (e.g. Google Maps),
-    /// endpoint matching is used to disambiguate.
+    /// Endpoint restrictions are always enforced and also disambiguate
+    /// multiple entries sharing a domain (e.g. Google Maps).
     pub fn lookup(&self, url: &str) -> Option<&ServiceEntry> {
         let (hostname, path) = parse_url(url);
 
@@ -332,12 +332,8 @@ impl ServiceCatalog {
             return None;
         }
 
-        // If only one candidate, return it
-        if candidates.len() == 1 {
-            return Some(candidates[0]);
-        }
-
-        // Multiple candidates: filter by endpoint match
+        // Endpoint predicates are billing predicates, even when the domain
+        // has only one catalog entry. Never price another API on that host.
         for entry in &candidates {
             if let Some(ref endpoints) = entry.endpoints {
                 for ep in endpoints {
@@ -355,8 +351,8 @@ impl ServiceCatalog {
             }
         }
 
-        // Last resort: first candidate
-        Some(candidates[0])
+        // Every candidate was endpoint-restricted and none matched.
+        None
     }
 
     /// Apply extraction rules to get cost from an HTTP response.
@@ -912,6 +908,15 @@ mod tests {
         let places = catalog.lookup("https://maps.googleapis.com/maps/api/place/nearbysearch");
         assert!(places.is_some());
         assert_eq!(places.unwrap().key, "google_maps_places");
+    }
+
+    #[test]
+    fn test_endpoint_restricted_single_candidate_does_not_price_other_api() {
+        let catalog = ServiceCatalog::new();
+        assert!(catalog.lookup("https://api.cohere.com/v2/embed").is_none());
+        assert!(catalog
+            .lookup("https://api.jina.ai/v1/embeddings")
+            .is_none());
     }
 
     #[test]

@@ -266,12 +266,8 @@ func (sc *ServiceCatalog) Lookup(rawURL string) *ServiceEntry {
 		return nil
 	}
 
-	// If only one candidate, return it.
-	if len(candidates) == 1 {
-		return candidates[0]
-	}
-
-	// Multiple candidates: filter by endpoint match.
+	// Endpoint predicates are billing predicates, even when the domain has
+	// only one catalog entry. Never price a different API on the same host.
 	for _, entry := range candidates {
 		if len(entry.Endpoints) > 0 {
 			for _, ep := range entry.Endpoints {
@@ -289,8 +285,8 @@ func (sc *ServiceCatalog) Lookup(rawURL string) *ServiceEntry {
 		}
 	}
 
-	// Last resort: first candidate.
-	return candidates[0]
+	// Every candidate was endpoint-restricted and none matched.
+	return nil
 }
 
 // domainMatches checks if hostname matches any of the domain patterns.

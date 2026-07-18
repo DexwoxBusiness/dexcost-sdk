@@ -137,6 +137,41 @@ class TestKnownServiceExtraction:
             for event in get_recorded_events()
         )
 
+    @pytest.mark.parametrize(
+        ("url", "body", "observer_service", "provider"),
+        [
+            (
+                "https://api.cohere.com/v2/embed",
+                {"id": "cohere-1", "meta": {"billed_units": {"input_tokens": 29}}},
+                "cohere_embed",
+                "cohere",
+            ),
+            (
+                "https://api.jina.ai/v1/embeddings",
+                {"model": "jina-embeddings-v3", "usage": {"total_tokens": 53}},
+                "jina_embeddings",
+                "jina",
+            ),
+        ],
+    )
+    def test_observer_endpoint_is_not_claimed_by_rerank_catalog_fallback(
+        self,
+        url: str,
+        body: dict[str, Any],
+        observer_service: str,
+        provider: str,
+    ) -> None:
+        task = _make_task("embedding")
+        with task_context(task):
+            _handle_http_call(url, response=_make_response(body=body))
+        event = get_recorded_events()[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.details["attribution_observer_service"] == observer_service
+        assert wire is not None
+        assert wire["provider"]["name"] == provider
+        assert "cost_evidence" not in wire
+
     def test_deepgram_duration_is_speech_to_text_seconds(self) -> None:
         task = _make_task("transcription")
         response = _make_response(

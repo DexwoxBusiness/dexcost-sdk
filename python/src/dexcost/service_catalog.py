@@ -250,8 +250,8 @@ class ServiceCatalog:
         """Match a URL against the catalog by domain and endpoint.
 
         Wildcard domains like ``*.pinecone.io`` are supported via fnmatch.
-        When multiple entries share the same domain (e.g. Google Maps),
-        endpoint matching is used to disambiguate.
+        Endpoint restrictions are always enforced and also disambiguate
+        multiple entries sharing a domain (e.g. Google Maps).
         """
         parsed = urlparse(url)
         hostname = parsed.hostname or ""
@@ -272,11 +272,8 @@ class ServiceCatalog:
         if not candidates:
             return None
 
-        # If only one candidate, return it (no endpoint filtering needed)
-        if len(candidates) == 1:
-            return candidates[0]
-
-        # Multiple candidates: filter by endpoint match
+        # Endpoint predicates are billing predicates, even when the domain has
+        # only one catalog entry. Never price a different API on the same host.
         for entry in candidates:
             if entry.endpoints:
                 for ep in entry.endpoints:
@@ -288,8 +285,8 @@ class ServiceCatalog:
             if not entry.endpoints:
                 return entry
 
-        # Last resort: first candidate
-        return candidates[0]
+        # Every candidate was endpoint-restricted and none matched.
+        return None
 
     @staticmethod
     def _domain_matches(hostname: str, patterns: list[str]) -> bool:

@@ -5,6 +5,7 @@ package pricing
 
 import (
 	"encoding/json"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -56,9 +57,17 @@ var (
 
 func loadUsageObservers() {
 	data, err := embeddedServiceData.ReadFile("data/service_usage_observers.json")
-	if err != nil || json.Unmarshal(data, &usageObservers) != nil ||
-		usageObservers.Meta.Version == "" ||
+	if err != nil {
+		log.Printf("[dexcost] bundled service usage observers disabled: read manifest: %v", err)
+		return
+	}
+	if err := json.Unmarshal(data, &usageObservers); err != nil {
+		log.Printf("[dexcost] bundled service usage observers disabled: invalid JSON: %v", err)
+		return
+	}
+	if usageObservers.Meta.Version == "" ||
 		usageObservers.Meta.ObserverCount != len(usageObservers.Observers) {
+		log.Printf("[dexcost] bundled service usage observers disabled: inconsistent metadata")
 		return
 	}
 	keys := make(map[string]struct{}, len(usageObservers.Observers))
@@ -72,6 +81,10 @@ func loadUsageObservers() {
 			!allUsageObserverDomainsValid(observer.Domains) ||
 			!allUsageObserverEndpointsValid(observer.Endpoints) ||
 			!strings.HasPrefix(observer.SourceURL, "https://") {
+			log.Printf(
+				"[dexcost] bundled service usage observers disabled: invalid observer %q",
+				observer.ServiceKey,
+			)
 			return
 		}
 		keys[observer.ServiceKey] = struct{}{}

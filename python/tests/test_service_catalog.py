@@ -97,6 +97,12 @@ class TestDomainMatching:
         entry = catalog.lookup("https://unknown-service.example.com/v1/api")
         assert entry is None
 
+    def test_endpoint_restricted_single_candidate_does_not_price_other_api(
+        self, catalog: ServiceCatalog
+    ) -> None:
+        assert catalog.lookup("https://api.cohere.com/v2/embed") is None
+        assert catalog.lookup("https://api.jina.ai/v1/embeddings") is None
+
     def test_multiple_domains_for_service(self, catalog: ServiceCatalog) -> None:
         """Services with multiple exact domains should match any of them."""
         entry_person = catalog.lookup("https://person.clearbit.com/v2/people")

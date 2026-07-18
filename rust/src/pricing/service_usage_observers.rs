@@ -173,5 +173,13 @@ impl ServiceUsageObservers {
 
 pub fn default_service_usage_observers() -> Option<&'static ServiceUsageObservers> {
     static OBSERVERS: OnceLock<Option<ServiceUsageObservers>> = OnceLock::new();
-    OBSERVERS.get_or_init(ServiceUsageObservers::load).as_ref()
+    OBSERVERS
+        .get_or_init(|| {
+            let observers = ServiceUsageObservers::load();
+            if observers.is_none() {
+                eprintln!("[dexcost] bundled service usage observers disabled: invalid manifest");
+            }
+            observers
+        })
+        .as_ref()
 }
