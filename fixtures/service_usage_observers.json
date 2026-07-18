@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.0.0",
-    "observer_count": 5,
+    "version": "1.1.0",
+    "observer_count": 8,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -14,6 +14,7 @@
       "endpoints": ["/v1/embeddings"],
       "response_path": "usage.total_tokens",
       "usage_metric": "input_tokens",
+      "resource_type": "model",
       "resource_path": "model",
       "record_id_header": "x-request-id",
       "source_url": "https://platform.openai.com/docs/api-reference/embeddings/create"
@@ -27,6 +28,8 @@
       "endpoints": ["/v1/embed", "/v2/embed"],
       "response_path": "meta.billed_units.input_tokens",
       "usage_metric": "input_tokens",
+      "resource_type": "model",
+      "request_resource_path": "model",
       "record_id_path": "id",
       "source_url": "https://docs.cohere.com/v2/reference/embed"
     },
@@ -39,6 +42,7 @@
       "endpoints": ["/v1/embeddings", "/v1/contextualizedembeddings"],
       "response_path": "usage.total_tokens",
       "usage_metric": "input_tokens",
+      "resource_type": "model",
       "resource_path": "model",
       "source_url": "https://docs.voyageai.com/reference/embeddings-api"
     },
@@ -51,20 +55,90 @@
       "endpoints": ["/v1/embeddings"],
       "response_path": "usage.total_tokens",
       "usage_metric": "input_tokens",
+      "resource_type": "model",
       "resource_path": "model",
       "source_url": "https://api.jina.ai/scalar"
     },
     {
       "service_key": "deepgram_transcription",
       "provider_name": "deepgram",
-      "provider_service": "speech_to_text",
+      "provider_service": "speech_to_text_pre_recorded",
       "component": "speech_to_text",
-      "domains": ["api.deepgram.com"],
+      "domains": ["api.deepgram.com", "api.eu.deepgram.com", "api.au.deepgram.com"],
       "endpoints": ["/v1/listen"],
       "response_path": "metadata.duration",
       "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "resource_query_parameter": "model",
+      "default_resource_id": "base-general",
+      "resource_variant": {
+        "query_parameter": "language",
+        "equals": "multi",
+        "matched_suffix": ":multilingual",
+        "default_suffix": ":monolingual"
+      },
+      "quantity_multiplier_path": "metadata.channels",
+      "quantity_multiplier_query_parameter": "multichannel",
       "record_id_path": "metadata.request_id",
       "source_url": "https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded"
+    },
+    {
+      "service_key": "deepgram_diarization",
+      "provider_name": "deepgram",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.deepgram.com", "api.eu.deepgram.com", "api.au.deepgram.com"],
+      "endpoints": ["/v1/listen"],
+      "response_path": "metadata.duration",
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "speaker_diarization",
+      "query_any": [
+        { "parameter": "diarize", "operator": "truthy" },
+        { "parameter": "diarize_model", "operator": "present" }
+      ],
+      "quantity_multiplier_path": "metadata.channels",
+      "quantity_multiplier_query_parameter": "multichannel",
+      "record_id_path": "metadata.request_id",
+      "source_url": "https://deepgram.com/pricing"
+    },
+    {
+      "service_key": "deepgram_redaction",
+      "provider_name": "deepgram",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.deepgram.com", "api.eu.deepgram.com", "api.au.deepgram.com"],
+      "endpoints": ["/v1/listen"],
+      "response_path": "metadata.duration",
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "redaction",
+      "query_any": [
+        { "parameter": "redact", "operator": "truthy" }
+      ],
+      "quantity_multiplier_path": "metadata.channels",
+      "quantity_multiplier_query_parameter": "multichannel",
+      "record_id_path": "metadata.request_id",
+      "source_url": "https://deepgram.com/pricing"
+    },
+    {
+      "service_key": "deepgram_keyterm_prompting",
+      "provider_name": "deepgram",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.deepgram.com", "api.eu.deepgram.com", "api.au.deepgram.com"],
+      "endpoints": ["/v1/listen"],
+      "response_path": "metadata.duration",
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "keyterm_prompting",
+      "query_any": [
+        { "parameter": "keyterm", "operator": "present" }
+      ],
+      "quantity_multiplier_path": "metadata.channels",
+      "quantity_multiplier_query_parameter": "multichannel",
+      "record_id_path": "metadata.request_id",
+      "source_url": "https://deepgram.com/pricing"
     }
   ]
 }

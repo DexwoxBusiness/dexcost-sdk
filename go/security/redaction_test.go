@@ -8,10 +8,10 @@ import (
 // Test 1: RedactMap removes matching keys.
 func TestRedactMap_RemovesMatchingKeys(t *testing.T) {
 	data := map[string]interface{}{
-		"email":    "user@example.com",
-		"name":     "Alice",
-		"api_key":  "secret-key-123",
-		"project":  "my-project",
+		"email":   "user@example.com",
+		"name":    "Alice",
+		"api_key": "secret-key-123",
+		"project": "my-project",
 	}
 	fields := []string{"email", "api_key"}
 
@@ -232,5 +232,13 @@ func TestScrubURL_SecurityTokenSuffix(t *testing.T) {
 	if !strings.Contains(got, "X-Amz-Security-Token=REDACTED") ||
 		!strings.Contains(got, "page=1") {
 		t.Errorf("security-token suffix not scrubbed: %q", got)
+	}
+}
+
+func TestScrubURL_RedactsDeepgramFreeFormValues(t *testing.T) {
+	got := ScrubURL("https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=Acme%20Secret&custom_topic=Roadmap")
+	want := "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=REDACTED&custom_topic=REDACTED"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

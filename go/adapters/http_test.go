@@ -94,11 +94,12 @@ func TestTrackHTTP_DoesNotObserveFailedProviderResponse(t *testing.T) {
 
 func TestTrackHTTP_ObserverEndpointsBypassUnrelatedRerankCatalogEntries(t *testing.T) {
 	testCases := []struct {
-		name, rawURL, body, observerService, provider string
+		name, rawURL, body, requestBody, observerService, provider string
 	}{
 		{
 			name: "cohere", rawURL: "https://api.cohere.com/v2/embed",
 			body:            `{"id":"cohere-1","meta":{"billed_units":{"input_tokens":29}}}`,
+			requestBody:     `{"model":"embed-v4.0","texts":["hello"]}`,
 			observerService: "cohere_embed", provider: "cohere",
 		},
 		{
@@ -125,7 +126,7 @@ func TestTrackHTTP_ObserverEndpointsBypassUnrelatedRerankCatalogEntries(t *testi
 				core.WithTask(context.Background(), &task),
 				http.MethodPost,
 				testCase.rawURL,
-				nil,
+				strings.NewReader(testCase.requestBody),
 			)
 			resp, err := client.Do(req)
 			if err != nil {
@@ -143,6 +144,8 @@ func TestTrackHTTP_ObserverEndpointsBypassUnrelatedRerankCatalogEntries(t *testi
 			}
 			if wire := attribution.ToEventV2(event); wire == nil || wire.CostEvidence != nil {
 				t.Fatalf("unexpected attribution evidence: %+v", wire)
+			} else if testCase.name == "cohere" && (wire.Resource == nil || wire.Resource.Type != "model" || wire.Resource.ID != "embed-v4.0") {
+				t.Fatalf("cohere request model was not preserved: %+v", wire.Resource)
 			}
 		})
 	}
@@ -181,6 +184,47 @@ func TestTrackHTTP_MissingObserverUsageStillAttributesNotableNetwork(t *testing.
 	}
 	if events[0].Details["cost_pending"] != true {
 		t.Fatalf("network attribution must remain pending: %+v", events[0])
+	}
+}
+
+func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"metadata":{"request_id":"dg-addon","duration":10,"channels":2}}`,
+			)),
+			Request: req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("transcription")
+	rawURL := "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
+		"&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme"
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task), http.MethodPost, rawURL, nil,
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	events := adapters.GetRecordedEvents()
+	if len(events) != 4 {
+		t.Fatalf("expected base plus three add-on events, got %d", len(events))
+	}
+	wantResources := []string{
+		"nova-3:multilingual", "speaker_diarization", "redaction", "keyterm_prompting",
+	}
+	for i, event := range events {
+		wire := attribution.ToEventV2(event)
+		if wire == nil || wire.Resource == nil || wire.Resource.ID != wantResources[i] ||
+			len(wire.Usage) != 1 || wire.Usage[0].Quantity != "20" || wire.CostEvidence != nil {
+			t.Fatalf("unexpected Deepgram line %d: %+v", i, wire)
+		}
 	}
 }
 

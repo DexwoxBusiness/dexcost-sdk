@@ -168,6 +168,10 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
 
 
 def _resource_for(event: Event) -> AttributionResourceV2 | None:
+    explicit_type = _string_detail(event.details, "attribution_resource_type")
+    explicit_id = _string_detail(event.details, "attribution_resource_id")
+    if explicit_id and explicit_type in {"model", "sku", "instance", "endpoint", "session", "other"}:
+        return {"type": cast(Any, explicit_type), "id": explicit_id[:256]}
     if event.event_type == "retry_marker" and event.retry_reason:
         reason = event.retry_reason.strip()
         if reason:

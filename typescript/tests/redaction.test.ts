@@ -247,4 +247,12 @@ describe("scrubUrl", () => {
       "https://api.example.com/?api_key=REDACTED&keep=ok",
     );
   });
+
+  it("redacts free-form Deepgram values but preserves billing selectors", () => {
+    expect(scrubUrl(
+      "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=Acme%20Secret&custom_topic=Roadmap",
+    )).toBe(
+      "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=REDACTED&custom_topic=REDACTED",
+    );
+  });
 });

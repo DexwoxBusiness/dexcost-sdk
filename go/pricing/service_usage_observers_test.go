@@ -2,10 +2,30 @@ package pricing
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"reflect"
 	"testing"
 )
+
+func TestObserverQueryMatchesPreservesBlankPresentValue(t *testing.T) {
+	predicate := []usageQueryPredicate{{Parameter: "keyterm", Operator: "present"}}
+	parsed, err := url.Parse("https://api.deepgram.com/v1/listen?keyterm=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observerQueryMatches(parsed.Query(), predicate) {
+		t.Fatal("blank keyterm value must satisfy the present predicate")
+	}
+
+	prefixed, err := url.Parse("https://api.deepgram.com/v1/listen?notkeyterm=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observerQueryMatches(prefixed.Query(), predicate) {
+		t.Fatal("a different query parameter must not satisfy the keyterm predicate")
+	}
+}
 
 func TestSharedServiceUsageObserverConformance(t *testing.T) {
 	raw, err := os.ReadFile("../../fixtures/service_usage_observation_conformance.json")
@@ -14,11 +34,12 @@ func TestSharedServiceUsageObserverConformance(t *testing.T) {
 	}
 	var fixture struct {
 		Cases []struct {
-			Name     string                 `json:"name"`
-			URL      string                 `json:"url"`
-			Headers  map[string]string      `json:"headers"`
-			Response map[string]interface{} `json:"response"`
-			Expected map[string]interface{} `json:"expected"`
+			Name     string                   `json:"name"`
+			URL      string                   `json:"url"`
+			Headers  map[string]string        `json:"headers"`
+			Request  map[string]interface{}   `json:"request"`
+			Response map[string]interface{}   `json:"response"`
+			Expected []map[string]interface{} `json:"expected"`
 		} `json:"cases"`
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
@@ -26,26 +47,23 @@ func TestSharedServiceUsageObserverConformance(t *testing.T) {
 	}
 	for _, testCase := range fixture.Cases {
 		t.Run(testCase.Name, func(t *testing.T) {
-			observed := ObserveServiceUsage(testCase.URL, testCase.Headers, testCase.Response)
-			if testCase.Expected == nil {
-				if observed != nil {
-					t.Fatalf("unexpected observation: %+v", observed)
+			observed := ObserveServiceUsage(testCase.URL, testCase.Headers, testCase.Response, testCase.Request)
+			if len(observed) != len(testCase.Expected) {
+				t.Fatalf("got %d observations, want %d", len(observed), len(testCase.Expected))
+			}
+			for index := range observed {
+				checks := map[string]string{
+					"service_key": observed[index].ServiceKey, "provider_name": observed[index].ProviderName,
+					"provider_service": observed[index].ProviderService, "component": observed[index].Component,
+					"metric": observed[index].Metric, "quantity": observed[index].Quantity.String(),
+					"resource_type": observed[index].ResourceType, "resource_id": observed[index].ResourceID,
+					"provider_record_id": observed[index].ProviderRecordID,
 				}
-				return
-			}
-			if observed == nil {
-				t.Fatal("expected an observation")
-			}
-			checks := map[string]string{
-				"service_key": observed.ServiceKey, "provider_name": observed.ProviderName,
-				"provider_service": observed.ProviderService, "component": observed.Component,
-				"metric": observed.Metric, "quantity": observed.Quantity.String(),
-				"resource_id": observed.ResourceID, "provider_record_id": observed.ProviderRecordID,
-			}
-			for key, actual := range checks {
-				expected, _ := testCase.Expected[key].(string)
-				if actual != expected {
-					t.Fatalf("%s: got %q want %q", key, actual, expected)
+				for key, actual := range checks {
+					expected, _ := testCase.Expected[index][key].(string)
+					if actual != expected {
+						t.Fatalf("observation %d %s: got %q want %q", index, key, actual, expected)
+					}
 				}
 			}
 		})

@@ -162,7 +162,9 @@ impl DexcostMiddleware {
         event.cost_confidence = CostConfidence::Unknown;
         event.provider = Some(observation.provider_name.clone());
         event.service_name = Some(observation.provider_service.clone());
-        event.model = observation.resource_id.clone();
+        if observation.resource_type.as_deref() == Some("model") {
+            event.model = observation.resource_id.clone();
+        }
         if let Some(record_id) = &observation.provider_record_id {
             event.details.insert(
                 "provider_record_id".to_string(),
@@ -173,6 +175,18 @@ impl DexcostMiddleware {
             "attribution_component".to_string(),
             serde_json::Value::String(observation.component.clone()),
         );
+        if let Some(resource_type) = &observation.resource_type {
+            event.details.insert(
+                "attribution_resource_type".to_string(),
+                serde_json::Value::String(resource_type.clone()),
+            );
+        }
+        if let Some(resource_id) = &observation.resource_id {
+            event.details.insert(
+                "attribution_resource_id".to_string(),
+                serde_json::Value::String(resource_id.clone()),
+            );
+        }
         event.details.insert(
             "attribution_usage_quantity".to_string(),
             serde_json::Value::String(observation.quantity.normalize().to_string()),
@@ -349,6 +363,11 @@ impl Middleware for DexcostMiddleware {
             .and_then(|b| b.as_bytes())
             .map(|b| b.len())
             .unwrap_or(0);
+        let observer_request_body = default_service_usage_observers()
+            .filter(|observers| observers.needs_request_body(url.as_str()))
+            .and_then(|_| req.body().and_then(|body| body.as_bytes()))
+            .filter(|bytes| bytes.len() <= 1_048_576)
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
         let request_bytes = measure_bytes_from_headers(
             &method,
             url.as_str(),
@@ -496,17 +515,25 @@ impl Middleware for DexcostMiddleware {
             }
 
             if !recorded && status.is_success() {
-                if let Some(observation) = default_service_usage_observers()
-                    .and_then(|observers| {
-                        observers.observe(url.as_str(), &response_headers_map, &body_json)
+                let observations = default_service_usage_observers()
+                    .map(|observers| {
+                        observers.observe(
+                            url.as_str(),
+                            &response_headers_map,
+                            &body_json,
+                            observer_request_body.as_ref(),
+                        )
                     })
-                {
-                    self.record_usage_observation(
-                        &task_id,
-                        &observation,
-                        &byte_details,
-                        &mut buf,
-                    );
+                    .unwrap_or_default();
+                if !observations.is_empty() {
+                    for observation in &observations {
+                        self.record_usage_observation(
+                            &task_id,
+                            observation,
+                            &byte_details,
+                            &mut buf,
+                        );
+                    }
                     recorded = true;
                 }
             }
@@ -807,9 +834,10 @@ mod tests {
             component: "external".to_string(),
             metric: "input_tokens".to_string(),
             quantity: Decimal::from(17),
+            resource_type: Some("model".to_string()),
             resource_id: Some("text-embedding-3-small".to_string()),
             provider_record_id: Some("req-17".to_string()),
-            manifest_version: "1.0.0".to_string(),
+            manifest_version: "1.1.0".to_string(),
         };
         {
             let mut events = buffer.lock().await;
@@ -825,6 +853,10 @@ mod tests {
         assert_eq!(wire.provider.name, "openai");
         assert_eq!(wire.provider.service, "embeddings");
         assert_eq!(wire.provider.record_id.as_deref(), Some("req-17"));
+        assert_eq!(
+            wire.resource.as_ref().map(|resource| resource.id.as_str()),
+            Some("text-embedding-3-small")
+        );
         assert_eq!(wire.usage.len(), 1);
         assert_eq!(wire.usage[0].quantity, "17");
         assert!(wire.cost_evidence.is_none());

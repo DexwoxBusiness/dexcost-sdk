@@ -15,20 +15,21 @@ def test_shared_service_usage_observer_conformance() -> None:
     )
     observers = ServiceUsageObservers()
     for case in fixture["cases"]:
-        observed = observers.observe(case["url"], case["headers"], case["response"])
-        expected: dict[str, Any] | None = case["expected"]
-        if expected is None:
-            assert observed is None, case["name"]
-            continue
-        assert observed is not None, case["name"]
-        assert observed.service_key == expected["service_key"]
-        assert observed.provider_name == expected["provider_name"]
-        assert observed.provider_service == expected["provider_service"]
-        assert observed.component == expected["component"]
-        assert observed.metric == expected["metric"]
-        assert str(observed.quantity) == expected["quantity"]
-        assert observed.resource_id == expected.get("resource_id")
-        assert observed.provider_record_id == expected.get("provider_record_id")
+        observed = observers.observe(
+            case["url"], case["headers"], case["response"], case.get("request")
+        )
+        expected: list[dict[str, Any]] = case["expected"]
+        assert len(observed) == len(expected), case["name"]
+        for actual, wanted in zip(observed, expected, strict=True):
+            assert actual.service_key == wanted["service_key"]
+            assert actual.provider_name == wanted["provider_name"]
+            assert actual.provider_service == wanted["provider_service"]
+            assert actual.component == wanted["component"]
+            assert actual.metric == wanted["metric"]
+            assert str(actual.quantity) == wanted["quantity"]
+            assert actual.resource_type == wanted.get("resource_type")
+            assert actual.resource_id == wanted.get("resource_id")
+            assert actual.provider_record_id == wanted.get("provider_record_id")
 
 
 def test_packaged_observer_manifest_matches_canonical_manifest() -> None:

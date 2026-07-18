@@ -78,6 +78,15 @@ fn sensitive_query_params() -> &'static HashSet<&'static str> {
             "x-amz-credential",
             "x-amz-security-token",
             "session",
+            "keyterm",
+            "keywords",
+            "custom_topic",
+            "custom_intent",
+            "search",
+            "replace",
+            "tag",
+            "extra",
+            "callback",
         ]
         .into_iter()
         .collect()
@@ -301,7 +310,10 @@ mod tests {
         let out = scrub_url(u);
         assert!(out.contains("X-Amz-Credential=REDACTED"), "got {out}");
         assert!(out.contains("X-Amz-Signature=REDACTED"), "got {out}");
-        assert!(out.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"), "got {out}");
+        assert!(
+            out.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"),
+            "got {out}"
+        );
         assert!(out.contains("X-Amz-Date=20260526T123456Z"), "got {out}");
     }
 
@@ -339,6 +351,14 @@ mod tests {
         assert_eq!(
             scrub_url("https://api.example.com/?api_key=abc==pad&keep=ok"),
             "https://api.example.com/?api_key=REDACTED&keep=ok"
+        );
+    }
+
+    #[test]
+    fn scrub_url_redacts_deepgram_free_form_values() {
+        assert_eq!(
+            scrub_url("https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=Acme%20Secret&custom_topic=Roadmap"),
+            "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&keyterm=REDACTED&custom_topic=REDACTED"
         );
     }
 

@@ -164,6 +164,14 @@ func providerFor(event core.Event) ProviderIdentityV2 {
 }
 
 func resourceFor(event core.Event) *ResourceV2 {
+	if resourceType := stringDetail(event.Details, "attribution_resource_type"); resourceType != "" {
+		if resourceID := stringDetail(event.Details, "attribution_resource_id"); resourceID != "" {
+			switch resourceType {
+			case "model", "sku", "instance", "endpoint", "session", "other":
+				return &ResourceV2{Type: resourceType, ID: truncate(resourceID, 256)}
+			}
+		}
+	}
 	// Retry markers may also carry model data copied from the failed call.
 	// Keep the retry reason as the marker's identity instead of allowing the
 	// generic model branch to hide it.
