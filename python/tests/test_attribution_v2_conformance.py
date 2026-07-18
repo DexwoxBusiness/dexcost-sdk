@@ -39,6 +39,11 @@ def test_contract_version_matches_shared_corpus() -> None:
     assert _CORPUS["contract_version"] == ATTRIBUTION_V2_CONTRACT_VERSION
 
 
+def test_shared_corpus_case_names_are_unique() -> None:
+    names = [case["name"] for case in (*_CORPUS["valid"], *_CORPUS["invalid"])]
+    assert len(names) == len(set(names))
+
+
 @pytest.mark.parametrize("case", _CORPUS["valid"], ids=lambda case: case["name"])
 def test_accepts_shared_valid_corpus(case: dict[str, Any]) -> None:
     result = validate_attribution_event_v2(case["event"])

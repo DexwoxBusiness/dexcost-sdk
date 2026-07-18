@@ -28,6 +28,11 @@ describe("attribution v2 shared conformance corpus", () => {
     expect(corpus.contract_version).toBe(ATTRIBUTION_V2_CONTRACT_VERSION);
   });
 
+  it("keeps every conformance case name unique", () => {
+    const names = [...corpus.valid, ...corpus.invalid].map((testCase) => testCase.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   for (const testCase of corpus.valid) {
     it(`accepts ${testCase.name}`, () => {
       expect(validateAttributionEventV2(testCase.event)).toEqual({ success: true, issues: [] });
