@@ -2,11 +2,13 @@ package transport
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +27,10 @@ const (
 	maxBackoff           = 300 * time.Second
 	maxPayloadBytes      = 120_000
 	purgeRetention       = 7 * 24 * time.Hour
+	purgeInterval        = time.Hour
+	conversionScanMax    = 1_000
+	conversionScanFactor = 10
+	conversionWarnEvery  = time.Hour
 )
 
 // taskSyncBuffer extends core.Buffer with task-syncing and purge capabilities.
@@ -37,6 +43,10 @@ type taskSyncBuffer interface {
 	PurgeOldPendingEvents(before time.Time) (int64, error)
 }
 
+type eventQuarantineBuffer interface {
+	MarkQuarantined(eventIDs []string) error
+}
+
 // EventPusher asynchronously pushes buffered events to the Control Layer API.
 // It runs a background goroutine that periodically flushes pending events,
 // with exponential backoff on failures.
@@ -47,6 +57,10 @@ type EventPusher struct {
 	batchSize int
 	interval  time.Duration
 	backoff   time.Duration
+	lastPurge time.Time
+
+	lastConversionWarnAt  time.Time
+	lastConversionWarnKey string
 
 	redactFields   []string
 	hashCustomerID bool
@@ -123,7 +137,7 @@ func (p *EventPusher) run() {
 		select {
 		case <-p.stopCh:
 			// Final flush before exiting.
-			p.pushBatch()
+			p.pushBatch(false)
 			return
 		case <-ticker.C:
 			p.mu.Lock()
@@ -136,12 +150,12 @@ func (p *EventPusher) run() {
 				// Use select so a stop signal during backoff is not missed.
 				select {
 				case <-p.stopCh:
-					p.pushBatch()
+					p.pushBatch(false)
 					return
 				case <-time.After(p.backoff):
 				}
 			}
-			p.pushBatch()
+			p.pushBatch(false)
 		case errCh := <-p.flushCh:
 			p.mu.Lock()
 			stopped := p.stopped
@@ -150,7 +164,7 @@ func (p *EventPusher) run() {
 				errCh <- nil
 				continue
 			}
-			err := p.pushBatch()
+			err := p.pushBatch(true)
 			errCh <- err
 		}
 	}
@@ -187,7 +201,7 @@ func (p *EventPusher) Start() {
 	go p.run()
 }
 
-func (p *EventPusher) pushBatch() error {
+func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 	p.mu.Lock()
 	if p.stopped {
 		p.mu.Unlock()
@@ -195,33 +209,74 @@ func (p *EventPusher) pushBatch() error {
 	}
 	p.mu.Unlock()
 
-	events, err := p.buffer.QueryPendingEvents(p.batchSize)
-	if err != nil {
-		return err
-	}
-	// Redact before attribution conversion because the v2 converter promotes
-	// selected detail fields (for example request_id and gpu_sku) into typed
-	// provider/resource fields on the wire payload.
-	p.redactEventDetails(events)
-
-	eventDicts := make([]map[string]interface{}, 0, len(events))
-	skippedEventIDs := make([]string, 0)
+	batchSize := max(1, p.batchSize)
+	eventDicts := make([]map[string]interface{}, 0, batchSize)
+	failedEventIDs := make([]string, 0)
 	taskIDSet := make(map[string]struct{})
-	for _, e := range events {
-		taskIDSet[e.TaskID.String()] = struct{}{}
-		converted := attribution.ToEventV2(e)
-		if converted == nil {
-			skippedEventIDs = append(skippedEventIDs, e.EventID.String())
-			continue
-		}
-		wire, err := toMap(converted)
+	seenEventIDs := make(map[string]struct{})
+	scanLimit := max(batchSize, min(conversionScanMax, batchSize*conversionScanFactor))
+	scanned := 0
+
+	// Quarantine malformed pages as they are encountered and continue reading
+	// the pending window. This prevents an old invalid prefix from starving
+	// newer, valid attribution records forever.
+	for len(eventDicts) < batchSize && scanned < scanLimit {
+		pageLimit := min(batchSize-len(eventDicts), scanLimit-scanned)
+		events, err := p.buffer.QueryPendingEvents(pageLimit)
 		if err != nil {
-			return fmt.Errorf("serialize attribution event %s: %w", e.EventID, err)
+			return err
 		}
-		eventDicts = append(eventDicts, wire)
-	}
-	if err := p.buffer.MarkSynced(skippedEventIDs); err != nil {
-		return err
+		if len(events) == 0 {
+			break
+		}
+		// Redact before conversion because selected detail fields become typed
+		// provider/resource fields in the v2 payload.
+		p.redactEventDetails(events)
+		observabilityEventIDs := make([]string, 0)
+		pageFailedEventIDs := make([]string, 0)
+		newlyScanned := 0
+		for _, event := range events {
+			eventID := event.EventID.String()
+			if _, seen := seenEventIDs[eventID]; seen {
+				continue
+			}
+			seenEventIDs[eventID] = struct{}{}
+			newlyScanned++
+			scanned++
+			if event.EventType == core.EventTypeGPUUtilizationSignal {
+				observabilityEventIDs = append(observabilityEventIDs, eventID)
+				continue
+			}
+			converted := attribution.ToEventV2(event)
+			if converted == nil {
+				pageFailedEventIDs = append(pageFailedEventIDs, eventID)
+				continue
+			}
+			wire, err := toMap(converted)
+			if err != nil {
+				return fmt.Errorf("serialize attribution event %s: %w", event.EventID, err)
+			}
+			taskIDSet[event.TaskID.String()] = struct{}{}
+			eventDicts = append(eventDicts, wire)
+		}
+		if err := p.buffer.MarkSynced(observabilityEventIDs); err != nil {
+			return err
+		}
+		if len(pageFailedEventIDs) > 0 {
+			quarantine, ok := p.buffer.(eventQuarantineBuffer)
+			if !ok {
+				return fmt.Errorf("buffer cannot quarantine %d attribution conversion failure(s)", len(pageFailedEventIDs))
+			}
+			if err := quarantine.MarkQuarantined(pageFailedEventIDs); err != nil {
+				return fmt.Errorf("quarantine attribution conversion failures: %w", err)
+			}
+			failedEventIDs = append(failedEventIDs, pageFailedEventIDs...)
+		}
+		// A custom backend may fail to advance its pending cursor. Avoid a busy
+		// loop; a later flush can try again after the surfaced storage error.
+		if newlyScanned == 0 || len(events) < pageLimit {
+			break
+		}
 	}
 
 	taskDicts := make([]map[string]interface{}, 0)
@@ -259,31 +314,77 @@ func (p *EventPusher) pushBatch() error {
 		}
 	}
 	if len(eventDicts) == 0 && len(taskDicts) == 0 {
-		return nil
+		return p.handleConversionFailures(failedEventIDs, surfaceConversionErrors)
 	}
 
 	if err := p.pushWithSplit(eventDicts, taskDicts, 0); err != nil {
 		return err
 	}
+	// Retention must run only after the selected batch is accepted. Running it
+	// before QueryPendingEvents can silently delete deliverable records when a
+	// client recovers after an outage longer than the retention window.
+	p.maintainBuffer()
 
-	// Successful leaves already marked exactly the records accepted by the
-	// control plane. Purging remains best-effort maintenance.
-	if tsb, ok := p.buffer.(taskSyncBuffer); ok {
-		if n, err := tsb.PurgeSyncedEvents(time.Now().UTC().Add(-purgeRetention)); err != nil {
-			log.Printf("[dexcost] failed to purge old events: %v", err)
-		} else if n > 0 {
-			log.Printf("[dexcost] purged %d old synced events", n)
-		}
-		// Also purge events stuck pending past the retention window so a
-		// permanently failing sync doesn't grow the buffer unbounded.
-		if n, err := tsb.PurgeOldPendingEvents(time.Now().UTC().Add(-purgeRetention)); err != nil {
-			log.Printf("[dexcost] failed to purge stale pending events: %v", err)
-		} else if n > 0 {
-			log.Printf("[dexcost] purged %d stale pending events", n)
-		}
+	return p.handleConversionFailures(failedEventIDs, surfaceConversionErrors)
+}
+
+func conversionFailure(eventIDs []string) error {
+	if len(eventIDs) == 0 {
+		return nil
 	}
+	preview := eventIDs
+	if len(preview) > 3 {
+		preview = preview[:3]
+	}
+	return fmt.Errorf(
+		"%d event(s) were quarantined because they cannot be represented by attribution v2 (event IDs: %s)",
+		len(eventIDs),
+		strings.Join(preview, ", "),
+	)
+}
 
+func (p *EventPusher) handleConversionFailures(eventIDs []string, surface bool) error {
+	if len(eventIDs) == 0 {
+		p.lastConversionWarnKey = ""
+		return nil
+	}
+	err := conversionFailure(eventIDs)
+	if surface {
+		return err
+	}
+	now := time.Now()
+	ids := append([]string(nil), eventIDs...)
+	sort.Strings(ids)
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(ids, "\x00"))))
+	if fingerprint != p.lastConversionWarnKey || now.Sub(p.lastConversionWarnAt) >= conversionWarnEvery {
+		log.Printf("[dexcost] %v", err)
+		p.lastConversionWarnKey = fingerprint
+		p.lastConversionWarnAt = now
+	}
 	return nil
+}
+
+func (p *EventPusher) maintainBuffer() {
+	now := time.Now().UTC()
+	if !p.lastPurge.IsZero() && now.Sub(p.lastPurge) < purgeInterval {
+		return
+	}
+	p.lastPurge = now
+	tsb, ok := p.buffer.(taskSyncBuffer)
+	if !ok {
+		return
+	}
+	before := now.Add(-purgeRetention)
+	if n, err := tsb.PurgeSyncedEvents(before); err != nil {
+		log.Printf("[dexcost] failed to purge old events: %v", err)
+	} else if n > 0 {
+		log.Printf("[dexcost] purged %d old synced events", n)
+	}
+	if n, err := tsb.PurgeOldPendingEvents(before); err != nil {
+		log.Printf("[dexcost] failed to purge stale pending/quarantined events: %v", err)
+	} else if n > 0 {
+		log.Printf("[dexcost] purged %d stale pending/quarantined events", n)
+	}
 }
 
 // redactEventDetails applies PII redaction, customer-ID hashing, and the

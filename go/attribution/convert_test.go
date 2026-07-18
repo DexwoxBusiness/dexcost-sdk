@@ -111,6 +111,37 @@ func TestToEventV2RetainsUserOverrideAsManualEvidence(t *testing.T) {
 	}
 }
 
+func TestToEventV2PreservesRetryMarkerReasonAndCost(t *testing.T) {
+	task := core.NewTask("retry")
+	original := core.NewEvent(task.TaskID, core.EventTypeLLMCall)
+	event := core.NewEvent(task.TaskID, core.EventTypeRetryMarker)
+	event.Model = "gpt-5"
+	event.IsRetry = true
+	event.RetryReason = "partial_response"
+	event.RetryOf = &original.EventID
+	event.CostUSD = decimal.RequireFromString("0.0042")
+
+	converted := ToEventV2(event)
+	if converted == nil {
+		t.Fatal("expected retry marker conversion")
+	}
+	if converted.Provider.Name != "dexcost" || converted.Provider.Service != "retry" {
+		t.Fatalf("retry provider identity was lost: %+v", converted.Provider)
+	}
+	if converted.Resource == nil || converted.Resource.Type != "other" || converted.Resource.ID != "partial_response" {
+		t.Fatalf("retry reason must take precedence over copied model data: %+v", converted.Resource)
+	}
+	if converted.RetryOf != original.EventID.String() {
+		t.Fatalf("retry linkage = %q", converted.RetryOf)
+	}
+	if usageQuantities(converted)[MetricRequestCount] != "1" {
+		t.Fatalf("retry usage: %+v", converted.Usage)
+	}
+	if converted.CostEvidence == nil || converted.CostEvidence.Amount != "0.0042" || converted.CostEvidence.Source != "manual" {
+		t.Fatalf("retry cost evidence: %+v", converted.CostEvidence)
+	}
+}
+
 func TestToEventV2NetworkDirectionsAndCatalogEvidence(t *testing.T) {
 	event := core.NewEvent(core.NewTask("test").TaskID, core.EventTypeNetwork)
 	event.Details["request_bytes"] = 10

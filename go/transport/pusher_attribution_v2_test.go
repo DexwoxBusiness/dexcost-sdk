@@ -265,3 +265,132 @@ func TestPusherDoesNotAcknowledgePartialAcceptance(t *testing.T) {
 		t.Fatalf("rejected event was acknowledged: %v %+v", err, pending)
 	}
 }
+
+func TestPusherQuarantinesInvalidPrefixAndDeliversValidSibling(t *testing.T) {
+	var received map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		_ = json.NewEncoder(w).Encode(map[string]int{"queued": 1, "rejected": 0})
+	}))
+	defer server.Close()
+
+	buffer, err := NewSQLiteBuffer(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Close()
+	task := core.NewTask("conversion_failure")
+	if err := buffer.InsertTask(task); err != nil {
+		t.Fatal(err)
+	}
+	invalid := core.NewEvent(task.TaskID, core.EventType("future_internal_signal"))
+	secondInvalid := core.NewEvent(task.TaskID, core.EventType("legacy_internal_signal"))
+	valid := core.NewEvent(task.TaskID, core.EventTypeLLMCall)
+	invalid.OccurredAt = time.Now().UTC().Add(-time.Minute)
+	secondInvalid.OccurredAt = invalid.OccurredAt.Add(time.Second)
+	valid.OccurredAt = secondInvalid.OccurredAt.Add(time.Second)
+	if err := buffer.InsertEvent(invalid); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.InsertEvent(secondInvalid); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.InsertEvent(valid); err != nil {
+		t.Fatal(err)
+	}
+
+	pusher := NewEventPusher(PusherOptions{Buffer: buffer, Endpoint: server.URL, APIKey: "test", BatchSize: 2, Interval: time.Hour})
+	defer pusher.Stop()
+	if err := pusher.Flush(); err == nil || !strings.Contains(err.Error(), "were quarantined") {
+		t.Fatalf("expected surfaced conversion failure, got %v", err)
+	}
+
+	pending, err := buffer.QueryPendingEvents(10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("quarantined event remained in the delivery window: %v %+v", err, pending)
+	}
+	quarantined, err := buffer.QueryQuarantinedEvents(10)
+	if err != nil || len(quarantined) != 2 || quarantined[0].EventID != invalid.EventID || quarantined[1].EventID != secondInvalid.EventID {
+		t.Fatalf("invalid event was not retained for diagnosis: %v %+v", err, quarantined)
+	}
+	events := received["events"].([]interface{})
+	if len(events) != 1 || events[0].(map[string]interface{})["event_id"] != valid.EventID.String() {
+		t.Fatalf("valid sibling was not delivered exactly once: %+v", received)
+	}
+}
+
+func TestPusherAcknowledgesObservabilitySignalWithoutUpload(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	buffer, err := NewSQLiteBuffer(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Close()
+	task := core.NewTask("observability")
+	if err := buffer.InsertTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.MarkTasksSynced([]string{task.TaskID.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := buffer.InsertEvent(core.NewEvent(task.TaskID, core.EventTypeGPUUtilizationSignal)); err != nil {
+		t.Fatal(err)
+	}
+
+	pusher := NewEventPusher(PusherOptions{Buffer: buffer, Endpoint: server.URL, APIKey: "test", Interval: time.Hour})
+	defer pusher.Stop()
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := buffer.QueryPendingEvents(10)
+	if err != nil || len(pending) != 0 || requests != 0 {
+		t.Fatalf("observability signal was not locally acknowledged: %v pending=%d requests=%d", err, len(pending), requests)
+	}
+}
+
+func TestPusherUploadsStalePendingEventBeforeRetentionCleanup(t *testing.T) {
+	var received map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		_ = json.NewEncoder(w).Encode(map[string]int{"queued": 2, "rejected": 0})
+	}))
+	defer server.Close()
+
+	buffer, err := NewSQLiteBuffer(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Close()
+	task := core.NewTask("recovered_after_outage")
+	if err := buffer.InsertTask(task); err != nil {
+		t.Fatal(err)
+	}
+	event := core.NewEvent(task.TaskID, core.EventTypeLLMCall)
+	event.Provider = "openai"
+	event.OccurredAt = time.Now().UTC().Add(-8 * 24 * time.Hour)
+	inputTokens := 1
+	event.InputTokens = &inputTokens
+	if err := buffer.InsertEvent(event); err != nil {
+		t.Fatal(err)
+	}
+
+	pusher := NewEventPusher(PusherOptions{Buffer: buffer, Endpoint: server.URL, APIKey: "test", Interval: time.Hour})
+	defer pusher.Stop()
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	events := received["events"].([]interface{})
+	if len(events) != 1 || events[0].(map[string]interface{})["event_id"] != event.EventID.String() {
+		t.Fatalf("stale deliverable event was purged before upload: %+v", received)
+	}
+	remaining, err := buffer.QueryEvents(task.TaskID.String())
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("accepted stale event was not cleaned up afterward: %v %+v", err, remaining)
+	}
+}
