@@ -489,6 +489,45 @@ func (b *SQLiteBuffer) MarkSynced(eventIDs []string) error {
 	return err
 }
 
+// MarkQuarantined removes unrepresentable events from the normal pending
+// delivery window without treating them as accepted by the control plane.
+// The durable rows remain queryable for diagnostics until retention cleanup.
+func (b *SQLiteBuffer) MarkQuarantined(eventIDs []string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(eventIDs))
+	args := make([]interface{}, len(eventIDs))
+	for i, id := range eventIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(
+		"UPDATE events SET sync_status = 'quarantined' WHERE sync_status = 'pending' AND event_id IN (%s)",
+		strings.Join(placeholders, ","),
+	)
+	_, err := b.db.Exec(query, args...)
+	return err
+}
+
+// QueryQuarantinedEvents returns durable conversion failures, oldest first,
+// so applications can inspect records that were intentionally not uploaded.
+func (b *SQLiteBuffer) QueryQuarantinedEvents(limit int) ([]core.Event, error) {
+	rows, err := b.db.Query(`SELECT
+		event_id, task_id, event_type, occurred_at,
+		cost_usd, cost_confidence, pricing_source, pricing_version,
+		service_name, provider, model,
+		input_tokens, output_tokens, cached_tokens, latency_ms,
+		is_retry, retry_reason, retry_of,
+		details, schema_version
+	FROM events WHERE sync_status = 'quarantined' ORDER BY occurred_at LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
 // InsertTaskWithEvents inserts a task and its events atomically within a
 // single database transaction. If any insert fails the entire operation is
 // rolled back, leaving the database unchanged. This satisfies the
@@ -689,14 +728,12 @@ func (b *SQLiteBuffer) PurgeSyncedEvents(before time.Time) (int64, error) {
 	return result.RowsAffected()
 }
 
-// PurgeOldPendingEvents deletes events still in sync_status='pending' that are
-// older than before — events that have failed to sync long enough to be
-// considered abandoned. Without this, a permanently failing sync (e.g. a
-// rejected API key) leaves the buffer growing forever. Returns the number of
-// rows deleted. Mirrors Python storage/sqlite.py purge_old_pending.
+// PurgeOldPendingEvents deletes pending or quarantined events older than
+// before. Quarantined rows remain diagnosable during the retention window but
+// cannot grow the buffer forever.
 func (b *SQLiteBuffer) PurgeOldPendingEvents(before time.Time) (int64, error) {
 	result, err := b.db.Exec(
-		"DELETE FROM events WHERE sync_status = 'pending' AND occurred_at < ?",
+		"DELETE FROM events WHERE sync_status IN ('pending', 'quarantined') AND occurred_at < ?",
 		before.Format(time.RFC3339Nano),
 	)
 	if err != nil {
