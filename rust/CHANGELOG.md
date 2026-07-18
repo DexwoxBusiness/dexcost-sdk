@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.4.0...rust/v0.4.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **rust:** harden attribution v2 delivery ([#86](https://github.com/DexwoxBusiness/dexcost-sdk/issues/86)) ([7f7834f](https://github.com/DexwoxBusiness/dexcost-sdk/commit/7f7834f4f7ee724f95769d2950daa0a490a54f9f))
+
 ## [0.4.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.3.2...rust/v0.4.0) (2026-07-17)
 
 
