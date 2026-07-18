@@ -168,6 +168,10 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
 
 
 def _resource_for(event: Event) -> AttributionResourceV2 | None:
+    if event.event_type == "retry_marker" and event.retry_reason:
+        reason = event.retry_reason.strip()
+        if reason:
+            return {"type": "other", "id": reason[:256]}
     if event.model:
         return {"type": "model", "id": event.model[:256]}
     if event.event_type == "gpu_cost":
@@ -178,10 +182,6 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
         instance = _string_detail(event.details, "instance_type", "architecture")
         if instance:
             return {"type": "instance", "id": instance[:256]}
-    if event.event_type == "retry_marker" and event.retry_reason:
-        reason = event.retry_reason.strip()
-        if reason:
-            return {"type": "other", "id": reason[:256]}
     return None
 
 

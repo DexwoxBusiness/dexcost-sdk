@@ -283,6 +283,7 @@ def test_preserves_retry_linkage_reason_usage_and_cost() -> None:
     converted = to_attribution_event_v2(
         _event(
             event_type="retry_marker",
+            model="partial-response-model",
             is_retry=True,
             retry_reason="rate_limit",
             retry_of=retry_of,
