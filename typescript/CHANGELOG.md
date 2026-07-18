@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.13.0...typescript/v0.13.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **typescript:** preserve retry attribution delivery ([#80](https://github.com/DexwoxBusiness/dexcost-sdk/issues/80)) ([3e84dc5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/3e84dc5858d7dae3032b85d6935ddd9068e60283))
+
 ## [0.13.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.12.1...typescript/v0.13.0) (2026-07-17)
 
 
