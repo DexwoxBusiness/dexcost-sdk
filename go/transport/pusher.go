@@ -209,7 +209,6 @@ func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 	}
 	p.mu.Unlock()
 
-	p.maintainBuffer()
 	batchSize := max(1, p.batchSize)
 	eventDicts := make([]map[string]interface{}, 0, batchSize)
 	failedEventIDs := make([]string, 0)
@@ -321,6 +320,10 @@ func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 	if err := p.pushWithSplit(eventDicts, taskDicts, 0); err != nil {
 		return err
 	}
+	// Retention must run only after the selected batch is accepted. Running it
+	// before QueryPendingEvents can silently delete deliverable records when a
+	// client recovers after an outage longer than the retention window.
+	p.maintainBuffer()
 
 	return p.handleConversionFailures(failedEventIDs, surfaceConversionErrors)
 }

@@ -352,3 +352,45 @@ func TestPusherAcknowledgesObservabilitySignalWithoutUpload(t *testing.T) {
 		t.Fatalf("observability signal was not locally acknowledged: %v pending=%d requests=%d", err, len(pending), requests)
 	}
 }
+
+func TestPusherUploadsStalePendingEventBeforeRetentionCleanup(t *testing.T) {
+	var received map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		_ = json.NewEncoder(w).Encode(map[string]int{"queued": 2, "rejected": 0})
+	}))
+	defer server.Close()
+
+	buffer, err := NewSQLiteBuffer(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buffer.Close()
+	task := core.NewTask("recovered_after_outage")
+	if err := buffer.InsertTask(task); err != nil {
+		t.Fatal(err)
+	}
+	event := core.NewEvent(task.TaskID, core.EventTypeLLMCall)
+	event.Provider = "openai"
+	event.OccurredAt = time.Now().UTC().Add(-8 * 24 * time.Hour)
+	inputTokens := 1
+	event.InputTokens = &inputTokens
+	if err := buffer.InsertEvent(event); err != nil {
+		t.Fatal(err)
+	}
+
+	pusher := NewEventPusher(PusherOptions{Buffer: buffer, Endpoint: server.URL, APIKey: "test", Interval: time.Hour})
+	defer pusher.Stop()
+	if err := pusher.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	events := received["events"].([]interface{})
+	if len(events) != 1 || events[0].(map[string]interface{})["event_id"] != event.EventID.String() {
+		t.Fatalf("stale deliverable event was purged before upload: %+v", received)
+	}
+	remaining, err := buffer.QueryEvents(task.TaskID.String())
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("accepted stale event was not cleaned up afterward: %v %+v", err, remaining)
+	}
+}
