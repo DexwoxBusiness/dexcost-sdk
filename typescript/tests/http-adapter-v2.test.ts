@@ -110,7 +110,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
-  it("does not pre-read opaque Request streams for observer metadata", async () => {
+  it("does not block on unfinished Request streams for observer metadata", async () => {
     const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "cohere-stream",
       meta: { billed_units: { input_tokens: 11 } },
@@ -127,6 +127,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
     const request = new Request("https://api.cohere.com/v2/embed", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
@@ -183,6 +184,35 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
       provider: { name: "openai", service: "text_to_speech", record_id: "req-tts-4" },
       resource: { type: "model", id: "tts-1-hd" },
       usage: [{ metric: "characters", quantity: "4", unit: "Characters" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("emits OpenAI TTS characters from a Request object body", async () => {
+    const audio = new Uint8Array([5, 6, 7]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-request" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Hello" }),
+    });
+
+    const response = await runWithTask(task, async () => fetch(request));
+
+    expect(baseFetch).toHaveBeenCalledWith(request, undefined);
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([5, 6, 7]);
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      component: "text_to_speech",
+      provider: { name: "openai", service: "text_to_speech", record_id: "req-tts-request" },
+      resource: { type: "model", id: "tts-1" },
+      usage: [{ metric: "characters", quantity: "5", unit: "Characters" }],
     });
     expect(wire?.cost_evidence).toBeUndefined();
   });
