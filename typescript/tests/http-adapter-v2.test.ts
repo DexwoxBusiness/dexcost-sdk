@@ -244,6 +244,32 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     )).toHaveLength(0);
   });
 
+  it("attributes the embedded Request body when init.body is null", async () => {
+    const audio = new Uint8Array([10, 11]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-null" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Retained" }),
+    });
+
+    const response = await runWithTask(task, async () => fetch(request, { body: null }));
+
+    expect(baseFetch).toHaveBeenCalledWith(request, { body: null });
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([10, 11]);
+    expect(toAttributionEventV2(getRecordedEvents()[0])).toMatchObject({
+      component: "text_to_speech",
+      resource: { type: "model", id: "tts-1" },
+      usage: [{ metric: "characters", quantity: "8", unit: "Characters" }],
+    });
+  });
+
   it("emits separate Deepgram base and add-on attribution lines", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       metadata: { request_id: "dg-addon", duration: 10, channels: 2 },
