@@ -1110,6 +1110,10 @@ async function _resolveObserverRequestBody(
       if (bytes.byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
       return JSON.parse(new TextDecoder().decode(bytes));
     }
+    // init.body overrides a Request's embedded body. If the override is a
+    // representation we do not parse, fail open instead of attributing usage
+    // from a different body than the provider receives.
+    if (body !== undefined && body !== null) return undefined;
 
     if (!(input instanceof Request) || input.bodyUsed || input.body === null) return undefined;
     const contentType = input.headers.get("content-type")?.toLowerCase() ?? "";

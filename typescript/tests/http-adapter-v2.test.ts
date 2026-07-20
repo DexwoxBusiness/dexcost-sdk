@@ -217,6 +217,33 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("does not attribute the embedded Request body when init.body overrides it", async () => {
+    const audio = new Uint8Array([8, 9]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-override" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Embedded body" }),
+    });
+    const override = new Blob([
+      JSON.stringify({ model: "tts-1-hd", input: "Provider body" }),
+    ], { type: "application/json" });
+
+    const response = await runWithTask(task, async () => fetch(request, { body: override }));
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([8, 9]);
+
+    expect(baseFetch).toHaveBeenCalledWith(request, { body: override });
+    expect(getRecordedEvents().filter(
+      (event) => event.details.attribution_component === "text_to_speech",
+    )).toHaveLength(0);
+  });
+
   it("emits separate Deepgram base and add-on attribution lines", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       metadata: { request_id: "dg-addon", duration: 10, channels: 2 },
