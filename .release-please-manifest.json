@@ -1,5 +1,5 @@
 {
-  "typescript": "0.15.0",
+  "typescript": "0.16.0",
   "python": "0.6.0",
   "rust": "0.5.0",
   "go": "0.5.0"
