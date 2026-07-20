@@ -3,8 +3,8 @@
 import { createRequire } from "node:module";
 import { Decimal } from "../core/models.js";
 
-export type ObservedUsageMetric = "input_tokens" | "audio_seconds";
-export type ObservedAttributionComponent = "external" | "speech_to_text";
+export type ObservedUsageMetric = "input_tokens" | "audio_seconds" | "characters";
+export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
 export type ObservedResourceType = "model" | "sku";
 
 interface QueryPredicate {
@@ -26,11 +26,13 @@ interface UsageObserverDefinition {
   component: ObservedAttributionComponent;
   domains: string[];
   endpoints: string[];
-  response_path: string;
+  response_path?: string;
+  request_character_count_path?: string;
   usage_metric: ObservedUsageMetric;
   resource_type?: ObservedResourceType;
   resource_path?: string;
   request_resource_path?: string;
+  allowed_resource_ids?: string[];
   resource_query_parameter?: string;
   default_resource_id?: string;
   fixed_resource_id?: string;
@@ -62,8 +64,8 @@ export interface ServiceUsageObservation {
 }
 
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds"]);
-const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text"]);
+const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds", "characters"]);
+const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text", "text_to_speech"]);
 const RESOURCE_TYPES = new Set<ObservedResourceType>(["model", "sku"]);
 
 function resolvePath(value: unknown, path: string): unknown {
@@ -124,6 +126,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
     const optionalStrings = [
       observer.resource_path,
       observer.request_resource_path,
+      observer.request_character_count_path,
       observer.resource_query_parameter,
       observer.default_resource_id,
       observer.fixed_resource_id,
@@ -132,9 +135,13 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.record_id_path,
       observer.record_id_header,
     ];
-    const hasResourceSelector = optionalStrings.slice(0, 5).some(
-      (value) => value !== undefined,
-    );
+    const hasResourceSelector = [
+      observer.resource_path,
+      observer.request_resource_path,
+      observer.resource_query_parameter,
+      observer.default_resource_id,
+      observer.fixed_resource_id,
+    ].some((value) => value !== undefined);
     if (
       observer === null ||
       typeof observer !== "object" ||
@@ -149,12 +156,20 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
-      typeof observer.response_path !== "string" ||
-      observer.response_path.length === 0 ||
+      ((observer.response_path === undefined) ===
+        (observer.request_character_count_path === undefined)) ||
+      (observer.response_path !== undefined &&
+        (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
       optionalStrings.some(
         (value) => value !== undefined && (typeof value !== "string" || value.length === 0),
       ) ||
       (observer.resource_type !== undefined && !RESOURCE_TYPES.has(observer.resource_type)) ||
+      (observer.allowed_resource_ids !== undefined && (
+        observer.resource_type === undefined ||
+        !Array.isArray(observer.allowed_resource_ids) ||
+        observer.allowed_resource_ids.length === 0 ||
+        !observer.allowed_resource_ids.every((id) => typeof id === "string" && id.length > 0)
+      )) ||
       (hasResourceSelector && observer.resource_type === undefined) ||
       ((observer.quantity_multiplier_path === undefined) !==
         (observer.quantity_multiplier_query_parameter === undefined)) ||
@@ -218,7 +233,14 @@ export class ServiceUsageObservers {
 
   needsRequestBody(url: string): boolean {
     return this.lookup(url)?.observers.some(
-      (observer) => observer.request_resource_path !== undefined,
+      (observer) => observer.request_resource_path !== undefined ||
+        observer.request_character_count_path !== undefined,
+    ) === true;
+  }
+
+  needsResponseBody(url: string): boolean {
+    return this.lookup(url)?.observers.some(
+      (observer) => observer.response_path !== undefined,
     ) === true;
   }
 
@@ -232,9 +254,18 @@ export class ServiceUsageObservers {
     if (matched === undefined) return [];
     const observations: ServiceUsageObservation[] = [];
     for (const observer of matched.observers) {
-      const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path));
-      if (rawQuantity === undefined) continue;
-      let quantity = new Decimal(rawQuantity);
+      let quantity: Decimal;
+      if (observer.request_character_count_path !== undefined) {
+        const text = resolvePath(requestBody, observer.request_character_count_path);
+        if (typeof text !== "string") continue;
+        const characterCount = Array.from(text).length;
+        if (characterCount === 0) continue;
+        quantity = new Decimal(characterCount);
+      } else {
+        const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path!));
+        if (rawQuantity === undefined) continue;
+        quantity = new Decimal(rawQuantity);
+      }
       if (
         observer.quantity_multiplier_path !== undefined &&
         observer.quantity_multiplier_query_parameter !== undefined &&
@@ -261,6 +292,12 @@ export class ServiceUsageObservers {
         : boundedString(matched.parsed.searchParams.get(observer.resource_query_parameter));
       resourceId ??= boundedString(observer.fixed_resource_id);
       resourceId ??= boundedString(observer.default_resource_id);
+      if (
+        observer.allowed_resource_ids !== undefined &&
+        (resourceId === undefined || !observer.allowed_resource_ids.includes(resourceId))
+      ) {
+        continue;
+      }
       if (resourceId !== undefined && observer.resource_variant !== undefined) {
         const variant = observer.resource_variant;
         resourceId += matched.parsed.searchParams.get(variant.query_parameter) === variant.equals

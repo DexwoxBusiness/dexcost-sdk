@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.1.0",
-    "observer_count": 8,
+    "version": "1.2.0",
+    "observer_count": 9,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -58,6 +58,21 @@
       "resource_type": "model",
       "resource_path": "model",
       "source_url": "https://api.jina.ai/scalar"
+    },
+    {
+      "service_key": "openai_tts",
+      "provider_name": "openai",
+      "provider_service": "text_to_speech",
+      "component": "text_to_speech",
+      "domains": ["api.openai.com"],
+      "endpoints": ["/v1/audio/speech"],
+      "request_character_count_path": "input",
+      "usage_metric": "characters",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "allowed_resource_ids": ["tts-1", "tts-1-hd"],
+      "record_id_header": "x-request-id",
+      "source_url": "https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
     },
     {
       "service_key": "deepgram_transcription",

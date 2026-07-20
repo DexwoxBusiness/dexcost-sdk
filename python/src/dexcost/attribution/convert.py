@@ -347,8 +347,11 @@ def _component_and_usage(
         if explicit_metric in ATTRIBUTION_UNIT_BY_METRIC
         else inferred_metric
     )
-    component: AttributionComponent = (
-        "speech_to_text" if explicit_component == "speech_to_text" else "external"
+    component: AttributionComponent = cast(
+        AttributionComponent,
+        explicit_component
+        if explicit_component in {"speech_to_text", "text_to_speech"}
+        else "external",
     )
     duration = _decimal_detail(details, "attribution_usage_duration_seconds")
     return component, _compact_usage([_usage_line(metric, explicit_quantity or 1)]), duration

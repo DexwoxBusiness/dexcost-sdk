@@ -275,8 +275,9 @@ function componentAndUsage(event: CostEvent): {
       const metric = explicitMetric !== undefined && explicitMetric in ATTRIBUTION_UNIT_BY_METRIC
         ? explicitMetric as AttributionUsageMetric
         : inferredMetric;
-      const component: AttributionComponent = explicitComponent === "speech_to_text"
-        ? "speech_to_text"
+      const component: AttributionComponent = explicitComponent === "speech_to_text" ||
+        explicitComponent === "text_to_speech"
+        ? explicitComponent
         : "external";
       return {
         component,

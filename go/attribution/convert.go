@@ -329,8 +329,11 @@ func componentAndUsage(event core.Event) (Component, []UsageLineV2, decimal.Deci
 			}
 		}
 		component := ComponentExternal
-		if stringDetail(details, "attribution_component") == string(ComponentSpeechToText) {
+		switch stringDetail(details, "attribution_component") {
+		case string(ComponentSpeechToText):
 			component = ComponentSpeechToText
+		case string(ComponentTextToSpeech):
+			component = ComponentTextToSpeech
 		}
 		duration, _ := decimalDetail(details, "attribution_usage_duration_seconds")
 		return component, appendUsage(nil, metric, quantity), duration, true

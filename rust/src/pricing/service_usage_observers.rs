@@ -17,11 +17,13 @@ struct ObserverDefinition {
     component: String,
     domains: Vec<String>,
     endpoints: Vec<String>,
-    response_path: String,
+    response_path: Option<String>,
+    request_character_count_path: Option<String>,
     usage_metric: String,
     resource_type: Option<String>,
     resource_path: Option<String>,
     request_resource_path: Option<String>,
+    allowed_resource_ids: Option<Vec<String>>,
     resource_query_parameter: Option<String>,
     default_resource_id: Option<String>,
     fixed_resource_id: Option<String>,
@@ -137,10 +139,13 @@ impl ServiceUsageObservers {
                 || !keys.insert(observer.service_key.clone())
                 || observer.provider_name.is_empty()
                 || observer.provider_service.is_empty()
-                || !matches!(observer.component.as_str(), "external" | "speech_to_text")
+                || !matches!(
+                    observer.component.as_str(),
+                    "external" | "speech_to_text" | "text_to_speech"
+                )
                 || !matches!(
                     observer.usage_metric.as_str(),
-                    "input_tokens" | "audio_seconds"
+                    "input_tokens" | "audio_seconds" | "characters"
                 )
                 || observer.domains.is_empty()
                 || observer.endpoints.is_empty()
@@ -152,12 +157,25 @@ impl ServiceUsageObservers {
                     .endpoints
                     .iter()
                     .any(|endpoint| !endpoint.starts_with('/'))
-                || observer.response_path.is_empty()
+                || (observer.response_path.is_some()
+                    == observer.request_character_count_path.is_some())
+                || observer
+                    .response_path
+                    .as_ref()
+                    .is_some_and(String::is_empty)
                 || observer
                     .resource_type
                     .as_deref()
                     .is_some_and(|value| !matches!(value, "model" | "sku"))
                 || (has_resource_selector && observer.resource_type.is_none())
+                || observer
+                    .allowed_resource_ids
+                    .as_ref()
+                    .is_some_and(|allowed| {
+                        observer.resource_type.is_none()
+                            || allowed.is_empty()
+                            || allowed.iter().any(|id| id.trim().is_empty())
+                    })
                 || (observer.quantity_multiplier_path.is_some()
                     != observer.quantity_multiplier_query_parameter.is_some())
                 || observer.query_any.iter().any(|predicate| {
@@ -221,7 +239,16 @@ impl ServiceUsageObservers {
                         }))
             })
             .filter_map(|observer| {
-                let mut quantity = positive_decimal(resolve_path(body, &observer.response_path)?)?;
+                let mut quantity =
+                    if let Some(path) = observer.request_character_count_path.as_deref() {
+                        let text = request_body
+                            .and_then(|request| resolve_path(request, path))
+                            .and_then(serde_json::Value::as_str)?;
+                        let count = text.chars().count();
+                        (count > 0).then(|| Decimal::from(count as u64))?
+                    } else {
+                        positive_decimal(resolve_path(body, observer.response_path.as_deref()?)?)?
+                    };
                 if let (Some(path), Some(parameter)) = (
                     observer.quantity_multiplier_path.as_deref(),
                     observer.quantity_multiplier_query_parameter.as_deref(),
@@ -277,6 +304,17 @@ impl ServiceUsageObservers {
                 if resource_id.is_none() {
                     resource_id = bounded_text(observer.default_resource_id.as_deref());
                 }
+                if observer
+                    .allowed_resource_ids
+                    .as_ref()
+                    .is_some_and(|allowed| {
+                        resource_id
+                            .as_ref()
+                            .is_none_or(|resource| !allowed.contains(resource))
+                    })
+                {
+                    return None;
+                }
                 if let (Some(resource), Some(variant)) =
                     (resource_id.as_mut(), observer.resource_variant.as_ref())
                 {
@@ -313,7 +351,8 @@ impl ServiceUsageObservers {
             return false;
         };
         self.observers.iter().any(|observer| {
-            observer.request_resource_path.is_some()
+            (observer.request_resource_path.is_some()
+                || observer.request_character_count_path.is_some())
                 && observer
                     .domains
                     .iter()

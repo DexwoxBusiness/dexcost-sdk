@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -29,6 +29,30 @@
       "headers": {},
       "response": { "model": "jina-embeddings-v3", "usage": { "total_tokens": 53, "prompt_tokens": 53 } },
       "expected": [{ "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_type": "model", "resource_id": "jina-embeddings-v3" }]
+    },
+    {
+      "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
+      "url": "https://api.openai.com/v1/audio/speech",
+      "headers": { "x-request-id": "req_tts_123" },
+      "request": { "model": "tts-1-hd", "input": "Hi \ud83c\udf0d" },
+      "response": null,
+      "expected": [{ "service_key": "openai_tts", "provider_name": "openai", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "4", "resource_type": "model", "resource_id": "tts-1-hd", "provider_record_id": "req_tts_123" }]
+    },
+    {
+      "name": "openai_tts_excludes_token_priced_models",
+      "url": "https://api.openai.com/v1/audio/speech",
+      "headers": { "x-request-id": "req_tts_unsupported" },
+      "request": { "model": "gpt-4o-mini-tts", "input": "Hello" },
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "openai_tts_does_not_invent_usage_without_billed_text",
+      "url": "https://api.openai.com/v1/audio/speech",
+      "headers": {},
+      "request": { "model": "tts-1" },
+      "response": null,
+      "expected": []
     },
     {
       "name": "deepgram_default_model_is_a_monolingual_batch_sku",

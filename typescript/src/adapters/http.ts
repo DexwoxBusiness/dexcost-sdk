@@ -1631,10 +1631,18 @@ async function _maybeRecordCost(
     // owned quantities and the control plane decides whether they are priced.
     if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
       try {
+        let observerResponseBody: unknown;
+        if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
+          try {
+            observerResponseBody = await response.clone().json();
+          } catch {
+            observerResponseBody = undefined;
+          }
+        }
         const observations = serviceUsageObservers?.observe(
           urlStr,
           response.headers,
-          await response.clone().json(),
+          observerResponseBody,
           ctx?.observerRequestBody,
         ) ?? [];
         if (observations.length > 0) {
