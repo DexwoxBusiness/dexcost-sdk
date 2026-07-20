@@ -586,12 +586,39 @@ impl Middleware for DexcostMiddleware {
             // the EventBuffer so it syncs.
             let mut buf = self.buffer.lock().await;
             let mut recorded = false;
-            if let Some(mut event) =
-                dexcost_http::resolve_http_cost_event(url.as_str(), &task_id, Some(&self.catalog))
-            {
-                stamp_byte_details(&mut event, &byte_details);
-                buf.add_event(event);
-                recorded = true;
+            if status.is_success() {
+                let observations = default_service_usage_observers()
+                    .map(|observers| {
+                        observers.observe(
+                            url.as_str(),
+                            &response_headers_map,
+                            &serde_json::Value::Null,
+                            observer_request_body.as_ref(),
+                        )
+                    })
+                    .unwrap_or_default();
+                if !observations.is_empty() {
+                    for observation in &observations {
+                        self.record_usage_observation(
+                            &task_id,
+                            observation,
+                            &byte_details,
+                            &mut buf,
+                        );
+                    }
+                    recorded = true;
+                }
+            }
+            if !recorded {
+                if let Some(mut event) = dexcost_http::resolve_http_cost_event(
+                    url.as_str(),
+                    &task_id,
+                    Some(&self.catalog),
+                ) {
+                    stamp_byte_details(&mut event, &byte_details);
+                    buf.add_event(event);
+                    recorded = true;
+                }
             }
             if !recorded && !is_network_event_suppressed() {
                 if let Some(ev) = build_network_event(
@@ -859,6 +886,42 @@ mod tests {
         );
         assert_eq!(wire.usage.len(), 1);
         assert_eq!(wire.usage[0].quantity, "17");
+        assert!(wire.cost_evidence.is_none());
+    }
+
+    #[tokio::test]
+    async fn tts_usage_observation_preserves_component_and_characters() {
+        let (catalog, pricing, buffer) = fixtures();
+        let middleware = DexcostMiddleware::new(catalog, pricing, buffer.clone(), None);
+        let task_id = Uuid::new_v4().to_string();
+        let observation = ServiceUsageObservation {
+            service_key: "openai_tts".to_string(),
+            provider_name: "openai".to_string(),
+            provider_service: "text_to_speech".to_string(),
+            component: "text_to_speech".to_string(),
+            metric: "characters".to_string(),
+            quantity: Decimal::from(4),
+            resource_type: Some("model".to_string()),
+            resource_id: Some("tts-1-hd".to_string()),
+            provider_record_id: Some("req-tts-4".to_string()),
+            manifest_version: "1.2.0".to_string(),
+        };
+        {
+            let mut events = buffer.lock().await;
+            middleware.record_usage_observation(
+                &task_id,
+                &observation,
+                &serde_json::json!({}),
+                &mut events,
+            );
+        }
+        let event = buffer.lock().await.get_pending_events(1).pop().unwrap();
+        let wire = crate::attribution::to_attribution_event_v2(&event).unwrap();
+        assert_eq!(wire.component, crate::attribution::AttributionComponent::TextToSpeech);
+        assert_eq!(wire.provider.name, "openai");
+        assert_eq!(wire.provider.service, "text_to_speech");
+        assert_eq!(wire.usage[0].metric, crate::attribution::AttributionUsageMetric::Characters);
+        assert_eq!(wire.usage[0].quantity, "4");
         assert!(wire.cost_evidence.is_none());
     }
 

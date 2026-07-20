@@ -228,6 +228,55 @@ func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
 	}
 }
 
+func TestTrackHTTP_OpenAITTSObservesCharactersWithoutConsumingAudio(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": {"audio/mpeg"},
+				"X-Request-Id": {"req-tts-4"},
+			},
+			Body: io.NopCloser(strings.NewReader("audio")),
+			Request: req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("speech")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/audio/speech",
+		strings.NewReader(`{"model":"tts-1-hd","input":"Hi 🌍"}`),
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if string(body) != "audio" {
+		t.Fatalf("provider audio body was changed: %q", body)
+	}
+	events := adapters.GetRecordedEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected one TTS usage event, got %d", len(events))
+	}
+	wire := attribution.ToEventV2(events[0])
+	if wire == nil || wire.Component != attribution.ComponentTextToSpeech ||
+		wire.Provider.Name != "openai" || wire.Provider.Service != "text_to_speech" ||
+		wire.Provider.RecordID != "req-tts-4" || wire.Resource == nil ||
+		wire.Resource.ID != "tts-1-hd" || len(wire.Usage) != 1 ||
+		wire.Usage[0].Metric != attribution.MetricCharacters ||
+		wire.Usage[0].Quantity != "4" || wire.CostEvidence != nil {
+		t.Fatalf("unexpected TTS attribution: %+v", wire)
+	}
+}
+
 // Test 1: RegisterDomainRate and GetDomainRates
 func TestRegisterAndGetDomainRates(t *testing.T) {
 	adapters.ClearDomainRates()

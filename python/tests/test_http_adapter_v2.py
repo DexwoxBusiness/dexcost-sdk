@@ -191,6 +191,34 @@ class TestKnownServiceExtraction:
         assert wire["usage_period"]["end_at"] is not None
         assert "cost_evidence" not in wire
 
+    def test_openai_tts_request_characters_are_text_to_speech_usage(self) -> None:
+        task = _make_task("speech")
+        response = _make_response(
+            headers={"x-request-id": "req-tts-4"},
+            content_type="audio/mpeg",
+            content_length=4,
+        )
+        with task_context(task):
+            _handle_http_call(
+                "https://api.openai.com/v1/audio/speech",
+                method="POST",
+                request_body={"model": "tts-1-hd", "input": "Hi 🌍"},
+                response=response,
+            )
+        wire = to_attribution_event_v2(get_recorded_events()[0])
+        assert wire is not None
+        assert wire["component"] == "text_to_speech"
+        assert wire["provider"] == {
+            "name": "openai",
+            "service": "text_to_speech",
+            "record_id": "req-tts-4",
+        }
+        assert wire["resource"] == {"type": "model", "id": "tts-1-hd"}
+        assert wire["usage"] == [
+            {"metric": "characters", "quantity": "4", "unit": "Characters"}
+        ]
+        assert "cost_evidence" not in wire
+
     def test_cohere_request_model_reaches_attribution_v2(self) -> None:
         task = _make_task("embedding")
         response = _make_response(

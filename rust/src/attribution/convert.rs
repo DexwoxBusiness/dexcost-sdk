@@ -237,12 +237,10 @@ fn component_and_usage(
                     )
                 });
             append_usage(&mut usage, metric, quantity);
-            let component = if string_detail(&event.details, &["attribution_component"])
-                == Some("speech_to_text")
-            {
-                AttributionComponent::SpeechToText
-            } else {
-                AttributionComponent::External
+            let component = match string_detail(&event.details, &["attribution_component"]) {
+                Some("speech_to_text") => AttributionComponent::SpeechToText,
+                Some("text_to_speech") => AttributionComponent::TextToSpeech,
+                _ => AttributionComponent::External,
             };
             let duration = decimal_detail(&event.details, &["attribution_usage_duration_seconds"])
                 .unwrap_or(Decimal::ZERO);

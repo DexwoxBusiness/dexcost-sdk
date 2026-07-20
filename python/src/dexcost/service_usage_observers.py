@@ -11,8 +11,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
-_METRICS = {"input_tokens", "audio_seconds"}
-_COMPONENTS = {"external", "speech_to_text"}
+_METRICS = {"input_tokens", "audio_seconds", "characters"}
+_COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
 _LOG = logging.getLogger(__name__)
 
 
@@ -24,11 +24,13 @@ class UsageObserver:
     component: str
     domains: tuple[str, ...]
     endpoints: tuple[str, ...]
-    response_path: str
+    response_path: str | None
+    request_character_count_path: str | None
     usage_metric: str
     resource_type: str | None
     resource_path: str | None
     request_resource_path: str | None
+    allowed_resource_ids: tuple[str, ...]
     resource_query_parameter: str | None
     default_resource_id: str | None
     fixed_resource_id: str | None
@@ -96,7 +98,7 @@ class ServiceUsageObservers:
                 raise ValueError("usage observer must be an object")
             required = (
                 "service_key", "provider_name", "provider_service", "component",
-                "response_path", "usage_metric", "source_url",
+                "usage_metric", "source_url",
             )
             if any(
                 not isinstance(definition.get(field), str) or not definition[field]
@@ -106,14 +108,21 @@ class ServiceUsageObservers:
             domains = definition.get("domains")
             endpoints = definition.get("endpoints")
             optional_string_fields = (
-                "resource_path", "request_resource_path", "resource_query_parameter",
+                "resource_path", "request_resource_path", "request_character_count_path",
+                "resource_query_parameter",
                 "default_resource_id", "fixed_resource_id", "quantity_multiplier_path",
                 "quantity_multiplier_query_parameter", "record_id_path", "record_id_header",
             )
             has_resource_selector = any(
                 field in definition
-                for field in optional_string_fields[:5]
+                for field in (
+                    "resource_path", "request_resource_path", "resource_query_parameter",
+                    "default_resource_id", "fixed_resource_id",
+                )
             )
+            response_path = definition.get("response_path")
+            request_character_count_path = definition.get("request_character_count_path")
+            allowed_resource_ids = definition.get("allowed_resource_ids", [])
             if (
                 definition["service_key"] in keys
                 or definition["usage_metric"] not in _METRICS
@@ -131,6 +140,14 @@ class ServiceUsageObservers:
                     for field in optional_string_fields
                 )
                 or definition.get("resource_type") not in {None, "model", "sku"}
+                or ((response_path is None) == (request_character_count_path is None))
+                or (
+                    response_path is not None
+                    and (not isinstance(response_path, str) or not response_path)
+                )
+                or not isinstance(allowed_resource_ids, list)
+                or any(not isinstance(item, str) or not item for item in allowed_resource_ids)
+                or (allowed_resource_ids and definition.get("resource_type") is None)
                 or (has_resource_selector and definition.get("resource_type") is None)
                 or (
                     ("quantity_multiplier_path" in definition)
@@ -171,11 +188,13 @@ class ServiceUsageObservers:
                     component=definition["component"],
                     domains=tuple(domains),
                     endpoints=tuple(endpoints),
-                    response_path=definition["response_path"],
+                    response_path=response_path,
+                    request_character_count_path=request_character_count_path,
                     usage_metric=definition["usage_metric"],
                     resource_type=definition.get("resource_type"),
                     resource_path=definition.get("resource_path"),
                     request_resource_path=definition.get("request_resource_path"),
+                    allowed_resource_ids=tuple(allowed_resource_ids),
                     resource_query_parameter=definition.get("resource_query_parameter"),
                     default_resource_id=definition.get("default_resource_id"),
                     fixed_resource_id=definition.get("fixed_resource_id"),
@@ -221,7 +240,10 @@ class ServiceUsageObservers:
 
     def needs_request_body(self, url: str) -> bool:
         matched = self._lookup(url)
-        return bool(matched and any(item.request_resource_path for item in matched[1]))
+        return bool(matched and any(
+            item.request_resource_path or item.request_character_count_path
+            for item in matched[1]
+        ))
 
     def observe(
         self,
@@ -230,8 +252,6 @@ class ServiceUsageObservers:
         response_body: dict[str, Any] | None,
         request_body: dict[str, Any] | None = None,
     ) -> list[ServiceUsageObservation]:
-        if response_body is None:
-            return []
         matched = self._lookup(url)
         if matched is None:
             return []
@@ -239,10 +259,16 @@ class ServiceUsageObservers:
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
         for observer in observers:
-            try:
-                quantity = Decimal(str(_resolve_path(response_body, observer.response_path)))
-            except (InvalidOperation, ValueError):
-                continue
+            if observer.request_character_count_path:
+                text = _resolve_path(request_body, observer.request_character_count_path)
+                if not isinstance(text, str) or not text:
+                    continue
+                quantity = Decimal(len(text))
+            else:
+                try:
+                    quantity = Decimal(str(_resolve_path(response_body, observer.response_path or "")))
+                except (InvalidOperation, ValueError):
+                    continue
             if not quantity.is_finite() or quantity <= 0:
                 continue
             if (
@@ -285,6 +311,8 @@ class ServiceUsageObservers:
                 ), None))
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
+            if observer.allowed_resource_ids and resource_id not in observer.allowed_resource_ids:
+                continue
             if resource_id is not None and observer.resource_variant is not None:
                 variant = observer.resource_variant
                 suffix = (

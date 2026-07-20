@@ -501,9 +501,9 @@ function _buildInstrumentedFetch(
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
     const requestBodyLen = _resolveRequestBodyLen(input, init);
-    const observerRequestBody = serviceUsageObservers?.needsRequestBody(urlStr) === true
-      ? _resolveObserverRequestBody(init)
-      : undefined;
+    const observerRequestBodyPromise = serviceUsageObservers?.needsRequestBody(urlStr) === true
+      ? _resolveObserverRequestBody(input, init)
+      : Promise.resolve(undefined);
     const requestBytes = measureBytesFromHeaders(
       method,
       urlStr,
@@ -512,6 +512,7 @@ function _buildInstrumentedFetch(
     );
 
     const response = await base(input, init);
+    const observerRequestBody = await observerRequestBodyPromise;
 
     // ── v1 destination classification + byte details ─────────────────────
     let hostname = "";
@@ -1090,8 +1091,12 @@ function _resolveRequestBodyLen(
 }
 
 const MAX_OBSERVER_REQUEST_BODY_BYTES = 1_048_576;
+const OBSERVER_REQUEST_BODY_TIMEOUT_MS = 50;
 
-function _resolveObserverRequestBody(init?: RequestInit): unknown {
+async function _resolveObserverRequestBody(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<unknown> {
   try {
     const body = init?.body;
     if (typeof body === "string") {
@@ -1105,11 +1110,54 @@ function _resolveObserverRequestBody(init?: RequestInit): unknown {
       if (bytes.byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) return undefined;
       return JSON.parse(new TextDecoder().decode(bytes));
     }
-    // A Request exposes its body only as a stream, whose declared length can
-    // be absent or untrustworthy. Optional instrumentation must never clone
-    // and drain that stream before the provider fetch. Callers using a
-    // Request still emit provider-owned usage; only request-derived resource
-    // identity is omitted unless an explicit, bounded init.body is supplied.
+    // init.body overrides a Request's embedded body. If the override is a
+    // representation we do not parse, fail open instead of attributing usage
+    // from a different body than the provider receives.
+    if (body !== undefined && body !== null) return undefined;
+
+    if (!(input instanceof Request) || input.bodyUsed || input.body === null) return undefined;
+    const contentType = input.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("application/json") && !contentType.startsWith("text/plain")) {
+      return undefined;
+    }
+    const declaredLength = Number(input.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_OBSERVER_REQUEST_BODY_BYTES) {
+      return undefined;
+    }
+
+    const reader = input.clone().body?.getReader();
+    if (reader === undefined) return undefined;
+    const decoder = new TextDecoder();
+    let byteLength = 0;
+    let text = "";
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<undefined>((resolve) => {
+      timeout = setTimeout(() => {
+        void reader.cancel().catch(() => undefined);
+        resolve(undefined);
+      }, OBSERVER_REQUEST_BODY_TIMEOUT_MS);
+    });
+    const parsed = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          byteLength += value.byteLength;
+          if (byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) {
+            await reader.cancel();
+            return undefined;
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+        return JSON.parse(text);
+      } catch {
+        return undefined;
+      }
+    })();
+    const resolved = await Promise.race([parsed, timedOut]);
+    if (timeout !== undefined) clearTimeout(timeout);
+    return resolved;
   } catch {
     // Request metadata is fail-open; provider usage can still be observed.
   }
@@ -1631,10 +1679,18 @@ async function _maybeRecordCost(
     // owned quantities and the control plane decides whether they are priced.
     if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
       try {
+        let observerResponseBody: unknown;
+        if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
+          try {
+            observerResponseBody = await response.clone().json();
+          } catch {
+            observerResponseBody = undefined;
+          }
+        }
         const observations = serviceUsageObservers?.observe(
           urlStr,
           response.headers,
-          await response.clone().json(),
+          observerResponseBody,
           ctx?.observerRequestBody,
         ) ?? [];
         if (observations.length > 0) {

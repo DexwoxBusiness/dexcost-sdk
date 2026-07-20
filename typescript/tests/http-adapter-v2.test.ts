@@ -110,7 +110,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
-  it("does not pre-read opaque Request streams for observer metadata", async () => {
+  it("does not block on unfinished Request streams for observer metadata", async () => {
     const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "cohere-stream",
       meta: { billed_units: { input_tokens: 11 } },
@@ -127,6 +127,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
     const request = new Request("https://api.cohere.com/v2/embed", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
@@ -161,6 +162,112 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
     expect(wire?.usage_period?.end_at).toBeDefined();
     expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("emits OpenAI TTS characters without consuming the binary response", async () => {
+    const audio = new Uint8Array([1, 2, 3, 4]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-4" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const response = await runWithTask(task, async () => fetch(
+      "https://api.openai.com/v1/audio/speech",
+      { method: "POST", body: JSON.stringify({ model: "tts-1-hd", input: "Hi 🌍" }) },
+    ));
+
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      component: "text_to_speech",
+      provider: { name: "openai", service: "text_to_speech", record_id: "req-tts-4" },
+      resource: { type: "model", id: "tts-1-hd" },
+      usage: [{ metric: "characters", quantity: "4", unit: "Characters" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("emits OpenAI TTS characters from a Request object body", async () => {
+    const audio = new Uint8Array([5, 6, 7]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-request" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Hello" }),
+    });
+
+    const response = await runWithTask(task, async () => fetch(request));
+
+    expect(baseFetch).toHaveBeenCalledWith(request, undefined);
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([5, 6, 7]);
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      component: "text_to_speech",
+      provider: { name: "openai", service: "text_to_speech", record_id: "req-tts-request" },
+      resource: { type: "model", id: "tts-1" },
+      usage: [{ metric: "characters", quantity: "5", unit: "Characters" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("does not attribute the embedded Request body when init.body overrides it", async () => {
+    const audio = new Uint8Array([8, 9]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-override" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Embedded body" }),
+    });
+    const override = new Blob([
+      JSON.stringify({ model: "tts-1-hd", input: "Provider body" }),
+    ], { type: "application/json" });
+
+    const response = await runWithTask(task, async () => fetch(request, { body: override }));
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([8, 9]);
+
+    expect(baseFetch).toHaveBeenCalledWith(request, { body: override });
+    expect(getRecordedEvents().filter(
+      (event) => event.details.attribution_component === "text_to_speech",
+    )).toHaveLength(0);
+  });
+
+  it("attributes the embedded Request body when init.body is null", async () => {
+    const audio = new Uint8Array([10, 11]);
+    const baseFetch = vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-request-id": "req-tts-null" },
+    }));
+    vi.stubGlobal("fetch", baseFetch);
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const request = new Request("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: "Retained" }),
+    });
+
+    const response = await runWithTask(task, async () => fetch(request, { body: null }));
+
+    expect(baseFetch).toHaveBeenCalledWith(request, { body: null });
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([10, 11]);
+    expect(toAttributionEventV2(getRecordedEvents()[0])).toMatchObject({
+      component: "text_to_speech",
+      resource: { type: "model", id: "tts-1" },
+      usage: [{ metric: "characters", quantity: "8", unit: "Characters" }],
+    });
   });
 
   it("emits separate Deepgram base and add-on attribution lines", async () => {

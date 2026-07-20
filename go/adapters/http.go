@@ -290,6 +290,24 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			resp.Body = replaced
 		}
 		if observations := pricing.ObserveServiceUsage(req.URL.String(), headers, body, observerRequestBody); len(observations) > 0 {
+			if replaced == nil {
+				// Request-derived observers (for example binary TTS responses)
+				// must not consume the provider body. Record the attribution
+				// tuple now and let the normal body wrapper account for response
+				// bytes as the caller reads them.
+				byteDetails := map[string]interface{}{
+					"protocol": protocol, "request_bytes": requestBytes,
+					"is_internal_traffic": isInternalToValue(isInternal),
+				}
+				for i := range observations {
+					t.recordUsageObservation(req, &observations[i], byteDetails)
+				}
+				resp.Body = wrapBodyForRecording(resp.Body, &bodyRecorder{
+					accountant: accountant, host: host, requestBytes: requestBytes,
+					responseHeaderBytes: responseHeaderBytes, isInternal: isInternal,
+				})
+				return resp, nil
+			}
 			responseBytes := responseHeaderBytes + bodyByteCount
 			if accountant != nil {
 				accountant.Record(host, responseBytes, requestBytes, isInternal)

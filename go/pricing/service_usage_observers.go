@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
 )
@@ -21,10 +22,12 @@ type usageObserverDefinition struct {
 	Domains                          []string              `json:"domains"`
 	Endpoints                        []string              `json:"endpoints"`
 	ResponsePath                     string                `json:"response_path"`
+	RequestCharacterCountPath        string                `json:"request_character_count_path"`
 	UsageMetric                      string                `json:"usage_metric"`
 	ResourceType                     string                `json:"resource_type"`
 	ResourcePath                     string                `json:"resource_path"`
 	RequestResourcePath              string                `json:"request_resource_path"`
+	AllowedResourceIDs               []string              `json:"allowed_resource_ids"`
 	ResourceQueryParameter           string                `json:"resource_query_parameter"`
 	DefaultResourceID                string                `json:"default_resource_id"`
 	FixedResourceID                  string                `json:"fixed_resource_id"`
@@ -96,9 +99,11 @@ func loadUsageObservers() {
 	for _, observer := range usageObservers.Observers {
 		_, duplicate := keys[observer.ServiceKey]
 		if duplicate || observer.ServiceKey == "" || observer.ProviderName == "" ||
-			observer.ProviderService == "" || observer.ResponsePath == "" ||
+			observer.ProviderService == "" ||
+			((observer.ResponsePath == "") == (observer.RequestCharacterCountPath == "")) ||
 			observer.metricInvalid() ||
-			(observer.Component != "external" && observer.Component != "speech_to_text") ||
+			(observer.Component != "external" && observer.Component != "speech_to_text" &&
+				observer.Component != "text_to_speech") ||
 			len(observer.Domains) == 0 || len(observer.Endpoints) == 0 ||
 			!allUsageObserverDomainsValid(observer.Domains) ||
 			!allUsageObserverEndpointsValid(observer.Endpoints) ||
@@ -112,6 +117,16 @@ func loadUsageObservers() {
 		if observer.ResourceType != "" && observer.ResourceType != "model" && observer.ResourceType != "sku" {
 			log.Printf("[dexcost] bundled service usage observers disabled: invalid resource type")
 			return
+		}
+		if len(observer.AllowedResourceIDs) > 0 && observer.ResourceType == "" {
+			log.Printf("[dexcost] bundled service usage observers disabled: resource allowlist without type")
+			return
+		}
+		for _, resourceID := range observer.AllowedResourceIDs {
+			if strings.TrimSpace(resourceID) == "" {
+				log.Printf("[dexcost] bundled service usage observers disabled: invalid resource allowlist")
+				return
+			}
 		}
 		hasResourceSelector := observer.ResourcePath != "" || observer.RequestResourcePath != "" ||
 			observer.ResourceQueryParameter != "" || observer.DefaultResourceID != "" ||
@@ -146,7 +161,8 @@ func loadUsageObservers() {
 }
 
 func (observer usageObserverDefinition) metricInvalid() bool {
-	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds"
+	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds" &&
+		observer.UsageMetric != "characters"
 }
 
 func allUsageObserverDomainsValid(domains []string) bool {
@@ -235,7 +251,7 @@ func HasServiceUsageObserver(rawURL string) bool {
 func ServiceUsageObserverNeedsRequestBody(rawURL string) bool {
 	_, observers := lookupUsageObservers(rawURL)
 	for _, observer := range observers {
-		if observer.RequestResourcePath != "" {
+		if observer.RequestResourcePath != "" || observer.RequestCharacterCountPath != "" {
 			return true
 		}
 	}
@@ -257,14 +273,24 @@ func boundedUsageString(value interface{}) string {
 // ObserveServiceUsage extracts a positive quantity from a successful provider response.
 func ObserveServiceUsage(rawURL string, headers map[string]string, body map[string]interface{}, requestBody map[string]interface{}) []ServiceUsageObservation {
 	parsed, observers := lookupUsageObservers(rawURL)
-	if parsed == nil || len(observers) == 0 || body == nil {
+	if parsed == nil || len(observers) == 0 {
 		return nil
 	}
 	result := make([]ServiceUsageObservation, 0, len(observers))
 	for _, observer := range observers {
-		quantity, ok := toDecimal(resolveDottedPath(body, observer.ResponsePath))
-		if !ok || !quantity.IsPositive() {
-			continue
+		var quantity decimal.Decimal
+		if observer.RequestCharacterCountPath != "" {
+			text, ok := resolveDottedPath(requestBody, observer.RequestCharacterCountPath).(string)
+			if !ok || text == "" {
+				continue
+			}
+			quantity = decimal.NewFromInt(int64(utf8.RuneCountInString(text)))
+		} else {
+			var ok bool
+			quantity, ok = toDecimal(resolveDottedPath(body, observer.ResponsePath))
+			if !ok || !quantity.IsPositive() {
+				continue
+			}
 		}
 		if observer.QuantityMultiplierPath != "" && observer.QuantityMultiplierQueryParameter != "" {
 			for _, value := range parsed.Query()[observer.QuantityMultiplierQueryParameter] {
@@ -304,6 +330,9 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 		if resourceID == "" {
 			resourceID = boundedUsageString(observer.DefaultResourceID)
 		}
+		if len(observer.AllowedResourceIDs) > 0 && !containsUsageResourceID(observer.AllowedResourceIDs, resourceID) {
+			continue
+		}
 		if resourceID != "" && observer.ResourceVariant != nil {
 			suffix := observer.ResourceVariant.DefaultSuffix
 			if parsed.Query().Get(observer.ResourceVariant.QueryParameter) == observer.ResourceVariant.Equals {
@@ -323,4 +352,13 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 		})
 	}
 	return result
+}
+
+func containsUsageResourceID(allowed []string, resourceID string) bool {
+	for _, candidate := range allowed {
+		if candidate == resourceID {
+			return true
+		}
+	}
+	return false
 }
