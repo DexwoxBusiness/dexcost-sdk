@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.15.0...typescript/v0.16.0) (2026-07-20)
+
+
+### Features
+
+* **attribution:** observe OpenAI TTS usage across SDKs ([#99](https://github.com/DexwoxBusiness/dexcost-sdk/issues/99)) ([2e1905a](https://github.com/DexwoxBusiness/dexcost-sdk/commit/2e1905a5c90ded1615e2de7e43d9095f34eef02e))
+
 ## [0.15.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.14.0...typescript/v0.15.0) (2026-07-18)
 
 
