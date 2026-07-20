@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.5.0...go/v0.6.0) (2026-07-20)
+
+
+### Features
+
+* **attribution:** observe OpenAI TTS usage across SDKs ([#99](https://github.com/DexwoxBusiness/dexcost-sdk/issues/99)) ([2e1905a](https://github.com/DexwoxBusiness/dexcost-sdk/commit/2e1905a5c90ded1615e2de7e43d9095f34eef02e))
+
 ## [0.5.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.4.0...go/v0.5.0) (2026-07-18)
 
 
