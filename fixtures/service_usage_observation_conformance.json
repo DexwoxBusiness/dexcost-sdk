@@ -1,5 +1,5 @@
 {
-  "schema_version": "3",
+  "schema_version": "4",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -93,6 +93,34 @@
       "headers": {},
       "response": { "metadata": { "request_id": "dg-3", "duration": 4, "channels": 2 } },
       "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "4", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-3" }]
+    },
+    {
+      "name": "assemblyai_completed_transcript_uses_provider_duration_and_model",
+      "url": "https://api.assemblyai.com/v2/transcript/9ea68fd3-f953-42c1-9742-976c447fb463",
+      "headers": {},
+      "response": { "id": "9ea68fd3-f953-42c1-9742-976c447fb463", "status": "completed", "audio_duration": 281, "speech_model_used": "universal-2" },
+      "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "281", "resource_type": "model", "resource_id": "universal-2", "provider_record_id": "9ea68fd3-f953-42c1-9742-976c447fb463" }]
+    },
+    {
+      "name": "assemblyai_eu_multichannel_transcript_uses_channel_seconds",
+      "url": "https://api.eu.assemblyai.com/v2/transcript/aa-eu-2",
+      "headers": {},
+      "response": { "id": "aa-eu-2", "status": "completed", "audio_duration": 125, "audio_channels": 2, "speech_model_used": "universal-3-5-pro" },
+      "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "250", "resource_type": "model", "resource_id": "universal-3-5-pro", "provider_record_id": "aa-eu-2" }]
+    },
+    {
+      "name": "assemblyai_processing_transcript_is_not_final_usage",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-processing",
+      "headers": {},
+      "response": { "id": "aa-processing", "status": "processing", "audio_duration": 42, "speech_model_used": "universal-2" },
+      "expected": []
+    },
+    {
+      "name": "assemblyai_error_transcript_is_not_billable_usage",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-error",
+      "headers": {},
+      "response": { "id": "aa-error", "status": "error", "audio_duration": 42, "speech_model_used": "universal-2" },
+      "expected": []
     },
     {
       "name": "wrong_endpoint_is_not_observed",
