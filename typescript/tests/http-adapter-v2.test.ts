@@ -164,6 +164,67 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("emits completed AssemblyAI transcript usage from a bounded response", async () => {
+    const providerBody = {
+      id: "assembly-42",
+      status: "completed",
+      audio_duration: 42.5,
+      audio_channels: 2,
+      speech_model_used: "universal-3-pro",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(providerBody), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
+    const response = await runWithTask(task, async () => fetch(
+      "https://api.assemblyai.com/v2/transcript/assembly-42",
+    ));
+
+    expect(await response.json()).toEqual(providerBody);
+    const event = getRecordedEvents().find(
+      (candidate) => candidate.details["attribution_observer_service"] === "assemblyai_transcription",
+    );
+    expect(toAttributionEventV2(event!)).toMatchObject({
+      component: "speech_to_text",
+      provider: {
+        name: "assemblyai",
+        service: "speech_to_text_pre_recorded",
+        record_id: "assembly-42",
+      },
+      resource: { type: "model", id: "universal-3-pro" },
+      usage: [{ metric: "audio_seconds", quantity: "85", unit: "Seconds" }],
+    });
+  });
+
+  it("skips AssemblyAI observer parsing when an undeclared body exceeds the limit", async () => {
+    const providerBody = {
+      id: "assembly-large",
+      status: "completed",
+      audio_duration: 120,
+      audio_channels: 1,
+      speech_model_used: "universal-3-pro",
+      words: ["x".repeat(1_048_576)],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(providerBody), {
+      status: 200,
+      // Deliberately omit Content-Length: the stream reader must enforce the
+      // limit even when the provider does not declare a response size.
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
+    const response = await runWithTask(task, async () => fetch(
+      "https://api.assemblyai.com/v2/transcript/assembly-large",
+    ));
+
+    expect((await response.json()).id).toBe("assembly-large");
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "assemblyai_transcription",
+    )).toBe(false);
+  });
+
   it("emits OpenAI TTS characters without consuming the binary response", async () => {
     const audio = new Uint8Array([1, 2, 3, 4]);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(audio, {

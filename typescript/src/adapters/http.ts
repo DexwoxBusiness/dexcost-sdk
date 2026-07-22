@@ -1092,6 +1092,8 @@ function _resolveRequestBodyLen(
 
 const MAX_OBSERVER_REQUEST_BODY_BYTES = 1_048_576;
 const OBSERVER_REQUEST_BODY_TIMEOUT_MS = 50;
+const MAX_OBSERVER_RESPONSE_BODY_BYTES = MAX_BODY_SIZE;
+const OBSERVER_RESPONSE_BODY_TIMEOUT_MS = 50;
 
 async function _resolveObserverRequestBody(
   input: string | URL | Request,
@@ -1162,6 +1164,67 @@ async function _resolveObserverRequestBody(
     // Request metadata is fail-open; provider usage can still be observed.
   }
   return undefined;
+}
+
+/**
+ * Parse optional observer metadata without buffering an unbounded provider
+ * response. The SDK must never delay or exhaust the host application merely
+ * to improve attribution, so missing/invalid/large/slow bodies fail open.
+ */
+async function _resolveObserverResponseBody(response: Response): Promise<unknown> {
+  try {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("application/json")) return undefined;
+
+    const contentLength = response.headers.get("content-length");
+    const declaredLength = Number.parseInt(contentLength ?? "", 10);
+    if (
+      contentLength !== null &&
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_OBSERVER_RESPONSE_BODY_BYTES
+    ) {
+      return undefined;
+    }
+
+    const reader = response.clone().body?.getReader();
+    if (reader === undefined) return undefined;
+    const decoder = new TextDecoder();
+    let byteLength = 0;
+    let text = "";
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<undefined>((resolve) => {
+      timeout = setTimeout(() => {
+        void reader.cancel().catch(() => undefined);
+        resolve(undefined);
+      }, OBSERVER_RESPONSE_BODY_TIMEOUT_MS);
+    });
+    const parsed = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          byteLength += value.byteLength;
+          if (byteLength > MAX_OBSERVER_RESPONSE_BODY_BYTES) {
+            // Do not await cancellation: for a tee'd Response stream its
+            // promise may remain pending until the application consumes the
+            // original branch.
+            void reader.cancel().catch(() => undefined);
+            return undefined;
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+        return JSON.parse(text);
+      } catch {
+        return undefined;
+      }
+    })();
+    const resolved = await Promise.race([parsed, timedOut]);
+    if (timeout !== undefined) clearTimeout(timeout);
+    return resolved;
+  } catch {
+    return undefined;
+  }
 }
 
 function _measureResponseHeaderBytes(response: Response): number {
@@ -1681,11 +1744,7 @@ async function _maybeRecordCost(
       try {
         let observerResponseBody: unknown;
         if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
-          try {
-            observerResponseBody = await response.clone().json();
-          } catch {
-            observerResponseBody = undefined;
-          }
+          observerResponseBody = await _resolveObserverResponseBody(response);
         }
         const observations = serviceUsageObservers?.observe(
           urlStr,
