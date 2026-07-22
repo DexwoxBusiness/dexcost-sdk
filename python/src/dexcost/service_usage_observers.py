@@ -25,7 +25,7 @@ class UsageObserver:
     domains: tuple[str, ...]
     endpoints: tuple[str, ...]
     response_path: str | None
-    response_equals: dict[str, str] | None
+    response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
     usage_metric: str
     resource_type: str | None
@@ -77,6 +77,30 @@ def _query_value_is_truthy(value: str) -> bool:
     return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    resolved = _resolve_path(value, predicate["path"])
+    if predicate["operator"] == "equals":
+        return resolved == predicate["value"] and type(resolved) is type(predicate["value"])
+    if isinstance(resolved, str):
+        return bool(resolved.strip())
+    return isinstance(resolved, (list, dict)) and bool(resolved)
+
+
+def _valid_response_predicate(predicate: Any) -> bool:
+    if not isinstance(predicate, dict) or not isinstance(predicate.get("path"), str):
+        return False
+    if not predicate["path"]:
+        return False
+    if predicate.get("operator") == "non_empty":
+        return set(predicate) == {"path", "operator"}
+    value = predicate.get("value")
+    return (
+        predicate.get("operator") == "equals"
+        and set(predicate) == {"path", "operator", "value"}
+        and type(value) in {str, bool}
+    )
+
+
 class ServiceUsageObservers:
     def __init__(self, data_path: Path | None = None) -> None:
         raw = json.loads((data_path or _DATA_PATH).read_text(encoding="utf-8"))
@@ -122,7 +146,7 @@ class ServiceUsageObservers:
                 )
             )
             response_path = definition.get("response_path")
-            response_equals = definition.get("response_equals")
+            response_all = definition.get("response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
             if (
@@ -157,13 +181,10 @@ class ServiceUsageObservers:
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
-            if response_equals is not None and (
-                not isinstance(response_equals, dict)
-                or set(response_equals) != {"path", "equals"}
-                or not isinstance(response_equals.get("path"), str)
-                or not response_equals["path"]
-                or not isinstance(response_equals.get("equals"), str)
-                or not response_equals["equals"]
+            if (
+                not isinstance(response_all, list)
+                or ("response_all" in definition and not response_all)
+                or not all(_valid_response_predicate(item) for item in response_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid response predicate")
             query_any = definition.get("query_any", [])
@@ -200,7 +221,7 @@ class ServiceUsageObservers:
                     domains=tuple(domains),
                     endpoints=tuple(endpoints),
                     response_path=response_path,
-                    response_equals=response_equals,
+                    response_all=tuple(response_all),
                     request_character_count_path=request_character_count_path,
                     usage_metric=definition["usage_metric"],
                     resource_type=definition.get("resource_type"),
@@ -271,9 +292,9 @@ class ServiceUsageObservers:
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
         for observer in observers:
-            if observer.response_equals is not None and (
-                _resolve_path(response_body, observer.response_equals["path"])
-                != observer.response_equals["equals"]
+            if not all(
+                _response_predicate_matches(response_body, predicate)
+                for predicate in observer.response_all
             ):
                 continue
             if observer.request_character_count_path:

@@ -61,6 +61,18 @@ use crate::transport::buffer::EventBuffer;
 /// bytes. Mirrors python config `network_event_threshold_bytes = 102_400`
 /// (100 KiB).
 const NETWORK_EVENT_THRESHOLD_BYTES: usize = 102_400;
+const PROVIDER_OBSERVATION_NAMESPACE: Uuid = Uuid::from_u128(0x5b3d21ce1c755257946d967d7ba75ae5);
+
+fn provider_observation_event_id(observation: &ServiceUsageObservation) -> String {
+    let Some(record_id) = observation.provider_record_id.as_deref() else {
+        return Uuid::new_v4().to_string();
+    };
+    let identity = format!(
+        "{}|{}|{}",
+        observation.provider_name, observation.service_key, record_id
+    );
+    Uuid::new_v5(&PROVIDER_OBSERVATION_NAMESPACE, identity.as_bytes()).to_string()
+}
 
 /// Reqwest middleware that automatically records cost events for HTTP calls.
 ///
@@ -158,6 +170,7 @@ impl DexcostMiddleware {
         events: &mut EventBuffer,
     ) {
         let mut event = CostEvent::new(task_id, EventType::ExternalCost);
+        event.event_id = provider_observation_event_id(observation);
         event.cost_usd = Decimal::ZERO;
         event.cost_confidence = CostConfidence::Unknown;
         event.provider = Some(observation.provider_name.clone());
@@ -210,6 +223,9 @@ impl DexcostMiddleware {
             );
         }
         stamp_byte_details(&mut event, byte_details);
+        if observation.provider_record_id.is_some() && events.contains_event(&event.event_id) {
+            return;
+        }
         events.add_event(event);
     }
 
@@ -849,6 +865,26 @@ mod tests {
         )
     }
 
+    #[test]
+    fn provider_observation_event_id_is_stable_across_sdk_languages() {
+        let observation = ServiceUsageObservation {
+            service_key: "assemblyai_transcription".to_string(),
+            provider_name: "assemblyai".to_string(),
+            provider_service: "speech_to_text_pre_recorded".to_string(),
+            component: "speech_to_text".to_string(),
+            metric: "audio_seconds".to_string(),
+            quantity: Decimal::ONE,
+            resource_type: None,
+            resource_id: None,
+            provider_record_id: Some("aa-123".to_string()),
+            manifest_version: "1.4.0".to_string(),
+        };
+        assert_eq!(
+            provider_observation_event_id(&observation),
+            "2dc521b3-742a-5f61-9942-c4a59e6935f6"
+        );
+    }
+
     #[tokio::test]
     async fn usage_observation_emits_v2_quantity_without_cost_evidence() {
         let (catalog, pricing, buffer) = fixtures();
@@ -868,6 +904,12 @@ mod tests {
         };
         {
             let mut events = buffer.lock().await;
+            middleware.record_usage_observation(
+                &task_id,
+                &observation,
+                &serde_json::json!({}),
+                &mut events,
+            );
             middleware.record_usage_observation(
                 &task_id,
                 &observation,

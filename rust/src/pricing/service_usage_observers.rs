@@ -18,7 +18,7 @@ struct ObserverDefinition {
     domains: Vec<String>,
     endpoints: Vec<String>,
     response_path: Option<String>,
-    response_equals: Option<ResponseEqualsPredicate>,
+    response_all: Option<Vec<ResponsePredicate>>,
     request_character_count_path: Option<String>,
     usage_metric: String,
     resource_type: Option<String>,
@@ -45,9 +45,11 @@ struct QueryPredicate {
 }
 
 #[derive(Clone, Deserialize)]
-struct ResponseEqualsPredicate {
+#[serde(deny_unknown_fields)]
+struct ResponsePredicate {
     path: String,
-    equals: String,
+    operator: String,
+    value: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -127,6 +129,35 @@ fn query_value_is_truthy(value: &str) -> bool {
     )
 }
 
+fn valid_response_predicate(predicate: &ResponsePredicate) -> bool {
+    if predicate.path.is_empty() {
+        return false;
+    }
+    match predicate.operator.as_str() {
+        "non_empty" => predicate.value.is_none(),
+        "equals" => predicate
+            .value
+            .as_ref()
+            .is_some_and(|value| value.is_string() || value.is_boolean()),
+        _ => false,
+    }
+}
+
+fn response_predicate_matches(body: &serde_json::Value, predicate: &ResponsePredicate) -> bool {
+    let Some(value) = resolve_path(body, &predicate.path) else {
+        return false;
+    };
+    if predicate.operator == "equals" {
+        return predicate.value.as_ref() == Some(value);
+    }
+    match value {
+        serde_json::Value::String(value) => !value.trim().is_empty(),
+        serde_json::Value::Array(value) => !value.is_empty(),
+        serde_json::Value::Object(value) => !value.is_empty(),
+        _ => false,
+    }
+}
+
 impl ServiceUsageObservers {
     fn load() -> Option<Self> {
         let manifest: Manifest = serde_json::from_str(MANIFEST_JSON).ok()?;
@@ -185,8 +216,11 @@ impl ServiceUsageObservers {
                     })
                 || (observer.quantity_multiplier_query_parameter.is_some()
                     && observer.quantity_multiplier_path.is_none())
-                || observer.response_equals.as_ref().is_some_and(|predicate| {
-                    predicate.path.is_empty() || predicate.equals.is_empty()
+                || observer.response_all.as_ref().is_some_and(|predicates| {
+                    predicates.is_empty()
+                        || predicates
+                            .iter()
+                            .any(|predicate| !valid_response_predicate(predicate))
                 })
                 || observer.query_any.iter().any(|predicate| {
                     predicate.parameter.is_empty()
@@ -249,10 +283,13 @@ impl ServiceUsageObservers {
                         }))
             })
             .filter_map(|observer| {
-                if observer.response_equals.as_ref().is_some_and(|predicate| {
-                    resolve_path(body, &predicate.path).and_then(serde_json::Value::as_str)
-                        != Some(predicate.equals.as_str())
-                }) {
+                if !observer
+                    .response_all
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .all(|predicate| response_predicate_matches(body, predicate))
+                {
                     return None;
                 }
                 let mut quantity =

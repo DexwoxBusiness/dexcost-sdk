@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ServiceUsageObservers } from "../src/pricing/service-usage-observers.js";
+import { _providerObservationEventId } from "../src/adapters/http.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage_observation_conformance.json"), "utf8")) as {
@@ -42,5 +43,20 @@ describe("shared service usage observer conformance", () => {
     const canonical = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage_observers.json"), "utf8"));
     const packaged = JSON.parse(readFileSync(join(here, "../src/data/service_usage_observers.json"), "utf8"));
     expect(packaged).toEqual(canonical);
+  });
+
+  it("keeps provider observation IDs stable across SDK languages", () => {
+    expect(_providerObservationEventId(
+      {
+        serviceKey: "assemblyai_transcription",
+        providerName: "assemblyai",
+        providerService: "speech_to_text_pre_recorded",
+        component: "speech_to_text",
+        metric: "audio_seconds",
+        quantity: "1",
+        providerRecordId: "aa-123",
+        manifestVersion: "1.4.0",
+      },
+    )).toBe("2dc521b3-742a-5f61-9942-c4a59e6935f6");
   });
 });
