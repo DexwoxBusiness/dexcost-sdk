@@ -25,6 +25,7 @@ class UsageObserver:
     domains: tuple[str, ...]
     endpoints: tuple[str, ...]
     response_path: str | None
+    response_equals: dict[str, str] | None
     request_character_count_path: str | None
     usage_metric: str
     resource_type: str | None
@@ -121,6 +122,7 @@ class ServiceUsageObservers:
                 )
             )
             response_path = definition.get("response_path")
+            response_equals = definition.get("response_equals")
             request_character_count_path = definition.get("request_character_count_path")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
             if (
@@ -150,11 +152,20 @@ class ServiceUsageObservers:
                 or (allowed_resource_ids and definition.get("resource_type") is None)
                 or (has_resource_selector and definition.get("resource_type") is None)
                 or (
-                    ("quantity_multiplier_path" in definition)
-                    != ("quantity_multiplier_query_parameter" in definition)
+                    "quantity_multiplier_query_parameter" in definition
+                    and "quantity_multiplier_path" not in definition
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
+            if response_equals is not None and (
+                not isinstance(response_equals, dict)
+                or set(response_equals) != {"path", "equals"}
+                or not isinstance(response_equals.get("path"), str)
+                or not response_equals["path"]
+                or not isinstance(response_equals.get("equals"), str)
+                or not response_equals["equals"]
+            ):
+                raise ValueError("usage observer manifest contains an invalid response predicate")
             query_any = definition.get("query_any", [])
             if (
                 not isinstance(query_any, list)
@@ -189,6 +200,7 @@ class ServiceUsageObservers:
                     domains=tuple(domains),
                     endpoints=tuple(endpoints),
                     response_path=response_path,
+                    response_equals=response_equals,
                     request_character_count_path=request_character_count_path,
                     usage_metric=definition["usage_metric"],
                     resource_type=definition.get("resource_type"),
@@ -259,6 +271,11 @@ class ServiceUsageObservers:
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
         for observer in observers:
+            if observer.response_equals is not None and (
+                _resolve_path(response_body, observer.response_equals["path"])
+                != observer.response_equals["equals"]
+            ):
+                continue
             if observer.request_character_count_path:
                 text = _resolve_path(request_body, observer.request_character_count_path)
                 if not isinstance(text, str) or not text:
@@ -273,10 +290,14 @@ class ServiceUsageObservers:
                 continue
             if (
                 observer.quantity_multiplier_path
-                and observer.quantity_multiplier_query_parameter
-                and any(
-                    _query_value_is_truthy(value)
-                    for value in query.get(observer.quantity_multiplier_query_parameter, [])
+                and (
+                    observer.quantity_multiplier_query_parameter is None
+                    or any(
+                        _query_value_is_truthy(value)
+                        for value in query.get(
+                            observer.quantity_multiplier_query_parameter, []
+                        )
+                    )
                 )
             ):
                 try:

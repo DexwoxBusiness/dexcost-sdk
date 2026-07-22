@@ -18,6 +18,7 @@ struct ObserverDefinition {
     domains: Vec<String>,
     endpoints: Vec<String>,
     response_path: Option<String>,
+    response_equals: Option<ResponseEqualsPredicate>,
     request_character_count_path: Option<String>,
     usage_metric: String,
     resource_type: Option<String>,
@@ -41,6 +42,12 @@ struct ObserverDefinition {
 struct QueryPredicate {
     parameter: String,
     operator: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct ResponseEqualsPredicate {
+    path: String,
+    equals: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -176,8 +183,11 @@ impl ServiceUsageObservers {
                             || allowed.is_empty()
                             || allowed.iter().any(|id| id.trim().is_empty())
                     })
-                || (observer.quantity_multiplier_path.is_some()
-                    != observer.quantity_multiplier_query_parameter.is_some())
+                || (observer.quantity_multiplier_query_parameter.is_some()
+                    && observer.quantity_multiplier_path.is_none())
+                || observer.response_equals.as_ref().is_some_and(|predicate| {
+                    predicate.path.is_empty() || predicate.equals.is_empty()
+                })
                 || observer.query_any.iter().any(|predicate| {
                     predicate.parameter.is_empty()
                         || !matches!(predicate.operator.as_str(), "present" | "truthy")
@@ -239,6 +249,12 @@ impl ServiceUsageObservers {
                         }))
             })
             .filter_map(|observer| {
+                if observer.response_equals.as_ref().is_some_and(|predicate| {
+                    resolve_path(body, &predicate.path).and_then(serde_json::Value::as_str)
+                        != Some(predicate.equals.as_str())
+                }) {
+                    return None;
+                }
                 let mut quantity =
                     if let Some(path) = observer.request_character_count_path.as_deref() {
                         let text = request_body
@@ -249,13 +265,16 @@ impl ServiceUsageObservers {
                     } else {
                         positive_decimal(resolve_path(body, observer.response_path.as_deref()?)?)?
                     };
-                if let (Some(path), Some(parameter)) = (
-                    observer.quantity_multiplier_path.as_deref(),
-                    observer.quantity_multiplier_query_parameter.as_deref(),
-                ) {
-                    if query.get(parameter).is_some_and(|values| {
-                        values.iter().any(|value| query_value_is_truthy(value))
-                    }) {
+                if let Some(path) = observer.quantity_multiplier_path.as_deref() {
+                    let apply_multiplier = observer
+                        .quantity_multiplier_query_parameter
+                        .as_deref()
+                        .is_none_or(|parameter| {
+                            query.get(parameter).is_some_and(|values| {
+                                values.iter().any(|value| query_value_is_truthy(value))
+                            })
+                        });
+                    if apply_multiplier {
                         if let Some(multiplier) =
                             resolve_path(body, path).and_then(positive_decimal)
                         {

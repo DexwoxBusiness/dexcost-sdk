@@ -22,6 +22,7 @@ type usageObserverDefinition struct {
 	Domains                          []string              `json:"domains"`
 	Endpoints                        []string              `json:"endpoints"`
 	ResponsePath                     string                `json:"response_path"`
+	ResponseEquals                   *usageResponseEquals  `json:"response_equals"`
 	RequestCharacterCountPath        string                `json:"request_character_count_path"`
 	UsageMetric                      string                `json:"usage_metric"`
 	ResourceType                     string                `json:"resource_type"`
@@ -43,6 +44,11 @@ type usageObserverDefinition struct {
 type usageQueryPredicate struct {
 	Parameter string `json:"parameter"`
 	Operator  string `json:"operator"`
+}
+
+type usageResponseEquals struct {
+	Path   string `json:"path"`
+	Equals string `json:"equals"`
 }
 
 type usageResourceVariant struct {
@@ -135,8 +141,13 @@ func loadUsageObservers() {
 			log.Printf("[dexcost] bundled service usage observers disabled: resource selector without type")
 			return
 		}
-		if (observer.QuantityMultiplierPath == "") != (observer.QuantityMultiplierQueryParameter == "") {
+		if observer.QuantityMultiplierQueryParameter != "" && observer.QuantityMultiplierPath == "" {
 			log.Printf("[dexcost] bundled service usage observers disabled: incomplete quantity multiplier")
+			return
+		}
+		if observer.ResponseEquals != nil &&
+			(observer.ResponseEquals.Path == "" || observer.ResponseEquals.Equals == "") {
+			log.Printf("[dexcost] bundled service usage observers disabled: invalid response predicate")
 			return
 		}
 		if observer.QueryAny != nil && len(observer.QueryAny) == 0 {
@@ -278,6 +289,12 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 	}
 	result := make([]ServiceUsageObservation, 0, len(observers))
 	for _, observer := range observers {
+		if observer.ResponseEquals != nil {
+			value, ok := resolveDottedPath(body, observer.ResponseEquals.Path).(string)
+			if !ok || value != observer.ResponseEquals.Equals {
+				continue
+			}
+		}
 		var quantity decimal.Decimal
 		if observer.RequestCharacterCountPath != "" {
 			text, ok := resolveDottedPath(requestBody, observer.RequestCharacterCountPath).(string)
@@ -292,13 +309,17 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 				continue
 			}
 		}
-		if observer.QuantityMultiplierPath != "" && observer.QuantityMultiplierQueryParameter != "" {
+		if observer.QuantityMultiplierPath != "" {
+			applyMultiplier := observer.QuantityMultiplierQueryParameter == ""
 			for _, value := range parsed.Query()[observer.QuantityMultiplierQueryParameter] {
 				if queryValueIsTruthy(value) {
-					if multiplier, valid := toDecimal(resolveDottedPath(body, observer.QuantityMultiplierPath)); valid && multiplier.IsPositive() {
-						quantity = quantity.Mul(multiplier)
-					}
+					applyMultiplier = true
 					break
+				}
+			}
+			if applyMultiplier {
+				if multiplier, valid := toDecimal(resolveDottedPath(body, observer.QuantityMultiplierPath)); valid && multiplier.IsPositive() {
+					quantity = quantity.Mul(multiplier)
 				}
 			}
 		}

@@ -19,6 +19,11 @@ interface ResourceVariant {
   default_suffix: string;
 }
 
+interface ResponseEqualsPredicate {
+  path: string;
+  equals: string;
+}
+
 interface UsageObserverDefinition {
   service_key: string;
   provider_name: string;
@@ -27,6 +32,7 @@ interface UsageObserverDefinition {
   domains: string[];
   endpoints: string[];
   response_path?: string;
+  response_equals?: ResponseEqualsPredicate;
   request_character_count_path?: string;
   usage_metric: ObservedUsageMetric;
   resource_type?: ObservedResourceType;
@@ -171,8 +177,17 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         !observer.allowed_resource_ids.every((id) => typeof id === "string" && id.length > 0)
       )) ||
       (hasResourceSelector && observer.resource_type === undefined) ||
-      ((observer.quantity_multiplier_path === undefined) !==
-        (observer.quantity_multiplier_query_parameter === undefined)) ||
+      (observer.quantity_multiplier_query_parameter !== undefined &&
+        observer.quantity_multiplier_path === undefined) ||
+      (observer.response_equals !== undefined && (
+        observer.response_equals === null ||
+        typeof observer.response_equals !== "object" ||
+        Object.keys(observer.response_equals).length !== 2 ||
+        typeof observer.response_equals.path !== "string" ||
+        observer.response_equals.path.length === 0 ||
+        typeof observer.response_equals.equals !== "string" ||
+        observer.response_equals.equals.length === 0
+      )) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
         !observer.query_any.every((predicate) =>
@@ -254,6 +269,12 @@ export class ServiceUsageObservers {
     if (matched === undefined) return [];
     const observations: ServiceUsageObservation[] = [];
     for (const observer of matched.observers) {
+      if (
+        observer.response_equals !== undefined &&
+        resolvePath(responseBody, observer.response_equals.path) !== observer.response_equals.equals
+      ) {
+        continue;
+      }
       let quantity: Decimal;
       if (observer.request_character_count_path !== undefined) {
         const text = resolvePath(requestBody, observer.request_character_count_path);
@@ -268,9 +289,9 @@ export class ServiceUsageObservers {
       }
       if (
         observer.quantity_multiplier_path !== undefined &&
-        observer.quantity_multiplier_query_parameter !== undefined &&
-        matched.parsed.searchParams.getAll(observer.quantity_multiplier_query_parameter)
-          .some(queryValueIsTruthy)
+        (observer.quantity_multiplier_query_parameter === undefined ||
+          matched.parsed.searchParams.getAll(observer.quantity_multiplier_query_parameter)
+            .some(queryValueIsTruthy))
       ) {
         const multiplier = positiveDecimal(resolvePath(responseBody, observer.quantity_multiplier_path));
         if (multiplier !== undefined) quantity = quantity.mul(multiplier);
