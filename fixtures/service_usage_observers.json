@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.3.0",
-    "observer_count": 10,
+    "version": "1.4.0",
+    "observer_count": 27,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -163,11 +163,322 @@
       "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
       "endpoints": ["/v2/transcript"],
       "response_path": "audio_duration",
-      "response_equals": { "path": "status", "equals": "completed" },
+      "response_all": [{ "path": "status", "operator": "equals", "value": "completed" }],
       "usage_metric": "audio_seconds",
       "resource_type": "model",
       "resource_path": "speech_model_used",
       "quantity_multiplier_path": "audio_channels",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_keyterm_prompting",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speech_model_used", "operator": "equals", "value": "universal-3-5-pro" },
+        { "path": "keyterms_prompt", "operator": "non_empty" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "keyterm_prompting:universal-3-5-pro",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_prompting",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speech_model_used", "operator": "equals", "value": "universal-3-5-pro" },
+        { "path": "prompt", "operator": "non_empty" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "prompting:universal-3-5-pro",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_speaker_diarization",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speaker_labels", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "speaker_diarization",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_medical_mode",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "domain", "operator": "equals", "value": "medical-v1" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "medical_mode",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_speaker_identification",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speech_understanding.request.speaker_identification", "operator": "non_empty" },
+        { "path": "speech_understanding.response.speaker_identification.status", "operator": "equals", "value": "success" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "speaker_identification",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_translation",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speech_understanding.request.translation", "operator": "non_empty" },
+        { "path": "speech_understanding.response.translation.status", "operator": "equals", "value": "success" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "translation",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_custom_formatting",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "speech_understanding.request.custom_formatting", "operator": "non_empty" },
+        { "path": "speech_understanding.response.custom_formatting.status", "operator": "equals", "value": "success" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "custom_formatting",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_entity_detection",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "entity_detection", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "entity_detection",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_sentiment_analysis",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "sentiment_analysis", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "sentiment_analysis",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_auto_chapters",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "auto_chapters", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "auto_chapters",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_key_phrases",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "auto_highlights", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "key_phrases",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_topic_detection",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "iab_categories", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "topic_detection",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_summarization",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "summarization", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "summarization",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_profanity_filtering",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "filter_profanity", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "profanity_filtering",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_pii_audio_redaction",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "redact_pii_audio", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "pii_audio_redaction",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_pii_text_redaction",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "redact_pii", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "pii_text_redaction",
+      "record_id_path": "id",
+      "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
+    },
+    {
+      "service_key": "assemblyai_content_moderation",
+      "provider_name": "assemblyai",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.assemblyai.com", "api.eu.assemblyai.com"],
+      "endpoints": ["/v2/transcript"],
+      "response_path": "audio_duration",
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "completed" },
+        { "path": "content_safety", "operator": "equals", "value": true }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "content_moderation",
       "record_id_path": "id",
       "source_url": "https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/get"
     }

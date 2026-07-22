@@ -370,6 +370,17 @@ impl EventBuffer {
         }
     }
 
+    /// Returns true when an event identity is already buffered.
+    pub fn contains_event(&self, event_id: &str) -> bool {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM events WHERE event_id = ?1 LIMIT 1",
+                params![event_id],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
     /// Inserts or replaces a task.
     pub fn upsert_task(&mut self, task: Task) {
         let metadata_json =

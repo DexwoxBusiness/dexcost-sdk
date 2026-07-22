@@ -4,9 +4,11 @@ package pricing
 // usage quantities for services withheld from SDK-side pricing.
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -15,30 +17,30 @@ import (
 )
 
 type usageObserverDefinition struct {
-	ServiceKey                       string                `json:"service_key"`
-	ProviderName                     string                `json:"provider_name"`
-	ProviderService                  string                `json:"provider_service"`
-	Component                        string                `json:"component"`
-	Domains                          []string              `json:"domains"`
-	Endpoints                        []string              `json:"endpoints"`
-	ResponsePath                     string                `json:"response_path"`
-	ResponseEquals                   *usageResponseEquals  `json:"response_equals"`
-	RequestCharacterCountPath        string                `json:"request_character_count_path"`
-	UsageMetric                      string                `json:"usage_metric"`
-	ResourceType                     string                `json:"resource_type"`
-	ResourcePath                     string                `json:"resource_path"`
-	RequestResourcePath              string                `json:"request_resource_path"`
-	AllowedResourceIDs               []string              `json:"allowed_resource_ids"`
-	ResourceQueryParameter           string                `json:"resource_query_parameter"`
-	DefaultResourceID                string                `json:"default_resource_id"`
-	FixedResourceID                  string                `json:"fixed_resource_id"`
-	ResourceVariant                  *usageResourceVariant `json:"resource_variant"`
-	QueryAny                         []usageQueryPredicate `json:"query_any"`
-	QuantityMultiplierPath           string                `json:"quantity_multiplier_path"`
-	QuantityMultiplierQueryParameter string                `json:"quantity_multiplier_query_parameter"`
-	RecordIDPath                     string                `json:"record_id_path"`
-	RecordIDHeader                   string                `json:"record_id_header"`
-	SourceURL                        string                `json:"source_url"`
+	ServiceKey                       string                   `json:"service_key"`
+	ProviderName                     string                   `json:"provider_name"`
+	ProviderService                  string                   `json:"provider_service"`
+	Component                        string                   `json:"component"`
+	Domains                          []string                 `json:"domains"`
+	Endpoints                        []string                 `json:"endpoints"`
+	ResponsePath                     string                   `json:"response_path"`
+	ResponseAll                      []usageResponsePredicate `json:"response_all"`
+	RequestCharacterCountPath        string                   `json:"request_character_count_path"`
+	UsageMetric                      string                   `json:"usage_metric"`
+	ResourceType                     string                   `json:"resource_type"`
+	ResourcePath                     string                   `json:"resource_path"`
+	RequestResourcePath              string                   `json:"request_resource_path"`
+	AllowedResourceIDs               []string                 `json:"allowed_resource_ids"`
+	ResourceQueryParameter           string                   `json:"resource_query_parameter"`
+	DefaultResourceID                string                   `json:"default_resource_id"`
+	FixedResourceID                  string                   `json:"fixed_resource_id"`
+	ResourceVariant                  *usageResourceVariant    `json:"resource_variant"`
+	QueryAny                         []usageQueryPredicate    `json:"query_any"`
+	QuantityMultiplierPath           string                   `json:"quantity_multiplier_path"`
+	QuantityMultiplierQueryParameter string                   `json:"quantity_multiplier_query_parameter"`
+	RecordIDPath                     string                   `json:"record_id_path"`
+	RecordIDHeader                   string                   `json:"record_id_header"`
+	SourceURL                        string                   `json:"source_url"`
 }
 
 type usageQueryPredicate struct {
@@ -46,9 +48,17 @@ type usageQueryPredicate struct {
 	Operator  string `json:"operator"`
 }
 
-type usageResponseEquals struct {
-	Path   string `json:"path"`
-	Equals string `json:"equals"`
+type usageResponsePredicate struct {
+	Path     string          `json:"path"`
+	Operator string          `json:"operator"`
+	Value    json.RawMessage `json:"value"`
+}
+
+func (predicate *usageResponsePredicate) UnmarshalJSON(data []byte) error {
+	type rawUsageResponsePredicate usageResponsePredicate
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*rawUsageResponsePredicate)(predicate))
 }
 
 type usageResourceVariant struct {
@@ -145,10 +155,17 @@ func loadUsageObservers() {
 			log.Printf("[dexcost] bundled service usage observers disabled: incomplete quantity multiplier")
 			return
 		}
-		if observer.ResponseEquals != nil &&
-			(observer.ResponseEquals.Path == "" || observer.ResponseEquals.Equals == "") {
-			log.Printf("[dexcost] bundled service usage observers disabled: invalid response predicate")
-			return
+		if observer.ResponseAll != nil {
+			if len(observer.ResponseAll) == 0 {
+				log.Printf("[dexcost] bundled service usage observers disabled: empty response predicate list")
+				return
+			}
+			for _, predicate := range observer.ResponseAll {
+				if !validUsageResponsePredicate(predicate) {
+					log.Printf("[dexcost] bundled service usage observers disabled: invalid response predicate")
+					return
+				}
+			}
 		}
 		if observer.QueryAny != nil && len(observer.QueryAny) == 0 {
 			log.Printf("[dexcost] bundled service usage observers disabled: empty query predicate list")
@@ -204,6 +221,46 @@ func queryValueIsTruthy(value string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func validUsageResponsePredicate(predicate usageResponsePredicate) bool {
+	if predicate.Path == "" {
+		return false
+	}
+	if predicate.Operator == "non_empty" {
+		return len(predicate.Value) == 0
+	}
+	if predicate.Operator != "equals" || len(predicate.Value) == 0 {
+		return false
+	}
+	var value interface{}
+	if err := json.Unmarshal(predicate.Value, &value); err != nil {
+		return false
+	}
+	switch value.(type) {
+	case string, bool:
+		return true
+	default:
+		return false
+	}
+}
+
+func usageResponsePredicateMatches(body map[string]interface{}, predicate usageResponsePredicate) bool {
+	value := resolveDottedPath(body, predicate.Path)
+	if predicate.Operator == "equals" {
+		var expected interface{}
+		return json.Unmarshal(predicate.Value, &expected) == nil && reflect.DeepEqual(value, expected)
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []interface{}:
+		return len(typed) > 0
+	case map[string]interface{}:
+		return len(typed) > 0
+	default:
+		return false
 	}
 }
 
@@ -289,9 +346,15 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 	}
 	result := make([]ServiceUsageObservation, 0, len(observers))
 	for _, observer := range observers {
-		if observer.ResponseEquals != nil {
-			value, ok := resolveDottedPath(body, observer.ResponseEquals.Path).(string)
-			if !ok || value != observer.ResponseEquals.Equals {
+		if len(observer.ResponseAll) > 0 {
+			matched := true
+			for _, predicate := range observer.ResponseAll {
+				if !usageResponsePredicateMatches(body, predicate) {
+					matched = false
+					break
+				}
+			}
+			if !matched {
 				continue
 			}
 		}

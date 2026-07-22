@@ -1,5 +1,5 @@
 {
-  "schema_version": "4",
+  "schema_version": "5",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -109,10 +109,106 @@
       "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "250", "resource_type": "model", "resource_id": "universal-3-5-pro", "provider_record_id": "aa-eu-2" }]
     },
     {
+      "name": "assemblyai_emits_every_observable_billable_addon_with_channel_seconds",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-addons",
+      "headers": {},
+      "response": {
+        "id": "aa-addons",
+        "status": "completed",
+        "audio_duration": 60,
+        "audio_channels": 2,
+        "speech_model_used": "universal-3-5-pro",
+        "keyterms_prompt": ["DexCost"],
+        "prompt": "A customer support conversation",
+        "speaker_labels": true,
+        "domain": "medical-v1",
+        "speech_understanding": {
+          "request": {
+            "speaker_identification": { "speaker_type": "role" },
+            "translation": { "target_languages": ["es"] },
+            "custom_formatting": { "date": "yyyy-mm-dd" }
+          },
+          "response": {
+            "speaker_identification": { "status": "success" },
+            "translation": { "status": "success" },
+            "custom_formatting": { "status": "success" }
+          }
+        },
+        "entity_detection": true,
+        "sentiment_analysis": true,
+        "auto_chapters": true,
+        "auto_highlights": true,
+        "iab_categories": true,
+        "summarization": true,
+        "filter_profanity": true,
+        "redact_pii_audio": true,
+        "redact_pii": true,
+        "content_safety": true
+      },
+      "expected": [
+        { "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "120", "resource_type": "model", "resource_id": "universal-3-5-pro", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_keyterm_prompting", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "keyterm_prompting:universal-3-5-pro", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_prompting", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "prompting:universal-3-5-pro", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_speaker_diarization", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "speaker_diarization", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_medical_mode", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "medical_mode", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_speaker_identification", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "speaker_identification", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_translation", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "translation", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_custom_formatting", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "custom_formatting", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_entity_detection", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "entity_detection", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_sentiment_analysis", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "sentiment_analysis", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_auto_chapters", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "auto_chapters", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_key_phrases", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "key_phrases", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_topic_detection", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "topic_detection", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_summarization", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "summarization", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_profanity_filtering", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "profanity_filtering", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_pii_audio_redaction", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "pii_audio_redaction", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_pii_text_redaction", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "pii_text_redaction", "provider_record_id": "aa-addons" },
+        { "service_key": "assemblyai_content_moderation", "provider_name": "assemblyai", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "60", "resource_type": "sku", "resource_id": "content_moderation", "provider_record_id": "aa-addons" }
+      ]
+    },
+    {
+      "name": "assemblyai_universal_2_included_keyterms_do_not_create_an_addon_line",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-u2-keyterms",
+      "headers": {},
+      "response": { "id": "aa-u2-keyterms", "status": "completed", "audio_duration": 30, "speech_model_used": "universal-2", "keyterms_prompt": ["DexCost"] },
+      "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "30", "resource_type": "model", "resource_id": "universal-2", "provider_record_id": "aa-u2-keyterms" }]
+    },
+    {
+      "name": "assemblyai_empty_or_false_addon_signals_do_not_create_lines",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-empty-addons",
+      "headers": {},
+      "response": { "id": "aa-empty-addons", "status": "completed", "audio_duration": 15, "speech_model_used": "universal-3-5-pro", "keyterms_prompt": [], "prompt": "  ", "speaker_labels": false, "speech_understanding": { "request": {} }, "entity_detection": false, "redact_pii": false },
+      "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "15", "resource_type": "model", "resource_id": "universal-3-5-pro", "provider_record_id": "aa-empty-addons" }]
+    },
+    {
+      "name": "assemblyai_failed_speech_understanding_features_do_not_create_addon_lines",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-failed-understanding",
+      "headers": {},
+      "response": {
+        "id": "aa-failed-understanding",
+        "status": "completed",
+        "audio_duration": 20,
+        "speech_model_used": "universal-3-5-pro",
+        "speech_understanding": {
+          "request": {
+            "speaker_identification": { "speaker_type": "role" },
+            "translation": { "target_languages": ["es"] },
+            "custom_formatting": { "date": "yyyy-mm-dd" }
+          },
+          "response": {
+            "speaker_identification": { "status": "error" },
+            "translation": { "status": "error" },
+            "custom_formatting": { "status": "error" }
+          }
+        }
+      },
+      "expected": [{ "service_key": "assemblyai_transcription", "provider_name": "assemblyai", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "model", "resource_id": "universal-3-5-pro", "provider_record_id": "aa-failed-understanding" }]
+    },
+    {
       "name": "assemblyai_processing_transcript_is_not_final_usage",
       "url": "https://api.assemblyai.com/v2/transcript/aa-processing",
       "headers": {},
-      "response": { "id": "aa-processing", "status": "processing", "audio_duration": 42, "speech_model_used": "universal-2" },
+      "response": { "id": "aa-processing", "status": "processing", "audio_duration": 42, "speech_model_used": "universal-2", "speaker_labels": true, "entity_detection": true },
       "expected": []
     },
     {

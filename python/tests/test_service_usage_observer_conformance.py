@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+from dexcost.adapters.http import (
+    _persist_event,
+    _provider_observation_event_id,
+    clear_recorded_events,
+    get_recorded_events,
+)
+from dexcost.models.event import Event
 from dexcost.service_usage_observers import ServiceUsageObservers
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_provider_observation_id_is_stable_across_sdk_languages() -> None:
+    observation = SimpleNamespace(
+        provider_name="assemblyai",
+        service_key="assemblyai_transcription",
+        provider_record_id="aa-123",
+    )
+    event_id = _provider_observation_event_id(observation)
+    assert str(event_id) == "2dc521b3-742a-5f61-9942-c4a59e6935f6"
+
+
+def test_repeated_provider_observation_identity_is_recorded_once() -> None:
+    clear_recorded_events()
+    event_id = uuid.UUID("2dc521b3-742a-5f61-9942-c4a59e6935f6")
+    _persist_event(Event(event_id=event_id, event_type="external_cost"))
+    _persist_event(Event(event_id=event_id, event_type="external_cost"))
+    assert len(get_recorded_events()) == 1
+    clear_recorded_events()
 
 
 def test_shared_service_usage_observer_conformance() -> None:

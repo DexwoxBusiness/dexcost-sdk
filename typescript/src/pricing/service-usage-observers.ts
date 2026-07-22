@@ -19,9 +19,10 @@ interface ResourceVariant {
   default_suffix: string;
 }
 
-interface ResponseEqualsPredicate {
+interface ResponsePredicate {
   path: string;
-  equals: string;
+  operator: "equals" | "non_empty";
+  value?: string | boolean;
 }
 
 interface UsageObserverDefinition {
@@ -32,7 +33,7 @@ interface UsageObserverDefinition {
   domains: string[];
   endpoints: string[];
   response_path?: string;
-  response_equals?: ResponseEqualsPredicate;
+  response_all?: ResponsePredicate[];
   request_character_count_path?: string;
   usage_metric: ObservedUsageMetric;
   resource_type?: ObservedResourceType;
@@ -115,6 +116,27 @@ function predicateMatches(url: URL, predicate: QueryPredicate): boolean {
     : url.searchParams.getAll(predicate.parameter).some(queryValueIsTruthy);
 }
 
+function responsePredicateMatches(value: unknown, predicate: ResponsePredicate): boolean {
+  const resolved = resolvePath(value, predicate.path);
+  if (predicate.operator === "equals") return resolved === predicate.value;
+  if (typeof resolved === "string") return resolved.trim().length > 0;
+  if (Array.isArray(resolved)) return resolved.length > 0;
+  return resolved !== null && typeof resolved === "object" && Object.keys(resolved).length > 0;
+}
+
+function validResponsePredicate(predicate: unknown): predicate is ResponsePredicate {
+  if (predicate === null || typeof predicate !== "object") return false;
+  const candidate = predicate as Partial<ResponsePredicate>;
+  if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
+  if (candidate.operator === "non_empty") {
+    return Object.keys(candidate).length === 2 && candidate.value === undefined;
+  }
+  return candidate.operator === "equals" &&
+    Object.keys(candidate).length === 3 &&
+    (typeof candidate.value === "string" ||
+      typeof candidate.value === "boolean");
+}
+
 function validateManifest(raw: unknown): UsageObserverManifest {
   if (raw === null || typeof raw !== "object") throw new Error("usage observer manifest must be an object");
   const manifest = raw as Partial<UsageObserverManifest>;
@@ -179,14 +201,10 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       (hasResourceSelector && observer.resource_type === undefined) ||
       (observer.quantity_multiplier_query_parameter !== undefined &&
         observer.quantity_multiplier_path === undefined) ||
-      (observer.response_equals !== undefined && (
-        observer.response_equals === null ||
-        typeof observer.response_equals !== "object" ||
-        Object.keys(observer.response_equals).length !== 2 ||
-        typeof observer.response_equals.path !== "string" ||
-        observer.response_equals.path.length === 0 ||
-        typeof observer.response_equals.equals !== "string" ||
-        observer.response_equals.equals.length === 0
+      (observer.response_all !== undefined && (
+        !Array.isArray(observer.response_all) ||
+        observer.response_all.length === 0 ||
+        !observer.response_all.every(validResponsePredicate)
       )) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
@@ -270,8 +288,9 @@ export class ServiceUsageObservers {
     const observations: ServiceUsageObservation[] = [];
     for (const observer of matched.observers) {
       if (
-        observer.response_equals !== undefined &&
-        resolvePath(responseBody, observer.response_equals.path) !== observer.response_equals.equals
+        observer.response_all !== undefined &&
+        !observer.response_all.every((predicate) =>
+          responsePredicateMatches(responseBody, predicate))
       ) {
         continue;
       }

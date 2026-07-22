@@ -11,7 +11,7 @@
  * Implements US-035 (TypeScript counterpart to the Python HTTP adapter).
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { getCurrentTask, isNetworkEventSuppressed } from "../core/context.js";
@@ -33,7 +33,10 @@ import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { debugLog } from "../core/debug.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
-import { serviceUsageObservers } from "../pricing/service-usage-observers.js";
+import {
+  serviceUsageObservers,
+  type ServiceUsageObservation,
+} from "../pricing/service-usage-observers.js";
 import {
   SessionManager,
   setAmbientSessions,
@@ -49,6 +52,27 @@ import type { PricingEngine, CostResult } from "../pricing/engine.js";
 
 /** Map of domain → { costUsd, per } registered rates (user overrides). */
 const _domainRates = new Map<string, { costUsd: number; per: string }>();
+
+const _PROVIDER_OBSERVATION_NAMESPACE = "5b3d21ce-1c75-5257-946d-967d7ba75ae5";
+
+export function _providerObservationEventId(
+  observation: ServiceUsageObservation,
+): string {
+  if (observation.providerRecordId === undefined) return randomUUID();
+  const name = [
+    observation.providerName,
+    observation.serviceKey,
+    observation.providerRecordId,
+  ].join("|");
+  const namespace = Buffer.from(_PROVIDER_OBSERVATION_NAMESPACE.replaceAll("-", ""), "hex");
+  const bytes = Buffer.from(
+    createHash("sha1").update(namespace).update(name, "utf8").digest().subarray(0, 16),
+  );
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /**
  * Hostnames whose traffic is the SDK's OWN plumbing (event pusher, pricing
@@ -91,12 +115,17 @@ export function _resetInternalHostsForTests(): void {
  */
 const _RECORDED_EVENTS_CAP = 10_000;
 const _recordedEvents: CostEvent[] = [];
+const _recordedEventIds = new Set<string>();
 
-function _pushRecordedEvent(event: CostEvent): void {
+function _pushRecordedEvent(event: CostEvent): boolean {
+  if (_recordedEventIds.has(event.eventId)) return false;
   _recordedEvents.push(event);
+  _recordedEventIds.add(event.eventId);
   if (_recordedEvents.length > _RECORDED_EVENTS_CAP) {
-    _recordedEvents.splice(0, _RECORDED_EVENTS_CAP / 10);
+    const evicted = _recordedEvents.splice(0, _RECORDED_EVENTS_CAP / 10);
+    for (const item of evicted) _recordedEventIds.delete(item.eventId);
   }
+  return true;
 }
 
 /**
@@ -889,6 +918,7 @@ export function getRecordedEvents(): CostEvent[] {
  */
 export function clearRecordedEvents(): void {
   _recordedEvents.length = 0;
+  _recordedEventIds.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1500,7 +1530,8 @@ function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
       // persistence), so no phantom event leaks to the durable store.
       const idx = _recordedEvents.indexOf(ev);
       if (idx !== -1) {
-        _recordedEvents.splice(idx, 1);
+        const [removed] = _recordedEvents.splice(idx, 1);
+        if (removed !== undefined) _recordedEventIds.delete(removed.eventId);
       }
     }
   } finally {
@@ -1758,7 +1789,7 @@ async function _maybeRecordCost(
               ? { attribution_usage_duration_seconds: observation.quantity }
               : {};
             const event = createCostEvent({
-              eventId: randomUUID(),
+              eventId: _providerObservationEventId(observation),
               taskId: task.taskId,
               eventType: "external_cost",
               costUsd: 0,
@@ -1781,8 +1812,7 @@ async function _maybeRecordCost(
                 ...byteDetailsRequestOnly,
               },
             });
-            _pushRecordedEvent(event);
-            if (_buffer) _buffer.addEvent(event);
+            if (_pushRecordedEvent(event) && _buffer) _buffer.addEvent(event);
           }
           if (ctx) ctx._matchedCatalog = true;
           return;

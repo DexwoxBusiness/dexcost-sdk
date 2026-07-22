@@ -22,6 +22,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
@@ -38,6 +39,20 @@ from dexcost.service_usage_observers import get_service_usage_observers
 from dexcost.session import get_session_manager
 
 _log = logging.getLogger(__name__)
+
+_PROVIDER_OBSERVATION_NAMESPACE = uuid.UUID("5b3d21ce-1c75-5257-946d-967d7ba75ae5")
+
+
+def _provider_observation_event_id(observation: Any) -> uuid.UUID:
+    if not observation.provider_record_id:
+        return uuid.uuid4()
+    identity = "|".join((
+        observation.provider_name,
+        observation.service_key,
+        observation.provider_record_id,
+    ))
+    return uuid.uuid5(_PROVIDER_OBSERVATION_NAMESPACE, identity)
+
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -167,7 +182,11 @@ def _persist_event(event: Event) -> None:
     and lightweight setups) and, when a storage backend is wired via
     :func:`set_storage`, also persisted durably so the SyncWorker ships it.
     """
-    _recorded_events.append(event)
+    with _recorded_events_lock:
+        if event.event_id in _recorded_event_ids:
+            return
+        _recorded_event_ids.add(event.event_id)
+        _recorded_events.append(event)
     if _storage is not None:
         try:
             _storage.insert_event(event)
@@ -783,6 +802,7 @@ def _handle_usage_observer(
         if observation.metric == "audio_seconds":
             details["attribution_usage_duration_seconds"] = str(observation.quantity)
         event = Event(
+            event_id=_provider_observation_event_id(observation),
             task_id=task.task_id,
             event_type="external_cost",
             cost_usd=Decimal("0"),
@@ -900,13 +920,18 @@ def _handle_http_call_inner(
 # In a fully-wired setup, users would use CostTracker which handles storage.
 # This list allows tests and simple setups to verify events were recorded.
 _recorded_events: list[Event] = []
+_recorded_event_ids: set[uuid.UUID] = set()
+_recorded_events_lock = threading.Lock()
 
 
 def get_recorded_events() -> list[Event]:
     """Return all events recorded by the HTTP adapter since last clear."""
-    return list(_recorded_events)
+    with _recorded_events_lock:
+        return list(_recorded_events)
 
 
 def clear_recorded_events() -> None:
     """Clear the recorded events list."""
-    _recorded_events.clear()
+    with _recorded_events_lock:
+        _recorded_events.clear()
+        _recorded_event_ids.clear()

@@ -44,6 +44,17 @@ func TestTrackHTTP_ObservesEmbeddingUsageWithoutSyntheticCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	repeated, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.openai.com/v1/embeddings",
+		nil,
+	)
+	repeatedResp, err := client.Do(repeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeatedResp.Body.Close()
 	events := adapters.GetRecordedEvents()
 	if len(events) != 1 {
 		t.Fatalf("expected one usage event, got %d", len(events))
@@ -238,7 +249,7 @@ func TestTrackHTTP_OpenAITTSObservesCharactersWithoutConsumingAudio(t *testing.T
 				"Content-Type": {"audio/mpeg"},
 				"X-Request-Id": {"req-tts-4"},
 			},
-			Body: io.NopCloser(strings.NewReader("audio")),
+			Body:    io.NopCloser(strings.NewReader("audio")),
 			Request: req,
 		}, nil
 	})

@@ -33,6 +33,18 @@ type DomainRate struct {
 // (`adapters/http.py:_MAX_BODY_SIZE`).
 const maxResponseBodySize = 1_000_000
 
+var providerObservationNamespace = uuid.MustParse("5b3d21ce-1c75-5257-946d-967d7ba75ae5")
+
+func providerObservationEventID(observation *pricing.ServiceUsageObservation) uuid.UUID {
+	if observation.ProviderRecordID == "" {
+		return uuid.New()
+	}
+	identity := strings.Join([]string{
+		observation.ProviderName, observation.ServiceKey, observation.ProviderRecordID,
+	}, "|")
+	return uuid.NewSHA1(providerObservationNamespace, []byte(identity))
+}
+
 // defaultNetworkEventThresholdBytes — combined request + response bytes above
 // which an un-cataloged call emits a `network` event. Mirrors Python config
 // `network_event_threshold_bytes = 102_400` (100 KiB). Overridable at Init via
@@ -51,6 +63,7 @@ var (
 
 	recordedEventsMu sync.Mutex
 	recordedEvents   []core.Event
+	recordedEventIDs = make(map[uuid.UUID]struct{})
 
 	catalogMu sync.RWMutex
 	catalog   *pricing.ServiceCatalog
@@ -152,6 +165,7 @@ func ClearRecordedEvents() {
 	recordedEventsMu.Lock()
 	defer recordedEventsMu.Unlock()
 	recordedEvents = nil
+	recordedEventIDs = make(map[uuid.UUID]struct{})
 }
 
 // SetServiceCatalog replaces the active service catalog. Pass nil to disable
@@ -446,6 +460,7 @@ func (t *trackingTransport) recordUsageObservation(
 		return
 	}
 	event := core.NewEvent(taskID, core.EventTypeExternalCost)
+	event.EventID = providerObservationEventID(observation)
 	event.Provider = observation.ProviderName
 	event.ServiceName = observation.ProviderService
 	if observation.ResourceType == "model" {
@@ -478,7 +493,10 @@ func (t *trackingTransport) recordUsageObservation(
 // ships it. autoTask is non-nil only for the per-request auto-task path; it is
 // inserted before its event so storage ordering holds, then finalized.
 func persistEvent(event core.Event, autoTask *core.Task) {
-	storeRecordedEvent(event)
+	if !storeRecordedEvent(event) {
+		finalizeAuto(autoTask, &event, nil)
+		return
+	}
 
 	buf := getEventBuffer()
 	if buf == nil {
@@ -555,14 +573,22 @@ func resolveTaskID(req *http.Request) (uuid.UUID, *core.Task, bool) {
 // maxRecordedEvents; once that ceiling is hit the oldest entries are evicted
 // FIFO so long-lived processes don't accumulate unbounded memory between
 // ClearRecordedEvents calls.
-func storeRecordedEvent(event core.Event) {
+func storeRecordedEvent(event core.Event) bool {
 	recordedEventsMu.Lock()
 	defer recordedEventsMu.Unlock()
+	if _, exists := recordedEventIDs[event.EventID]; exists {
+		return false
+	}
 	recordedEvents = append(recordedEvents, event)
+	recordedEventIDs[event.EventID] = struct{}{}
 	if len(recordedEvents) > maxRecordedEvents {
 		excess := len(recordedEvents) - maxRecordedEvents
+		for _, evicted := range recordedEvents[:excess] {
+			delete(recordedEventIDs, evicted.EventID)
+		}
 		recordedEvents = append(recordedEvents[:0], recordedEvents[excess:]...)
 	}
+	return true
 }
 
 // finalizeAuto closes a per-request auto-created task once its cost event is

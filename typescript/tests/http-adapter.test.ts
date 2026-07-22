@@ -66,6 +66,27 @@ describe("registerDomainRate / getDomainRates", () => {
 });
 
 describe("trackHttp / fetch interception", () => {
+  it("records a repeatedly polled AssemblyAI transcript once", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      id: "aa-poll-1",
+      status: "completed",
+      audio_duration: 12,
+      speech_model_used: "universal-2",
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp();
+    const task = createTask({ taskId: randomUUID(), taskType: "assemblyai-poll" });
+
+    await runWithTask(task, async () => {
+      await fetch("https://api.assemblyai.com/v2/transcript/aa-poll-1");
+      await fetch("https://api.assemblyai.com/v2/transcript/aa-poll-1");
+    });
+
+    const observations = getRecordedEvents().filter(
+      (event) => event.details.attribution_observer_service === "assemblyai_transcription",
+    );
+    expect(observations).toHaveLength(1);
+  });
+
   it("records event when fetch hits registered domain inside a task", async () => {
     const mockResponse = new Response(JSON.stringify({ ok: true }), {
       status: 200,
