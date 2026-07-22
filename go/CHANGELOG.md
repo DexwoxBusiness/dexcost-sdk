@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.7.0...go/v0.8.0) (2026-07-22)
+
+
+### Features
+
+* **attribution:** observe AssemblyAI add-on usage across SDKs ([#110](https://github.com/DexwoxBusiness/dexcost-sdk/issues/110)) ([cfd9609](https://github.com/DexwoxBusiness/dexcost-sdk/commit/cfd96098c5f869de5ad14be91fd3d6fe8565cc6d))
+
 ## [0.7.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.6.0...go/v0.7.0) (2026-07-22)
 
 
