@@ -223,7 +223,7 @@ impl DexcostMiddleware {
             );
         }
         stamp_byte_details(&mut event, byte_details);
-        if events.contains_event(&event.event_id) {
+        if observation.provider_record_id.is_some() && events.contains_event(&event.event_id) {
             return;
         }
         events.add_event(event);
