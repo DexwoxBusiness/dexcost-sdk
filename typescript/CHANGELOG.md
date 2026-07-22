@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.16.0...typescript/v0.17.0) (2026-07-22)
+
+
+### Features
+
+* **attribution:** observe completed AssemblyAI transcripts across SDKs ([#105](https://github.com/DexwoxBusiness/dexcost-sdk/issues/105)) ([36b04de](https://github.com/DexwoxBusiness/dexcost-sdk/commit/36b04de9080e10c5abca4f7b2aa7f7fa46a1f66b))
+
 ## [0.16.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.15.0...typescript/v0.16.0) (2026-07-20)
 
 
