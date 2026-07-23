@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.17.0...typescript/v0.18.0) (2026-07-23)
+
+
+### Features
+
+* **attribution:** observe AssemblyAI add-on usage across SDKs ([#110](https://github.com/DexwoxBusiness/dexcost-sdk/issues/110)) ([cfd9609](https://github.com/DexwoxBusiness/dexcost-sdk/commit/cfd96098c5f869de5ad14be91fd3d6fe8565cc6d))
+
 ## [0.17.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.16.0...typescript/v0.17.0) (2026-07-22)
 
 
