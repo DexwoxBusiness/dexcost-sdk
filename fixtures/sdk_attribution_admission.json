@@ -1,0 +1,143 @@
+{
+  "schema_version": "1",
+  "observer_manifest_version": "1.4.0",
+  "conformance_schema_version": "5",
+  "required_sdks": ["typescript", "python", "go", "rust"],
+  "observers": [
+    {
+      "service_key": "openai_embeddings",
+      "positive_cases": ["openai_embeddings_uses_total_tokens_and_request_id"],
+      "fail_open_cases": ["openai_embeddings_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "cohere_embed",
+      "positive_cases": ["cohere_embed_uses_billed_tokens_and_request_model"],
+      "fail_open_cases": ["cohere_embed_missing_billed_units_is_not_invented"]
+    },
+    {
+      "service_key": "voyage_ai",
+      "positive_cases": ["voyage_contextualized_embeddings_are_observed"],
+      "fail_open_cases": ["voyage_ai_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "jina_embeddings",
+      "positive_cases": ["jina_embeddings_are_observed"],
+      "fail_open_cases": ["zero_usage_is_not_a_billable_observation"]
+    },
+    {
+      "service_key": "openai_tts",
+      "positive_cases": ["openai_tts_counts_unicode_characters_from_the_successful_request"],
+      "fail_open_cases": ["openai_tts_does_not_invent_usage_without_billed_text"]
+    },
+    {
+      "service_key": "deepgram_transcription",
+      "positive_cases": ["deepgram_default_model_is_a_monolingual_batch_sku"],
+      "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "deepgram_diarization",
+      "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
+      "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "deepgram_redaction",
+      "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
+      "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "deepgram_keyterm_prompting",
+      "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
+      "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_transcription",
+      "positive_cases": ["assemblyai_completed_transcript_uses_provider_duration_and_model"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_keyterm_prompting",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_prompting",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_speaker_diarization",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_medical_mode",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_speaker_identification",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_translation",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_custom_formatting",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_entity_detection",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_sentiment_analysis",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_auto_chapters",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_key_phrases",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_topic_detection",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_summarization",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_profanity_filtering",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_pii_audio_redaction",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_pii_text_redaction",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "assemblyai_content_moderation",
+      "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
+      "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    }
+  ]
+}
