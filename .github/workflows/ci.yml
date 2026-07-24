@@ -1,6 +1,6 @@
 name: CI
 
-# DexCost SDK CI uses two blocking layers:
+# DexCost SDK CI uses three blocking layers:
 #
 # 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
 #    that SDK's existing test suite (including bundled catalog drift checks
@@ -10,6 +10,10 @@ name: CI
 # 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
 #    and pricing parity suites and the attribution-v2 contract corpus in all
 #    four languages. A contract regression in any SDK blocks merge.
+#
+# 3. sdk-attribution-admission runs only after all four shared consumers pass.
+#    It rejects observers without exact dimensions, provider API evidence,
+#    positive and fail-open fixtures, or identical packaged manifests.
 #
 # Per-SDK hardening flags pin specific audit findings:
 #   - Go    : -race (catches B13 session race, race conditions in pusher)
@@ -256,3 +260,17 @@ jobs:
           cargo test --test cross_sdk_parity
           cargo test --test attribution_v2_conformance
           cargo test --test service_usage_observer_conformance
+
+  sdk-attribution-admission:
+    name: SDK attribution admission gate
+    needs: cross-sdk-conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test admission policy
+        run: node --test .github/scripts/validate-sdk-attribution-admission.test.mjs
+      - name: Enforce observer admission
+        run: node .github/scripts/validate-sdk-attribution-admission.mjs

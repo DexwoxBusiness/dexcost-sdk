@@ -9,6 +9,13 @@
       "expected": [{ "service_key": "openai_embeddings", "provider_name": "openai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "17", "resource_type": "model", "resource_id": "text-embedding-3-small", "provider_record_id": "req_openai_123" }]
     },
     {
+      "name": "openai_embeddings_missing_usage_is_not_invented",
+      "url": "https://api.openai.com/v1/embeddings",
+      "headers": { "x-request-id": "req_openai_missing_usage" },
+      "response": { "model": "text-embedding-3-small" },
+      "expected": []
+    },
+    {
       "name": "cohere_embed_uses_billed_tokens_and_request_model",
       "url": "https://api.cohere.com/v2/embed",
       "headers": {},
@@ -17,11 +24,26 @@
       "expected": [{ "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-1" }]
     },
     {
+      "name": "cohere_embed_missing_billed_units_is_not_invented",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "search_document" },
+      "response": { "id": "cohere-missing-billed-units", "meta": { "tokens": { "input_tokens": 31 } } },
+      "expected": []
+    },
+    {
       "name": "voyage_contextualized_embeddings_are_observed",
       "url": "https://api.voyageai.com/v1/contextualizedembeddings",
       "headers": {},
       "response": { "model": "voyage-context-3", "usage": { "total_tokens": 41 } },
       "expected": [{ "service_key": "voyage_ai", "provider_name": "voyageai", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "41", "resource_type": "model", "resource_id": "voyage-context-3" }]
+    },
+    {
+      "name": "voyage_ai_missing_usage_is_not_invented",
+      "url": "https://api.voyageai.com/v1/embeddings",
+      "headers": {},
+      "response": { "model": "voyage-4" },
+      "expected": []
     },
     {
       "name": "jina_embeddings_are_observed",
@@ -219,6 +241,43 @@
       "expected": []
     },
     {
+      "name": "assemblyai_missing_duration_is_not_invented",
+      "url": "https://api.assemblyai.com/v2/transcript/aa-missing-duration",
+      "headers": {},
+      "response": {
+        "id": "aa-missing-duration",
+        "status": "completed",
+        "speech_model_used": "universal-3-5-pro",
+        "keyterms_prompt": ["DexCost"],
+        "prompt": "Support call",
+        "speaker_labels": true,
+        "domain": "medical-v1",
+        "speech_understanding": {
+          "request": {
+            "speaker_identification": { "speaker_type": "role" },
+            "translation": { "target_languages": ["es"] },
+            "custom_formatting": { "date": "yyyy-mm-dd" }
+          },
+          "response": {
+            "speaker_identification": { "status": "success" },
+            "translation": { "status": "success" },
+            "custom_formatting": { "status": "success" }
+          }
+        },
+        "entity_detection": true,
+        "sentiment_analysis": true,
+        "auto_chapters": true,
+        "auto_highlights": true,
+        "iab_categories": true,
+        "summarization": true,
+        "filter_profanity": true,
+        "redact_pii_audio": true,
+        "redact_pii": true,
+        "content_safety": true
+      },
+      "expected": []
+    },
+    {
       "name": "wrong_endpoint_is_not_observed",
       "url": "https://api.openai.com/v1/chat/completions",
       "headers": {},
@@ -234,7 +293,7 @@
     },
     {
       "name": "missing_usage_is_not_invented",
-      "url": "https://api.deepgram.com/v1/listen",
+      "url": "https://api.deepgram.com/v1/listen?diarize_model=v2&redact=pci&keyterm=Acme",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-pending" } },
       "expected": []
