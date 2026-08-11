@@ -9,6 +9,7 @@ US-017 (retry detection and waste tracking), and US-033 (trace linking).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import copy
 import functools
@@ -111,6 +112,69 @@ class TrackedTask:
         return self._task
 
     _NON_LLM_EVENT_TYPES = frozenset({"external_cost", "compute_cost"})
+
+    def _stamp_retry_lineage(self, event: Event) -> None:
+        """Persist a retry chain's root operation identity before insertion."""
+        if not event.is_retry or event.retry_of is None:
+            return
+
+        prior_events: dict[uuid.UUID, Event] = {}
+        # Instrumentation remains fail-open. If the source attempt cannot be
+        # loaded, the direct retry link still gives a valid attempt 2.
+        with contextlib.suppress(Exception):
+            prior_events = {
+                prior.event_id: prior
+                for prior in self._storage.query_events(task_id=str(event.task_id))
+            }
+
+        operation_id = str(event.retry_of)
+        attempt_number = 2
+        prior = prior_events.get(event.retry_of)
+        visited = {event.event_id}
+        while prior is not None and prior.event_id not in visited:
+            visited.add(prior.event_id)
+            stored_operation_id = prior.details.get("attribution_operation_id")
+            stored_attempt_number = prior.details.get("attribution_attempt_number")
+            has_stored_operation_id = (
+                isinstance(stored_operation_id, str) and bool(stored_operation_id)
+            )
+            if has_stored_operation_id:
+                operation_id = stored_operation_id
+            if (
+                isinstance(stored_attempt_number, int)
+                and not isinstance(stored_attempt_number, bool)
+                and stored_attempt_number > 0
+            ):
+                attempt_number = stored_attempt_number + 1
+                break
+            if prior.retry_of is None:
+                if not has_stored_operation_id:
+                    operation_id = str(prior.event_id)
+                break
+            if not has_stored_operation_id:
+                operation_id = str(prior.retry_of)
+            attempt_number += 1
+            prior = prior_events.get(prior.retry_of)
+
+        explicit_operation_id = event.details.get("attribution_operation_id")
+        explicit_attempt_number = event.details.get("attribution_attempt_number")
+        event.details = {
+            **event.details,
+            "attribution_operation_id": (
+                explicit_operation_id
+                if isinstance(explicit_operation_id, str)
+                else operation_id
+            ),
+            "attribution_attempt_number": (
+                explicit_attempt_number
+                if (
+                    isinstance(explicit_attempt_number, int)
+                    and not isinstance(explicit_attempt_number, bool)
+                    and explicit_attempt_number > 0
+                )
+                else attempt_number
+            ),
+        }
 
     def record_cost(
         self,
@@ -235,6 +299,7 @@ class TrackedTask:
             retry_reason=reason,
             retry_of=retry_of,
         )
+        self._stamp_retry_lineage(event)
         self._storage.insert_event(event)
         if is_dev_mode():
             log_event(event, self._task.task_type)
@@ -270,6 +335,11 @@ class TrackedTask:
         target.is_retry = False
         target.retry_reason = None
         target.retry_of = None
+        target.details = {
+            **target.details,
+            "attribution_operation_id": str(target.event_id),
+            "attribution_attempt_number": 1,
+        }
         self._storage.update_event(target)
         return target
 
@@ -396,6 +466,7 @@ class TrackedTask:
                 event.retry_reason = prior.details.get("error_type", "unknown")
                 event.retry_of = prior.event_id
 
+        self._stamp_retry_lineage(event)
         self._storage.insert_event(event)
         if is_dev_mode():
             log_event(event, self._task.task_type)
