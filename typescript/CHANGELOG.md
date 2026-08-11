@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.18.0...typescript/v0.19.0) (2026-08-11)
+
+
+### Features
+
+* **typescript:** emit attribution v3 observations ([#117](https://github.com/DexwoxBusiness/dexcost-sdk/issues/117)) ([1ab1f57](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1ab1f57ae108382bdea36efa91a7d2dc81aa15cc))
+
 ## [0.18.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.17.0...typescript/v0.18.0) (2026-07-23)
 
 
