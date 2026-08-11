@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.8.0...go/v0.9.0) (2026-08-11)
+
+
+### Features
+
+* **go:** emit attribution v3 observations ([#121](https://github.com/DexwoxBusiness/dexcost-sdk/issues/121)) ([8904248](https://github.com/DexwoxBusiness/dexcost-sdk/commit/8904248a178ce309f9ae9d7d12b6909ade620028))
+
 ## [0.8.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.7.0...go/v0.8.0) (2026-07-22)
 
 
