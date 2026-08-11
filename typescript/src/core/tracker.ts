@@ -267,7 +267,7 @@ export interface TrackerOptions {
   batchSize?: number;
   /** Interval in milliseconds between background flushes. Defaults to 30000. */
   flushIntervalMs?: number;
-  /** Field names to redact from event details. */
+  /** Field names to redact from event details and logical billing-dimension keys. */
   redactFields?: string[];
   /** Whether to hash customer IDs before storing/sending. */
   hashCustomerId?: boolean;
@@ -386,6 +386,59 @@ export class TrackedTask {
     return this._events;
   }
 
+  /** Persist retry-root identity so later background conversion never guesses lineage. */
+  private _stampRetryLineage(event: CostEvent): void {
+    if (!event.isRetry || typeof event.retryOf !== "string" || event.retryOf.length === 0) return;
+
+    const priorEvents = new Map<string, CostEvent>();
+    try {
+      for (const prior of this._buffer.queryEvents(event.taskId)) {
+        priorEvents.set(prior.eventId, prior);
+      }
+    } catch {
+      // Instrumentation remains fail-open; in-memory history is still usable.
+    }
+    for (const prior of this._events) priorEvents.set(prior.eventId, prior);
+
+    let operationId = event.retryOf;
+    let attemptNumber = 2;
+    let prior = priorEvents.get(event.retryOf);
+    const visited = new Set<string>([event.eventId]);
+    while (prior !== undefined && !visited.has(prior.eventId)) {
+      visited.add(prior.eventId);
+      const storedOperationId = prior.details.attribution_operation_id;
+      const storedAttemptNumber = prior.details.attribution_attempt_number;
+      const hasStoredOperationId = typeof storedOperationId === "string" &&
+        storedOperationId.length > 0;
+      if (hasStoredOperationId) operationId = storedOperationId;
+      if (typeof storedAttemptNumber === "number" &&
+          Number.isInteger(storedAttemptNumber) && storedAttemptNumber > 0) {
+        attemptNumber = storedAttemptNumber + 1;
+        break;
+      }
+      if (typeof prior.retryOf !== "string" || prior.retryOf.length === 0) {
+        if (!hasStoredOperationId) operationId = prior.eventId;
+        break;
+      }
+      if (!hasStoredOperationId) operationId = prior.retryOf;
+      attemptNumber += 1;
+      prior = priorEvents.get(prior.retryOf);
+    }
+
+    const explicitOperationId = event.details.attribution_operation_id;
+    const explicitAttemptNumber = event.details.attribution_attempt_number;
+    event.details = {
+      ...event.details,
+      attribution_operation_id: typeof explicitOperationId === "string"
+        ? explicitOperationId
+        : operationId,
+      attribution_attempt_number: typeof explicitAttemptNumber === "number" &&
+        Number.isInteger(explicitAttemptNumber) && explicitAttemptNumber > 0
+        ? explicitAttemptNumber
+        : attemptNumber,
+    };
+  }
+
   /**
    * Record an LLM call event.
    *
@@ -473,6 +526,8 @@ export class TrackedTask {
         this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
       }
     }
+
+    this._stampRetryLineage(event);
 
     // Persist only after the retry fields have been finalised on `event`.
     this._events.push(event);
@@ -569,6 +624,8 @@ export class TrackedTask {
       retryReason: reason,
       retryOf,
     });
+
+    this._stampRetryLineage(event);
 
     this._events.push(event);
     this._buffer.addEvent(event);
@@ -982,9 +1039,15 @@ export class TrackedTask {
     target.isRetry = false;
     target.retryReason = undefined;
     target.retryOf = undefined;
+    target.details = {
+      ...target.details,
+      attribution_operation_id: target.eventId,
+      attribution_attempt_number: 1,
+    };
     this._task.retryCount = Math.max(0, this._task.retryCount - 1);
     const reversed = this._task.retryCostUsd.minus(target.costUsd);
     this._task.retryCostUsd = reversed.lt(0) ? new Decimal(0) : reversed;
+    this._buffer.updateEvent(target);
     this._buffer.upsertTask(this._task);
     return target;
   }

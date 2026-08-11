@@ -8,13 +8,13 @@ import { createCostEvent } from "../src/core/models.js";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { EventPusher } from "../src/transport/pusher.js";
 
-describe("attribution v2 pusher conformance", () => {
+describe("attribution v3 pusher conformance", () => {
   let buffer: EventBuffer;
   let tempDir: string;
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "dexcost-attribution-v2-"));
+    tempDir = mkdtempSync(join(tmpdir(), "dexcost-attribution-v3-"));
     buffer = new EventBuffer(join(tempDir, "buffer.db"));
   });
 
@@ -54,19 +54,33 @@ describe("attribution v2 pusher conformance", () => {
     expect(body.events.map((event) => event.event_id)).toEqual([valid.eventId]);
   });
 
-  it("acknowledges an observability-only GPU signal without uploading it", async () => {
+  it("uploads GPU utilization as an unpriced v3 observation", async () => {
     buffer.addEvent(createCostEvent({
       eventId: randomUUID(),
       taskId: randomUUID(),
       eventType: "gpu_utilization_signal",
+      details: { gpu_index: 0, gpu_sku: "h100", sm_util_pct: 42 },
     }));
-    globalThis.fetch = vi.fn();
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ accepted: 1, rejected: 0 }), { status: 202 }),
+    );
 
     const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 });
     await pusher.flush();
 
     expect(buffer.pendingCount).toBe(0);
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1];
+    const body = JSON.parse(String(request?.body)) as {
+      events: Array<Record<string, unknown>>;
+    };
+    expect(body.events[0]).toMatchObject({
+      schema_version: "3",
+      component: "gpu",
+      usage_snapshot: "full",
+    });
+    expect(body.events[0]).not.toHaveProperty("cost_evidence");
+    expect(body.events[0]).not.toHaveProperty("details");
   });
 
   it("throttles duplicate background warnings by failing event-set fingerprint", () => {
