@@ -169,6 +169,57 @@ func v3TestEvent(eventType core.EventType) core.Event {
 	return event
 }
 
+func TestValidateObservationV3RejectsNonStringIdentitiesWithoutPanicking(t *testing.T) {
+	_, valid, _ := loadV3Corpus(t)
+	if len(valid) == 0 {
+		t.Fatal("shared v3 corpus has no valid observation")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(map[string]interface{})
+	}{
+		{
+			name: "usage line ID object",
+			mutate: func(event map[string]interface{}) {
+				line := event["usage"].([]interface{})[0].(map[string]interface{})
+				line["line_id"] = map[string]interface{}{"invalid": true}
+			},
+		},
+		{
+			name: "dimension key array",
+			mutate: func(event map[string]interface{}) {
+				line := event["usage"].([]interface{})[0].(map[string]interface{})
+				line["dimensions"] = []interface{}{map[string]interface{}{
+					"key": []interface{}{"invalid"},
+					"value": map[string]interface{}{
+						"type":  "string",
+						"value": "safe",
+					},
+				}}
+			},
+		},
+		{
+			name: "attempt identity arrays",
+			mutate: func(event map[string]interface{}) {
+				attempt := event["operation"].(map[string]interface{})["attempt"].(map[string]interface{})
+				attempt["id"] = []interface{}{"invalid"}
+				attempt["retry_of"] = []interface{}{"invalid"}
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			event := cloneV3Map(t, valid[0].Event)
+			testCase.mutate(event)
+			if result := ValidateObservationV3(event); result.Success {
+				t.Fatal("expected malformed identity to fail validation")
+			}
+		})
+	}
+}
+
 func TestToObservationV3StableUsageAndOperationIdentities(t *testing.T) {
 	event := v3TestEvent(core.EventTypeLLMCall)
 	event.Provider = "anthropic"
@@ -262,5 +313,30 @@ func TestToObservationV3RetainsGPUSignalAsUsageOnly(t *testing.T) {
 	metrics := []string{converted.Usage[0].Metric, converted.Usage[1].Metric}
 	if !reflect.DeepEqual(metrics, []string{"gpu.sm_utilization_percent", "gpu.vram_peak_bytes"}) {
 		t.Fatalf("GPU metrics = %+v", metrics)
+	}
+}
+
+func TestToObservationV3CountsDimensionStringCharacters(t *testing.T) {
+	event := v3TestEvent(core.EventTypeExternalCost)
+	event.ServiceName = "future-provider"
+	event.Details["attribution_component"] = "external"
+	event.Details["attribution_usage_metric"] = "provider_new_meter"
+	event.Details["attribution_usage_unit"] = "Widgets"
+	event.Details["attribution_usage_quantity"] = "1"
+	event.Details["attribution_dimensions"] = []interface{}{map[string]interface{}{
+		"key": "label",
+		"value": map[string]interface{}{
+			"type":  "string",
+			"value": strings.Repeat("界", 256),
+		},
+	}}
+
+	if converted := ToObservationV3(event); converted == nil {
+		t.Fatal("256 Unicode characters must satisfy the schema maxLength")
+	}
+
+	event.Details["attribution_dimensions"].([]interface{})[0].(map[string]interface{})["value"].(map[string]interface{})["value"] = strings.Repeat("界", 257)
+	if converted := ToObservationV3(event); converted != nil {
+		t.Fatal("257 Unicode characters must exceed the schema maxLength")
 	}
 }

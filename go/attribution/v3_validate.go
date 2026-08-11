@@ -124,7 +124,7 @@ func validateV3Semantics(event map[string]interface{}, add func(string, string))
 	}
 
 	usage, _ := event["usage"].([]interface{})
-	lineIDs := make(map[interface{}]struct{}, len(usage))
+	lineIDs := make(map[string]struct{}, len(usage))
 	hasTimeMetric := false
 	for index, raw := range usage {
 		line, ok := raw.(map[string]interface{})
@@ -136,11 +136,12 @@ func validateV3Semantics(event map[string]interface{}, add func(string, string))
 		if !quantityOK || quantityErr != nil || !parsedQuantity.IsPositive() {
 			add(fmt.Sprintf("usage.%d.quantity", index), "Must be a positive plain decimal")
 		}
-		lineID := line["line_id"]
-		if _, exists := lineIDs[lineID]; exists {
-			add(fmt.Sprintf("usage.%d.line_id", index), "Must be unique in a full snapshot")
+		if lineID, ok := line["line_id"].(string); ok {
+			if _, exists := lineIDs[lineID]; exists {
+				add(fmt.Sprintf("usage.%d.line_id", index), "Must be unique in a full snapshot")
+			}
+			lineIDs[lineID] = struct{}{}
 		}
-		lineIDs[lineID] = struct{}{}
 		metric, _ := line["metric"].(string)
 		if unit, known := UnitByMetric[UsageMetric(metric)]; known {
 			if line["unit"] != string(unit) {
@@ -151,17 +152,18 @@ func validateV3Semantics(event map[string]interface{}, add func(string, string))
 			}
 		}
 		dimensions, _ := line["dimensions"].([]interface{})
-		keys := make(map[interface{}]struct{}, len(dimensions))
+		keys := make(map[string]struct{}, len(dimensions))
 		for dimensionIndex, rawDimension := range dimensions {
 			dimension, ok := rawDimension.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			key := dimension["key"]
-			if _, exists := keys[key]; exists {
-				add(fmt.Sprintf("usage.%d.dimensions.%d.key", index, dimensionIndex), "Must be unique within the usage line")
+			if key, ok := dimension["key"].(string); ok {
+				if _, exists := keys[key]; exists {
+					add(fmt.Sprintf("usage.%d.dimensions.%d.key", index, dimensionIndex), "Must be unique within the usage line")
+				}
+				keys[key] = struct{}{}
 			}
-			keys[key] = struct{}{}
 		}
 	}
 
@@ -175,7 +177,9 @@ func validateV3Semantics(event map[string]interface{}, add func(string, string))
 	if attemptNumberOK && attemptNumber > 1 && !hasRetryOf {
 		add("operation.attempt.retry_of", "Later attempts require retry_of")
 	}
-	if attempt["id"] != nil && attempt["id"] == attempt["retry_of"] {
+	attemptID, attemptIDOK := attempt["id"].(string)
+	retryOf, retryOfOK := attempt["retry_of"].(string)
+	if attemptIDOK && retryOfOK && attemptID == retryOf {
 		add("operation.attempt.retry_of", "Attempt cannot retry itself")
 	}
 

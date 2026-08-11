@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/shopspring/decimal"
@@ -96,7 +97,8 @@ func parseV3DimensionValue(value interface{}) (BillingDimensionValueV3, bool) {
 	switch kind {
 	case "string":
 		text, ok := candidate["value"].(string)
-		return BillingDimensionValueV3{Type: kind, Value: text}, ok && len(text) > 0 && len(text) <= 256
+		characterCount := utf8.RuneCountInString(text)
+		return BillingDimensionValueV3{Type: kind, Value: text}, ok && characterCount > 0 && characterCount <= 256
 	case "boolean":
 		boolean, ok := candidate["value"].(bool)
 		return BillingDimensionValueV3{Type: kind, Value: boolean}, ok
