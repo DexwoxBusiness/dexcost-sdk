@@ -75,7 +75,7 @@ function compactUsage(lines: Array<AttributionUsageLineV2 | undefined>): Attribu
   return lines.filter((line): line is AttributionUsageLineV2 => line !== undefined);
 }
 
-function providerFor(event: CostEvent): AttributionProviderIdentityV2 {
+export function attributionProviderFor(event: CostEvent): AttributionProviderIdentityV2 {
   const raw = (event.provider ?? "").toLowerCase();
   let name = canonicalName(event.provider, "unknown");
   let service = "api";
@@ -98,7 +98,7 @@ function providerFor(event: CostEvent): AttributionProviderIdentityV2 {
       else if (billingModel === "lambda" || billingModel === "fargate" || billingModel === "ec2") name = "aws";
       else name = canonicalName(event.provider, "runtime");
       service = canonicalName(billingModel ?? serviceName, "compute");
-    } else if (event.eventType === "gpu_cost") {
+    } else if (event.eventType === "gpu_cost" || event.eventType === "gpu_utilization_signal") {
       name = canonicalName(stringDetail(event.details, "cloud_provider") ?? event.provider, "runtime");
       service = canonicalName(billingModel, "gpu");
     } else if (event.eventType === "network") {
@@ -130,7 +130,7 @@ function providerFor(event: CostEvent): AttributionProviderIdentityV2 {
   return provider;
 }
 
-function resourceFor(event: CostEvent): AttributionResourceV2 | undefined {
+export function attributionResourceFor(event: CostEvent): AttributionResourceV2 | undefined {
   const explicitType = stringDetail(event.details, "attribution_resource_type");
   const explicitId = stringDetail(event.details, "attribution_resource_id");
   if (
@@ -141,7 +141,7 @@ function resourceFor(event: CostEvent): AttributionResourceV2 | undefined {
     return { type: explicitType as AttributionResourceV2["type"], id: explicitId.slice(0, 256) };
   }
   if (event.model) return { type: "model", id: event.model.slice(0, 256) };
-  if (event.eventType === "gpu_cost") {
+  if (event.eventType === "gpu_cost" || event.eventType === "gpu_utilization_signal") {
     const sku = stringDetail(event.details, "gpu_sku", "instance_type");
     if (sku) return { type: "sku", id: sku.slice(0, 256) };
   }
@@ -156,7 +156,7 @@ function resourceFor(event: CostEvent): AttributionResourceV2 | undefined {
   return undefined;
 }
 
-function evidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
+export function attributionEvidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
   const amount = positiveQuantity(event.costUsd);
   if (amount === undefined) return undefined;
   if (event.eventType === "retry_marker") {
@@ -193,7 +193,7 @@ function evidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
   };
 }
 
-function componentAndUsage(event: CostEvent): {
+export function attributionComponentAndUsage(event: CostEvent): {
   component: AttributionComponent;
   usage: AttributionUsageLineV2[];
   durationSeconds?: number;
@@ -290,7 +290,7 @@ function componentAndUsage(event: CostEvent): {
 
 /** Convert the SDK's durable v1 capture model into the strict v2 wire event. */
 export function toAttributionEventV2(event: CostEvent): AttributionEventV2 | null {
-  const mapped = componentAndUsage(event);
+  const mapped = attributionComponentAndUsage(event);
   if (mapped === null) return null;
   if (mapped.usage.length === 0) mapped.usage.push(usageLine("request_count", 1)!);
   const occurredAt = isoCanonical(event.occurredAt);
@@ -303,13 +303,13 @@ export function toAttributionEventV2(event: CostEvent): AttributionEventV2 | nul
     // retries; generating "now" here would change the ledger payload hash.
     observed_at: occurredAt,
     component: mapped.component,
-    provider: providerFor(event),
+    provider: attributionProviderFor(event),
     lifecycle: { state: "final", revision: 1 },
     usage: mapped.usage,
   };
-  const resource = resourceFor(event);
+  const resource = attributionResourceFor(event);
   if (resource !== undefined) converted.resource = resource;
-  const evidence = evidenceFor(event);
+  const evidence = attributionEvidenceFor(event);
   if (evidence !== undefined) converted.cost_evidence = evidence;
   if (event.isRetry && event.retryOf) converted.retry_of = event.retryOf;
   const hasTimeBasedUsage = mapped.usage.some((line) => line.unit.endsWith("Seconds"));

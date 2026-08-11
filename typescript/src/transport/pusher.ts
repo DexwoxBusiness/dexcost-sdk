@@ -6,10 +6,11 @@
  */
 
 import type { CostEvent, Task } from "../core/models.js";
-import type { AttributionEventV2 } from "../attribution/types.js";
+import type { AttributionEventV3 } from "../attribution/v3-types.js";
 import type { TrackerOptions } from "../core/tracker.js";
 import type { EventBuffer } from "./buffer.js";
-import { toAttributionEventV2, toAttributionTaskIngestV1 } from "../attribution/convert.js";
+import { toAttributionTaskIngestV1 } from "../attribution/convert.js";
+import { toAttributionObservationV3 } from "../attribution/v3-convert.js";
 import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
 import { DEFAULT_ENDPOINT } from "../core/endpoint.js";
 
@@ -162,7 +163,7 @@ export class EventPusher {
 
     const batchSize = Math.max(1, this._options.batchSize ?? 100);
     const tasks = this._buffer.getPendingTasks();
-    const wireEvents: AttributionEventV2[] = [];
+    const wireEvents: AttributionEventV3[] = [];
     const failedEventIds: string[] = [];
     const seenEventIds = new Set<string>();
     const scanLimit = Math.max(
@@ -178,7 +179,6 @@ export class EventPusher {
       const pending = this._buffer.getPendingEvents(pageLimit);
       if (pending.length === 0) break;
 
-      const observabilityEventIds: string[] = [];
       const pageFailedEventIds: string[] = [];
       let newlyScanned = 0;
       for (const event of pending) {
@@ -186,16 +186,11 @@ export class EventPusher {
         seenEventIds.add(event.eventId);
         newlyScanned++;
         scanned++;
-        if (event.eventType === "gpu_utilization_signal") {
-          observabilityEventIds.push(event.eventId);
-          continue;
-        }
         const converted = this._serializeEvent(event);
         if (converted === null) pageFailedEventIds.push(event.eventId);
         else wireEvents.push(converted);
       }
 
-      if (observabilityEventIds.length > 0) this._buffer.markSynced(observabilityEventIds);
       if (pageFailedEventIds.length > 0) {
         this._buffer.markQuarantined(pageFailedEventIds);
         failedEventIds.push(...pageFailedEventIds);
@@ -255,7 +250,7 @@ export class EventPusher {
     }
     const preview = eventIds.slice(0, 3).join(", ");
     const error = new Error(
-      `${eventIds.length} event(s) were quarantined because they cannot be represented by attribution v2 (event IDs: ${preview})`,
+      `${eventIds.length} event(s) were quarantined because they cannot be represented by attribution v3 (event IDs: ${preview})`,
     );
     if (surface) throw error;
 
@@ -271,8 +266,8 @@ export class EventPusher {
     }
   }
 
-  /** Convert durable capture into the strict, details-free v2 wire event. */
-  private _serializeEvent(event: CostEvent): AttributionEventV2 | null {
+  /** Convert durable capture into the strict, details-free v3 wire observation. */
+  private _serializeEvent(event: CostEvent): AttributionEventV3 | null {
     // The converter promotes selected detail fields into typed provider and
     // resource fields. Redact before conversion so configured identifiers
     // cannot bypass the field-level policy. Keep durable capture untouched.
@@ -280,7 +275,7 @@ export class EventPusher {
     const sanitized = redactFields && redactFields.length > 0
       ? { ...event, details: redactDict(event.details, redactFields) }
       : event;
-    return toAttributionEventV2(sanitized);
+    return toAttributionObservationV3(sanitized);
   }
 
   /**
@@ -329,7 +324,7 @@ export class EventPusher {
    * published control-plane limit. Task chunks land before dependent events.
    */
   private async pushWithSplit(
-    events: AttributionEventV2[],
+    events: AttributionEventV3[],
     tasks: Task[],
   ): Promise<boolean> {
     let payload: string;

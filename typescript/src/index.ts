@@ -100,6 +100,39 @@ export {
   toAttributionTaskIngestV1,
 } from "./attribution/convert.js";
 
+// Attribution v3 is the only observation contract emitted by the transport.
+export { ATTRIBUTION_V3_CONTRACT_VERSION } from "./attribution/v3-types.js";
+export type {
+  AttributionBillingDimensionValue,
+  AttributionBillingDimension,
+  AttributionUsageMetricV3,
+  AttributionUsageUnitV3,
+  AttributionUsageLineV3,
+  AttributionProviderIdentityV3,
+  AttributionResourceV3,
+  AttributionTraceIdentityV3,
+  AttributionAttemptIdentityV3,
+  AttributionOperationStatusV3,
+  AttributionOperationIdentityV3,
+  AttributionCostEvidenceV3,
+  AttributionLifecycleV3,
+  AttributionUsagePeriodV3,
+  AttributionObservationV3,
+  AttributionEventV3,
+} from "./attribution/v3-types.js";
+export {
+  validateAttributionObservationV3,
+  assertAttributionObservationV3,
+} from "./attribution/v3-validate.js";
+export type {
+  AttributionV3ValidationIssue,
+  AttributionV3ValidationResult,
+} from "./attribution/v3-validate.js";
+export {
+  toAttributionObservationV3,
+  toAttributionEventV3,
+} from "./attribution/v3-convert.js";
+
 // Configuration / API-key validation
 export {
   validateApiKey,
