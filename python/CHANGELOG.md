@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.10.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.9.0...python/v0.10.0) (2026-08-11)
+
+
+### Features
+
+* **python:** emit attribution v3 observations ([#119](https://github.com/DexwoxBusiness/dexcost-sdk/issues/119)) ([f1b0df5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/f1b0df505ac58dac6852adb3a380a0f11646e69b))
+
 ## [0.9.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.8.0...python/v0.9.0) (2026-07-23)
 
 
