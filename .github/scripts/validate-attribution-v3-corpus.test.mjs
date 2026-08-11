@@ -101,3 +101,36 @@ test("rejects privacy fixtures that leak a forbidden value", () => {
     "privacy.hash_task_assignment leaks forbidden value 111-22-3333 into expected output",
   );
 });
+
+test("rejects a valid observation missing a required contract field", () => {
+  const candidate = inputs();
+  delete candidate.corpus.valid_observations[0].event.event_id;
+  expectIssue(
+    validateAttributionV3Corpus(candidate),
+    "observation.final_known_meter valid record fails the observation contract at event_id",
+  );
+});
+
+test("rejects an invalid mutation that has become valid", () => {
+  const candidate = inputs();
+  const testCase = candidate.corpus.invalid_observations.find(
+    (entry) => entry.id === "observation.invalid.reversed_microseconds",
+  );
+  testCase.set = {
+    "usage_period.start_at": "2026-08-11T10:10:00.123456Z",
+    "usage_period.end_at": "2026-08-11T10:10:00.124000Z",
+  };
+  expectIssue(
+    validateAttributionV3Corpus(candidate),
+    "observation.invalid.reversed_microseconds mutation remains valid under the observation contract",
+  );
+});
+
+test("rejects a valid business record missing a required contract field", () => {
+  const candidate = inputs();
+  delete candidate.corpus.business_identities.valid[0].record.task_id;
+  expectIssue(
+    validateAttributionV3Corpus(candidate),
+    "business.identity.child_assignment valid record fails the business_identity contract at task_id",
+  );
+});

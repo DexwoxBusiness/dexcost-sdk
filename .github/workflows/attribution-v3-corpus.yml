@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - name: Install schema validator dependencies
+        run: npm ci --prefix typescript --ignore-scripts
       - name: Test corpus policy
         run: node --test .github/scripts/validate-attribution-v3-corpus.test.mjs
       - name: Enforce corpus integrity

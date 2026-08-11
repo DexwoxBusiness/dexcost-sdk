@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateCorpusContracts } from "./attribution-v3-contract-validator.mjs";
+
 const REQUIRED_SDKS = Object.freeze(["typescript", "python", "go", "rust"]);
 const REQUIRED_COVERAGE = Object.freeze([
   "business.currency_preserved",
@@ -384,6 +386,7 @@ export function validateAttributionV3Corpus({ manifest, corpus }) {
   for (const testCase of corpus?.redaction_cases ?? []) {
     validateRedactionCase(testCase, issues);
   }
+  issues.push(...validateCorpusContracts(corpus));
 
   return [...new Set(issues)].sort();
 }

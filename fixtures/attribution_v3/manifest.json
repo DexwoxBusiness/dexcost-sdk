@@ -11,6 +11,7 @@
   },
   "required_sdks": ["typescript", "python", "go", "rust"],
   "corpus_file": "fixtures/attribution_v3/conformance.json",
+  "schema_file": "fixtures/attribution_v3/schemas.json",
   "required_coverage": [
     "business.currency_preserved",
     "business.outcome_lifecycle",
