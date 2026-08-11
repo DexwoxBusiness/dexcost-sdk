@@ -230,9 +230,8 @@ func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 			break
 		}
 		// Redact before conversion because selected detail fields become typed
-		// provider/resource fields in the v2 payload.
+		// provider/resource/dimension fields in the v3 payload.
 		p.redactEventDetails(events)
-		observabilityEventIDs := make([]string, 0)
 		pageFailedEventIDs := make([]string, 0)
 		newlyScanned := 0
 		for _, event := range events {
@@ -243,11 +242,8 @@ func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 			seenEventIDs[eventID] = struct{}{}
 			newlyScanned++
 			scanned++
-			if event.EventType == core.EventTypeGPUUtilizationSignal {
-				observabilityEventIDs = append(observabilityEventIDs, eventID)
-				continue
-			}
-			converted := attribution.ToEventV2(event)
+
+			converted := attribution.ToEventV3(event)
 			if converted == nil {
 				pageFailedEventIDs = append(pageFailedEventIDs, eventID)
 				continue
@@ -259,9 +255,7 @@ func (p *EventPusher) pushBatch(surfaceConversionErrors bool) error {
 			taskIDSet[event.TaskID.String()] = struct{}{}
 			eventDicts = append(eventDicts, wire)
 		}
-		if err := p.buffer.MarkSynced(observabilityEventIDs); err != nil {
-			return err
-		}
+
 		if len(pageFailedEventIDs) > 0 {
 			quarantine, ok := p.buffer.(eventQuarantineBuffer)
 			if !ok {
@@ -337,7 +331,7 @@ func conversionFailure(eventIDs []string) error {
 		preview = preview[:3]
 	}
 	return fmt.Errorf(
-		"%d event(s) were quarantined because they cannot be represented by attribution v2 (event IDs: %s)",
+		"%d event(s) were quarantined because they cannot be represented by attribution v3 (event IDs: %s)",
 		len(eventIDs),
 		strings.Join(preview, ", "),
 	)
@@ -394,6 +388,9 @@ func (p *EventPusher) redactEventDetails(events []core.Event) {
 	for i := range events {
 		if len(p.redactFields) > 0 && events[i].Details != nil {
 			events[i].Details = security.RedactMap(events[i].Details, p.redactFields)
+			if dimensions, exists := events[i].Details["attribution_dimensions"]; exists {
+				events[i].Details["attribution_dimensions"] = filterRedactedDimensions(dimensions, p.redactFields)
+			}
 		}
 		if p.hashCustomerID {
 			if cid, ok := events[i].Details["customer_id"]; ok {
@@ -406,6 +403,34 @@ func (p *EventPusher) redactEventDetails(events []core.Event) {
 			events[i].Details = security.EnforceMetadataLimit(events[i].Details, 0)
 		}
 	}
+}
+
+func filterRedactedDimensions(raw interface{}, fields []string) interface{} {
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return raw
+	}
+	var candidates []interface{}
+	if err := json.Unmarshal(encoded, &candidates); err != nil {
+		return raw
+	}
+	fieldSet := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		fieldSet[field] = struct{}{}
+	}
+	filtered := make([]interface{}, 0, len(candidates))
+	for _, candidate := range candidates {
+		dimension, ok := candidate.(map[string]interface{})
+		if ok {
+			if key, ok := dimension["key"].(string); ok {
+				if _, redact := fieldSet[key]; redact {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
 }
 
 // redactTaskMetadata applies PII redaction/hashing to task metadata and

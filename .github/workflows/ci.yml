@@ -77,7 +77,7 @@ jobs:
         # -skip introduced in Go 1.20.
         run: >-
           go test -race
-          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)'
+          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3|TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)'
           ./...
 
   typescript:
@@ -241,7 +241,7 @@ jobs:
         working-directory: go
         run: |
           go test -v -run '^TestCrossSDK' .
-          go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2)' ./attribution
+          go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3)' ./attribution
           go test -v -run '^(TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)' ./pricing
 
       - name: Run cross-SDK conformance (typescript)

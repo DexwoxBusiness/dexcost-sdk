@@ -135,7 +135,7 @@ func providerFor(event core.Event) ProviderIdentityV2 {
 				provider.Name = canonicalName(event.Provider, "runtime")
 			}
 			provider.Service = canonicalName(firstNonEmpty(billing, event.ServiceName), "compute")
-		case core.EventTypeGPUCost:
+		case core.EventTypeGPUCost, core.EventTypeGPUUtilizationSignal:
 			provider.Name = canonicalName(firstNonEmpty(stringDetail(event.Details, "cloud_provider"), event.Provider), "runtime")
 			provider.Service = canonicalName(billing, "gpu")
 		case core.EventTypeNetwork:
@@ -183,7 +183,7 @@ func resourceFor(event core.Event) *ResourceV2 {
 	if event.Model != "" {
 		return &ResourceV2{Type: "model", ID: truncate(event.Model, 256)}
 	}
-	if event.EventType == core.EventTypeGPUCost {
+	if event.EventType == core.EventTypeGPUCost || event.EventType == core.EventTypeGPUUtilizationSignal {
 		if sku := stringDetail(event.Details, "gpu_sku", "instance_type"); sku != "" {
 			return &ResourceV2{Type: "sku", ID: truncate(sku, 256)}
 		}

@@ -257,6 +257,70 @@ func (tt *TrackedTask) GetTraceLinks() []map[string]string {
 	return result
 }
 
+// stampRetryLineage persists the root operation and real attempt number before
+// a retry is inserted. Background conversion must never guess a chain from an
+// incomplete upload page.
+func (tt *TrackedTask) stampRetryLineage(event *Event) {
+	if event == nil || !event.IsRetry || event.RetryOf == nil {
+		return
+	}
+	if event.Details == nil {
+		event.Details = make(map[string]interface{})
+	}
+	priorEvents := make(map[uuid.UUID]Event)
+	if events, err := tt.tracker.buffer.QueryEvents(event.TaskID.String()); err == nil {
+		for _, prior := range events {
+			priorEvents[prior.EventID] = prior
+		}
+	}
+
+	operationID := event.RetryOf.String()
+	attemptNumber := 2
+	prior := priorEvents[*event.RetryOf]
+	visited := map[uuid.UUID]struct{}{event.EventID: {}}
+	for prior.EventID != uuid.Nil {
+		if _, seen := visited[prior.EventID]; seen {
+			break
+		}
+		visited[prior.EventID] = struct{}{}
+		storedOperationID, hasStoredOperationID := prior.Details["attribution_operation_id"].(string)
+		if hasStoredOperationID && storedOperationID != "" {
+			operationID = storedOperationID
+		}
+		if storedAttempt, ok := positiveDetailInt(prior.Details["attribution_attempt_number"]); ok {
+			attemptNumber = storedAttempt + 1
+			break
+		}
+		if prior.RetryOf == nil {
+			if !hasStoredOperationID || storedOperationID == "" {
+				operationID = prior.EventID.String()
+			}
+			break
+		}
+		if !hasStoredOperationID || storedOperationID == "" {
+			operationID = prior.RetryOf.String()
+		}
+		attemptNumber++
+		prior = priorEvents[*prior.RetryOf]
+	}
+	if explicit, ok := event.Details["attribution_operation_id"].(string); !ok {
+		event.Details["attribution_operation_id"] = operationID
+	} else {
+		event.Details["attribution_operation_id"] = explicit
+	}
+	if _, ok := positiveDetailInt(event.Details["attribution_attempt_number"]); !ok {
+		event.Details["attribution_attempt_number"] = attemptNumber
+	}
+}
+
+func positiveDetailInt(value interface{}) (int, bool) {
+	parsed, err := decimal.NewFromString(fmt.Sprint(value))
+	if err != nil || !parsed.IsPositive() || !parsed.Equal(parsed.Truncate(0)) || parsed.GreaterThan(decimal.NewFromInt(2_147_483_647)) {
+		return 0, false
+	}
+	return int(parsed.IntPart()), true
+}
+
 // RecordCost records a non-LLM cost event (external_cost) on this task.
 func (tt *TrackedTask) RecordCost(service string, costUSD decimal.Decimal, opts ...EventOption) error {
 	// Sprint 1 Theme B / §2.2.2 1a: nil-tracker check for the no-op
@@ -384,20 +448,20 @@ func (tt *TrackedTask) RecordLLMCall(provider, model string, inputTokens, output
 		event.Details[k] = v
 	}
 
-	if err := tt.tracker.buffer.InsertEvent(event); err != nil {
-		return err
-	}
-
 	if tt.tracker.heuristics != nil {
 		match := tt.tracker.heuristics.Check(event)
 		if match.IsRetry {
 			event.IsRetry = true
 			event.RetryReason = "heuristic"
 			event.RetryOf = match.MatchedEventID
-			if updErr := tt.tracker.buffer.UpdateEvent(event); updErr != nil {
-				log.Printf("[dexcost] failed to update event with retry heuristic: %v", updErr)
-			}
+			event.Details["retry_confidence"] = match.Confidence
 		}
+	}
+	tt.stampRetryLineage(&event)
+	if err := tt.tracker.buffer.InsertEvent(event); err != nil {
+		return err
+	}
+	if tt.tracker.heuristics != nil {
 		tt.tracker.heuristics.Record(event)
 	}
 
@@ -466,6 +530,7 @@ func (tt *TrackedTask) MarkRetry(reason string, opts ...RetryOption) error {
 	if rcfg.costUSD != nil {
 		event.CostUSD = *rcfg.costUSD
 	}
+	tt.stampRetryLineage(&event)
 
 	return tt.tracker.buffer.InsertEvent(event)
 }
@@ -512,6 +577,11 @@ func (tt *TrackedTask) MarkNotRetry(eventID uuid.UUID) error {
 	target.IsRetry = false
 	target.RetryReason = ""
 	target.RetryOf = nil
+	if target.Details == nil {
+		target.Details = make(map[string]interface{})
+	}
+	target.Details["attribution_operation_id"] = target.EventID.String()
+	target.Details["attribution_attempt_number"] = 1
 	return tt.tracker.buffer.UpdateEvent(*target)
 }
 

@@ -92,7 +92,7 @@ func TestPusherDoesNotResendSyncedTaskForLaterEvent(t *testing.T) {
 	}
 }
 
-func TestPusherSendsStrictAttributionV2AndIngestionOnlyTask(t *testing.T) {
+func TestPusherSendsStrictAttributionV3AndIngestionOnlyTask(t *testing.T) {
 	var received map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -123,8 +123,8 @@ func TestPusherSendsStrictAttributionV2AndIngestionOnlyTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventWire := received["events"].([]interface{})[0].(map[string]interface{})
-	if eventWire["schema_version"] != "2" {
-		t.Fatalf("not v2: %+v", eventWire)
+	if eventWire["schema_version"] != "3" {
+		t.Fatalf("not v3: %+v", eventWire)
 	}
 	if _, ok := eventWire["details"]; ok {
 		t.Fatal("event details leaked")
@@ -161,6 +161,10 @@ func TestPusherRedactsDetailsBeforeAttributionConversion(t *testing.T) {
 	event.Details["gpu_sku"] = secretGPUSKU
 	event.Details["gpu_seconds_used"] = 1
 	event.Details["billing_model"] = "per_gpu_second_active"
+	event.Details["attribution_dimensions"] = []interface{}{
+		map[string]interface{}{"key": "ssn", "value": map[string]interface{}{"type": "string", "value": "123-45-6789"}},
+		map[string]interface{}{"key": "billing_tier", "value": map[string]interface{}{"type": "string", "value": "pro"}},
+	}
 	if err := buffer.InsertEvent(event); err != nil {
 		t.Fatal(err)
 	}
@@ -170,18 +174,21 @@ func TestPusherRedactsDetailsBeforeAttributionConversion(t *testing.T) {
 		Endpoint:     server.URL,
 		APIKey:       "test",
 		Interval:     time.Hour,
-		RedactFields: []string{"request_id", "gpu_sku"},
+		RedactFields: []string{"request_id", "gpu_sku", "ssn"},
 	})
 	defer pusher.Stop()
 	if err := pusher.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	payload := string(received)
-	if strings.Contains(payload, secretRequestID) || strings.Contains(payload, secretGPUSKU) {
+	if strings.Contains(payload, secretRequestID) || strings.Contains(payload, secretGPUSKU) || strings.Contains(payload, "123-45-6789") {
 		t.Fatalf("redacted attribution detail leaked into wire payload: %s", payload)
 	}
 	if !strings.Contains(payload, "[REDACTED]") {
 		t.Fatalf("expected typed attribution fields to contain redaction marker: %s", payload)
+	}
+	if strings.Contains(payload, `"key":"ssn"`) || !strings.Contains(payload, `"key":"billing_tier"`) {
+		t.Fatalf("logical billing-dimension redaction was not applied: %s", payload)
 	}
 }
 
@@ -319,11 +326,13 @@ func TestPusherQuarantinesInvalidPrefixAndDeliversValidSibling(t *testing.T) {
 	}
 }
 
-func TestPusherAcknowledgesObservabilitySignalWithoutUpload(t *testing.T) {
+func TestPusherUploadsGPUUtilizationAsUsageOnly(t *testing.T) {
 	requests := 0
+	var received map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		_ = json.NewEncoder(w).Encode(map[string]int{"queued": 1, "rejected": 0})
 	}))
 	defer server.Close()
 	buffer, err := NewSQLiteBuffer(tempDB(t))
@@ -348,8 +357,15 @@ func TestPusherAcknowledgesObservabilitySignalWithoutUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending, err := buffer.QueryPendingEvents(10)
-	if err != nil || len(pending) != 0 || requests != 0 {
-		t.Fatalf("observability signal was not locally acknowledged: %v pending=%d requests=%d", err, len(pending), requests)
+	if err != nil || len(pending) != 0 || requests != 1 {
+		t.Fatalf("GPU signal was not uploaded once: %v pending=%d requests=%d", err, len(pending), requests)
+	}
+	wire := received["events"].([]interface{})[0].(map[string]interface{})
+	if wire["schema_version"] != "3" || wire["component"] != "gpu" {
+		t.Fatalf("GPU signal was not emitted as attribution v3: %+v", wire)
+	}
+	if _, exists := wire["cost_evidence"]; exists {
+		t.Fatalf("GPU utilization signal must stay non-monetary: %+v", wire)
 	}
 }
 
