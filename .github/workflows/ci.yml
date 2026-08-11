@@ -8,7 +8,7 @@ name: CI
 #    excludes the parity/conformance files exercised once in the shared gate.
 #
 # 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
-#    and pricing parity suites and the attribution-v2 contract corpus in all
+#    and pricing parity suites and the active attribution contract corpora in all
 #    four languages. A contract regression in any SDK blocks merge.
 #
 # 3. sdk-attribution-admission runs only after all four shared consumers pass.
@@ -58,6 +58,7 @@ jobs:
           python -m pytest tests/
           --ignore=tests/test_cross_sdk_parity.py
           --ignore=tests/test_attribution_v2_conformance.py
+          --ignore=tests/test_attribution_v3_conformance.py
           --ignore=tests/test_service_usage_observer_conformance.py
           -v
 
@@ -231,6 +232,7 @@ jobs:
           python -m pytest \
             tests/test_cross_sdk_parity.py \
             tests/test_attribution_v2_conformance.py \
+            tests/test_attribution_v3_conformance.py \
             tests/test_service_usage_observer_conformance.py \
             -v
 

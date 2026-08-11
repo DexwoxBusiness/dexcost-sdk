@@ -19,10 +19,8 @@ from email.message import Message
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from dexcost.attribution.convert import (
-    to_attribution_event_v2,
-    to_attribution_task_ingest_v1,
-)
+from dexcost.attribution.convert import to_attribution_task_ingest_v1
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 
 if TYPE_CHECKING:
@@ -45,14 +43,14 @@ class _AttributionBatchRejectedError(RuntimeError):
 
 
 class _AttributionConversionError(RuntimeError):
-    """One or more durable events cannot be represented by attribution v2."""
+    """One or more durable events cannot be represented by attribution v3."""
 
     def __init__(self, event_ids: list[str]) -> None:
         self.event_ids = tuple(sorted(event_ids))
         preview = ", ".join(event_ids[:3])
         super().__init__(
             f"{len(event_ids)} event(s) were quarantined because they cannot be "
-            f"represented by attribution v2 (event IDs: {preview})"
+            f"represented by attribution v3 (event IDs: {preview})"
         )
 
 
@@ -234,7 +232,6 @@ class SyncWorker:
             if not events:
                 break
 
-            observability_event_ids: list[str] = []
             page_failed_event_ids: list[str] = []
             newly_scanned = 0
             for event in events:
@@ -244,17 +241,12 @@ class SyncWorker:
                 seen_event_ids.add(event_id)
                 newly_scanned += 1
                 scanned += 1
-                if event.event_type == "gpu_utilization_signal":
-                    observability_event_ids.append(event_id)
-                    continue
                 converted = self._prepare_event_dict(event)
                 if converted is None:
                     page_failed_event_ids.append(event_id)
                 else:
                     event_dicts.append(converted)
 
-            if observability_event_ids:
-                st.mark_synced(observability_event_ids)
             if page_failed_event_ids:
                 st.mark_quarantined(page_failed_event_ids)
                 failed_event_ids.extend(page_failed_event_ids)
@@ -366,10 +358,10 @@ class SyncWorker:
                     container[key] = hash_value(val)
 
     def _prepare_event_dict(self, event: Any) -> dict[str, Any] | None:
-        """Convert one event to the strict, details-free v2 wire contract.
+        """Convert one event to the strict, details-free v3 wire contract.
 
         Arbitrary ``details`` never cross the process boundary. The converter
-        reads only the accounting allow-list needed by attribution v2.
+        reads only the accounting allow-list needed by attribution v3.
         """
         sanitized = event
         if self._config.redact_fields and isinstance(event.details, dict):
@@ -379,7 +371,19 @@ class SyncWorker:
             # configured field-level redaction.
             sanitized = copy.copy(event)
             sanitized.details = redact_dict(event.details, self._config.redact_fields)
-        return cast(dict[str, Any] | None, to_attribution_event_v2(sanitized))
+            dimensions = sanitized.details.get("attribution_dimensions")
+            if isinstance(dimensions, list):
+                # Billing dimensions promote values from an array, so redact
+                # by the logical dimension key before v3 conversion.
+                sanitized.details["attribution_dimensions"] = [
+                    candidate
+                    for candidate in dimensions
+                    if not (
+                        isinstance(candidate, dict)
+                        and candidate.get("key") in self._config.redact_fields
+                    )
+                ]
+        return cast(dict[str, Any] | None, to_attribution_observation_v3(sanitized))
 
     def _prepare_task_dict(self, task: Any) -> dict[str, Any]:
         """Serialise a task and apply the same redaction policy as events.
@@ -516,7 +520,7 @@ class SyncWorker:
                     rejected = result.get("rejected", 0)
                     if isinstance(rejected, (int, float)) and rejected > 0:
                         _log.warning(
-                            "Control plane rejected %s item(s) from an attribution-v2 batch",
+                            "Control plane rejected %s item(s) from an attribution-v3 batch",
                             rejected,
                         )
                         return False

@@ -1,0 +1,1398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/attribution/conformance-v3.json",
+  "generated_from": {
+    "repository": "DexwoxBusiness/dexcost-control-plane",
+    "observation": "server/src/api/attribution-observation-openapi.ts",
+    "business": "server/src/api/business-attribution-openapi.ts"
+  },
+  "components": {
+    "schemas": {
+      "AttributionBillingDimensionValue": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean"
+                ]
+              },
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "integer"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^-?(?:0|[1-9]\\d{0,25})$"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "decimal"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^-?(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
+        },
+        "x-dexcost-value-types": [
+          "string",
+          "boolean",
+          "integer",
+          "decimal"
+        ]
+      },
+      "AttributionBillingDimension": {
+        "type": "object",
+        "description": "Typed, queryable billing selector. Dimension keys must be unique within one usage line.",
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "value": {
+            "$ref": "#/components/schemas/AttributionBillingDimensionValue"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionUsageLine": {
+        "type": "object",
+        "description": "One observed consumed quantity. Known metrics enforce their canonical unit; unknown metrics remain visible without producing money.",
+        "properties": {
+          "line_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identity for one metric and dimension stream across full revisions."
+          },
+          "metric": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128,
+            "description": "Extensible canonical meter. Unknown meters are accepted and surfaced as unpriced."
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^(?=.*[1-9])(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$",
+            "description": "Positive plain decimal string. JSON numbers, zero, negatives, whitespace, and scientific notation are rejected."
+          },
+          "unit": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._{}/*^+-]{0,63}$",
+            "maxLength": 64
+          },
+          "dimensions": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "$ref": "#/components/schemas/AttributionBillingDimension"
+            }
+          }
+        },
+        "required": [
+          "line_id",
+          "metric",
+          "quantity",
+          "unit",
+          "dimensions"
+        ],
+        "additionalProperties": false,
+        "x-dexcost-known-metrics": [
+          "input_tokens",
+          "output_tokens",
+          "cache_read_input_tokens",
+          "cache_write_input_tokens",
+          "reasoning_output_tokens",
+          "characters",
+          "audio_seconds",
+          "connected_seconds",
+          "recording_seconds",
+          "agent_seconds",
+          "compute_seconds",
+          "vcpu_seconds",
+          "memory_gib_seconds",
+          "gpu_seconds",
+          "request_count",
+          "call_count",
+          "bytes_in",
+          "bytes_out",
+          "image_count",
+          "page_count",
+          "credit_count"
+        ],
+        "x-dexcost-known-units": [
+          "Tokens",
+          "Characters",
+          "Seconds",
+          "vCPU-Seconds",
+          "GiB-Seconds",
+          "GPU-Seconds",
+          "Requests",
+          "Calls",
+          "Bytes",
+          "Images",
+          "Pages",
+          "Credits"
+        ],
+        "x-dexcost-unit-by-metric": {
+          "input_tokens": "Tokens",
+          "output_tokens": "Tokens",
+          "cache_read_input_tokens": "Tokens",
+          "cache_write_input_tokens": "Tokens",
+          "reasoning_output_tokens": "Tokens",
+          "characters": "Characters",
+          "audio_seconds": "Seconds",
+          "connected_seconds": "Seconds",
+          "recording_seconds": "Seconds",
+          "agent_seconds": "Seconds",
+          "compute_seconds": "Seconds",
+          "vcpu_seconds": "vCPU-Seconds",
+          "memory_gib_seconds": "GiB-Seconds",
+          "gpu_seconds": "GPU-Seconds",
+          "request_count": "Requests",
+          "call_count": "Calls",
+          "bytes_in": "Bytes",
+          "bytes_out": "Bytes",
+          "image_count": "Images",
+          "page_count": "Pages",
+          "credit_count": "Credits"
+        }
+      },
+      "AttributionProviderIdentity": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "service": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Opaque provider lifecycle identifier; must not contain phone numbers, prompts, or other customer content."
+          },
+          "region": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "name",
+          "service"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "model",
+              "sku",
+              "instance",
+              "endpoint",
+              "session",
+              "other"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionTraceIdentity": {
+        "type": "object",
+        "description": "Optional W3C trace correlation identity.",
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "span_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          }
+        },
+        "required": [
+          "trace_id",
+          "span_id"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionAttemptIdentity": {
+        "type": "object",
+        "description": "Stable attempt identity. Attempt 1 cannot carry retry_of; later attempts require it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "retry_of": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "number"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionOperationIdentity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "in_progress",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "attempt": {
+            "$ref": "#/components/schemas/AttributionAttemptIdentity"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/AttributionTraceIdentity"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "attempt"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionCostEvidence": {
+        "type": "object",
+        "description": "Non-authoritative cost evidence. Customer-visible value is selected by the control plane.",
+        "properties": {
+          "amount": {
+            "type": "string",
+            "pattern": "^(?=.*[1-9])(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$",
+            "description": "Positive plain decimal string. JSON numbers, zero, negatives, whitespace, and scientific notation are rejected."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "provider_reported",
+              "sdk_catalog",
+              "sdk_rate_registry",
+              "manual"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "computed",
+              "estimated",
+              "unknown"
+            ]
+          },
+          "pricing_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "amount",
+          "currency",
+          "source",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionLifecycle": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "provisional",
+              "final",
+              "voided"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "state",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionUsagePeriod": {
+        "type": "object",
+        "description": "Observed consumption period. end_at cannot precede start_at at microsecond precision.",
+        "properties": {
+          "start_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "end_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          }
+        },
+        "required": [
+          "start_at"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionObservation": {
+        "type": "object",
+        "description": "Canonical observation revision. Successful final observations require provider-observed usage. Failed, cancelled, or unknown final operations may carry an empty usage snapshot and remain visibly unpriced; clients must not invent usage or zero cost. Observed usage, pricing evidence, and customer-visible server valuation remain separate.",
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "3"
+            ]
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identity for one component observation stream across revisions."
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "component": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "telephony",
+              "voice_platform",
+              "speech_to_text",
+              "text_to_speech",
+              "realtime_transport",
+              "recording",
+              "post_call_analysis",
+              "compute",
+              "gpu",
+              "network",
+              "storage",
+              "external"
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AttributionProviderIdentity"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/AttributionResource"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/AttributionOperationIdentity"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AttributionLifecycle"
+          },
+          "usage_snapshot": {
+            "type": "string",
+            "enum": [
+              "full"
+            ],
+            "description": "Every revision is a complete snapshot; omitted line IDs are no longer asserted by that revision."
+          },
+          "usage_period": {
+            "$ref": "#/components/schemas/AttributionUsagePeriod"
+          },
+          "usage": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/AttributionUsageLine"
+            }
+          },
+          "cost_evidence": {
+            "$ref": "#/components/schemas/AttributionCostEvidence"
+          }
+        },
+        "required": [
+          "schema_version",
+          "event_id",
+          "task_id",
+          "occurred_at",
+          "observed_at",
+          "component",
+          "provider",
+          "operation",
+          "lifecycle",
+          "usage_snapshot",
+          "usage"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionTaskIngestV1": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "success",
+              "failed"
+            ],
+            "default": "pending"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits.",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "default": {}
+          },
+          "customer_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "project_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "parent_task_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "experiment_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "variant": {
+            "type": "string",
+            "nullable": true
+          },
+          "schema_version": {
+            "type": "string",
+            "default": "1"
+          }
+        },
+        "required": [
+          "task_id",
+          "started_at"
+        ],
+        "additionalProperties": true,
+        "description": "Task metadata upsert. Unknown extension fields are accepted but discarded; attribution data must use strict AttributionObservation records."
+      },
+      "AttributionEventsIngestRequest": {
+        "type": "object",
+        "description": "Observation entries are validated independently; valid siblings are queued when another item fails runtime validation.",
+        "properties": {
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionObservation"
+            }
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionTasksIngestRequest": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionTaskIngestV1"
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionMixedIngestRequest": {
+        "type": "object",
+        "description": "At least one record is required. Validation errors retain flattened indexes across all six streams.",
+        "properties": {
+          "events": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributionObservation"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributionTaskIngestV1"
+            }
+          },
+          "business_identities": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributionBusinessIdentityRevision"
+            }
+          },
+          "outcomes": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributionOutcomeRevision"
+            }
+          },
+          "revenue_revisions": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttributionRevenueRevision"
+            }
+          },
+          "cost_pools": {
+            "type": "array",
+            "default": [],
+            "items": {},
+            "description": "Entries are validated independently at runtime.",
+            "x-dexcost-item-schema": {
+              "$ref": "#/components/schemas/AttributionBillingPeriodCostPoolRevision"
+            }
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "events"
+            ],
+            "properties": {
+              "events": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "tasks"
+            ],
+            "properties": {
+              "tasks": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "business_identities"
+            ],
+            "properties": {
+              "business_identities": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "outcomes"
+            ],
+            "properties": {
+              "outcomes": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "revenue_revisions"
+            ],
+            "properties": {
+              "revenue_revisions": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "cost_pools"
+            ],
+            "properties": {
+              "cost_pools": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      },
+      "AttributionIngestValidationError": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Flattened mixed-ingest index in events, tasks, business_identities, outcomes, revenue_revisions, then cost_pools order."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "index",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionIngestAccepted": {
+        "type": "object",
+        "properties": {
+          "receipt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributionIngestValidationError"
+            }
+          }
+        },
+        "required": [
+          "receipt_id",
+          "queued",
+          "rejected",
+          "errors"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionIngestRejected": {
+        "type": "object",
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "errors": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionIngestValidationError"
+            }
+          }
+        },
+        "required": [
+          "queued",
+          "rejected",
+          "errors"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionIngestError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionIngestPayloadTooLarge": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit_kind": {
+            "type": "string",
+            "enum": [
+              "http_transport",
+              "queue_message"
+            ]
+          },
+          "max_bytes": {
+            "type": "integer",
+            "enum": [
+              128000,
+              10485760
+            ]
+          }
+        },
+        "required": [
+          "error",
+          "limit_kind",
+          "max_bytes"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionIngestRateLimitError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retry_after_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "error",
+          "retry_after_ms"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionBusinessValue": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean"
+                ]
+              },
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "integer"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^-?(?:0|[1-9]\\d{0,25})$"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "decimal"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^-?(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
+        },
+        "x-dexcost-value-types": [
+          "string",
+          "boolean",
+          "integer",
+          "decimal"
+        ]
+      },
+      "AttributionBusinessTaskHierarchy": {
+        "type": "object",
+        "description": "A root task identifies itself as root and has no parent; child tasks require a different root and parent.",
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "root_task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_task_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "task_type",
+          "root_task_id"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionBusinessWorkflowIdentity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionBusinessAgentIdentity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionBusinessAssignment": {
+        "type": "object",
+        "description": "Full assignment snapshot. Omitted optional fields clear the prior assignment; variant requires experiment_id.",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "experiment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "variant": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "AttributionBusinessIdentityRevision": {
+        "type": "object",
+        "description": "Append-only full snapshot of task hierarchy, agent identity, workflow, and business assignment. Corrections never rewrite provider observations.",
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "1"
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "effective_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "identity_snapshot": {
+            "type": "string",
+            "enum": [
+              "full"
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/AttributionBusinessTaskHierarchy"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/AttributionBusinessWorkflowIdentity"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/AttributionBusinessAgentIdentity"
+          },
+          "assignment": {
+            "$ref": "#/components/schemas/AttributionBusinessAssignment"
+          }
+        },
+        "required": [
+          "schema_version",
+          "task_id",
+          "revision",
+          "effective_at",
+          "observed_at",
+          "identity_snapshot",
+          "task",
+          "assignment"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionOutcomeLifecycle": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "achieved",
+              "missed",
+              "voided"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "state",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionOutcomeRevision": {
+        "type": "object",
+        "description": "Revisioned business result. Pending and voided outcomes carry no value; explicit corrections remain replayable.",
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "1"
+            ]
+          },
+          "outcome_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "effective_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AttributionOutcomeLifecycle"
+          },
+          "value": {
+            "$ref": "#/components/schemas/AttributionBusinessValue"
+          }
+        },
+        "required": [
+          "schema_version",
+          "outcome_id",
+          "task_id",
+          "name",
+          "effective_at",
+          "observed_at",
+          "lifecycle"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionRevenueLifecycle": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "provisional",
+              "recognized",
+              "voided"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "state",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionRevenueAmount": {
+        "type": "object",
+        "description": "Exact non-negative revenue amount. Currencies are never implicitly converted or combined.",
+        "properties": {
+          "value": {
+            "type": "string",
+            "pattern": "^(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$"
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "minLength": 3,
+            "maxLength": 3
+          }
+        },
+        "required": [
+          "value",
+          "currency"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionRevenueSource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "sdk",
+              "workspace_api",
+              "import",
+              "manual"
+            ]
+          },
+          "record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionRevenueRevision": {
+        "type": "object",
+        "description": "Task/outcome-linked revisioned revenue. Refunds and adjustments are intentionally deferred to the debit/credit contract.",
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "1"
+            ]
+          },
+          "revenue_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "effective_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AttributionRevenueLifecycle"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/AttributionRevenueAmount"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AttributionRevenueSource"
+          }
+        },
+        "required": [
+          "schema_version",
+          "revenue_id",
+          "task_id",
+          "effective_at",
+          "observed_at",
+          "lifecycle",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionBusinessIdentitiesIngestRequest": {
+        "type": "object",
+        "properties": {
+          "business_identities": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionBusinessIdentityRevision"
+            }
+          }
+        },
+        "required": [
+          "business_identities"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionOutcomesIngestRequest": {
+        "type": "object",
+        "properties": {
+          "outcomes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionOutcomeRevision"
+            }
+          }
+        },
+        "required": [
+          "outcomes"
+        ],
+        "additionalProperties": false
+      },
+      "AttributionRevenueRevisionsIngestRequest": {
+        "type": "object",
+        "properties": {
+          "revenue_revisions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/AttributionRevenueRevision"
+            }
+          }
+        },
+        "required": [
+          "revenue_revisions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

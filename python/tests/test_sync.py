@@ -288,20 +288,27 @@ class TestSyncBatch:
         assert storage.query_pending_tasks_for_sync() == []
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_observability_only_event_is_acknowledged_without_post(
+    def test_gpu_observation_is_uploaded_without_cost_evidence(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
-        """Non-billable signals cannot poison the durable pending queue."""
+        """GPU telemetry is durable usage, not an acknowledged local-only signal."""
+        mock_urlopen.return_value = _mock_urlopen_success()
         storage = _make_storage(tmp_path)
-        event = _make_event()
+        event = _make_event(details={"gpu_index": 0, "gpu_sku": "h100", "sm_util_pct": 42})
         event.event_type = "gpu_utilization_signal"
         storage.insert_event(event)
 
         worker = SyncWorker(config=_make_config(), storage=storage)
-        assert worker._sync_batch() is False
+        assert worker._sync_batch() is True
 
         assert storage.query_events_for_sync() == []
-        mock_urlopen.assert_not_called()
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        wire = body["events"][0]
+        assert wire["schema_version"] == "3"
+        assert wire["component"] == "gpu"
+        assert wire["usage_snapshot"] == "full"
+        assert "cost_evidence" not in wire
+        assert "details" not in wire
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_malformed_head_event_is_quarantined_while_valid_sibling_is_delivered(
@@ -376,10 +383,10 @@ class TestSyncBatch:
         assert len(pending) == 7
 
     @patch("dexcost.sync.urllib.request.urlopen")
-    def test_events_serialized_as_attribution_v2(
+    def test_events_serialized_as_attribution_v3(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
-        """Durable v1 events are converted to the strict v2 wire format."""
+        """Durable v1 events are converted to the strict v3 wire format."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
         storage = _make_storage(tmp_path)
@@ -395,7 +402,14 @@ class TestSyncBatch:
         assert wire["component"] == "llm"
         assert wire["provider"] == {"name": "openai", "service": "responses"}
         assert wire["resource"] == {"type": "model", "id": "gpt-4"}
-        assert wire["schema_version"] == "2"
+        assert wire["schema_version"] == "3"
+        assert wire["usage_snapshot"] == "full"
+        assert wire["operation"] == {
+            "id": str(events[0].event_id),
+            "name": "llm.call",
+            "status": "succeeded",
+            "attempt": {"id": str(events[0].event_id), "number": 1},
+        }
         assert wire["cost_evidence"] == {
             "amount": "0.05",
             "currency": "USD",
@@ -561,7 +575,7 @@ class TestFlush:
 
 
 class TestRedaction:
-    """Attribution v2 transmits no arbitrary event details."""
+    """Attribution v3 transmits no arbitrary event details."""
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_redact_fields_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
@@ -582,6 +596,31 @@ class TestRedaction:
         assert "req_sensitive" not in json.dumps(body["events"][0])
 
     @patch("dexcost.sync.urllib.request.urlopen")
+    def test_logical_billing_dimension_keys_are_redacted(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
+        config = _make_config(redact_fields=["ssn"])
+        storage = _make_storage(tmp_path)
+        event = _make_event(
+            details={
+                "attribution_dimensions": [
+                    {"key": "ssn", "value": {"type": "string", "value": "111-22-3333"}},
+                    {"key": "tier", "value": {"type": "string", "value": "gold"}},
+                ]
+            }
+        )
+        storage.insert_event(event)
+
+        worker = SyncWorker(config=config, storage=storage)
+        assert worker._sync_batch() is True
+
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        dimensions = body["events"][0]["usage"][0]["dimensions"]
+        assert dimensions == [{"key": "tier", "value": {"type": "string", "value": "gold"}}]
+        assert "111-22-3333" not in json.dumps(body["events"][0])
+
+    @patch("dexcost.sync.urllib.request.urlopen")
     def test_hash_customer_id_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
         """Customer-adjacent details are omitted instead of transmitted."""
         mock_urlopen.return_value = _mock_urlopen_success()
@@ -600,7 +639,7 @@ class TestRedaction:
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_enforce_metadata_limit_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
-        """Large arbitrary details do not inflate the v2 wire payload."""
+        """Large arbitrary details do not inflate the v3 wire payload."""
         mock_urlopen.return_value = _mock_urlopen_success()
         config = _make_config()
         storage = _make_storage(tmp_path)
