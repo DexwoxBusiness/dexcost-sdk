@@ -1,0 +1,42 @@
+{
+  "corpus_version": "2026-08-11.1",
+  "contracts": {
+    "observation": "3.0.0",
+    "business_attribution": "1.0.0"
+  },
+  "contract_authority": {
+    "repository": "DexwoxBusiness/dexcost-control-plane",
+    "observation_schema": "server/src/ingestion/attribution-observation.ts",
+    "business_schema": "server/src/ingestion/business-attribution.ts"
+  },
+  "required_sdks": ["typescript", "python", "go", "rust"],
+  "corpus_file": "fixtures/attribution_v3/conformance.json",
+  "required_coverage": [
+    "business.currency_preserved",
+    "business.outcome_lifecycle",
+    "business.revenue_lifecycle",
+    "business.task_hierarchy",
+    "business.workflow_agent_assignment",
+    "cost.no_synthetic_zero",
+    "cost.sdk_evidence_diagnostic",
+    "lifecycle.failed_final_no_usage",
+    "lifecycle.final",
+    "lifecycle.pending",
+    "lifecycle.provisional",
+    "lifecycle.voided",
+    "observation.known_meter",
+    "observation.operation_attempt_trace",
+    "observation.retry_linkage",
+    "observation.typed_dimensions",
+    "observation.unknown_meter_visible",
+    "privacy.arbitrary_details_not_transported",
+    "privacy.hash_customer_project",
+    "privacy.redact_before_promotion",
+    "quantity.exact_decimal",
+    "quantity.reject_float_or_scientific",
+    "revision.full_snapshot",
+    "revision.stable_line_identity",
+    "timestamps.microsecond_order",
+    "unit.canonical_mapping"
+  ]
+}
