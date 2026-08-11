@@ -1,0 +1,236 @@
+{
+  "schema_version": "1",
+  "corpus_version": "2026-08-11.1",
+  "observation_contract_version": "3.0.0",
+  "business_contract_version": "1.0.0",
+  "valid_observations": [
+    {
+      "id": "observation.final_known_meter",
+      "covers": ["observation.known_meter", "observation.typed_dimensions", "observation.operation_attempt_trace", "lifecycle.final", "quantity.exact_decimal", "unit.canonical_mapping", "cost.sdk_evidence_diagnostic"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:00:00.123456Z",
+        "observed_at": "2026-08-11T10:00:01.123456Z",
+        "component": "llm",
+        "provider": { "name": "anthropic", "service": "messages", "record_id": "msg_123", "region": "us-east" },
+        "resource": { "type": "model", "id": "claude-sonnet-4-5" },
+        "operation": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "agent.answer",
+          "status": "succeeded",
+          "attempt": { "id": "44444444-4444-4444-8444-444444444444", "number": 1 },
+          "trace": { "trace_id": "0123456789abcdef0123456789abcdef", "span_id": "0123456789abcdef" }
+        },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": [
+          {
+            "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+            "metric": "input_tokens",
+            "quantity": "100.125",
+            "unit": "Tokens",
+            "dimensions": [
+              { "key": "provider_region", "value": { "type": "string", "value": "us-east" } },
+              { "key": "cached", "value": { "type": "boolean", "value": false } },
+              { "key": "replica_count", "value": { "type": "integer", "value": "2" } },
+              { "key": "quality_multiplier", "value": { "type": "decimal", "value": "1.25" } }
+            ]
+          }
+        ],
+        "cost_evidence": { "amount": "0.00135", "currency": "USD", "source": "sdk_catalog", "confidence": "computed", "pricing_version": "llm:2026-08-11" }
+      }
+    },
+    {
+      "id": "observation.pending_voice_call",
+      "covers": ["lifecycle.pending"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111112",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:05:00Z",
+        "observed_at": "2026-08-11T10:05:00.010000Z",
+        "component": "telephony",
+        "provider": { "name": "twilio", "service": "voice", "record_id": "CA123" },
+        "resource": { "type": "session", "id": "CA123" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333334", "name": "voice.call", "status": "in_progress", "attempt": { "id": "44444444-4444-4444-8444-444444444445", "number": 1 } },
+        "lifecycle": { "state": "pending", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage_period": { "start_at": "2026-08-11T10:05:00Z" },
+        "usage": []
+      }
+    },
+    {
+      "id": "observation.provisional_audio_usage",
+      "covers": ["lifecycle.provisional"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111113",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:10:00Z",
+        "observed_at": "2026-08-11T10:10:31Z",
+        "component": "speech_to_text",
+        "provider": { "name": "deepgram", "service": "speech_to_text_pre_recorded", "record_id": "dg_123" },
+        "resource": { "type": "sku", "id": "nova-3:monolingual" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333335", "name": "audio.transcribe", "status": "in_progress", "attempt": { "id": "44444444-4444-4444-8444-444444444446", "number": 1 } },
+        "lifecycle": { "state": "provisional", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage_period": { "start_at": "2026-08-11T10:10:00Z", "end_at": "2026-08-11T10:10:30Z" },
+        "usage": [{ "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2", "metric": "audio_seconds", "quantity": "30", "unit": "Seconds", "dimensions": [] }],
+        "cost_evidence": { "amount": "0.0024", "currency": "USD", "source": "sdk_catalog", "confidence": "estimated", "pricing_version": "deepgram:2026-08-11" }
+      }
+    },
+    {
+      "id": "observation.unknown_meter_visible",
+      "covers": ["observation.unknown_meter_visible"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111114",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:20:00Z",
+        "observed_at": "2026-08-11T10:20:01Z",
+        "component": "external",
+        "provider": { "name": "future_provider", "service": "agent_api" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333336", "name": "agent.external", "status": "succeeded", "attempt": { "id": "44444444-4444-4444-8444-444444444447", "number": 1 } },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": [{ "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3", "metric": "provider_new_meter", "quantity": "7.5", "unit": "Widgets", "dimensions": [] }]
+      }
+    },
+    {
+      "id": "observation.retry_attempt",
+      "covers": ["observation.retry_linkage"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111115",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:25:00Z",
+        "observed_at": "2026-08-11T10:25:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333337", "name": "agent.search", "status": "succeeded", "attempt": { "id": "44444444-4444-4444-8444-444444444449", "number": 2, "retry_of": "44444444-4444-4444-8444-444444444448" } },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": [{ "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", "metric": "request_count", "quantity": "1", "unit": "Requests", "dimensions": [] }]
+      }
+    },
+    {
+      "id": "observation.failed_final_without_usage",
+      "covers": ["lifecycle.failed_final_no_usage"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111116",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:30:00Z",
+        "observed_at": "2026-08-11T10:30:01Z",
+        "component": "external",
+        "provider": { "name": "tavily", "service": "search" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333338", "name": "agent.search", "status": "failed", "attempt": { "id": "44444444-4444-4444-8444-444444444450", "number": 1 } },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": []
+      }
+    }
+  ],
+  "invalid_observations": [
+    { "id": "observation.invalid.old_schema", "covers": [], "expected_error_path": "schema_version", "event": { "schema_version": "2" } },
+    { "id": "observation.invalid.numeric_quantity", "covers": ["quantity.reject_float_or_scientific"], "expected_error_path": "usage.0.quantity", "mutate_from": "observation.final_known_meter", "set": { "usage.0.quantity": 1.5 } },
+    { "id": "observation.invalid.scientific_quantity", "covers": ["quantity.reject_float_or_scientific"], "expected_error_path": "usage.0.quantity", "mutate_from": "observation.final_known_meter", "set": { "usage.0.quantity": "1e3" } },
+    { "id": "observation.invalid.wrong_known_unit", "covers": ["unit.canonical_mapping"], "expected_error_path": "usage.0.unit", "mutate_from": "observation.final_known_meter", "set": { "usage.0.unit": "Characters" } },
+    { "id": "observation.invalid.duplicate_line_id", "covers": [], "expected_error_path": "usage.1.line_id", "mutate_from": "observation.final_known_meter", "append_usage": { "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "metric": "output_tokens", "quantity": "1", "unit": "Tokens", "dimensions": [] } },
+    { "id": "observation.invalid.duplicate_dimension", "covers": [], "expected_error_path": "usage.0.dimensions.4.key", "mutate_from": "observation.final_known_meter", "append_dimension": { "key": "cached", "value": { "type": "boolean", "value": true } } },
+    { "id": "observation.invalid.pending_usage", "covers": [], "expected_error_path": "usage", "mutate_from": "observation.pending_voice_call", "set": { "usage": [{ "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5", "metric": "call_count", "quantity": "1", "unit": "Calls", "dimensions": [] }] } },
+    { "id": "observation.invalid.provisional_exact_cost", "covers": [], "expected_error_path": "cost_evidence.confidence", "mutate_from": "observation.provisional_audio_usage", "set": { "cost_evidence.confidence": "exact" } },
+    { "id": "observation.invalid.successful_final_without_usage", "covers": [], "expected_error_path": "usage", "mutate_from": "observation.retry_attempt", "set": { "usage": [] } },
+    { "id": "observation.invalid.time_usage_without_closed_period", "covers": [], "expected_error_path": "usage_period.end_at", "mutate_from": "observation.provisional_audio_usage", "delete": ["usage_period.end_at"] },
+    { "id": "observation.invalid.reversed_microseconds", "covers": ["timestamps.microsecond_order"], "expected_error_path": "usage_period.end_at", "mutate_from": "observation.provisional_audio_usage", "set": { "usage_period.start_at": "2026-08-11T10:10:00.123456Z", "usage_period.end_at": "2026-08-11T10:10:00.123000Z" } },
+    { "id": "observation.invalid.calendar_instant", "covers": [], "expected_error_path": "observed_at", "mutate_from": "observation.retry_attempt", "set": { "observed_at": "2026-02-29T10:00:00Z" } },
+    { "id": "observation.invalid.synthetic_zero", "covers": ["cost.no_synthetic_zero"], "expected_error_path": "cost_evidence.amount", "mutate_from": "observation.final_known_meter", "set": { "cost_evidence.amount": "0.000000" } },
+    { "id": "observation.invalid.voided_revision_one", "covers": [], "expected_error_path": "lifecycle.revision", "mutate_from": "observation.failed_final_without_usage", "set": { "lifecycle.state": "voided" } },
+    { "id": "observation.invalid.attempt_two_without_retry", "covers": [], "expected_error_path": "operation.attempt.retry_of", "mutate_from": "observation.retry_attempt", "delete": ["operation.attempt.retry_of"] },
+    { "id": "observation.invalid.details_carrier", "covers": ["privacy.arbitrary_details_not_transported"], "expected_error_path": "details", "mutate_from": "observation.retry_attempt", "set": { "details": { "price": "0.01", "prompt": "secret" } } }
+  ],
+  "revision_sequences": [
+    {
+      "id": "revision.voice_full_snapshot",
+      "covers": ["revision.full_snapshot", "revision.stable_line_identity", "lifecycle.voided"],
+      "stable_event_id": "55555555-5555-4555-8555-555555555555",
+      "revisions": [
+        { "revision": 1, "state": "pending", "usage_snapshot": "full", "usage": [] },
+        { "revision": 2, "state": "provisional", "usage_snapshot": "full", "usage": [{ "line_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "metric": "connected_seconds", "quantity": "30", "unit": "Seconds", "dimensions": [] }] },
+        { "revision": 3, "state": "final", "usage_snapshot": "full", "usage": [{ "line_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "metric": "connected_seconds", "quantity": "61", "unit": "Seconds", "dimensions": [] }, { "line_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", "metric": "call_count", "quantity": "1", "unit": "Calls", "dimensions": [] }] },
+        { "revision": 4, "state": "voided", "usage_snapshot": "full", "usage": [] }
+      ],
+      "expected_active_line_ids_after_each_revision": [[], ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1"], ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2"], []]
+    }
+  ],
+  "business_identities": {
+    "valid": [
+      {
+        "id": "business.identity.child_assignment",
+        "covers": ["business.task_hierarchy", "business.workflow_agent_assignment"],
+        "record": {
+          "schema_version": "1",
+          "task_id": "20000000-0000-4000-8000-000000000001",
+          "revision": 1,
+          "effective_at": "2026-08-11T11:00:00.123456Z",
+          "observed_at": "2026-08-11T11:00:01.123456Z",
+          "identity_snapshot": "full",
+          "task": { "task_type": "support.resolve_ticket", "root_task_id": "20000000-0000-4000-8000-000000000002", "parent_task_id": "20000000-0000-4000-8000-000000000002" },
+          "workflow": { "id": "support-workflow", "session_id": "ticket-123" },
+          "agent": { "id": "support-agent", "version": "2026.08.11" },
+          "assignment": { "customer_id": "customer-a", "project_id": "support", "experiment_id": "prompt-test", "variant": "b" }
+        }
+      }
+    ],
+    "invalid": [
+      { "id": "business.identity.invalid_self_parent", "covers": [], "expected_error_path": "task.parent_task_id", "mutate_from": "business.identity.child_assignment", "set": { "task.parent_task_id": "20000000-0000-4000-8000-000000000001" } },
+      { "id": "business.identity.invalid_variant_without_experiment", "covers": [], "expected_error_path": "assignment.variant", "mutate_from": "business.identity.child_assignment", "delete": ["assignment.experiment_id"] }
+    ]
+  },
+  "outcomes": {
+    "valid": [
+      { "id": "business.outcome.pending", "covers": ["business.outcome_lifecycle"], "record": { "schema_version": "1", "outcome_id": "30000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "name": "ticket.resolved", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:05:01Z", "lifecycle": { "state": "pending", "revision": 1 } } },
+      { "id": "business.outcome.achieved", "covers": ["business.outcome_lifecycle"], "record": { "schema_version": "1", "outcome_id": "30000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "name": "ticket.resolved", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:06:01Z", "lifecycle": { "state": "achieved", "revision": 2 }, "value": { "type": "boolean", "value": true } } },
+      { "id": "business.outcome.voided", "covers": ["business.outcome_lifecycle"], "record": { "schema_version": "1", "outcome_id": "30000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "name": "ticket.resolved", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:07:01Z", "lifecycle": { "state": "voided", "revision": 3 } } }
+    ],
+    "invalid": [
+      { "id": "business.outcome.invalid_pending_value", "covers": [], "expected_error_path": "value", "mutate_from": "business.outcome.pending", "set": { "value": { "type": "boolean", "value": true } } },
+      { "id": "business.outcome.invalid_voided_revision_one", "covers": [], "expected_error_path": "lifecycle.revision", "mutate_from": "business.outcome.voided", "set": { "lifecycle.revision": 1 } }
+    ]
+  },
+  "revenues": {
+    "valid": [
+      { "id": "business.revenue.pending", "covers": ["business.revenue_lifecycle"], "record": { "schema_version": "1", "revenue_id": "40000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "outcome_id": "30000000-0000-4000-8000-000000000001", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:05:02Z", "lifecycle": { "state": "pending", "revision": 1 }, "source": { "type": "workspace_api", "record_id": "invoice-line-1" } } },
+      { "id": "business.revenue.recognized", "covers": ["business.revenue_lifecycle", "business.currency_preserved"], "record": { "schema_version": "1", "revenue_id": "40000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "outcome_id": "30000000-0000-4000-8000-000000000001", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:06:02Z", "lifecycle": { "state": "recognized", "revision": 2 }, "amount": { "value": "12.50", "currency": "EUR" }, "source": { "type": "workspace_api", "record_id": "invoice-line-1" } } },
+      { "id": "business.revenue.voided", "covers": ["business.revenue_lifecycle"], "record": { "schema_version": "1", "revenue_id": "40000000-0000-4000-8000-000000000001", "task_id": "20000000-0000-4000-8000-000000000001", "outcome_id": "30000000-0000-4000-8000-000000000001", "effective_at": "2026-08-11T11:05:00Z", "observed_at": "2026-08-11T11:07:02Z", "lifecycle": { "state": "voided", "revision": 3 }, "source": { "type": "workspace_api", "record_id": "invoice-line-1" } } }
+    ],
+    "invalid": [
+      { "id": "business.revenue.invalid_pending_amount", "covers": [], "expected_error_path": "amount", "mutate_from": "business.revenue.pending", "set": { "amount": { "value": "1", "currency": "USD" } } },
+      { "id": "business.revenue.invalid_lowercase_currency", "covers": [], "expected_error_path": "amount.currency", "mutate_from": "business.revenue.recognized", "set": { "amount.currency": "usd" } },
+      { "id": "business.revenue.invalid_numeric_amount", "covers": [], "expected_error_path": "amount.value", "mutate_from": "business.revenue.recognized", "set": { "amount.value": 12.5 } }
+    ]
+  },
+  "redaction_cases": [
+    {
+      "id": "privacy.redact_promoted_identifiers",
+      "covers": ["privacy.redact_before_promotion", "privacy.arbitrary_details_not_transported"],
+      "source": { "details": { "request_id": "req_secret", "call_sid": "CA_secret", "gpu_sku": "private-sku", "prompt": "customer secret" } },
+      "policy": { "redact_fields": ["request_id", "call_sid", "gpu_sku"] },
+      "promotions": [
+        { "source_path": "details.request_id", "wire_path": "provider.record_id" },
+        { "source_path": "details.call_sid", "wire_path": "resource.id" },
+        { "source_path": "details.gpu_sku", "wire_path": "resource.id" }
+      ],
+      "expected": { "omitted_wire_paths": ["provider.record_id", "resource.id", "details"], "forbidden_values": ["req_secret", "CA_secret", "private-sku", "customer secret"] }
+    },
+    {
+      "id": "privacy.hash_task_assignment",
+      "covers": ["privacy.hash_customer_project"],
+      "source": { "customer_id": "customer-a", "project_id": "project-7", "metadata": { "profile": { "ssn": "111-22-3333" }, "safe": "retained" } },
+      "policy": { "redact_fields": ["ssn"], "hash_customer_id": true },
+      "expected": { "customer_id": "0bd7029e0d7aeffc87b34f267150288a0151888b5e4b049f575ea1d1f87b7844", "project_id": "0c98100e42d0f19ff4812fda92b9356d3de20fc86a606f3e4934e8b446c10e72", "metadata": { "profile": {}, "safe": "retained" }, "forbidden_values": ["customer-a", "project-7", "111-22-3333"] }
+    }
+  ]
+}

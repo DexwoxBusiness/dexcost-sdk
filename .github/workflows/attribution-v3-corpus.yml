@@ -1,0 +1,28 @@
+name: Attribution v3 corpus
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integrity:
+    name: attribution v3 corpus integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      - name: Install schema validator dependencies
+        run: npm ci --prefix typescript --ignore-scripts
+      - name: Test corpus policy
+        run: node --test .github/scripts/validate-attribution-v3-corpus.test.mjs
+      - name: Enforce corpus integrity
+        run: node .github/scripts/validate-attribution-v3-corpus.mjs
