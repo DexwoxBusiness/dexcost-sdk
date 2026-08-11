@@ -187,29 +187,32 @@ function operationStatus(event: CostEvent): AttributionOperationStatusV3 {
   return "succeeded";
 }
 
-function operationFor(event: CostEvent): AttributionOperationIdentityV3 {
+function operationFor(event: CostEvent): AttributionOperationIdentityV3 | null {
   const explicitOperationId = stringDetail(event.details, "attribution_operation_id");
-  const retryOf = typeof event.retryOf === "string" && UUID.test(event.retryOf)
-    ? event.retryOf.toLowerCase()
-    : undefined;
-  const operationId = explicitOperationId !== undefined && UUID.test(explicitOperationId)
-    ? explicitOperationId.toLowerCase()
-    : retryOf ?? event.eventId.toLowerCase();
+  if (event.retryOf !== undefined &&
+      (typeof event.retryOf !== "string" || !UUID.test(event.retryOf))) return null;
+  const retryOf = event.retryOf?.toLowerCase();
+  const hasValidOperationId = explicitOperationId !== undefined && UUID.test(explicitOperationId);
+  const operationId = hasValidOperationId
+    ? explicitOperationId!.toLowerCase()
+    : event.eventId.toLowerCase();
   const explicitAttemptId = stringDetail(event.details, "attribution_attempt_id");
   const attemptId = explicitAttemptId !== undefined && UUID.test(explicitAttemptId)
     ? explicitAttemptId.toLowerCase()
     : event.eventId.toLowerCase();
   const explicitAttempt = numberDetail(event.details, "attribution_attempt_number");
-  const attemptNumber = explicitAttempt !== undefined && Number.isInteger(explicitAttempt) && explicitAttempt > 0
-    ? explicitAttempt
-    : retryOf === undefined ? 1 : 2;
+  const hasValidAttemptNumber = explicitAttempt !== undefined && Number.isInteger(explicitAttempt) &&
+    explicitAttempt > 0;
+  if (retryOf !== undefined &&
+      (!hasValidOperationId || !hasValidAttemptNumber || (explicitAttempt ?? 0) <= 1)) return null;
+  const attemptNumber = hasValidAttemptNumber ? explicitAttempt! : 1;
   const operation: AttributionOperationIdentityV3 = {
     id: operationId,
     name: operationName(event),
     status: operationStatus(event),
     attempt: { id: attemptId, number: attemptNumber },
   };
-  if (retryOf !== undefined && attemptNumber > 1) operation.attempt.retry_of = retryOf;
+  if (retryOf !== undefined) operation.attempt.retry_of = retryOf;
   const traceId = stringDetail(event.details, "trace_id")?.toLowerCase();
   const spanId = stringDetail(event.details, "span_id")?.toLowerCase();
   if (traceId !== undefined && spanId !== undefined && TRACE_ID.test(traceId) && SPAN_ID.test(spanId)) {
@@ -277,6 +280,11 @@ export function toAttributionObservationV3(event: CostEvent): AttributionEventV3
     return null;
   }
   const occurredAt = isoCanonical(event.occurredAt);
+  const operation = operationFor(event);
+  if (operation === null) {
+    console.warn(`[dexcost] Event ${event.eventId} has invalid or incomplete retry lineage`);
+    return null;
+  }
   const converted: AttributionEventV3 = {
     schema_version: "3",
     event_id: event.eventId.toLowerCase(),
@@ -285,7 +293,7 @@ export function toAttributionObservationV3(event: CostEvent): AttributionEventV3
     observed_at: occurredAt,
     component,
     provider: attributionProviderFor(event),
-    operation: operationFor(event),
+    operation,
     lifecycle: { state: "final", revision: 1 },
     usage_snapshot: "full",
     usage,

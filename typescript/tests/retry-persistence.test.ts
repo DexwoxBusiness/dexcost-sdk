@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CostTracker } from "../src/core/tracker.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 
 let tmpDir: string;
 
@@ -97,6 +98,53 @@ describe("Fix 1 — heuristic retry flag persistence", () => {
     expect(persisted).toBeDefined();
     expect(persisted!.isRetry).toBe(false);
     expect(persisted!.retryReason).toBeUndefined();
+
+    tracker.close();
+  });
+
+  it("persists one operation root and increasing attempt numbers across a retry chain", async () => {
+    const tracker = new CostTracker({
+      enableRetryHeuristics: true,
+      retryHeuristicThreshold: 0.5,
+      dbPath: join(tmpDir, "chain.db"),
+    });
+
+    let taskId = "";
+    let rootEventId = "";
+    let secondEventId = "";
+    let thirdEventId = "";
+    await tracker.track({ taskType: "test" }, async (task) => {
+      taskId = task.task.taskId;
+      const first = task.recordLlmCall(
+        "openai", "gpt-4o", 100, 50, 0.05, undefined, undefined,
+        { errorType: "rate_limit" },
+      );
+      const second = task.recordLlmCall(
+        "openai", "gpt-4o", 100, 50, 0.05, undefined, undefined,
+        { errorType: "rate_limit" },
+      );
+      const third = task.recordLlmCall(
+        "openai", "gpt-4o", 100, 50, 0.05, undefined, undefined,
+        { errorType: "rate_limit" },
+      );
+      rootEventId = first.eventId;
+      secondEventId = second.eventId;
+      thirdEventId = third.eventId;
+      expect(second.retryOf).toBe(rootEventId);
+      expect(third.retryOf).toBe(secondEventId);
+    });
+
+    const third = tracker.buffer.queryEvents(taskId)
+      .find((event) => event.eventId === thirdEventId);
+    expect(third).toBeDefined();
+    expect(third!.details.attribution_operation_id).toBe(rootEventId);
+    expect(third!.details.attribution_attempt_number).toBe(3);
+    expect(toAttributionObservationV3(third!)).toMatchObject({
+      operation: {
+        id: rootEventId,
+        attempt: { id: thirdEventId, number: 3, retry_of: secondEventId },
+      },
+    });
 
     tracker.close();
   });

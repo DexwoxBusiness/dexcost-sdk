@@ -35,6 +35,7 @@ interface SentTask {
 
 interface SentEvent {
   provider?: { record_id?: string };
+  usage?: Array<{ dimensions: Array<{ key: string; value: unknown }> }>;
 }
 
 describe("Fix 3 — task metadata redaction on push", () => {
@@ -70,6 +71,48 @@ describe("Fix 3 — task metadata redaction on push", () => {
 
     expect(sentEvent).toBeDefined();
     expect(sentEvent!.provider?.record_id).toBeUndefined();
+
+    pusher.stop();
+    buffer.close();
+  });
+
+  it("redacts billing dimensions by their logical key", async () => {
+    const buffer = new EventBuffer(join(tmpDir, "dimension.db"));
+    const taskId = randomUUID();
+    buffer.upsertTask(createTask({ taskId, taskType: "external" }));
+    buffer.addEvent(createCostEvent({
+      eventId: randomUUID(),
+      taskId,
+      eventType: "external_cost",
+      serviceName: "future-provider",
+      details: {
+        attribution_usage_metric: "provider_new_meter",
+        attribution_usage_unit: "Widgets",
+        attribution_usage_quantity: "1",
+        attribution_dimensions: [
+          { key: "ssn", value: { type: "string", value: "123-45-6789" } },
+          { key: "tier", value: { type: "string", value: "enterprise" } },
+        ],
+      },
+    }));
+
+    let sentEvent: SentEvent | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { events: SentEvent[] };
+      sentEvent = body.events[0];
+      return new Response("{}", { status: 202 });
+    });
+
+    const pusher = new EventPusher(buffer, {
+      apiKey: "dx_live_x",
+      redactFields: ["ssn"],
+    });
+    await pusher.flush();
+
+    expect(sentEvent?.usage?.[0].dimensions).toEqual([
+      { key: "tier", value: { type: "string", value: "enterprise" } },
+    ]);
+    expect(JSON.stringify(sentEvent)).not.toContain("123-45-6789");
 
     pusher.stop();
     buffer.close();

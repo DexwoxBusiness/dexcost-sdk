@@ -39,6 +39,27 @@ function conversionFailureFingerprint(eventIds: string[]): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+function redactEventDetails(
+  details: Record<string, unknown>,
+  fields: string[],
+): Record<string, unknown> {
+  const redacted = redactDict(details, fields);
+  const dimensions = redacted.attribution_dimensions;
+  if (!Array.isArray(dimensions)) return redacted;
+
+  const fieldSet = new Set(fields);
+  return {
+    ...redacted,
+    attribution_dimensions: dimensions.filter((candidate) => {
+      if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+        return true;
+      }
+      const key = (candidate as Record<string, unknown>).key;
+      return typeof key !== "string" || !fieldSet.has(key);
+    }),
+  };
+}
+
 /**
  * Pushes buffered events to a remote endpoint on a periodic interval.
  *
@@ -273,7 +294,7 @@ export class EventPusher {
     // cannot bypass the field-level policy. Keep durable capture untouched.
     const redactFields = this._options.redactFields;
     const sanitized = redactFields && redactFields.length > 0
-      ? { ...event, details: redactDict(event.details, redactFields) }
+      ? { ...event, details: redactEventDetails(event.details, redactFields) }
       : event;
     return toAttributionObservationV3(sanitized);
   }

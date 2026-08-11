@@ -172,6 +172,10 @@ describe("durable v1 capture to attribution v3 conversion", () => {
       retryOf,
       costUsd: "0.02",
       costConfidence: "exact",
+      details: {
+        attribution_operation_id: retryOf,
+        attribution_attempt_number: 2,
+      },
     }));
     expect(converted).toMatchObject({
       operation: {
