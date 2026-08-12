@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.10.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.10.0...python/v0.10.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **python:** honor configured capture buffer path ([#123](https://github.com/DexwoxBusiness/dexcost-sdk/issues/123)) ([10404f0](https://github.com/DexwoxBusiness/dexcost-sdk/commit/10404f0b1e1f326f6f86be05073dbe2fb9d1aa90))
+
 ## [0.10.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.9.0...python/v0.10.0) (2026-08-11)
 
 
