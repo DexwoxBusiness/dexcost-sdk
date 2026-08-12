@@ -365,7 +365,14 @@ def init(
     # Create the global tracker with auto-instrumentation.
     # Thread retry-heuristic settings through so the advanced
     # RetryHeuristicEngine (US-036) is reachable via init().
+    # The tracker and sync worker must use the same configured durable buffer.
+    # Otherwise capture writes to ~/.dexcost/buffer.db while the worker polls
+    # buffer_path, silently stranding events.
+    from dexcost.storage.sqlite import SQLiteStorage
+
+    tracker_storage = SQLiteStorage(db_path=_global_config.buffer_path)
     _global_tracker = CostTracker(
+        storage=tracker_storage,
         auto_instrument=auto_instrument,
         enable_retry_heuristics=enable_retry_heuristics,
         retry_heuristic_window=retry_heuristic_window,

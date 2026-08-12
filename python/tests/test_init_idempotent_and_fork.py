@@ -66,6 +66,29 @@ def test_init_without_http_clears_stale_catalog_refresh_state(tmp_path: Path) ->
     assert dexcost._service_catalog_refresh_api_key is None
 
 
+def test_init_uses_configured_buffer_for_capture(tmp_path: Path) -> None:
+    """Capture and delivery must share the caller-selected SQLite buffer."""
+    db_path = tmp_path / "configured-buffer.db"
+
+    dexcost.init(
+        storage="local",
+        buffer_path=str(db_path),
+        track_http=False,
+        auto_instrument=[],
+    )
+    with dexcost.task("buffer-path-regression") as task:
+        task.record_cost(
+            service="buffer-path-test",
+            cost_usd="0",
+            cost_confidence="unknown",
+        )
+
+    assert db_path.exists()
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+
+
 def test_double_init_does_not_create_orphan_threads(tmp_path: Path) -> None:
     """B10 / §2.2.4 (a): calling init() twice must not orphan the first
     SyncWorker thread.
