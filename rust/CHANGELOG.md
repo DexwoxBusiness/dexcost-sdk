@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.8.0...rust/v0.9.0) (2026-08-13)
+
+
+### Features
+
+* **pricing:** observe ElevenLabs billed TTS characters ([#125](https://github.com/DexwoxBusiness/dexcost-sdk/issues/125)) ([69991c5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/69991c59f8777fb901540f6c2713491891f10027))
+
 ## [0.8.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/rust/v0.7.0...rust/v0.8.0) (2026-07-23)
 
 
