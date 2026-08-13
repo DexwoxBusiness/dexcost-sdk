@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.20.0...typescript/v0.20.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **pricing:** preserve ElevenLabs correlation context ([#130](https://github.com/DexwoxBusiness/dexcost-sdk/issues/130)) ([c04faa6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c04faa66e80235e5e441cad1751a1cf0f332d050))
+
 ## [0.20.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.19.0...typescript/v0.20.0) (2026-08-13)
 
 
