@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.4.0",
-    "observer_count": 27,
+    "version": "1.5.0",
+    "observer_count": 28,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -73,6 +73,29 @@
       "allowed_resource_ids": ["tts-1", "tts-1-hd"],
       "record_id_header": "x-request-id",
       "source_url": "https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
+    },
+    {
+      "service_key": "elevenlabs_tts",
+      "provider_name": "elevenlabs",
+      "provider_service": "text_to_speech",
+      "component": "text_to_speech",
+      "domains": ["api.elevenlabs.io"],
+      "endpoints": ["/v1/text-to-speech"],
+      "response_quantity_header": "character-cost",
+      "usage_metric": "characters",
+      "resource_type": "model",
+      "request_resource_path": "model_id",
+      "allowed_resource_ids": [
+        "eleven_v3",
+        "eleven_multilingual_v2",
+        "eleven_flash_v2_5",
+        "eleven_flash_v2",
+        "eleven_turbo_v2_5",
+        "eleven_turbo_v2"
+      ],
+      "default_resource_id": "eleven_multilingual_v2",
+      "record_id_header": "request-id",
+      "source_url": "https://elevenlabs.io/docs/api-reference/introduction"
     },
     {
       "service_key": "deepgram_transcription",

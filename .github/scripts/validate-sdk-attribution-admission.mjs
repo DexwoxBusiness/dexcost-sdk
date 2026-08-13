@@ -246,6 +246,7 @@ function validateObserverShape(observer, issues) {
 
   const quantitySources = [
     observer?.response_path,
+    observer?.response_quantity_header,
     observer?.request_character_count_path,
   ].filter(isNonEmptyString);
   if (quantitySources.length !== 1) {

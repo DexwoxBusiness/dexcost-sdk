@@ -18,6 +18,7 @@ struct ObserverDefinition {
     domains: Vec<String>,
     endpoints: Vec<String>,
     response_path: Option<String>,
+    response_quantity_header: Option<String>,
     response_all: Option<Vec<ResponsePredicate>>,
     request_character_count_path: Option<String>,
     usage_metric: String,
@@ -109,6 +110,11 @@ fn positive_decimal(value: &serde_json::Value) -> Option<Decimal> {
     (parsed > Decimal::ZERO).then_some(parsed)
 }
 
+fn positive_decimal_text(value: &str) -> Option<Decimal> {
+    let parsed = Decimal::from_str(value.trim()).ok()?;
+    (parsed > Decimal::ZERO).then_some(parsed)
+}
+
 fn bounded_string(value: Option<&serde_json::Value>) -> Option<String> {
     let value = value?.as_str()?.trim();
     if value.is_empty() {
@@ -195,10 +201,21 @@ impl ServiceUsageObservers {
                     .endpoints
                     .iter()
                     .any(|endpoint| !endpoint.starts_with('/'))
-                || (observer.response_path.is_some()
-                    == observer.request_character_count_path.is_some())
+                || [
+                    observer.response_path.is_some(),
+                    observer.response_quantity_header.is_some(),
+                    observer.request_character_count_path.is_some(),
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count()
+                    != 1
                 || observer
                     .response_path
+                    .as_ref()
+                    .is_some_and(String::is_empty)
+                || observer
+                    .response_quantity_header
                     .as_ref()
                     .is_some_and(String::is_empty)
                 || observer
@@ -299,6 +316,11 @@ impl ServiceUsageObservers {
                             .and_then(serde_json::Value::as_str)?;
                         let count = text.chars().count();
                         (count > 0).then(|| Decimal::from(count as u64))?
+                    } else if let Some(header) = observer.response_quantity_header.as_deref() {
+                        headers
+                            .iter()
+                            .find(|(key, _)| key.eq_ignore_ascii_case(header))
+                            .and_then(|(_, value)| positive_decimal_text(value))?
                     } else {
                         positive_decimal(resolve_path(body, observer.response_path.as_deref()?)?)?
                     };

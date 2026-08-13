@@ -33,6 +33,7 @@ interface UsageObserverDefinition {
   domains: string[];
   endpoints: string[];
   response_path?: string;
+  response_quantity_header?: string;
   response_all?: ResponsePredicate[];
   request_character_count_path?: string;
   usage_metric: ObservedUsageMetric;
@@ -155,6 +156,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.resource_path,
       observer.request_resource_path,
       observer.request_character_count_path,
+      observer.response_quantity_header,
       observer.resource_query_parameter,
       observer.default_resource_id,
       observer.fixed_resource_id,
@@ -184,8 +186,11 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
-      ((observer.response_path === undefined) ===
-        (observer.request_character_count_path === undefined)) ||
+      [
+        observer.response_path,
+        observer.response_quantity_header,
+        observer.request_character_count_path,
+      ].filter((value) => value !== undefined).length !== 1 ||
       (observer.response_path !== undefined &&
         (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
       optionalStrings.some(
@@ -301,6 +306,10 @@ export class ServiceUsageObservers {
         const characterCount = Array.from(text).length;
         if (characterCount === 0) continue;
         quantity = new Decimal(characterCount);
+      } else if (observer.response_quantity_header !== undefined) {
+        const rawQuantity = positiveDecimal(headers.get(observer.response_quantity_header));
+        if (rawQuantity === undefined) continue;
+        quantity = new Decimal(rawQuantity);
       } else {
         const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path!));
         if (rawQuantity === undefined) continue;

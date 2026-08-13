@@ -22,6 +22,7 @@ from dexcost.adapters.http import (
     untrack_http,
 )
 from dexcost.attribution.convert import to_attribution_event_v2
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.context import clear_context, set_current_task, task_context
 from dexcost.models.task import Task
 from dexcost.session import reset_session_manager
@@ -218,6 +219,47 @@ class TestKnownServiceExtraction:
             {"metric": "characters", "quantity": "4", "unit": "Characters"}
         ]
         assert "cost_evidence" not in wire
+    def test_elevenlabs_tts_uses_provider_billed_character_header(self) -> None:
+        task = _make_task("speech")
+        response = _make_response(
+            headers={"character-cost": "11", "request-id": "el-tts-11"},
+            content_type="audio/mpeg",
+            content_length=4,
+        )
+        with task_context(task):
+            _handle_http_call(
+                "https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
+                method="POST",
+                request_body={"model_id": "eleven_flash_v2_5", "text": "Not eleven chars"},
+                response=response,
+            )
+        wire = to_attribution_event_v2(get_recorded_events()[0])
+        assert wire is not None
+        assert wire["component"] == "text_to_speech"
+        assert wire["provider"] == {
+            "name": "elevenlabs",
+            "service": "text_to_speech",
+            "record_id": "el-tts-11",
+        }
+        assert wire["resource"] == {"type": "model", "id": "eleven_flash_v2_5"}
+        assert wire["usage"] == [
+            {"metric": "characters", "quantity": "11", "unit": "Characters"}
+        ]
+        assert "cost_evidence" not in wire
+        v3 = to_attribution_observation_v3(get_recorded_events()[0])
+        assert v3 is not None
+        assert v3["schema_version"] == "3"
+        assert v3["component"] == "text_to_speech"
+        assert v3["provider"] == {
+            "name": "elevenlabs",
+            "service": "text_to_speech",
+            "record_id": "el-tts-11",
+        }
+        assert v3["resource"] == {"type": "model", "id": "eleven_flash_v2_5"}
+        assert v3["usage"][0]["metric"] == "characters"
+        assert v3["usage"][0]["quantity"] == "11"
+        assert v3["usage"][0]["unit"] == "Characters"
+        assert v3["usage"][0]["dimensions"] == []
 
     def test_cohere_request_model_reaches_attribution_v2(self) -> None:
         task = _make_task("embedding")

@@ -25,6 +25,7 @@ class UsageObserver:
     domains: tuple[str, ...]
     endpoints: tuple[str, ...]
     response_path: str | None
+    response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
     usage_metric: str
@@ -134,6 +135,7 @@ class ServiceUsageObservers:
             endpoints = definition.get("endpoints")
             optional_string_fields = (
                 "resource_path", "request_resource_path", "request_character_count_path",
+                "response_quantity_header",
                 "resource_query_parameter",
                 "default_resource_id", "fixed_resource_id", "quantity_multiplier_path",
                 "quantity_multiplier_query_parameter", "record_id_path", "record_id_header",
@@ -146,6 +148,7 @@ class ServiceUsageObservers:
                 )
             )
             response_path = definition.get("response_path")
+            response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
@@ -166,7 +169,14 @@ class ServiceUsageObservers:
                     for field in optional_string_fields
                 )
                 or definition.get("resource_type") not in {None, "model", "sku"}
-                or ((response_path is None) == (request_character_count_path is None))
+                or sum(
+                    value is not None
+                    for value in (
+                        response_path,
+                        response_quantity_header,
+                        request_character_count_path,
+                    )
+                ) != 1
                 or (
                     response_path is not None
                     and (not isinstance(response_path, str) or not response_path)
@@ -221,6 +231,7 @@ class ServiceUsageObservers:
                     domains=tuple(domains),
                     endpoints=tuple(endpoints),
                     response_path=response_path,
+                    response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
                     request_character_count_path=request_character_count_path,
                     usage_metric=definition["usage_metric"],
@@ -302,9 +313,21 @@ class ServiceUsageObservers:
                 if not isinstance(text, str) or not text:
                     continue
                 quantity = Decimal(len(text))
+            elif observer.response_quantity_header:
+                raw_quantity = next(
+                    (value for key, value in response_headers.items()
+                     if key.lower() == observer.response_quantity_header.lower()),
+                    None,
+                )
+                try:
+                    quantity = Decimal(str(raw_quantity))
+                except (InvalidOperation, ValueError):
+                    continue
             else:
                 try:
-                    quantity = Decimal(str(_resolve_path(response_body, observer.response_path or "")))
+                    quantity = Decimal(str(_resolve_path(
+                        response_body, observer.response_path or ""
+                    )))
                 except (InvalidOperation, ValueError):
                     continue
             if not quantity.is_finite() or quantity <= 0:
