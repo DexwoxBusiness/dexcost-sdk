@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.19.0...typescript/v0.20.0) (2026-08-13)
+
+
+### Features
+
+* **pricing:** observe ElevenLabs billed TTS characters ([#125](https://github.com/DexwoxBusiness/dexcost-sdk/issues/125)) ([69991c5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/69991c59f8777fb901540f6c2713491891f10027))
+
 ## [0.19.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.18.0...typescript/v0.19.0) (2026-08-11)
 
 
