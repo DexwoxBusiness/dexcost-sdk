@@ -348,9 +348,7 @@ class TestSyncBatch:
         warnings = [record for record in caplog.records if record.levelname == "WARNING"]
         assert len(warnings) == 2
 
-    def test_stale_quarantine_is_purged_without_a_successful_upload(
-        self, tmp_path: Path
-    ) -> None:
+    def test_stale_quarantine_is_purged_without_a_successful_upload(self, tmp_path: Path) -> None:
         storage = _make_storage(tmp_path)
         stale = _make_event()
         stale.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -600,12 +598,13 @@ class TestRedaction:
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
         mock_urlopen.return_value = _mock_urlopen_success()
-        config = _make_config(redact_fields=["ssn"])
+        config = _make_config(redact_fields=["ssn", "voice_id"])
         storage = _make_storage(tmp_path)
         event = _make_event(
             details={
                 "attribution_dimensions": [
                     {"key": "ssn", "value": {"type": "string", "value": "111-22-3333"}},
+                    {"key": "voice_id", "value": {"type": "string", "value": "private_voice"}},
                     {"key": "tier", "value": {"type": "string", "value": "gold"}},
                 ]
             }
@@ -619,6 +618,7 @@ class TestRedaction:
         dimensions = body["events"][0]["usage"][0]["dimensions"]
         assert dimensions == [{"key": "tier", "value": {"type": "string", "value": "gold"}}]
         assert "111-22-3333" not in json.dumps(body["events"][0])
+        assert "private_voice" not in json.dumps(body["events"][0])
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_hash_customer_id_applied(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:

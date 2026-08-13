@@ -1806,6 +1806,7 @@ async function _maybeRecordCost(
                 attribution_resource_id: observation.resourceId,
                 attribution_usage_quantity: observation.quantity,
                 attribution_usage_metric: observation.metric,
+                attribution_dimensions: observation.dimensions,
                 attribution_observer_version: observation.manifestVersion,
                 attribution_observer_service: observation.serviceKey,
                 ...duration,

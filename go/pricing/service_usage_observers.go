@@ -88,6 +88,7 @@ type ServiceUsageObservation struct {
 	ResourceType     string
 	ResourceID       string
 	ProviderRecordID string
+	Dimensions       []map[string]interface{}
 	ManifestVersion  string
 }
 
@@ -422,6 +423,14 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 				}
 			}
 		}
+		if recordID == "" && observer.ServiceKey == "elevenlabs_tts" {
+			for key, value := range headers {
+				if strings.EqualFold(key, "x-trace-id") {
+					recordID = boundedUsageString(value)
+					break
+				}
+			}
+		}
 		resourceID := ""
 		if observer.ResourcePath != "" {
 			resourceID = boundedUsageString(resolveDottedPath(body, observer.ResourcePath))
@@ -452,11 +461,22 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 		if resourceID != "" {
 			resourceType = observer.ResourceType
 		}
+		dimensions := make([]map[string]interface{}, 0, 1)
+		if observer.ServiceKey == "elevenlabs_tts" && strings.HasPrefix(parsed.Path, "/v1/text-to-speech/") {
+			remainder := strings.TrimPrefix(parsed.Path, "/v1/text-to-speech/")
+			value := boundedUsageString(strings.SplitN(remainder, "/", 2)[0])
+			if value != "" {
+				dimensions = append(dimensions, map[string]interface{}{
+					"key":   "voice_id",
+					"value": map[string]interface{}{"type": "string", "value": value},
+				})
+			}
+		}
 		result = append(result, ServiceUsageObservation{
 			ServiceKey: observer.ServiceKey, ProviderName: observer.ProviderName,
 			ProviderService: observer.ProviderService, Component: observer.Component,
 			Metric: observer.UsageMetric, Quantity: quantity, ResourceType: resourceType, ResourceID: resourceID,
-			ProviderRecordID: recordID, ManifestVersion: usageObservers.Meta.Version,
+			ProviderRecordID: recordID, Dimensions: dimensions, ManifestVersion: usageObservers.Meta.Version,
 		})
 	}
 	return result

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
 _METRICS = {"input_tokens", "audio_seconds", "characters"}
@@ -57,6 +57,7 @@ class ServiceUsageObservation:
     resource_type: str | None = None
     resource_id: str | None = None
     provider_record_id: str | None = None
+    dimensions: tuple[dict[str, Any], ...] = ()
 
 
 def _resolve_path(value: Any, path: str) -> Any:
@@ -123,8 +124,12 @@ class ServiceUsageObservers:
             if not isinstance(definition, dict):
                 raise ValueError("usage observer must be an object")
             required = (
-                "service_key", "provider_name", "provider_service", "component",
-                "usage_metric", "source_url",
+                "service_key",
+                "provider_name",
+                "provider_service",
+                "component",
+                "usage_metric",
+                "source_url",
             )
             if any(
                 not isinstance(definition.get(field), str) or not definition[field]
@@ -134,17 +139,26 @@ class ServiceUsageObservers:
             domains = definition.get("domains")
             endpoints = definition.get("endpoints")
             optional_string_fields = (
-                "resource_path", "request_resource_path", "request_character_count_path",
+                "resource_path",
+                "request_resource_path",
+                "request_character_count_path",
                 "response_quantity_header",
                 "resource_query_parameter",
-                "default_resource_id", "fixed_resource_id", "quantity_multiplier_path",
-                "quantity_multiplier_query_parameter", "record_id_path", "record_id_header",
+                "default_resource_id",
+                "fixed_resource_id",
+                "quantity_multiplier_path",
+                "quantity_multiplier_query_parameter",
+                "record_id_path",
+                "record_id_header",
             )
             has_resource_selector = any(
                 field in definition
                 for field in (
-                    "resource_path", "request_resource_path", "resource_query_parameter",
-                    "default_resource_id", "fixed_resource_id",
+                    "resource_path",
+                    "request_resource_path",
+                    "resource_query_parameter",
+                    "default_resource_id",
+                    "fixed_resource_id",
                 )
             )
             response_path = definition.get("response_path")
@@ -176,7 +190,8 @@ class ServiceUsageObservers:
                         response_quantity_header,
                         request_character_count_path,
                     )
-                ) != 1
+                )
+                != 1
                 or (
                     response_path is not None
                     and (not isinstance(response_path, str) or not response_path)
@@ -213,11 +228,8 @@ class ServiceUsageObservers:
             if resource_variant is not None and (
                 not isinstance(resource_variant, dict)
                 or any(
-                    not isinstance(resource_variant.get(field), str)
-                    or not resource_variant[field]
-                    for field in (
-                        "query_parameter", "equals", "matched_suffix", "default_suffix"
-                    )
+                    not isinstance(resource_variant.get(field), str) or not resource_variant[field]
+                    for field in ("query_parameter", "equals", "matched_suffix", "default_suffix")
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid resource variant")
@@ -258,7 +270,8 @@ class ServiceUsageObservers:
         parsed = urlparse(url)
         query = parse_qs(parsed.query, keep_blank_values=True)
         matched = [
-            candidate for candidate in self._observers
+            candidate
+            for candidate in self._observers
             if parsed.hostname in candidate.domains
             and any(
                 parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
@@ -284,10 +297,13 @@ class ServiceUsageObservers:
 
     def needs_request_body(self, url: str) -> bool:
         matched = self._lookup(url)
-        return bool(matched and any(
-            item.request_resource_path or item.request_character_count_path
-            for item in matched[1]
-        ))
+        return bool(
+            matched
+            and any(
+                item.request_resource_path or item.request_character_count_path
+                for item in matched[1]
+            )
+        )
 
     def observe(
         self,
@@ -315,8 +331,11 @@ class ServiceUsageObservers:
                 quantity = Decimal(len(text))
             elif observer.response_quantity_header:
                 raw_quantity = next(
-                    (value for key, value in response_headers.items()
-                     if key.lower() == observer.response_quantity_header.lower()),
+                    (
+                        value
+                        for key, value in response_headers.items()
+                        if key.lower() == observer.response_quantity_header.lower()
+                    ),
                     None,
                 )
                 try:
@@ -325,55 +344,68 @@ class ServiceUsageObservers:
                     continue
             else:
                 try:
-                    quantity = Decimal(str(_resolve_path(
-                        response_body, observer.response_path or ""
-                    )))
+                    quantity = Decimal(
+                        str(_resolve_path(response_body, observer.response_path or ""))
+                    )
                 except (InvalidOperation, ValueError):
                     continue
             if not quantity.is_finite() or quantity <= 0:
                 continue
-            if (
-                observer.quantity_multiplier_path
-                and (
-                    observer.quantity_multiplier_query_parameter is None
-                    or any(
-                        _query_value_is_truthy(value)
-                        for value in query.get(
-                            observer.quantity_multiplier_query_parameter, []
-                        )
-                    )
+            if observer.quantity_multiplier_path and (
+                observer.quantity_multiplier_query_parameter is None
+                or any(
+                    _query_value_is_truthy(value)
+                    for value in query.get(observer.quantity_multiplier_query_parameter, [])
                 )
             ):
                 try:
-                    multiplier = Decimal(str(_resolve_path(
-                        response_body, observer.quantity_multiplier_path
-                    )))
+                    multiplier = Decimal(
+                        str(_resolve_path(response_body, observer.quantity_multiplier_path))
+                    )
                 except (InvalidOperation, ValueError):
                     multiplier = Decimal(0)
                 if multiplier.is_finite() and multiplier > 0:
                     quantity *= multiplier
             record_id = (
                 _bounded_string(_resolve_path(response_body, observer.record_id_path))
-                if observer.record_id_path else None
+                if observer.record_id_path
+                else None
             )
             if record_id is None and observer.record_id_header:
-                record_id = _bounded_string(next(
-                    (value for key, value in response_headers.items()
-                     if key.lower() == observer.record_id_header.lower()),
-                    None,
-                ))
+                record_id = _bounded_string(
+                    next(
+                        (
+                            value
+                            for key, value in response_headers.items()
+                            if key.lower() == observer.record_id_header.lower()
+                        ),
+                        None,
+                    )
+                )
+            if record_id is None and observer.service_key == "elevenlabs_tts":
+                record_id = _bounded_string(
+                    next(
+                        (
+                            value
+                            for key, value in response_headers.items()
+                            if key.lower() == "x-trace-id"
+                        ),
+                        None,
+                    )
+                )
             resource_id = (
                 _bounded_string(_resolve_path(response_body, observer.resource_path))
-                if observer.resource_path else None
+                if observer.resource_path
+                else None
             )
             if resource_id is None and observer.request_resource_path:
-                resource_id = _bounded_string(_resolve_path(
-                    request_body, observer.request_resource_path
-                ))
+                resource_id = _bounded_string(
+                    _resolve_path(request_body, observer.request_resource_path)
+                )
             if resource_id is None and observer.resource_query_parameter:
-                resource_id = _bounded_string(next(iter(
-                    query.get(observer.resource_query_parameter, [])
-                ), None))
+                resource_id = _bounded_string(
+                    next(iter(query.get(observer.resource_query_parameter, [])), None)
+                )
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
             if observer.allowed_resource_ids and resource_id not in observer.allowed_resource_ids:
@@ -387,18 +419,37 @@ class ServiceUsageObservers:
                     else variant["default_suffix"]
                 )
                 resource_id = f"{resource_id}{suffix}"[:256]
-            observations.append(ServiceUsageObservation(
-                service_key=observer.service_key,
-                provider_name=observer.provider_name,
-                provider_service=observer.provider_service,
-                component=observer.component,
-                metric=observer.usage_metric,
-                quantity=quantity,
-                resource_type=observer.resource_type if resource_id else None,
-                resource_id=resource_id,
-                provider_record_id=record_id,
-                manifest_version=self.manifest_version,
-            ))
+            dimensions: list[dict[str, Any]] = []
+            if observer.service_key == "elevenlabs_tts":
+                prefix = "/v1/text-to-speech/"
+                if parsed.path.startswith(prefix):
+                    encoded = parsed.path[len(prefix) :].split("/", 1)[0]
+                    try:
+                        value = _bounded_string(unquote(encoded, errors="strict"))
+                    except UnicodeDecodeError:
+                        value = None
+                    if value is not None:
+                        dimensions.append(
+                            {
+                                "key": "voice_id",
+                                "value": {"type": "string", "value": value},
+                            }
+                        )
+            observations.append(
+                ServiceUsageObservation(
+                    service_key=observer.service_key,
+                    provider_name=observer.provider_name,
+                    provider_service=observer.provider_service,
+                    component=observer.component,
+                    metric=observer.usage_metric,
+                    quantity=quantity,
+                    resource_type=observer.resource_type if resource_id else None,
+                    resource_id=resource_id,
+                    provider_record_id=record_id,
+                    dimensions=tuple(dimensions),
+                    manifest_version=self.manifest_version,
+                )
+            )
         return observations
 
 

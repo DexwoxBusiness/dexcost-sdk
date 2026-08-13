@@ -91,6 +91,7 @@ describe("Fix 3 — task metadata redaction on push", () => {
         attribution_usage_quantity: "1",
         attribution_dimensions: [
           { key: "ssn", value: { type: "string", value: "123-45-6789" } },
+          { key: "voice_id", value: { type: "string", value: "private_voice" } },
           { key: "tier", value: { type: "string", value: "enterprise" } },
         ],
       },
@@ -105,7 +106,7 @@ describe("Fix 3 — task metadata redaction on push", () => {
 
     const pusher = new EventPusher(buffer, {
       apiKey: "dx_live_x",
-      redactFields: ["ssn"],
+      redactFields: ["ssn", "voice_id"],
     });
     await pusher.flush();
 
@@ -113,6 +114,7 @@ describe("Fix 3 — task metadata redaction on push", () => {
       { key: "tier", value: { type: "string", value: "enterprise" } },
     ]);
     expect(JSON.stringify(sentEvent)).not.toContain("123-45-6789");
+    expect(JSON.stringify(sentEvent)).not.toContain("private_voice");
 
     pusher.stop();
     buffer.close();

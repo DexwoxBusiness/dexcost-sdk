@@ -163,6 +163,7 @@ func TestPusherRedactsDetailsBeforeAttributionConversion(t *testing.T) {
 	event.Details["billing_model"] = "per_gpu_second_active"
 	event.Details["attribution_dimensions"] = []interface{}{
 		map[string]interface{}{"key": "ssn", "value": map[string]interface{}{"type": "string", "value": "123-45-6789"}},
+		map[string]interface{}{"key": "voice_id", "value": map[string]interface{}{"type": "string", "value": "private_voice"}},
 		map[string]interface{}{"key": "billing_tier", "value": map[string]interface{}{"type": "string", "value": "pro"}},
 	}
 	if err := buffer.InsertEvent(event); err != nil {
@@ -174,20 +175,22 @@ func TestPusherRedactsDetailsBeforeAttributionConversion(t *testing.T) {
 		Endpoint:     server.URL,
 		APIKey:       "test",
 		Interval:     time.Hour,
-		RedactFields: []string{"request_id", "gpu_sku", "ssn"},
+		RedactFields: []string{"request_id", "gpu_sku", "ssn", "voice_id"},
 	})
 	defer pusher.Stop()
 	if err := pusher.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	payload := string(received)
-	if strings.Contains(payload, secretRequestID) || strings.Contains(payload, secretGPUSKU) || strings.Contains(payload, "123-45-6789") {
+	if strings.Contains(payload, secretRequestID) || strings.Contains(payload, secretGPUSKU) ||
+		strings.Contains(payload, "123-45-6789") || strings.Contains(payload, "private_voice") {
 		t.Fatalf("redacted attribution detail leaked into wire payload: %s", payload)
 	}
 	if !strings.Contains(payload, "[REDACTED]") {
 		t.Fatalf("expected typed attribution fields to contain redaction marker: %s", payload)
 	}
-	if strings.Contains(payload, `"key":"ssn"`) || !strings.Contains(payload, `"key":"billing_tier"`) {
+	if strings.Contains(payload, `"key":"ssn"`) || strings.Contains(payload, `"key":"voice_id"`) ||
+		!strings.Contains(payload, `"key":"billing_tier"`) {
 		t.Fatalf("logical billing-dimension redaction was not applied: %s", payload)
 	}
 }

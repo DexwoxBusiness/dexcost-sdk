@@ -6,6 +6,7 @@ the rewritten HTTP adapter behaviour.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock
@@ -118,11 +119,11 @@ class TestKnownServiceExtraction:
         assert event.cost_confidence == "unknown"
         assert wire is not None
         assert wire["provider"] == {
-            "name": "openai", "service": "embeddings", "record_id": "req-17"
+            "name": "openai",
+            "service": "embeddings",
+            "record_id": "req-17",
         }
-        assert wire["usage"] == [
-            {"metric": "input_tokens", "quantity": "17", "unit": "Tokens"}
-        ]
+        assert wire["usage"] == [{"metric": "input_tokens", "quantity": "17", "unit": "Tokens"}]
         assert "cost_evidence" not in wire
 
     def test_failed_provider_response_is_not_observed(self) -> None:
@@ -215,14 +216,13 @@ class TestKnownServiceExtraction:
             "record_id": "req-tts-4",
         }
         assert wire["resource"] == {"type": "model", "id": "tts-1-hd"}
-        assert wire["usage"] == [
-            {"metric": "characters", "quantity": "4", "unit": "Characters"}
-        ]
+        assert wire["usage"] == [{"metric": "characters", "quantity": "4", "unit": "Characters"}]
         assert "cost_evidence" not in wire
+
     def test_elevenlabs_tts_uses_provider_billed_character_header(self) -> None:
         task = _make_task("speech")
         response = _make_response(
-            headers={"character-cost": "11", "request-id": "el-tts-11"},
+            headers={"character-cost": "11", "x-trace-id": "el-trace-11"},
             content_type="audio/mpeg",
             content_length=4,
         )
@@ -233,33 +233,35 @@ class TestKnownServiceExtraction:
                 request_body={"model_id": "eleven_flash_v2_5", "text": "Not eleven chars"},
                 response=response,
             )
-        wire = to_attribution_event_v2(get_recorded_events()[0])
+        event = get_recorded_events()[0]
+        assert "Not eleven chars" not in json.dumps(event.details)
+        wire = to_attribution_event_v2(event)
         assert wire is not None
         assert wire["component"] == "text_to_speech"
         assert wire["provider"] == {
             "name": "elevenlabs",
             "service": "text_to_speech",
-            "record_id": "el-tts-11",
+            "record_id": "el-trace-11",
         }
         assert wire["resource"] == {"type": "model", "id": "eleven_flash_v2_5"}
-        assert wire["usage"] == [
-            {"metric": "characters", "quantity": "11", "unit": "Characters"}
-        ]
+        assert wire["usage"] == [{"metric": "characters", "quantity": "11", "unit": "Characters"}]
         assert "cost_evidence" not in wire
-        v3 = to_attribution_observation_v3(get_recorded_events()[0])
+        v3 = to_attribution_observation_v3(event)
         assert v3 is not None
         assert v3["schema_version"] == "3"
         assert v3["component"] == "text_to_speech"
         assert v3["provider"] == {
             "name": "elevenlabs",
             "service": "text_to_speech",
-            "record_id": "el-tts-11",
+            "record_id": "el-trace-11",
         }
         assert v3["resource"] == {"type": "model", "id": "eleven_flash_v2_5"}
         assert v3["usage"][0]["metric"] == "characters"
         assert v3["usage"][0]["quantity"] == "11"
         assert v3["usage"][0]["unit"] == "Characters"
-        assert v3["usage"][0]["dimensions"] == []
+        assert v3["usage"][0]["dimensions"] == [
+            {"key": "voice_id", "value": {"type": "string", "value": "voice_123"}}
+        ]
 
     def test_cohere_request_model_reaches_attribution_v2(self) -> None:
         task = _make_task("embedding")
@@ -297,7 +299,8 @@ class TestKnownServiceExtraction:
             "keyterm_prompting",
         ]
         assert all(
-            wire is not None and wire["usage"][0]["quantity"] == "20"
+            wire is not None
+            and wire["usage"][0]["quantity"] == "20"
             and "cost_evidence" not in wire
             for wire in wires
         )
@@ -380,9 +383,14 @@ class TestUnknownDomain:
         response = _make_response(body={"data": "hello"})
 
         with task_context(task):
-            _handle_http_call("https://unknown-api.example.com/v1/data",
-                              method="GET", request_headers={}, request_body_len=0,
-                              response=response, latency_ms=5)
+            _handle_http_call(
+                "https://unknown-api.example.com/v1/data",
+                method="GET",
+                request_headers={},
+                request_body_len=0,
+                response=response,
+                latency_ms=5,
+            )
 
         # No event — small successful call to un-cataloged domain.
         events = get_recorded_events()
@@ -397,9 +405,14 @@ class TestUnknownDomain:
         response = _make_response(body={"data": "x"}, content_length=200_000)
 
         with task_context(task):
-            _handle_http_call("https://unknown-api.example.com/v1/bulk",
-                              method="GET", request_headers={}, request_body_len=0,
-                              response=response, latency_ms=50)
+            _handle_http_call(
+                "https://unknown-api.example.com/v1/bulk",
+                method="GET",
+                request_headers={},
+                request_body_len=0,
+                response=response,
+                latency_ms=50,
+            )
 
         events = get_recorded_events()
         assert len(events) == 1

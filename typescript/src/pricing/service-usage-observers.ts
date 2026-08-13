@@ -25,6 +25,11 @@ interface ResponsePredicate {
   value?: string | boolean;
 }
 
+export interface ObservedBillingDimension {
+  key: string;
+  value: { type: "string"; value: string };
+}
+
 interface UsageObserverDefinition {
   service_key: string;
   provider_name: string;
@@ -68,6 +73,7 @@ export interface ServiceUsageObservation {
   resourceType?: ObservedResourceType;
   resourceId?: string;
   providerRecordId?: string;
+  dimensions?: ObservedBillingDimension[];
   manifestVersion: string;
 }
 
@@ -136,6 +142,22 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
     Object.keys(candidate).length === 3 &&
     (typeof candidate.value === "string" ||
       typeof candidate.value === "boolean");
+}
+
+function pathDimensions(url: URL, definition: UsageObserverDefinition): ObservedBillingDimension[] {
+  if (definition.service_key !== "elevenlabs_tts") return [];
+  const prefix = "/v1/text-to-speech/";
+  if (!url.pathname.startsWith(prefix)) return [];
+  const encoded = url.pathname.slice(prefix.length).split("/", 1)[0];
+  if (encoded === "") return [];
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(encoded);
+  } catch {
+    return [];
+  }
+  const value = boundedString(decoded);
+  return value === undefined ? [] : [{ key: "voice_id", value: { type: "string", value } }];
 }
 
 function validateManifest(raw: unknown): UsageObserverManifest {
@@ -327,9 +349,12 @@ export class ServiceUsageObservers {
       const recordFromBody = observer.record_id_path === undefined
         ? undefined
         : boundedString(resolvePath(responseBody, observer.record_id_path));
-      const recordFromHeader = observer.record_id_header === undefined
+      let recordFromHeader = observer.record_id_header === undefined
         ? undefined
         : boundedString(headers.get(observer.record_id_header));
+      if (observer.service_key === "elevenlabs_tts") {
+        recordFromHeader ??= boundedString(headers.get("x-trace-id"));
+      }
       let resourceId = observer.resource_path === undefined
         ? undefined
         : boundedString(resolvePath(responseBody, observer.resource_path));
@@ -364,6 +389,7 @@ export class ServiceUsageObservers {
         resourceType: resourceId === undefined ? undefined : observer.resource_type,
         resourceId,
         providerRecordId: recordFromBody ?? recordFromHeader,
+        dimensions: pathDimensions(matched.parsed, observer),
         manifestVersion: this.manifestVersion,
       });
     }
