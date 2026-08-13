@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.11.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.11.0...python/v0.11.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **pricing:** preserve ElevenLabs correlation context ([#130](https://github.com/DexwoxBusiness/dexcost-sdk/issues/130)) ([c04faa6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c04faa66e80235e5e441cad1751a1cf0f332d050))
+
 ## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.10.1...python/v0.11.0) (2026-08-13)
 
 
