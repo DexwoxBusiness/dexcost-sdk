@@ -795,6 +795,7 @@ def _handle_usage_observer(
             "attribution_resource_id": observation.resource_id,
             "attribution_usage_quantity": str(observation.quantity),
             "attribution_usage_metric": observation.metric,
+            "attribution_dimensions": list(observation.dimensions),
             "attribution_observer_version": observation.manifest_version,
             "attribution_observer_service": observation.service_key,
             **byte_details,

@@ -475,6 +475,7 @@ func (t *trackingTransport) recordUsageObservation(
 	event.Details["attribution_resource_id"] = observation.ResourceID
 	event.Details["attribution_usage_quantity"] = observation.Quantity.String()
 	event.Details["attribution_usage_metric"] = observation.Metric
+	event.Details["attribution_dimensions"] = observation.Dimensions
 	event.Details["attribution_observer_version"] = observation.ManifestVersion
 	event.Details["attribution_observer_service"] = observation.ServiceKey
 	if observation.Metric == "audio_seconds" {

@@ -2,6 +2,7 @@ package adapters_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -297,7 +298,7 @@ func TestTrackHTTP_ElevenLabsTTSUsesProviderBilledCharactersWithoutConsumingAudi
 			Header: http.Header{
 				"Content-Type":   {"audio/mpeg"},
 				"Character-Cost": {"11"},
-				"Request-Id":     {"el-tts-11"},
+				"X-Trace-Id":     {"el-trace-11"},
 			},
 			Body:    io.NopCloser(strings.NewReader("audio")),
 			Request: req,
@@ -327,10 +328,13 @@ func TestTrackHTTP_ElevenLabsTTSUsesProviderBilledCharactersWithoutConsumingAudi
 	if len(events) != 1 {
 		t.Fatalf("expected one ElevenLabs usage event, got %d", len(events))
 	}
+	if strings.Contains(strings.TrimSpace(fmt.Sprint(events[0].Details)), "Not eleven chars") {
+		t.Fatal("raw narration text leaked into event details")
+	}
 	wire := attribution.ToEventV2(events[0])
 	if wire == nil || wire.Component != attribution.ComponentTextToSpeech ||
 		wire.Provider.Name != "elevenlabs" || wire.Provider.Service != "text_to_speech" ||
-		wire.Provider.RecordID != "el-tts-11" || wire.Resource == nil ||
+		wire.Provider.RecordID != "el-trace-11" || wire.Resource == nil ||
 		wire.Resource.ID != "eleven_flash_v2_5" || len(wire.Usage) != 1 ||
 		wire.Usage[0].Metric != attribution.MetricCharacters ||
 		wire.Usage[0].Quantity != "11" || wire.CostEvidence != nil {
@@ -339,10 +343,13 @@ func TestTrackHTTP_ElevenLabsTTSUsesProviderBilledCharactersWithoutConsumingAudi
 	v3 := attribution.ToObservationV3(events[0])
 	if v3 == nil || v3.SchemaVersion != "3" || v3.Component != "text_to_speech" ||
 		v3.Provider.Name != "elevenlabs" || v3.Provider.Service != "text_to_speech" ||
-		v3.Provider.RecordID != "el-tts-11" || v3.Resource == nil ||
+		v3.Provider.RecordID != "el-trace-11" || v3.Resource == nil ||
 		v3.Resource.ID != "eleven_flash_v2_5" || len(v3.Usage) != 1 ||
 		v3.Usage[0].Metric != "characters" || v3.Usage[0].Quantity != "11" ||
-		v3.Usage[0].Unit != "Characters" || len(v3.Usage[0].Dimensions) != 0 ||
+		v3.Usage[0].Unit != "Characters" || len(v3.Usage[0].Dimensions) != 1 ||
+		v3.Usage[0].Dimensions[0].Key != "voice_id" ||
+		v3.Usage[0].Dimensions[0].Value.Type != "string" ||
+		v3.Usage[0].Dimensions[0].Value.Value != "voice_123" ||
 		v3.CostEvidence != nil {
 		t.Fatalf("unexpected ElevenLabs attribution v3: %+v", v3)
 	}

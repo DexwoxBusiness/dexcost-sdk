@@ -255,9 +255,9 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(audio, {
       status: 200,
       headers: {
-        "content-type": "audio/mpeg",
-        "character-cost": "11",
-        "request-id": "el-tts-11",
+         "content-type": "audio/mpeg",
+         "character-cost": "11",
+         "x-trace-id": "el-trace-11",
       },
     })));
     trackHttp(buffer);
@@ -271,20 +271,27 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     ));
 
     expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([12, 13, 14]);
-    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    const event = getRecordedEvents()[0];
+    expect(JSON.stringify(event.details)).not.toContain("Not eleven chars");
+    const wire = toAttributionEventV2(event);
     expect(wire).toMatchObject({
       component: "text_to_speech",
-      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-tts-11" },
+      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-trace-11" },
       resource: { type: "model", id: "eleven_flash_v2_5" },
       usage: [{ metric: "characters", quantity: "11", unit: "Characters" }],
     });
     expect(wire?.cost_evidence).toBeUndefined();
-    expect(toAttributionObservationV3(getRecordedEvents()[0])).toMatchObject({
+    expect(toAttributionObservationV3(event)).toMatchObject({
       schema_version: "3",
       component: "text_to_speech",
-      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-tts-11" },
+      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-trace-11" },
       resource: { type: "model", id: "eleven_flash_v2_5" },
-      usage: [{ metric: "characters", quantity: "11", unit: "Characters", dimensions: [] }],
+      usage: [{
+        metric: "characters",
+        quantity: "11",
+        unit: "Characters",
+        dimensions: [{ key: "voice_id", value: { type: "string", value: "voice_123" } }],
+      }],
     });
   });
 
