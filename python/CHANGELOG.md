@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.10.1...python/v0.11.0) (2026-08-13)
+
+
+### Features
+
+* **pricing:** observe ElevenLabs billed TTS characters ([#125](https://github.com/DexwoxBusiness/dexcost-sdk/issues/125)) ([69991c5](https://github.com/DexwoxBusiness/dexcost-sdk/commit/69991c59f8777fb901540f6c2713491891f10027))
+
 ## [0.10.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.10.0...python/v0.10.1) (2026-08-12)
 
 
