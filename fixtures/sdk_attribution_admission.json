@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.4.0",
+  "observer_manifest_version": "1.5.0",
   "conformance_schema_version": "5",
   "required_sdks": ["typescript", "python", "go", "rust"],
   "observers": [
@@ -28,6 +28,11 @@
       "service_key": "openai_tts",
       "positive_cases": ["openai_tts_counts_unicode_characters_from_the_successful_request"],
       "fail_open_cases": ["openai_tts_does_not_invent_usage_without_billed_text"]
+    },
+    {
+      "service_key": "elevenlabs_tts",
+      "positive_cases": ["elevenlabs_tts_uses_provider_billed_character_header"],
+      "fail_open_cases": ["elevenlabs_tts_missing_character_cost_is_not_invented"]
     },
     {
       "service_key": "deepgram_transcription",

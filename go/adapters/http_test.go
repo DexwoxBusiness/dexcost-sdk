@@ -288,6 +288,66 @@ func TestTrackHTTP_OpenAITTSObservesCharactersWithoutConsumingAudio(t *testing.T
 	}
 }
 
+func TestTrackHTTP_ElevenLabsTTSUsesProviderBilledCharactersWithoutConsumingAudio(t *testing.T) {
+	adapters.ClearDomainRates()
+	adapters.ClearRecordedEvents()
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":   {"audio/mpeg"},
+				"Character-Cost": {"11"},
+				"Request-Id":     {"el-tts-11"},
+			},
+			Body:    io.NopCloser(strings.NewReader("audio")),
+			Request: req,
+		}, nil
+	})
+	client := adapters.TrackHTTP(&http.Client{Transport: base})
+	task := core.NewTask("speech")
+	req, _ := http.NewRequestWithContext(
+		core.WithTask(context.Background(), &task),
+		http.MethodPost,
+		"https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
+		strings.NewReader(`{"model_id":"eleven_flash_v2_5","text":"Not eleven chars"}`),
+	)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if string(body) != "audio" {
+		t.Fatalf("provider audio body was changed: %q", body)
+	}
+	events := adapters.GetRecordedEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected one ElevenLabs usage event, got %d", len(events))
+	}
+	wire := attribution.ToEventV2(events[0])
+	if wire == nil || wire.Component != attribution.ComponentTextToSpeech ||
+		wire.Provider.Name != "elevenlabs" || wire.Provider.Service != "text_to_speech" ||
+		wire.Provider.RecordID != "el-tts-11" || wire.Resource == nil ||
+		wire.Resource.ID != "eleven_flash_v2_5" || len(wire.Usage) != 1 ||
+		wire.Usage[0].Metric != attribution.MetricCharacters ||
+		wire.Usage[0].Quantity != "11" || wire.CostEvidence != nil {
+		t.Fatalf("unexpected ElevenLabs attribution: %+v", wire)
+	}
+	v3 := attribution.ToObservationV3(events[0])
+	if v3 == nil || v3.SchemaVersion != "3" || v3.Component != "text_to_speech" ||
+		v3.Provider.Name != "elevenlabs" || v3.Provider.Service != "text_to_speech" ||
+		v3.Provider.RecordID != "el-tts-11" || v3.Resource == nil ||
+		v3.Resource.ID != "eleven_flash_v2_5" || len(v3.Usage) != 1 ||
+		v3.Usage[0].Metric != "characters" || v3.Usage[0].Quantity != "11" ||
+		v3.Usage[0].Unit != "Characters" || len(v3.Usage[0].Dimensions) != 0 ||
+		v3.CostEvidence != nil {
+		t.Fatalf("unexpected ElevenLabs attribution v3: %+v", v3)
+	}
+}
+
 // Test 1: RegisterDomainRate and GetDomainRates
 func TestRegisterAndGetDomainRates(t *testing.T) {
 	adapters.ClearDomainRates()

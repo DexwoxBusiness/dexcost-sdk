@@ -77,6 +77,46 @@
       "expected": []
     },
     {
+      "name": "elevenlabs_tts_uses_provider_billed_character_header",
+      "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
+      "headers": { "Character-Cost": "11", "Request-Id": "el_req_123" },
+      "request": { "model_id": "eleven_flash_v2_5", "text": "This raw text is deliberately not eleven characters." },
+      "response": null,
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "11", "resource_type": "model", "resource_id": "eleven_flash_v2_5", "provider_record_id": "el_req_123" }]
+    },
+    {
+      "name": "elevenlabs_tts_defaults_to_multilingual_v2",
+      "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_456",
+      "headers": { "character-cost": "7.5", "request-id": "el_req_default" },
+      "request": { "text": "Hello" },
+      "response": null,
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "7.5", "resource_type": "model", "resource_id": "eleven_multilingual_v2", "provider_record_id": "el_req_default" }]
+    },
+    {
+      "name": "elevenlabs_tts_missing_character_cost_is_not_invented",
+      "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_789",
+      "headers": { "request-id": "el_req_missing" },
+      "request": { "model_id": "eleven_v3", "text": "Hello" },
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "elevenlabs_tts_invalid_character_cost_is_not_invented",
+      "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_789",
+      "headers": { "character-cost": "not-a-number", "request-id": "el_req_invalid" },
+      "request": { "model_id": "eleven_v3", "text": "Hello" },
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "elevenlabs_tts_unknown_model_is_not_priced_by_assumption",
+      "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_789",
+      "headers": { "character-cost": "5", "request-id": "el_req_unknown_model" },
+      "request": { "model_id": "future_unverified_model", "text": "Hello" },
+      "response": null,
+      "expected": []
+    },
+    {
       "name": "deepgram_default_model_is_a_monolingual_batch_sku",
       "url": "https://api.deepgram.com/v1/listen",
       "headers": {},

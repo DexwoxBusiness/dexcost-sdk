@@ -22,6 +22,7 @@ import {
   resetServiceCatalog,
 } from "../src/adapters/http.js";
 import { toAttributionEventV2 } from "../src/attribution/convert.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 
 let tmpDir: string;
 let buffer: EventBuffer;
@@ -247,6 +248,44 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
       usage: [{ metric: "characters", quantity: "4", unit: "Characters" }],
     });
     expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("emits ElevenLabs provider-billed characters without consuming audio", async () => {
+    const audio = new Uint8Array([12, 13, 14]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(audio, {
+      status: 200,
+      headers: {
+        "content-type": "audio/mpeg",
+        "character-cost": "11",
+        "request-id": "el-tts-11",
+      },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "speech" });
+    const response = await runWithTask(task, async () => fetch(
+      "https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
+      {
+        method: "POST",
+        body: JSON.stringify({ model_id: "eleven_flash_v2_5", text: "Not eleven chars" }),
+      },
+    ));
+
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([12, 13, 14]);
+    const wire = toAttributionEventV2(getRecordedEvents()[0]);
+    expect(wire).toMatchObject({
+      component: "text_to_speech",
+      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-tts-11" },
+      resource: { type: "model", id: "eleven_flash_v2_5" },
+      usage: [{ metric: "characters", quantity: "11", unit: "Characters" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+    expect(toAttributionObservationV3(getRecordedEvents()[0])).toMatchObject({
+      schema_version: "3",
+      component: "text_to_speech",
+      provider: { name: "elevenlabs", service: "text_to_speech", record_id: "el-tts-11" },
+      resource: { type: "model", id: "eleven_flash_v2_5" },
+      usage: [{ metric: "characters", quantity: "11", unit: "Characters", dimensions: [] }],
+    });
   });
 
   it("emits OpenAI TTS characters from a Request object body", async () => {

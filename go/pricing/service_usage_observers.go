@@ -24,6 +24,7 @@ type usageObserverDefinition struct {
 	Domains                          []string                 `json:"domains"`
 	Endpoints                        []string                 `json:"endpoints"`
 	ResponsePath                     string                   `json:"response_path"`
+	ResponseQuantityHeader           string                   `json:"response_quantity_header"`
 	ResponseAll                      []usageResponsePredicate `json:"response_all"`
 	RequestCharacterCountPath        string                   `json:"request_character_count_path"`
 	UsageMetric                      string                   `json:"usage_metric"`
@@ -116,7 +117,7 @@ func loadUsageObservers() {
 		_, duplicate := keys[observer.ServiceKey]
 		if duplicate || observer.ServiceKey == "" || observer.ProviderName == "" ||
 			observer.ProviderService == "" ||
-			((observer.ResponsePath == "") == (observer.RequestCharacterCountPath == "")) ||
+			boolCount(observer.ResponsePath != "", observer.ResponseQuantityHeader != "", observer.RequestCharacterCountPath != "") != 1 ||
 			observer.metricInvalid() ||
 			(observer.Component != "external" && observer.Component != "speech_to_text" &&
 				observer.Component != "text_to_speech") ||
@@ -191,6 +192,16 @@ func loadUsageObservers() {
 func (observer usageObserverDefinition) metricInvalid() bool {
 	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds" &&
 		observer.UsageMetric != "characters"
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
 }
 
 func allUsageObserverDomainsValid(domains []string) bool {
@@ -365,6 +376,19 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 				continue
 			}
 			quantity = decimal.NewFromInt(int64(utf8.RuneCountInString(text)))
+		} else if observer.ResponseQuantityHeader != "" {
+			var headerValue string
+			for key, value := range headers {
+				if strings.EqualFold(key, observer.ResponseQuantityHeader) {
+					headerValue = value
+					break
+				}
+			}
+			var ok bool
+			quantity, ok = toDecimal(headerValue)
+			if !ok || !quantity.IsPositive() {
+				continue
+			}
 		} else {
 			var ok bool
 			quantity, ok = toDecimal(resolveDottedPath(body, observer.ResponsePath))
