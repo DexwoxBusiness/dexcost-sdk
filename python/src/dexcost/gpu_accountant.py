@@ -38,6 +38,7 @@ _log = logging.getLogger(__name__)
 
 _warned_modes: set[str] = set()
 _warn_lock = threading.Lock()
+_SAMPLE_INTERVAL_SECONDS = 0.5
 
 
 def _reset_warning_state() -> None:
@@ -85,6 +86,15 @@ class GpuAccountant:
         self._device_handles: list = []
         self._device_product_names: list[str | None] = []
         self._device_mig_modes: list[bool] = []
+        # NVML commonly exposes only the most recent process-utilization
+        # sample on Windows. Retain periodic samples while the task is active
+        # so work that finishes before finalization is not measured as zero.
+        self._baseline_timestamps: dict[int, dict[int, int]] = {}
+        self._collected_samples: dict[int, dict[int, list[Any]]] = {}
+        self._observed_scope_pids: set[int] = set()
+        self._sample_lock = threading.Lock()
+        self._sample_stop = threading.Event()
+        self._sample_thread: threading.Thread | None = None
         # Per-device peak VRAM tracker (sampled at start + end).
         self._vram_total: dict[int, int] = {}
         self._vram_used_peak: dict[int, int] = {}
@@ -124,6 +134,7 @@ class GpuAccountant:
                 self._vram_total[i] = mem.total_bytes
                 self._vram_used_peak[i] = mem.used_bytes
             self._initial_timestamps[i] = {}
+            self._collected_samples[i] = {}
             self._pids_touched_per_device[i] = set()
             # Baseline NVML sample — captures the per-PID lastSeenTimeStamp.
             baseline = nvml_reader.get_process_utilization(
@@ -142,11 +153,66 @@ class GpuAccountant:
                         self._initial_timestamps[i][pid] = max(
                             s.time_stamp for s in samples_list
                         )
+            self._baseline_timestamps[i] = dict(self._initial_timestamps[i])
 
         # Snapshot cgroup PIDs (Decision #1 scope classification).
         self._scope = cgroup_walker.classify_scope()
         pids = cgroup_walker.enumerate_pids(self._scope)
         self._initial_pids = set(pids) if pids is not None else {os.getpid()}
+        self._observed_scope_pids.update(self._initial_pids)
+        self._sample_thread = threading.Thread(
+            target=self._sample_periodically,
+            name="dexcost-gpu-sampler",
+            daemon=True,
+        )
+        self._sample_thread.start()
+
+    def _sample_periodically(self) -> None:
+        while not self._sample_stop.wait(_SAMPLE_INTERVAL_SECONDS):
+            self._collect_samples()
+
+    def _collect_samples(self) -> None:
+        """Collect one bounded NVML sample batch without affecting the task."""
+        scope = self._scope or cgroup_walker.classify_scope()
+        pids = cgroup_walker.enumerate_pids(scope)
+        observed_pids = {os.getpid()} if pids is None else set(pids)
+        with self._sample_lock:
+            self._observed_scope_pids.update(observed_pids)
+
+        for i, handle in enumerate(self._device_handles):
+            try:
+                samples = nvml_reader.get_process_utilization(
+                    handle, self._initial_timestamps[i],
+                ) or {}
+                mem = nvml_reader.get_memory_info(handle)
+            except Exception:
+                _log.debug("periodic NVML sampling failed open", exc_info=True)
+                continue
+            with self._sample_lock:
+                for pid, sample_list in samples.items():
+                    if not sample_list:
+                        continue
+                    self._collected_samples[i].setdefault(pid, []).extend(sample_list)
+                    self._pids_touched_per_device[i].add(pid)
+                if mem:
+                    self._vram_used_peak[i] = max(
+                        self._vram_used_peak.get(i, 0), mem.used_bytes,
+                    )
+
+    def _stop_sampling(self) -> None:
+        self._sample_stop.set()
+        if self._sample_thread is not None:
+            self._sample_thread.join(timeout=_SAMPLE_INTERVAL_SECONDS + 1.0)
+            if self._sample_thread.is_alive():
+                _warn_once(
+                    "gpu_periodic_sampler_stop_timeout",
+                    "Periodic NVML sampler did not stop before finalization; "
+                    "using the samples already collected",
+                )
+                return
+        # Capture the final boundary too. Periodic samples retain the active
+        # window; this last sample records any work after the final interval.
+        self._collect_samples()
 
     # ------------------------------------------------------------------
     # Snapshot end + build dual events
@@ -172,6 +238,8 @@ class GpuAccountant:
         if not self._device_handles:
             return (None, None)
 
+        self._stop_sampling()
+
         # End-snapshot cgroup walk + Decision #1 fallback label.
         scope = self._scope or cgroup_walker.classify_scope()
         end_pids_list = cgroup_walker.enumerate_pids(scope)
@@ -185,7 +253,10 @@ class GpuAccountant:
 
         # Union of PIDs seen at start + end (forked workers that exited
         # before end still contributed GPU time captured at start).
-        cgroup_pid_union = self._initial_pids | current_pids
+        with self._sample_lock:
+            cgroup_pid_union = (
+                self._initial_pids | current_pids | self._observed_scope_pids
+            )
 
         # Per-device: end NVML samples + accumulate SM-time across cgroup PIDs.
         per_device_gpu_seconds: dict[int, float] = {}
@@ -225,20 +296,12 @@ class GpuAccountant:
             # Each PID's first integration-dt is `first_sample.time_stamp -
             # baseline_ts_per_pid[pid]`; reading the mutated dict afterwards
             # would zero out the dt for every PID.
-            baseline_ts_per_pid = dict(self._initial_timestamps[i])
-
-            end_samples = nvml_reader.get_process_utilization(
-                handle, self._initial_timestamps[i],
-            ) or {}
-            if end_samples:
-                self._pids_touched_per_device[i].update(end_samples.keys())
-
-            # Re-read memory for peak update.
-            mem = nvml_reader.get_memory_info(handle)
-            if mem:
-                self._vram_used_peak[i] = max(
-                    self._vram_used_peak.get(i, 0), mem.used_bytes,
-                )
+            baseline_ts_per_pid = dict(self._baseline_timestamps[i])
+            with self._sample_lock:
+                end_samples = {
+                    pid: list(samples)
+                    for pid, samples in self._collected_samples[i].items()
+                }
 
             # Filter to cgroup-PID set (Decision #1 boundary). After B2 the
             # NVML wrapper returns dict[pid, list[UtilSample]] — multiple
@@ -365,6 +428,11 @@ class GpuAccountant:
             return (None, None)
 
         total_gpu_seconds = sum(per_device_gpu_seconds.values())
+        if self.runtime == GpuRuntimeKind.LOCAL_GPU and total_gpu_seconds <= 0:
+            # A zero quantity is not billable usage and cannot be represented
+            # by attribution v3's positive-decimal usage contract. Preserve
+            # utilization telemetry, but do not create a quarantined cost row.
+            return (None, signal_events if signal_events else None)
         cost_event = self._build_cost_event(
             duration_ms=duration_ms,
             gpu_sku=gpu_sku,
