@@ -206,4 +206,8 @@ describe("No NVML / no GPU → NONE", () => {
   it("no cloud provider resolved + no env vars → NONE", () => {
     expect(resolveGpuRuntime(opts(true, 0, null))).toBe(GpuRuntimeKind.None);
   });
+
+  it("visible GPU without a cloud provider → LOCAL_GPU", () => {
+    expect(resolveGpuRuntime(opts(true, 1, null))).toBe(GpuRuntimeKind.LocalGpu);
+  });
 });

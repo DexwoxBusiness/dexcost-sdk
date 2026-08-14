@@ -3,10 +3,10 @@
 // Mirrors python/src/dexcost/nvml_reader.py. The Go SDK avoids a hard
 // dep on github.com/NVIDIA/go-nvml so the SDK builds + tests on GPU-less
 // hosts; NVML access happens through a pluggable backend interface
-// (NVMLBackend). The default backend is a noop that reports "no GPU".
+// (NVMLBackend). The production default uses the NVIDIA `nvidia-smi` CLI.
 //
-// Consumers can register a real backend via SetNVMLBackend(); the GPU
-// stack works on default-noop in unit tests with mocked devices.
+// Consumers can register a native backend via SetNVMLBackend(); tests use
+// the noop or a deterministic mock backend.
 //
 // Decision #4: GetNVMLProductName applies NFC Unicode normalization +
 // lowercase + whitespace collapse on the raw productName before returning
@@ -52,9 +52,8 @@ type NVMLMemInfo struct {
 }
 
 // NVMLBackend abstracts NVML so the SDK doesn't require pynvml/go-nvml at
-// build time. The default backend returns "no GPU"; production deployments
-// inject a real NVML-backed implementation; tests inject a deterministic
-// mock.
+// build time. Production defaults to the bounded nvidia-smi implementation;
+// tests can inject a deterministic mock.
 type NVMLBackend interface {
 	Available() bool
 	Init() bool
@@ -72,7 +71,7 @@ type NVMLBackend interface {
 	MemoryInfo(devIdx int) (NVMLMemInfo, bool)
 }
 
-// noopNVMLBackend is the default: reports "no GPU" for every call.
+// noopNVMLBackend reports "no GPU" and is used by deterministic tests.
 type noopNVMLBackend struct{}
 
 func (noopNVMLBackend) Available() bool                { return false }
@@ -91,11 +90,11 @@ func (noopNVMLBackend) MemoryInfo(int) (NVMLMemInfo, bool) { return NVMLMemInfo{
 
 var (
 	nvmlBackendMu sync.RWMutex
-	nvmlBackend   NVMLBackend = noopNVMLBackend{}
+	nvmlBackend   NVMLBackend = newNvidiaSMIBackend()
 )
 
 // SetNVMLBackend swaps the global NVML backend. Used by consumers that
-// vendor a real NVML library. nil reverts to the noop default.
+// vendor a native NVML library. nil selects the test-safe noop backend.
 func SetNVMLBackend(b NVMLBackend) {
 	nvmlBackendMu.Lock()
 	defer nvmlBackendMu.Unlock()
@@ -289,11 +288,11 @@ type MockNVMLBackend struct {
 	// Available toggles every accessor at once. Field is named with a
 	// trailing underscore in struct layout to avoid clash with the
 	// Available() method required by the NVMLBackend interface.
-	Available      bool
-	DeviceCount    int
-	ProductNames   map[int]string
-	MIGModes       map[int]bool
-	Procs          map[int][]NVMLProcessInfo
+	Available    bool
+	DeviceCount  int
+	ProductNames map[int]string
+	MIGModes     map[int]bool
+	Procs        map[int][]NVMLProcessInfo
 	// Utilizations: map[devIdx][pid][]Sample. Single-element slice gives
 	// the legacy single-sample behaviour; multi-element slices exercise
 	// B2 integration math.
@@ -322,8 +321,8 @@ func (m *MockNVMLBackend) nvmlAvailable() bool {
 // NVMLBackend interface methods. We use distinct method receiver names
 // to avoid the field/method same-name collision.
 
-func (m *MockNVMLBackend) Init() bool                    { return m.nvmlAvailable() }
-func (m *MockNVMLBackend) Shutdown()                     {}
+func (m *MockNVMLBackend) Init() bool { return m.nvmlAvailable() }
+func (m *MockNVMLBackend) Shutdown()  {}
 
 func (m *MockNVMLBackend) GetAvailable() bool { return m.nvmlAvailable() }
 
@@ -407,12 +406,12 @@ func (m *MockNVMLBackend) GetMemoryInfo(devIdx int) (NVMLMemInfo, bool) {
 // names clash with the struct's exported field names).
 type mockAdapter struct{ m *MockNVMLBackend }
 
-func (a *mockAdapter) Available() bool               { return a.m.GetAvailable() }
-func (a *mockAdapter) Init() bool                    { return a.m.Init() }
-func (a *mockAdapter) Shutdown()                     { a.m.Shutdown() }
-func (a *mockAdapter) DeviceCount() (int, bool)      { return a.m.GetDeviceCount() }
+func (a *mockAdapter) Available() bool                  { return a.m.GetAvailable() }
+func (a *mockAdapter) Init() bool                       { return a.m.Init() }
+func (a *mockAdapter) Shutdown()                        { a.m.Shutdown() }
+func (a *mockAdapter) DeviceCount() (int, bool)         { return a.m.GetDeviceCount() }
 func (a *mockAdapter) ProductName(i int) (string, bool) { return a.m.GetProductName(i) }
-func (a *mockAdapter) MIGMode(i int) bool            { return a.m.GetMIGMode(i) }
+func (a *mockAdapter) MIGMode(i int) bool               { return a.m.GetMIGMode(i) }
 func (a *mockAdapter) ComputeRunningProcesses(i int) ([]NVMLProcessInfo, bool) {
 	return a.m.GetComputeRunningProcesses(i)
 }

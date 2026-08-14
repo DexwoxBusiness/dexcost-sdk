@@ -94,7 +94,11 @@ func (tt *TrackedTask) finalizeGPU(events []Event) {
 		ev.CostUSD = cost.CostUSD
 		ev.CostConfidence = CostConfidence(cost.CostConfidence)
 		ev.PricingSource = PricingSource(cost.PricingSource)
-		ev.PricingVersion = pricingVersion
+		if billing, _ := ev.Details["billing_model"].(string); billing == "local_gpu_usage_only" {
+			ev.PricingVersion = ""
+		} else {
+			ev.PricingVersion = pricingVersion
+		}
 		delete(ev.Details, "cost_pending")
 		if err := tt.tracker.buffer.UpdateEvent(ev); err != nil {
 			log.Printf("[dexcost] WARNING: failed to back-fill gpu event %s: %v", ev.EventID, err)

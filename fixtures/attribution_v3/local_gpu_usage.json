@@ -1,0 +1,25 @@
+{
+  "schema_version": "1",
+  "case_id": "local_nvidia_usage_only",
+  "details": {
+    "billing_model": "local_gpu_usage_only",
+    "runtime_kind": "local_gpu",
+    "cloud_provider": null,
+    "gpu_vendor": "nvidia",
+    "gpu_sku": "l4-24gb",
+    "gpu_count": 1,
+    "duration_ms": 10000,
+    "gpu_seconds_used": "2.5"
+  },
+  "expected": {
+    "component": "gpu",
+    "provider_name": "self_hosted",
+    "provider_service": "gpu_compute",
+    "resource_type": "sku",
+    "resource_id": "l4-24gb",
+    "usage_metric": "gpu_seconds",
+    "usage_unit": "GPU-Seconds",
+    "usage_quantity": "2.5",
+    "has_cost_evidence": false
+  }
+}

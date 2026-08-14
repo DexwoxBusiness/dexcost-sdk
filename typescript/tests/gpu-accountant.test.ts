@@ -7,7 +7,7 @@
  * pattern) so tests inject deterministic stubs.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   GpuAccountant,
   _resetWarningStateForTests,
@@ -88,6 +88,68 @@ describe("GpuAccountant — Modal serverless emission", () => {
     expect(sig.gpu_sku).toBe(costDetails!.gpu_sku);
     expect(sig.sm_util_pct).not.toBeNull();
     expect(sig.vram_total_bytes).toBe(85899345920);
+  });
+
+  it("preserves an unknown local workstation model without pricing it", () => {
+    const acc = new GpuAccountant(
+      GpuRuntimeKind.LocalGpu,
+      cloud(null, null, "none"),
+      baseHooks({
+        getProductName: () => "nvidia geforce rtx 4090",
+      }),
+    );
+    acc.snapshotStart();
+    const { costDetails } = acc.snapshotEndAndBuild(0);
+
+    expect(costDetails?.gpu_sku).toBe("nvidia geforce rtx 4090");
+    expect(costDetails?.billing_model).toBe("local_gpu_usage_only");
+  });
+
+  it.each([
+    "nvidia rtx 6000 ada generation",
+    "nvidia h100 pcie",
+    "nvidia h100 nvl",
+  ])("preserves exact local identity for %s", (productName) => {
+    const acc = new GpuAccountant(
+      GpuRuntimeKind.LocalGpu,
+      cloud(null, null, "none"),
+      baseHooks({ getProductName: () => productName }),
+    );
+    acc.snapshotStart();
+    const { costDetails } = acc.snapshotEndAndBuild(0);
+
+    expect(costDetails?.gpu_sku).toBe(productName);
+  });
+
+  it("retains a periodic sample after the GPU process disappears", async () => {
+    vi.useFakeTimers();
+    try {
+      const periodic = vi.fn().mockResolvedValueOnce({
+        [SELF]: [
+          { pid: SELF, smUtil: 80, memUtil: 20, timeStamp: 1_000_000 },
+        ],
+      });
+      const acc = new GpuAccountant(
+        GpuRuntimeKind.LocalGpu,
+        cloud(null, null, "none"),
+        baseHooks({
+          getProductName: () => "nvidia geforce rtx 4090",
+          getProcessUtilization: () => ({}),
+          getProcessUtilizationAsync: periodic,
+          samplingIntervalMs: 10,
+        }),
+      );
+      acc.snapshotStart();
+      await vi.advanceTimersByTimeAsync(10);
+
+      const { costDetails, signalEvents } = acc.snapshotEndAndBuild(2_000);
+
+      expect(periodic).toHaveBeenCalledOnce();
+      expect(costDetails?.gpu_seconds_used).toBeGreaterThan(0);
+      expect(signalEvents?.[0].sample_count).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

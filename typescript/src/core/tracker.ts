@@ -42,7 +42,7 @@ import { ComputeAccountant } from "./compute-accountant.js";
 import { RuntimeKind } from "./compute-runtime.js";
 import { GpuPricingEngine } from "../pricing/gpu-pricing.js";
 import { GpuAccountant } from "./gpu-accountant.js";
-import { GpuRuntimeKind } from "./gpu-runtime.js";
+import { GpuRuntimeKind, resolveGpuRuntime } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
 import { EventPusher } from "../transport/pusher.js";
 import { PricingEngine } from "../pricing/engine.js";
@@ -183,7 +183,15 @@ export function setApiKey(newKey: string): boolean {
 }
 
 export async function globalTrack<T>(
-  opts: { taskType: string; customerId?: string; projectId?: string; metadata?: Record<string, unknown>; experimentId?: string; variant?: string },
+  opts: {
+    taskType: string;
+    customerId?: string;
+    projectId?: string;
+    metadata?: Record<string, unknown>;
+    experimentId?: string;
+    variant?: string;
+    trackGpu?: boolean;
+  },
   fn: (task: TrackedTask) => Promise<T>,
 ): Promise<T> {
   return getTracker().track(opts, fn);
@@ -365,7 +373,7 @@ export class TrackedTask {
   private _events: CostEvent[] = [];
   private _ended = false;
 
-  constructor(task: Task, buffer: EventBuffer, tracker: CostTracker) {
+  constructor(task: Task, buffer: EventBuffer, tracker: CostTracker, trackGpu = false) {
     this._task = task;
     this._buffer = buffer;
     this._tracker = tracker;
@@ -374,6 +382,19 @@ export class TrackedTask {
     // can record byte usage via core.getAccountant(taskId).
     // Unregistered in end().
     registerAccountant(task.taskId, new NetworkAccountant());
+    if (trackGpu) {
+      try {
+        const cloudEnv = getCloudEnv();
+        const runtime = resolveGpuRuntime({ getCloudEnv: () => cloudEnv });
+        if (runtime === GpuRuntimeKind.LocalGpu) {
+          const accountant = new GpuAccountant(runtime, cloudEnv);
+          accountant.snapshotStart();
+          (task as any)._gpu = accountant;
+        }
+      } catch {
+        // Optional instrumentation is fail-open.
+      }
+    }
   }
 
   /** The underlying Task data. */
@@ -888,6 +909,7 @@ export class TrackedTask {
       GpuRuntimeKind.AzureVmVgpu,
       GpuRuntimeKind.LambdaLabs,
       GpuRuntimeKind.CoreWeave,
+      GpuRuntimeKind.LocalGpu,
     ]);
     const newEventIds = new Set<string>();
     if (accountant && longRunningGpu.has(accountant.runtime)) {
@@ -943,7 +965,9 @@ export class TrackedTask {
       ev.costUsd = priced.costUsd;
       ev.pricingSource = priced.pricingSource as any;
       ev.costConfidence = priced.costConfidence;
-      ev.pricingVersion = `gpu:${engine.catalogVersion}`;
+      ev.pricingVersion = details.billing_model === "local_gpu_usage_only"
+        ? undefined
+        : `gpu:${engine.catalogVersion}`;
       const newDetails: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(details)) {
         if (
@@ -1332,17 +1356,13 @@ export class CostTracker {
   }
 
   /**
-   * Execute `fn` inside a tracked task context.
-   *
-   * Creates a new task, runs the function within an AsyncLocalStorage
-   * context, and ends the task on completion (or failure).
-   */
-  /**
    * Manually start a task and return a `TrackedTask` handle.
    *
    * Use this when callbacks/context managers don't fit your architecture
    * (e.g. Celery-style workers, multi-process pipelines). The caller
    * **must** call `TrackedTask.end()` when the task is complete.
+   * Set `trackGpu: true` only on the leaf task that owns local NVIDIA GPU
+   * work; owned hardware is emitted as usage-only, never a synthetic price.
    * Mirrors the Python SDK's `CostTracker.start_task`.
    */
   startTask(
@@ -1353,6 +1373,7 @@ export class CostTracker {
       metadata?: Record<string, unknown>;
       experimentId?: string;
       variant?: string;
+      trackGpu?: boolean;
     } = {}
   ): TrackedTask {
     const parentTask = getCurrentTask();
@@ -1367,9 +1388,16 @@ export class CostTracker {
       variant: opts.variant,
     });
     this._buffer.upsertTask(task);
-    return new TrackedTask(task, this._buffer, this);
+    return new TrackedTask(task, this._buffer, this, opts.trackGpu === true);
   }
 
+  /**
+   * Execute `fn` inside a tracked task context.
+   *
+   * Creates a new task, runs the function within an AsyncLocalStorage
+   * context, and ends the task on completion (or failure). Set
+   * `trackGpu: true` only on the leaf task that owns local NVIDIA GPU work.
+   */
   async track<T>(
     opts: {
       taskType: string;
@@ -1378,6 +1406,7 @@ export class CostTracker {
       metadata?: Record<string, unknown>;
       experimentId?: string;
       variant?: string;
+      trackGpu?: boolean;
     },
     fn: (task: TrackedTask) => Promise<T>
   ): Promise<T> {
@@ -1396,7 +1425,7 @@ export class CostTracker {
 
     this._buffer.upsertTask(task);
 
-    const trackedTask = new TrackedTask(task, this._buffer, this);
+    const trackedTask = new TrackedTask(task, this._buffer, this, opts.trackGpu === true);
 
     try {
       const result = await runWithTask(task, () => fn(trackedTask));

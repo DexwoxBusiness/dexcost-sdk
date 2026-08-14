@@ -55,6 +55,21 @@ func main() {
 }
 ```
 
+## Local NVIDIA GPU usage
+
+Opt in only on the leaf task that owns the GPU work:
+
+```go
+_, whisper := dexcost.StartTask(ctx, "local-whisper", dexcost.WithGPUUsage())
+transcribeOnLocalGPU()
+whisper.End(dexcost.StatusSuccess)
+```
+
+DexCost records measured GPU-seconds, the normalized device model, and
+utilization evidence. A locally owned GPU remains explicitly unpriced; the SDK
+does not invent a public-cloud rate. Do not enable the option on both a parent
+and its child, because they would measure the same hardware interval twice.
+
 ## Cloud Mode
 
 To push events to the dexcost Control Layer:

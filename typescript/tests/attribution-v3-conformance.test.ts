@@ -33,12 +33,19 @@ const canonicalSchemaPath = fileURLToPath(
 const packagedSchemaPath = fileURLToPath(
   new URL("../src/attribution/attribution-v3-schema.json", import.meta.url),
 );
+const localGpuPath = fileURLToPath(
+  new URL("../../fixtures/attribution_v3/local_gpu_usage.json", import.meta.url),
+);
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8")) as {
   observation_contract_version: string;
   valid_observations: ValidCase[];
   invalid_observations: InvalidCase[];
 };
 const validById = new Map(corpus.valid_observations.map((entry) => [entry.id, entry.event]));
+const localGpu = JSON.parse(readFileSync(localGpuPath, "utf8")) as {
+  details: Record<string, unknown>;
+  expected: Record<string, string | boolean>;
+};
 
 function parentAndKey(target: Record<string, unknown>, path: string): {
   parent: Record<string, unknown> | unknown[];
@@ -238,5 +245,33 @@ describe("durable v1 capture to attribution v3 conversion", () => {
       "gpu.vram_peak_bytes",
     ]);
     expect(converted).not.toHaveProperty("cost_evidence");
+  });
+
+  it("matches the shared local-GPU usage-only contract", () => {
+    const converted = toAttributionObservationV3(createCostEvent({
+      ...base,
+      eventType: "gpu_cost",
+      costUsd: 0,
+      details: localGpu.details,
+    }));
+    expect(converted).toMatchObject({
+      component: localGpu.expected.component,
+      provider: {
+        name: localGpu.expected.provider_name,
+        service: localGpu.expected.provider_service,
+      },
+      resource: {
+        type: localGpu.expected.resource_type,
+        id: localGpu.expected.resource_id,
+      },
+      usage: [{
+        metric: localGpu.expected.usage_metric,
+        unit: localGpu.expected.usage_unit,
+        quantity: localGpu.expected.usage_quantity,
+        dimensions: [],
+      }],
+    });
+    expect(converted).not.toHaveProperty("cost_evidence");
+    expect(validateAttributionObservationV3(converted!)).toMatchObject({ success: true });
   });
 });

@@ -23,6 +23,11 @@ _CORPUS_PATH = _REPO_ROOT / "fixtures" / "attribution_v3" / "conformance.json"
 _SCHEMA_PATH = _REPO_ROOT / "fixtures" / "attribution_v3" / "schemas.json"
 _CORPUS = json.loads(_CORPUS_PATH.read_text(encoding="utf-8"))
 _VALID_BY_ID = {case["id"]: case["event"] for case in _CORPUS["valid_observations"]}
+_LOCAL_GPU = json.loads(
+    (_REPO_ROOT / "fixtures" / "attribution_v3" / "local_gpu_usage.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 def _parent_and_key(
@@ -213,6 +218,34 @@ def test_gpu_utilization_is_non_monetary_extensible_usage() -> None:
         "gpu.vram_peak_bytes",
     ]
     assert "cost_evidence" not in converted
+
+
+def test_local_gpu_usage_matches_shared_usage_only_contract() -> None:
+    converted = to_attribution_observation_v3(
+        _event(event_type="gpu_cost", cost_usd=Decimal("0"), details=_LOCAL_GPU["details"])
+    )
+    expected = _LOCAL_GPU["expected"]
+    assert converted is not None
+    assert converted["component"] == expected["component"]
+    assert converted["provider"] == {
+        "name": expected["provider_name"],
+        "service": expected["provider_service"],
+    }
+    assert converted["resource"] == {
+        "type": expected["resource_type"],
+        "id": expected["resource_id"],
+    }
+    assert converted["usage"] == [
+        {
+            "line_id": converted["usage"][0]["line_id"],
+            "metric": expected["usage_metric"],
+            "unit": expected["usage_unit"],
+            "quantity": expected["usage_quantity"],
+            "dimensions": [],
+        }
+    ]
+    assert "cost_evidence" not in converted
+    assert validate_attribution_observation_v3(converted).success
 
 
 def test_retry_chain_persists_one_operation_root_and_increasing_attempts(

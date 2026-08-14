@@ -245,7 +245,7 @@ export class GpuPricingEngine {
       return {
         costUsd: cost.costUsd,
         pricingSource: `${cost.pricingSource}:${String(scopeFb)}`,
-        costConfidence: "estimated",
+        costConfidence: cost.costConfidence === "unknown" ? "unknown" : "estimated",
       };
     }
     return cost;
@@ -261,6 +261,13 @@ export class GpuPricingEngine {
     cloudEnv: CloudEnv,
     windowS: Decimal | undefined,
   ): GpuCost {
+    if (billingModel === "local_gpu_usage_only") {
+      return {
+        costUsd: new Decimal(0),
+        pricingSource: "unpriced:local_gpu",
+        costConfidence: "unknown",
+      };
+    }
     if (billingModel === "per_gpu_second_active") {
       return this._perGpuSecond(details, cloudEnv);
     }

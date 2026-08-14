@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SpawnSyncReturns } from "node:child_process";
 
 import * as dexcost from "../src/index.js";
 import { Decimal } from "../src/core/models.js";
@@ -17,6 +18,7 @@ import {
   _setResultForTests,
   type CloudEnv,
 } from "../src/cloud-detect.js";
+import { _setSpawnFnForTests } from "../src/core/nvml-reader.js";
 
 let tmpDir: string;
 const SELF = process.pid;
@@ -74,8 +76,32 @@ afterEach(() => {
     // already closed
   }
   _resetCloudDetectForTests();
+  _setSpawnFnForTests(null);
   rmSync(tmpDir, { recursive: true, force: true });
 });
+
+function smiResult(stdout: string): SpawnSyncReturns<string> {
+  return {
+    pid: 1,
+    output: ["", stdout, ""],
+    stdout,
+    stderr: "",
+    status: 0,
+    signal: null,
+  } as SpawnSyncReturns<string>;
+}
+
+function installLocalSmi(): void {
+  _setSpawnFnForTests((_cmd, args) => {
+    const joined = args.join(" ");
+    if (joined.includes("--query-gpu=count")) return smiResult("1\n");
+    if (joined.includes("--query-gpu=name")) return smiResult("NVIDIA L4 24GB\n");
+    if (joined.includes("--query-gpu=mig.mode.current")) return smiResult("Disabled\n");
+    if (joined.includes("--query-gpu=memory.used,memory.total")) return smiResult("1024, 24576\n");
+    if (args[0] === "pmon") return smiResult(`0 ${SELF} C 50 20 - - whisper\n`);
+    return smiResult("");
+  });
+}
 
 describe("EC2 GPU task emits dual events and back-fills cost", () => {
   test("long-running EC2 p5: gpu_cost back-filled; gpu_utilization_signal stays cost_usd=0", async () => {
@@ -154,6 +180,39 @@ describe("Unknown GPU runtime emits nothing", () => {
     );
     expect(gpuEvs.length).toBe(0);
     expect(tt.task.gpuCostUsd.toNumber()).toBe(0);
+  });
+});
+
+describe("local GPU usage-only opt in", () => {
+  test("measures the owning leaf task without inventing hardware cost", async () => {
+    _setResultForTests({ provider: null, region: null, source: "none", instanceType: null });
+    installLocalSmi();
+    const tracker = dexcost.init({
+      dbPath: join(tmpDir, "buf.db"), autoInstrument: [], storage: "local", trackHttp: false,
+    });
+    const root = tracker.startTask({ taskType: "campaign-root" });
+    expect((root.task as any)._gpu).toBeUndefined();
+    const whisper = tracker.startTask({ taskType: "local-whisper", trackGpu: true });
+    expect((whisper.task as any)._gpu?.runtime).toBe(GpuRuntimeKind.LocalGpu);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    whisper.end("success");
+    root.end("success");
+
+    const events = tracker.buffer.queryEvents(whisper.task.taskId);
+    const cost = events.find((event) => event.eventType === "gpu_cost");
+    expect(cost).toBeDefined();
+    expect(cost?.costUsd.toString()).toBe("0");
+    expect(cost?.pricingSource).toMatch(/^unpriced:local_gpu/);
+    expect(cost?.costConfidence).toBe("unknown");
+    expect(cost?.pricingVersion).toBeUndefined();
+    expect(cost?.details).toMatchObject({
+      billing_model: "local_gpu_usage_only",
+      runtime_kind: "local_gpu",
+      cloud_provider: null,
+    });
+    expect(tracker.buffer.queryEvents(root.task.taskId).filter(
+      (event) => event.eventType === "gpu_cost",
+    )).toHaveLength(0);
   });
 });
 

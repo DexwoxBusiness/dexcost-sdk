@@ -464,6 +464,8 @@ def init(
 def task(
     task_type: str = "",
     metadata: dict[str, Any] | None = None,
+    *,
+    track_gpu: bool = False,
 ) -> Generator[TrackedTask, None, None]:
     """Group multiple costs into one business task.
 
@@ -472,6 +474,8 @@ def task(
     Args:
         task_type: Identifier for the kind of task (e.g. ``"resolve_ticket"``).
         metadata: Optional dict of extra metadata.
+        track_gpu: Measure usage from local NVIDIA GPUs for this task. Enable
+            this only on the leaf task that owns the GPU work.
 
     Yields:
         A :class:`TrackedTask` handle.
@@ -487,6 +491,7 @@ def task(
         customer_id=ctx.customer_id if ctx else None,
         project_id=ctx.project_id if ctx else None,
         metadata=metadata,
+        track_gpu=track_gpu,
     ) as t:
         yield t
 

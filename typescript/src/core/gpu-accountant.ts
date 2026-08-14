@@ -6,9 +6,10 @@
  * start-snapshot timestamps (Decision #8 persistent state), and the
  * device indexes.
  *
- * At task finalize:
+ * During the task and at finalization:
  *
- * 1. Snapshots NVML utilization across all devices.
+ * 1. Periodically snapshots NVML utilization across all devices, retaining
+ *    evidence from GPU processes that exit before task finalization.
  * 2. Walks the cgroup PIDs (Decision #1) and accumulates SM-time across
  *    them per device.
  * 3. Computes the window-averaged `sm_util_pct` per Decision #3 (NOT a
@@ -45,6 +46,7 @@ import {
   getMemoryInfo as defaultGetMemoryInfo,
   getMigMode as defaultGetMigMode,
   getProcessUtilization as defaultGetProcessUtilization,
+  getProcessUtilizationAsync as defaultGetProcessUtilizationAsync,
   getProductName as defaultGetProductName,
   initNvml as defaultInitNvml,
   type MemInfo,
@@ -80,6 +82,10 @@ export interface GpuAccountantHooks {
     index: number,
     lastSeen: Record<number, number>,
   ) => Record<number, UtilSample[]> | null;
+  getProcessUtilizationAsync?: (
+    index: number,
+  ) => Promise<Record<number, UtilSample[]> | null>;
+  samplingIntervalMs?: number;
 }
 
 function defaultHooks(): GpuAccountantHooks {
@@ -92,6 +98,7 @@ function defaultHooks(): GpuAccountantHooks {
     classifyScope: defaultClassifyScope,
     enumeratePids: defaultEnumeratePids,
     getProcessUtilization: defaultGetProcessUtilization,
+    getProcessUtilizationAsync: defaultGetProcessUtilizationAsync,
   };
 }
 
@@ -107,12 +114,14 @@ const BILLING_MODEL_FOR_RUNTIME: Record<string, string> = {
   [GpuRuntimeKind.GcpGceBundled]: "per_instance_hour",
   [GpuRuntimeKind.AzureVmGpu]: "per_instance_hour",
   [GpuRuntimeKind.AzureVmVgpu]: "per_vgpu_hour",
+  [GpuRuntimeKind.LocalGpu]: "local_gpu_usage_only",
 };
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
 export interface GpuCostDetails {
   billing_model: string;
+  runtime_kind: string;
   cloud_provider: string | null;
   gpu_vendor: string;
   gpu_sku: string | null;
@@ -129,6 +138,9 @@ export interface GpuCostDetails {
 }
 
 export interface GpuUtilizationSignal {
+  billing_model: string;
+  runtime_kind: string;
+  cloud_provider: string | null;
   gpu_index: number;
   gpu_sku: string | null;
   sm_util_pct: number | null;
@@ -188,6 +200,10 @@ export class GpuAccountant {
   private _initialPids: Set<number> = new Set();
   // Decision #8: per-device-per-PID lastSeenTimeStamp persisted across calls.
   private _initialTimestamps: Record<number, Record<number, number>> = {};
+  private _baselineTimestamps: Record<number, Record<number, number>> = {};
+  private _acceptedTimestamps: Record<number, Record<number, number>> = {};
+  private _utilizationSamples: Record<number, Record<number, UtilSample[]>> = {};
+  private _observedPids: Set<number> = new Set();
   private _deviceIndexes: number[] = [];
   private _deviceProductNames: (string | null)[] = [];
   private _deviceMigModes: boolean[] = [];
@@ -196,6 +212,9 @@ export class GpuAccountant {
   private _vramUsedPeak: Record<number, number> = {};
   // Per-device PID set observed across the task.
   private _pidsTouchedPerDevice: Record<number, Set<number>> = {};
+  private _sampleTimer: ReturnType<typeof setInterval> | null = null;
+  private _sampleInFlight = false;
+  private readonly _samplingIntervalMs: number;
 
   constructor(
     runtime: GpuRuntimeKind,
@@ -205,6 +224,7 @@ export class GpuAccountant {
     this.runtime = runtime;
     this.cloudEnv = cloudEnv;
     this.hooks = { ...defaultHooks(), ...(hooks ?? {}) };
+    this._samplingIntervalMs = Math.max(1, hooks?.samplingIntervalMs ?? 1_000);
   }
 
   /** Initialize NVML, snapshot cgroup PIDs, capture baseline NVML timestamps. */
@@ -233,6 +253,9 @@ export class GpuAccountant {
         this._vramUsedPeak[i] = mem.usedBytes;
       }
       this._initialTimestamps[i] = {};
+      this._baselineTimestamps[i] = {};
+      this._acceptedTimestamps[i] = {};
+      this._utilizationSamples[i] = {};
       this._pidsTouchedPerDevice[i] = new Set<number>();
       // Baseline NVML sample — captures the per-PID lastSeenTimeStamp.
       const baseline = this.hooks.getProcessUtilization(
@@ -244,12 +267,78 @@ export class GpuAccountant {
           this._pidsTouchedPerDevice[i].add(Number(pidKey));
         }
       }
+      this._baselineTimestamps[i] = { ...this._initialTimestamps[i] };
+      this._acceptedTimestamps[i] = { ...this._initialTimestamps[i] };
     }
 
     // Snapshot cgroup PIDs (Decision #1 scope classification).
     this._scope = this.hooks.classifyScope();
     const pids = this.hooks.enumeratePids(this._scope);
     this._initialPids = new Set(pids ?? [process.pid]);
+    this._observedPids = new Set(this._initialPids);
+    if (this.hooks.getProcessUtilizationAsync) {
+      this._sampleTimer = setInterval(() => {
+        void this.capturePeriodicSample();
+      }, this._samplingIntervalMs);
+      const timer = this._sampleTimer as unknown as { unref?: () => void };
+      timer.unref?.();
+    }
+  }
+
+  private appendSamples(
+    index: number,
+    batch: Record<number, UtilSample[]> | null,
+  ): void {
+    if (!batch) return;
+    for (const [pidKey, samples] of Object.entries(batch)) {
+      const pid = Number(pidKey);
+      this._pidsTouchedPerDevice[index].add(pid);
+      let lastAccepted = this._acceptedTimestamps[index][pid] ?? 0;
+      for (const sample of [...samples].sort((a, b) => a.timeStamp - b.timeStamp)) {
+        if (sample.timeStamp <= lastAccepted) continue;
+        (this._utilizationSamples[index][pid] ??= []).push(sample);
+        lastAccepted = sample.timeStamp;
+      }
+      this._acceptedTimestamps[index][pid] = lastAccepted;
+      this._initialTimestamps[index][pid] = Math.max(
+        this._initialTimestamps[index][pid] ?? 0,
+        lastAccepted,
+      );
+    }
+  }
+
+  private captureCurrentPids(): void {
+    if (!this._scope) return;
+    const pids = this.hooks.enumeratePids(this._scope);
+    for (const pid of pids ?? [process.pid]) this._observedPids.add(pid);
+  }
+
+  private async capturePeriodicSample(): Promise<void> {
+    const read = this.hooks.getProcessUtilizationAsync;
+    if (this._frozen || this._sampleInFlight || !read) return;
+    this._sampleInFlight = true;
+    this.captureCurrentPids();
+    try {
+      const batches = await Promise.all(
+        this._deviceIndexes.map(async (index) => ({
+          index,
+          batch: await read(index),
+        })),
+      );
+      if (this._frozen) return;
+      for (const { index, batch } of batches) {
+        this.appendSamples(index, batch);
+        const mem = this.hooks.getMemoryInfo(index);
+        if (mem) {
+          this._vramUsedPeak[index] = Math.max(
+            this._vramUsedPeak[index] ?? 0,
+            mem.usedBytes,
+          );
+        }
+      }
+    } finally {
+      this._sampleInFlight = false;
+    }
   }
 
   /**
@@ -262,6 +351,10 @@ export class GpuAccountant {
   ): { costDetails: GpuCostDetails | null; signalEvents: GpuUtilizationSignal[] | null } {
     if (this._frozen) return { costDetails: null, signalEvents: null };
     this._frozen = true;
+    if (this._sampleTimer !== null) {
+      clearInterval(this._sampleTimer);
+      this._sampleTimer = null;
+    }
     if (this._deviceIndexes.length === 0) {
       return { costDetails: null, signalEvents: null };
     }
@@ -281,14 +374,21 @@ export class GpuAccountant {
 
     // Union of start + end PIDs.
     const cgroupPidUnion = new Set<number>([
-      ...this._initialPids,
+      ...this._observedPids,
       ...currentPids,
     ]);
 
     // Canonical SKU from first non-null productName (homogeneous-device assumption).
     const canonicalProductName =
       this._deviceProductNames.find((n) => n !== null && n !== undefined) ?? null;
-    const gpuSku = resolveSkuFromProductName(canonicalProductName);
+    let gpuSku: string | null;
+    if (this.runtime === GpuRuntimeKind.LocalGpu && canonicalProductName) {
+      // The normalized NVML name is authoritative for owned hardware. Coarse
+      // aliases collapse PCIe/NVL/SXM and workstation variants.
+      gpuSku = [...canonicalProductName].slice(0, 256).join("");
+    } else {
+      gpuSku = resolveSkuFromProductName(canonicalProductName);
+    }
 
     // Decision #2 transparency: MIG presence surfaced regardless of cgroup-touch.
     let migProfile: string | null = null;
@@ -308,14 +408,12 @@ export class GpuAccountant {
       // `_initialTimestamps[i]` in place. Reading the mutated map
       // afterwards would zero every PID's first-sample dt.
       const baselineTsPerPid: Record<number, number> = {
-        ...this._initialTimestamps[i],
+        ...this._baselineTimestamps[i],
       };
 
-      const endSamples =
+      const finalSamples =
         this.hooks.getProcessUtilization(i, this._initialTimestamps[i]) ?? {};
-      for (const pidKey of Object.keys(endSamples)) {
-        this._pidsTouchedPerDevice[i].add(Number(pidKey));
-      }
+      this.appendSamples(i, finalSamples);
 
       const mem = this.hooks.getMemoryInfo(i);
       if (mem) {
@@ -327,7 +425,7 @@ export class GpuAccountant {
 
       // Filter to cgroup-PID union. Each value is a list of samples.
       const relevantByPid: Record<number, UtilSample[]> = {};
-      for (const [pidKey, samples] of Object.entries(endSamples)) {
+      for (const [pidKey, samples] of Object.entries(this._utilizationSamples[i])) {
         const pid = Number(pidKey);
         if (cgroupPidUnion.has(pid) && samples.length > 0) {
           relevantByPid[pid] = samples;
@@ -388,6 +486,9 @@ export class GpuAccountant {
         const memUtilAvg = memUtilN > 0 ? memUtilSum / memUtilN : 0;
 
         signalEvents.push({
+          billing_model: BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+          runtime_kind: this.runtime,
+          cloud_provider: this.cloudEnv.provider,
           gpu_index: i,
           gpu_sku: gpuSku,
           sm_util_pct: smUtilPct,
@@ -400,6 +501,9 @@ export class GpuAccountant {
         });
       } else if (degenerateWindow) {
         signalEvents.push({
+          billing_model: BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+          runtime_kind: this.runtime,
+          cloud_provider: this.cloudEnv.provider,
           gpu_index: i,
           gpu_sku: gpuSku,
           sm_util_pct: null,
@@ -454,7 +558,8 @@ export class GpuAccountant {
   }): GpuCostDetails {
     const details: GpuCostDetails = {
       billing_model:
-        BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "per_gpu_second_active",
+        BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+      runtime_kind: this.runtime,
       cloud_provider: this.cloudEnv.provider,
       gpu_vendor: "nvidia", // Decision #5
       gpu_sku: args.gpuSku,

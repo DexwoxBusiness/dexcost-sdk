@@ -136,8 +136,12 @@ func providerFor(event core.Event) ProviderIdentityV2 {
 			}
 			provider.Service = canonicalName(firstNonEmpty(billing, event.ServiceName), "compute")
 		case core.EventTypeGPUCost, core.EventTypeGPUUtilizationSignal:
-			provider.Name = canonicalName(firstNonEmpty(stringDetail(event.Details, "cloud_provider"), event.Provider), "runtime")
-			provider.Service = canonicalName(billing, "gpu")
+			if billing == "local_gpu_usage_only" {
+				provider.Name, provider.Service = "self_hosted", "gpu_compute"
+			} else {
+				provider.Name = canonicalName(firstNonEmpty(stringDetail(event.Details, "cloud_provider"), event.Provider), "runtime")
+				provider.Service = canonicalName(billing, "gpu")
+			}
 		case core.EventTypeNetwork:
 			provider.Name = canonicalName(firstNonEmpty(stringDetail(event.Details, "cloud_provider"), event.Provider), "internet")
 			provider.Service = "egress"
@@ -301,7 +305,8 @@ func componentAndUsage(event core.Event) (Component, []UsageLineV2, decimal.Deci
 			count = decimal.NewFromInt(1)
 		}
 		billed := duration.Mul(count)
-		if stringDetail(details, "billing_model") == "per_gpu_second_active" && measuredOK {
+		billingModel := stringDetail(details, "billing_model")
+		if (billingModel == "per_gpu_second_active" || billingModel == "local_gpu_usage_only") && measuredOK {
 			billed = measured
 		} else if billed.IsZero() && measuredOK {
 			billed = measured

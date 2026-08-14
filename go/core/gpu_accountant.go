@@ -7,10 +7,10 @@
 // ComputeAccountant + NetworkAccountant registries). Tracker registers
 // on task start, unregisters at finalize.
 //
-// At task finalize, the accountant:
+// During the task and at finalization, the accountant:
 //
-//  1. Snapshots NVML utilization across all devices with persisted
-//     timestamps (Decision #8).
+//  1. Periodically snapshots NVML utilization across all devices with
+//     persisted timestamps, retaining samples from processes that exit.
 //  2. Walks the cgroup PIDs (Decision #1) and accumulates SM-time across
 //     them per device.
 //  3. Computes window-averaged sm_util_pct per Decision #3 sharpening
@@ -26,6 +26,7 @@ package core
 import (
 	"os"
 	"sync"
+	"time"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
@@ -41,8 +42,10 @@ func billingModelForGpuRuntime(r GpuRuntimeKind) string {
 		return "per_instance_hour"
 	case GpuRuntimeAzureVMVGPU:
 		return "per_vgpu_hour"
+	case GpuRuntimeLocalGPU:
+		return "local_gpu_usage_only"
 	}
-	return "per_gpu_second_active"
+	return "local_gpu_usage_only"
 }
 
 // resolveSKUFromProductName is best-effort substring → canonical key mapping.
@@ -121,16 +124,22 @@ type GpuAccountant struct {
 
 	frozen bool
 
-	scope                    CgroupScope
-	scopeSet                 bool
-	initialPIDs              map[int]struct{}
-	initialTimestamps        map[int]map[int]int64 // devIdx → PID → ts
-	deviceProductNames       map[int]string
-	deviceMIGModes           map[int]bool
-	deviceCount              int
-	vramTotal                map[int]int64
-	vramUsedPeak             map[int]int64
-	pidsTouchedPerDevice     map[int]map[int]struct{}
+	scope                CgroupScope
+	scopeSet             bool
+	initialPIDs          map[int]struct{}
+	initialTimestamps    map[int]map[int]int64 // devIdx → PID → ts
+	baselineTimestamps   map[int]map[int]int64
+	utilizationSamples   map[int]map[int][]NVMLUtilSample
+	deviceProductNames   map[int]string
+	deviceMIGModes       map[int]bool
+	deviceCount          int
+	vramTotal            map[int]int64
+	vramUsedPeak         map[int]int64
+	pidsTouchedPerDevice map[int]map[int]struct{}
+	samplingInterval     time.Duration
+	samplingStop         chan struct{}
+	samplingDone         chan struct{}
+	samplingStopOnce     sync.Once
 }
 
 // NewGpuAccountant builds an accountant for the given runtime + cloud env.
@@ -140,11 +149,14 @@ func NewGpuAccountant(runtime GpuRuntimeKind, env cloud.CloudEnv) *GpuAccountant
 		CloudEnv:             env,
 		initialPIDs:          map[int]struct{}{},
 		initialTimestamps:    map[int]map[int]int64{},
+		baselineTimestamps:   map[int]map[int]int64{},
+		utilizationSamples:   map[int]map[int][]NVMLUtilSample{},
 		deviceProductNames:   map[int]string{},
 		deviceMIGModes:       map[int]bool{},
 		vramTotal:            map[int]int64{},
 		vramUsedPeak:         map[int]int64{},
 		pidsTouchedPerDevice: map[int]map[int]struct{}{},
+		samplingInterval:     time.Second,
 	}
 }
 
@@ -183,10 +195,15 @@ func (a *GpuAccountant) SnapshotStart() {
 			a.vramUsedPeak[i] = mem.UsedBytes
 		}
 		a.initialTimestamps[i] = map[int]int64{}
+		a.baselineTimestamps[i] = map[int]int64{}
+		a.utilizationSamples[i] = map[int][]NVMLUtilSample{}
 		a.pidsTouchedPerDevice[i] = map[int]struct{}{}
 		baseline := GetNVMLProcessUtilization(i, a.initialTimestamps[i])
 		for pid := range baseline {
 			a.pidsTouchedPerDevice[i][pid] = struct{}{}
+		}
+		for pid, ts := range a.initialTimestamps[i] {
+			a.baselineTimestamps[i][pid] = ts
 		}
 	}
 	if !a.scopeSet {
@@ -202,17 +219,107 @@ func (a *GpuAccountant) SnapshotStart() {
 			a.initialPIDs[p] = struct{}{}
 		}
 	}
+	a.samplingStop = make(chan struct{})
+	a.samplingDone = make(chan struct{})
+	go a.runSampler()
+}
+
+// runSampler retains point-in-time nvidia-smi samples throughout the task.
+// Native NVML backends also work here: buffered batches are drained into the
+// accountant rather than being lost as the mutable cursor advances.
+func (a *GpuAccountant) runSampler() {
+	a.mu.Lock()
+	interval := a.samplingInterval
+	stop := a.samplingStop
+	done := a.samplingDone
+	a.mu.Unlock()
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	defer close(done)
+	for {
+		select {
+		case <-ticker.C:
+			a.captureSample()
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (a *GpuAccountant) captureSample() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.frozen || a.deviceCount == 0 {
+		return
+	}
+	a.captureSampleLocked()
+}
+
+// captureSampleLocked records one utilization snapshot. a.mu must be held.
+// Overlapping native-NVML batches are filtered by the prior per-PID cursor.
+func (a *GpuAccountant) captureSampleLocked() {
+	if a.scopeSet {
+		if pids := EnumerateCgroupPIDs(a.scope, ""); pids == nil {
+			a.initialPIDs[os.Getpid()] = struct{}{}
+		} else {
+			for _, pid := range pids {
+				a.initialPIDs[pid] = struct{}{}
+			}
+		}
+	}
+	for i := 0; i < a.deviceCount; i++ {
+		priorCursor := map[int]int64{}
+		for pid, ts := range a.initialTimestamps[i] {
+			priorCursor[pid] = ts
+		}
+		batch := GetNVMLProcessUtilization(i, a.initialTimestamps[i])
+		for pid, samples := range batch {
+			a.pidsTouchedPerDevice[i][pid] = struct{}{}
+			lastAccepted := priorCursor[pid]
+			for _, sample := range samples {
+				if sample.TimeStamp <= lastAccepted {
+					continue
+				}
+				a.utilizationSamples[i][pid] = append(
+					a.utilizationSamples[i][pid], sample,
+				)
+				lastAccepted = sample.TimeStamp
+			}
+		}
+		if mem := GetNVMLMemoryInfo(i); mem != nil && mem.UsedBytes > a.vramUsedPeak[i] {
+			a.vramUsedPeak[i] = mem.UsedBytes
+		}
+	}
+}
+
+func (a *GpuAccountant) stopSampler() {
+	a.mu.Lock()
+	stop := a.samplingStop
+	done := a.samplingDone
+	a.mu.Unlock()
+	if stop == nil || done == nil {
+		return
+	}
+	a.samplingStopOnce.Do(func() { close(stop) })
+	<-done
 }
 
 // SnapshotEndAndBuild returns (cost_event_details, []signal_event_details).
 // Returns (nil, nil) on second call (idempotent), when NVML wasn't
 // available at start, or when no devices were touched.
 func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, []map[string]any) {
+	a.stopSampler()
 	a.mu.Lock()
 	if a.frozen {
 		a.mu.Unlock()
 		return nil, nil
 	}
+	// Retain a final boundary sample in addition to every periodic sample.
+	// If a worker already exited, its earlier observations remain available.
+	a.captureSampleLocked()
 	a.frozen = true
 	deviceCount := a.deviceCount
 	scope := a.scope
@@ -247,7 +354,18 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 			break
 		}
 	}
-	gpuSku := resolveSKUFromProductName(canonicalProduct)
+	var gpuSku string
+	if a.Runtime == GpuRuntimeLocalGPU && canonicalProduct != "" {
+		// The normalized NVML product name is authoritative for owned hardware.
+		// Coarse aliases collapse PCIe/NVL/SXM and workstation variants.
+		runes := []rune(canonicalProduct)
+		if len(runes) > 256 {
+			runes = runes[:256]
+		}
+		gpuSku = string(runes)
+	} else {
+		gpuSku = resolveSKUFromProductName(canonicalProduct)
+	}
 
 	// MIG-profile transparency.
 	var migProfile string
@@ -270,19 +388,11 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 		// initialTimestamps in place. Reading the mutated map after
 		// the end call would zero out each PID's first-sample dt.
 		baselineTSPerPID := map[int]int64{}
-		for pid, ts := range a.initialTimestamps[i] {
+		for pid, ts := range a.baselineTimestamps[i] {
 			baselineTSPerPID[pid] = ts
 		}
 
-		end := GetNVMLProcessUtilization(i, a.initialTimestamps[i])
-		for pid := range end {
-			a.pidsTouchedPerDevice[i][pid] = struct{}{}
-		}
-		if mem := GetNVMLMemoryInfo(i); mem != nil {
-			if mem.UsedBytes > a.vramUsedPeak[i] {
-				a.vramUsedPeak[i] = mem.UsedBytes
-			}
-		}
+		end := a.utilizationSamples[i]
 		// Filter to cgroup PID set. Each value is a list of samples.
 		relevantByPID := map[int][]NVMLUtilSample{}
 		for pid, samples := range end {
@@ -360,6 +470,9 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 			}
 
 			signals = append(signals, map[string]any{
+				"billing_model":        billingModelForGpuRuntime(a.Runtime),
+				"runtime_kind":         string(a.Runtime),
+				"cloud_provider":       a.CloudEnv.Provider,
 				"gpu_index":            i,
 				"gpu_sku":              gpuSku,
 				"sm_util_pct":          smUtilPct,
@@ -372,15 +485,18 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 			})
 		} else if degenerate {
 			signals = append(signals, map[string]any{
-				"gpu_index":             i,
-				"gpu_sku":               gpuSku,
-				"sm_util_pct":           nil,
-				"mem_util_pct":          nil,
-				"vram_used_peak_bytes":  a.vramUsedPeak[i],
-				"vram_total_bytes":      a.vramTotal[i],
-				"process_count":         len(a.pidsTouchedPerDevice[i]),
-				"sample_count":          0,
-				"task_duration_ms":      durationMS,
+				"billing_model":        billingModelForGpuRuntime(a.Runtime),
+				"runtime_kind":         string(a.Runtime),
+				"cloud_provider":       a.CloudEnv.Provider,
+				"gpu_index":            i,
+				"gpu_sku":              gpuSku,
+				"sm_util_pct":          nil,
+				"mem_util_pct":         nil,
+				"vram_used_peak_bytes": a.vramUsedPeak[i],
+				"vram_total_bytes":     a.vramTotal[i],
+				"process_count":        len(a.pidsTouchedPerDevice[i]),
+				"sample_count":         0,
+				"task_duration_ms":     durationMS,
 			})
 		}
 	}
@@ -397,6 +513,8 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 	}
 	cost := map[string]any{
 		"billing_model":    billingModelForGpuRuntime(a.Runtime),
+		"runtime_kind":     string(a.Runtime),
+		"cloud_provider":   a.CloudEnv.Provider,
 		"gpu_vendor":       "nvidia",
 		"gpu_sku":          gpuSku,
 		"gpu_count":        deviceCount,
@@ -463,5 +581,8 @@ func UnregisterGpuAccountant(taskID string) *GpuAccountant {
 func ResetGpuAccountantRegistryForTests() {
 	gpuRegistryMu.Lock()
 	defer gpuRegistryMu.Unlock()
+	for _, accountant := range gpuRegistry {
+		accountant.stopSampler()
+	}
 	gpuRegistry = map[string]*GpuAccountant{}
 }

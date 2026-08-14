@@ -28,6 +28,7 @@
  */
 
 import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { execFile as nodeExecFile } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 
 // Indirection so tests can swap the spawn implementation. The TS ESM bound
@@ -94,7 +95,7 @@ export interface UtilSample {
   smUtil: number;
   /** 0–100; percent of time memory subsystem was busy. */
   memUtil: number;
-  /** Per-PID timestamp (milliseconds since process start) for Decision #8 state. */
+  /** Per-PID timestamp in microseconds for Decision #8 integration state. */
   timeStamp: number;
 }
 
@@ -254,9 +255,9 @@ export function getComputeRunningProcesses(index: number): ProcessInfo[] | null 
 /**
  * Per-PID utilization sampled from `nvidia-smi pmon -c 1 -s u`.
  *
- * Decision #8 — TS uses `Date.now()` as the per-PID timestamp proxy
+ * Decision #8 — TS uses `Date.now() * 1000` as the per-PID timestamp proxy
  * because nvidia-smi pmon does not expose the NVML sample-buffer epoch.
- * The accountant uses (endTs - startTs) ms as the active-GPU-time
+ * The accountant uses (endTs - startTs) microseconds as the active-GPU-time
  * approximation between snapshots.
  *
  * Updates `lastSeenTimestamps` in place — callers persist across snapshots.
@@ -283,8 +284,6 @@ export function getProcessUtilization(
     `1`,
     `-s`,
     `u`,
-    `-o`,
-    `T`,
     `-i`,
     String(index),
   ]);
@@ -295,9 +294,23 @@ export function getProcessUtilization(
     );
     return null;
   }
+  const out = parsePmonUtilization(r.stdout, Date.now() * 1000);
+  for (const [pidKey, samples] of Object.entries(out)) {
+    const pid = Number(pidKey);
+    const latest = samples.length > 0 ? samples[samples.length - 1].timeStamp : 0;
+    if (latest > (lastSeenTimestamps[pid] ?? 0)) {
+      lastSeenTimestamps[pid] = latest;
+    }
+  }
+  return out;
+}
+
+function parsePmonUtilization(
+  stdout: string,
+  nowUs: number,
+): Record<number, UtilSample[]> {
   const out: Record<number, UtilSample[]> = {};
-  const nowMs = Date.now();
-  for (const rawLine of r.stdout.split("\n")) {
+  for (const rawLine of stdout.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     // Skip header lines and N/A rows.
@@ -310,14 +323,11 @@ export function getProcessUtilization(
     const sm = parseInt(parts[3], 10);
     const mem = parseInt(parts[4], 10);
     if (Number.isNaN(sm) || Number.isNaN(mem)) continue;
-    const sample: UtilSample = { pid, smUtil: sm, memUtil: mem, timeStamp: nowMs };
+    const sample: UtilSample = { pid, smUtil: sm, memUtil: mem, timeStamp: nowUs };
     if (out[pid]) {
       out[pid].push(sample);
     } else {
       out[pid] = [sample];
-    }
-    if (nowMs > (lastSeenTimestamps[pid] ?? 0)) {
-      lastSeenTimestamps[pid] = nowMs;
     }
   }
   // Sort each PID's samples by timestamp ascending — the integrator
@@ -326,6 +336,40 @@ export function getProcessUtilization(
     out[pid].sort((a, b) => a.timeStamp - b.timeStamp);
   }
   return out;
+}
+
+/**
+ * Non-blocking pmon sample used by the task-lifetime sampler. The existing
+ * synchronous reader remains available for start/final boundaries, while
+ * periodic instrumentation must never pause the application's event loop.
+ */
+export function getProcessUtilizationAsync(
+  index: number,
+): Promise<Record<number, UtilSample[]> | null> {
+  if (!_isNode()) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    nodeExecFile(
+      "nvidia-smi",
+      ["pmon", "-c", "1", "-s", "u", "-i", String(index)],
+      {
+        encoding: "utf8",
+        timeout: 5_000,
+        windowsHide: true,
+        maxBuffer: 1_048_576,
+      },
+      (error, stdout) => {
+        if (error) {
+          _warnOnce(
+            "gpu_process_utilization_failed",
+            `nvidia-smi pmon failed for device ${index}`,
+          );
+          resolve(null);
+          return;
+        }
+        resolve(parsePmonUtilization(String(stdout), Date.now() * 1000));
+      },
+    );
+  });
 }
 
 // ─── Memory + MIG ───────────────────────────────────────────────────────────

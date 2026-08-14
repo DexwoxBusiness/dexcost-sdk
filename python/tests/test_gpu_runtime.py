@@ -22,6 +22,7 @@ _SERVERLESS_VARS = (
 def _scrub_env(monkeypatch):
     for v in _SERVERLESS_VARS:
         monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr("dexcost.gpu_runtime.nvml_reader.init_nvml", lambda: True)
 
 
 # ─── Serverless GPU clouds (env-var detection wins) ──────────────────────────
@@ -211,3 +212,26 @@ def test_undetected_provider_returns_none(monkeypatch):
     monkeypatch.setattr("dexcost.gpu_runtime.cloud_detect.get_cloud_env",
                         lambda: CloudEnv(None, None, "none"))
     assert resolve_gpu_runtime() == GpuRuntimeKind.NONE
+
+
+def test_nvml_init_failure_returns_none(monkeypatch):
+    from dexcost.gpu_runtime import GpuRuntimeKind, resolve_gpu_runtime
+
+    monkeypatch.setattr("dexcost.gpu_runtime.nvml_reader.nvml_available", lambda: True)
+    monkeypatch.setattr("dexcost.gpu_runtime.nvml_reader.init_nvml", lambda: False)
+    monkeypatch.setattr(
+        "dexcost.gpu_runtime.nvml_reader.get_device_count",
+        lambda: pytest.fail("device enumeration must not run after init failure"),
+    )
+    assert resolve_gpu_runtime() == GpuRuntimeKind.NONE
+
+
+def test_visible_gpu_without_cloud_provider_is_local(monkeypatch):
+    from dexcost.gpu_runtime import GpuRuntimeKind, resolve_gpu_runtime
+    monkeypatch.setattr("dexcost.gpu_runtime.nvml_reader.nvml_available", lambda: True)
+    monkeypatch.setattr("dexcost.gpu_runtime.nvml_reader.get_device_count", lambda: 1)
+    monkeypatch.setattr(
+        "dexcost.gpu_runtime.cloud_detect.get_cloud_env",
+        lambda: CloudEnv(None, None, "none"),
+    )
+    assert resolve_gpu_runtime() == GpuRuntimeKind.LOCAL_GPU

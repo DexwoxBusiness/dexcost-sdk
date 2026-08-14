@@ -574,6 +574,7 @@ class _TaskContextManager:
         metadata: dict[str, Any],
         experiment_id: str | None = None,
         variant: str | None = None,
+        track_gpu: bool = False,
     ) -> None:
         self._tracker = tracker
         self._task_type = task_type
@@ -582,6 +583,7 @@ class _TaskContextManager:
         self._metadata = metadata
         self._experiment_id = experiment_id
         self._variant = variant
+        self._track_gpu = track_gpu
         self._tracked: TrackedTask | None = None
         self._token: contextvars.Token[Task | None] | None = None
 
@@ -600,6 +602,8 @@ class _TaskContextManager:
             task.parent_task_id = parent.task_id
 
         self._tracker._storage.insert_task(task)
+        if self._track_gpu:
+            self._tracker._start_local_gpu_accounting(task)
 
         self._token = set_current_task(task)
         tracked = TrackedTask(task, self._tracker._storage, self._tracker)
@@ -1001,6 +1005,7 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        track_gpu: bool = False,
     ) -> TrackedTask:
         """Manually start a task and return a :class:`TrackedTask` handle.
 
@@ -1016,6 +1021,9 @@ class CostTracker:
             metadata: Optional dict of extra metadata.
             experiment_id: Optional experiment grouping.
             variant: Optional variant label within experiment.
+            track_gpu: Measure local NVIDIA GPU usage for this task. Enable
+                this only on the leaf task that owns the GPU work so parent
+                and child tasks do not measure the same interval twice.
 
         Returns:
             A :class:`TrackedTask` whose ``task_id`` can be passed to other
@@ -1035,6 +1043,8 @@ class CostTracker:
             task.parent_task_id = parent.task_id
 
         self._storage.insert_task(task)
+        if track_gpu:
+            self._start_local_gpu_accounting(task)
 
         ctx_token = set_current_task(task)
         return TrackedTask(task, self._storage, self, ctx_token=ctx_token)
@@ -1051,6 +1061,7 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        track_gpu: bool = False,
     ) -> _TaskContextManager:
         """Return a context manager for explicit task tracking.
 
@@ -1064,6 +1075,9 @@ class CostTracker:
 
         The yielded :class:`TrackedTask` exposes ``record_cost``,
         ``record_usage``, ``mark_retry``, and ``task_id``.
+        Set ``track_gpu=True`` only on the leaf task that owns local NVIDIA
+        GPU work. Owned hardware is reported as usage-only, not as a
+        synthetic public-cloud cost.
         """
         return _TaskContextManager(
             tracker=self,
@@ -1073,6 +1087,7 @@ class CostTracker:
             metadata=copy.deepcopy(metadata) if metadata else {},
             experiment_id=experiment_id,
             variant=variant,
+            track_gpu=track_gpu,
         )
 
     # ------------------------------------------------------------------
@@ -1087,12 +1102,14 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        track_gpu: bool = False,
     ) -> Callable[[F], F]:
         """Decorator that wraps *func* with automatic task tracking.
 
         Creates a :class:`Task`, sets it as the current task via contextvars,
         runs the function, aggregates costs from recorded events, and persists
-        the final task state.
+        the final task state. ``track_gpu=True`` opts the decorated leaf task
+        into usage-only local NVIDIA GPU measurement.
         """
         meta = copy.deepcopy(metadata) if metadata else {}
 
@@ -1113,6 +1130,8 @@ class CostTracker:
                     if parent is not None and task.parent_task_id is None:
                         task.parent_task_id = parent.task_id
                     self._storage.insert_task(task)
+                    if track_gpu:
+                        self._start_local_gpu_accounting(task)
                     async with async_task_context(task):
                         try:
                             result = await func(*args, **kwargs)
@@ -1143,6 +1162,8 @@ class CostTracker:
                 if parent is not None and task.parent_task_id is None:
                     task.parent_task_id = parent.task_id
                 self._storage.insert_task(task)
+                if track_gpu:
+                    self._start_local_gpu_accounting(task)
                 with task_context(task):
                     try:
                         result = func(*args, **kwargs)
@@ -1329,6 +1350,7 @@ class CostTracker:
             GpuRuntimeKind.AZURE_VM_VGPU,
             GpuRuntimeKind.LAMBDA_LABS,
             GpuRuntimeKind.COREWEAVE,
+            GpuRuntimeKind.LOCAL_GPU,
         }
         new_event_ids: set = set()
         if (
@@ -1375,7 +1397,11 @@ class CostTracker:
             ev.cost_usd = priced.cost_usd
             ev.pricing_source = priced.pricing_source
             ev.cost_confidence = priced.cost_confidence
-            ev.pricing_version = f"gpu:{engine.catalog_version}"
+            ev.pricing_version = (
+                None
+                if details.get("billing_model") == "local_gpu_usage_only"
+                else f"gpu:{engine.catalog_version}"
+            )
             ev.details = {
                 k: v for k, v in details.items()
                 if k not in ("cost_pending", "_cgroup_scope_fallback",
@@ -1390,6 +1416,27 @@ class CostTracker:
 
         task.gpu_cost_usd += cost_delta
         task.total_cost_usd += cost_delta
+
+    def _start_local_gpu_accounting(self, task: Task) -> None:
+        """Attach usage-only GPU measurement for an ordinary local task.
+
+        Provider wrappers own the serverless lifecycle. This hook is only for
+        a locally visible NVIDIA GPU and is fully fail-open: optional GPU
+        instrumentation can never prevent the user's task from starting.
+        """
+        try:
+            from dexcost import cloud_detect
+            from dexcost.gpu_accountant import GpuAccountant
+            from dexcost.gpu_runtime import GpuRuntimeKind, resolve_gpu_runtime
+
+            runtime = resolve_gpu_runtime()
+            if runtime != GpuRuntimeKind.LOCAL_GPU:
+                return
+            accountant = GpuAccountant(runtime, cloud_detect.get_cloud_env())
+            accountant.snapshot_start()
+            setattr(task, "_gpu", accountant)
+        except Exception as exc:  # noqa: BLE001 - optional instrumentation
+            _log.debug("local GPU attribution unavailable: %s", exc)
 
     def _finalize_compute(self, task: Task) -> None:
         """Emit the long-running compute_cost event (if any) and back-fill

@@ -3,11 +3,56 @@
 package core
 
 import (
+	"context"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/cloud"
 )
+
+func TestWithGPUUsageCapturesLocalTaskWithoutSyntheticCost(t *testing.T) {
+	resetNVMLForTests()
+	SetNVMLBackendForTests(gpuMockWithDevices(1).AsBackend())
+	t.Cleanup(resetNVMLForTests)
+	ResetGpuAccountantRegistryForTests()
+	t.Cleanup(ResetGpuAccountantRegistryForTests)
+	cloud.SetResultForTests(cloud.CloudEnv{})
+	t.Cleanup(cloud.ResetForTests)
+
+	buf := newMockBuffer()
+	tracker, err := NewTracker(TrackerOptions{Buffer: buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, root := tracker.StartTask(context.Background(), "campaign-root")
+	if GetGpuAccountant(root.Task.TaskID.String()) != nil {
+		t.Fatal("parent task must not capture local GPU without opt in")
+	}
+	_, whisper := tracker.StartTask(context.Background(), "local-whisper", WithGPUUsage())
+	if accountant := GetGpuAccountant(whisper.Task.TaskID.String()); accountant == nil || accountant.Runtime != GpuRuntimeLocalGPU {
+		t.Fatalf("local GPU accountant was not attached: %+v", accountant)
+	}
+	whisper.Task.StartedAt = time.Now().UTC().Add(-time.Second)
+	if err := whisper.End(TaskStatusSuccess); err != nil {
+		t.Fatal(err)
+	}
+	events, err := buf.QueryEvents(whisper.Task.TaskID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cost *Event
+	for index := range events {
+		if events[index].EventType == EventTypeGPUCost {
+			candidate := events[index]
+			cost = &candidate
+		}
+	}
+	if cost == nil || !cost.CostUSD.IsZero() || !strings.HasPrefix(string(cost.PricingSource), "unpriced:local_gpu") || cost.CostConfidence != CostConfidenceUnknown || cost.PricingVersion != "" {
+		t.Fatalf("local GPU event invented or lost evidence: %+v", cost)
+	}
+}
 
 // gpuMockWithDevices returns a ready-to-use mock NVML backend with N
 // devices and self-PID accumulating SM time. The start sample has
@@ -23,10 +68,10 @@ func gpuMockWithDevices(deviceCount int) *MockNVMLBackend {
 	for i := 0; i < deviceCount; i++ {
 		productNames[i] = "NVIDIA H100 80GB HBM3"
 		utilStart[i] = map[int][]NVMLUtilSample{
-			selfPID:{{PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0}},
+			selfPID: {{PID: selfPID, SMUtil: 0, MemUtil: 0, TimeStamp: 0}},
 		}
 		utilEnd[i] = map[int][]NVMLUtilSample{
-			selfPID:{{PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000}},
+			selfPID: {{PID: selfPID, SMUtil: 80, MemUtil: 30, TimeStamp: 1_000_000}},
 		}
 		mem[i] = NVMLMemInfo{UsedBytes: 40 * 1024 * 1024 * 1024, TotalBytes: 80 * 1024 * 1024 * 1024}
 	}
@@ -68,6 +113,90 @@ func TestGpuAccountantSnapshotEndEmitsCostEvent(t *testing.T) {
 	}
 	if len(signals) != 1 {
 		t.Errorf("expected 1 utilization-signal event; got %d", len(signals))
+	}
+}
+
+func TestLocalGpuAccountantPreservesUnknownWorkstationModel(t *testing.T) {
+	resetNVMLForTests()
+	mock := gpuMockWithDevices(1)
+	mock.ProductNames[0] = "NVIDIA GeForce RTX 4090"
+	SetNVMLBackendForTests(mock.AsBackend())
+	t.Cleanup(resetNVMLForTests)
+
+	a := NewGpuAccountant(GpuRuntimeLocalGPU, cloud.CloudEnv{})
+	a.SnapshotStart()
+	cost, _ := a.SnapshotEndAndBuild(1000)
+	if cost == nil || cost["gpu_sku"] != "nvidia geforce rtx 4090" || cost["billing_model"] != "local_gpu_usage_only" {
+		t.Fatalf("local workstation identity was lost or priced: %+v", cost)
+	}
+}
+
+func TestLocalGpuAccountantPreservesExactModelBeforeCoarseAliases(t *testing.T) {
+	for _, productName := range []string{
+		"NVIDIA RTX 6000 Ada Generation",
+		"NVIDIA H100 PCIe",
+		"NVIDIA H100 NVL",
+	} {
+		t.Run(productName, func(t *testing.T) {
+			resetNVMLForTests()
+			mock := gpuMockWithDevices(1)
+			mock.ProductNames[0] = productName
+			SetNVMLBackendForTests(mock.AsBackend())
+			t.Cleanup(resetNVMLForTests)
+
+			a := NewGpuAccountant(GpuRuntimeLocalGPU, cloud.CloudEnv{})
+			a.SnapshotStart()
+			cost, _ := a.SnapshotEndAndBuild(1000)
+			want := normalizeProductName(productName)
+			if cost == nil || cost["gpu_sku"] != want {
+				t.Fatalf("local model collapsed: got %+v, want gpu_sku=%q", cost, want)
+			}
+		})
+	}
+}
+
+func TestGpuAccountantRetainsPeriodicSampleAfterProcessExits(t *testing.T) {
+	resetNVMLForTests()
+	selfPID := os.Getpid()
+	mock := &MockNVMLBackend{
+		Available:    true,
+		DeviceCount:  1,
+		ProductNames: map[int]string{0: "NVIDIA GeForce RTX 4090"},
+		Memory:       map[int]NVMLMemInfo{0: {TotalBytes: 24 * 1024 * 1024 * 1024}},
+		PerCallUtilization: map[int][]map[int][]NVMLUtilSample{
+			0: {
+				{},
+				{selfPID: {{PID: selfPID, SMUtil: 80, MemUtil: 20, TimeStamp: 1_000_000}}},
+				{},
+			},
+		},
+	}
+	SetNVMLBackendForTests(mock.AsBackend())
+	t.Cleanup(resetNVMLForTests)
+
+	a := NewGpuAccountant(GpuRuntimeLocalGPU, cloud.CloudEnv{})
+	a.samplingInterval = 2 * time.Millisecond
+	a.SnapshotStart()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		mock.mu.Lock()
+		calls := mock.invocationCount[0]
+		mock.mu.Unlock()
+		if calls >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("periodic GPU sampler did not run")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cost, signals := a.SnapshotEndAndBuild(2000)
+	if cost == nil || cost["gpu_seconds_used"].(float64) <= 0 {
+		t.Fatalf("periodic utilization was lost after process exit: %+v", cost)
+	}
+	if len(signals) != 1 || signals[0]["sample_count"] != 1 {
+		t.Fatalf("expected retained periodic sample, got %+v", signals)
 	}
 }
 

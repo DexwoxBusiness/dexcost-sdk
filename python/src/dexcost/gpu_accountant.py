@@ -66,6 +66,7 @@ _BILLING_MODEL_FOR_RUNTIME = {
     GpuRuntimeKind.GCP_GCE_BUNDLED:      "per_instance_hour",
     GpuRuntimeKind.AZURE_VM_GPU:         "per_instance_hour",
     GpuRuntimeKind.AZURE_VM_VGPU:        "per_vgpu_hour",
+    GpuRuntimeKind.LOCAL_GPU:            "local_gpu_usage_only",
 }
 
 
@@ -195,7 +196,14 @@ class GpuAccountant:
         canonical_product_name = next(
             (n for n in self._device_product_names if n), None,
         )
-        gpu_sku = self._resolve_sku_from_product_name(canonical_product_name)
+        if self.runtime == GpuRuntimeKind.LOCAL_GPU and canonical_product_name:
+            # A normalized NVML product name is the authoritative identity for
+            # owned hardware. Coarse cloud aliases collapse distinct devices
+            # (for example H100 PCIe/NVL/SXM and RTX 6000 Ada/Quadro), so local
+            # usage must retain the exact model without implying a public rate.
+            gpu_sku = canonical_product_name[:256]
+        else:
+            gpu_sku = self._resolve_sku_from_product_name(canonical_product_name)
 
         # MIG profile is set from the START snapshot — independent of whether
         # cgroup PIDs ended up touching the device. Decision #2 transparency:
@@ -305,6 +313,11 @@ class GpuAccountant:
                 mem_util_avg = mem_util_sum / mem_util_n if mem_util_n else 0.0
 
                 signal_events.append({
+                    "billing_model": _BILLING_MODEL_FOR_RUNTIME.get(
+                        self.runtime, "local_gpu_usage_only",
+                    ),
+                    "runtime_kind": self.runtime.value,
+                    "cloud_provider": self.cloud_env.provider,
                     "gpu_index": i,
                     "gpu_sku": gpu_sku,
                     "sm_util_pct": sm_util_pct_val,
@@ -318,6 +331,11 @@ class GpuAccountant:
             elif degenerate_window:
                 # Sub-100ms / zero-duration task: emit signal with None util.
                 signal_events.append({
+                    "billing_model": _BILLING_MODEL_FOR_RUNTIME.get(
+                        self.runtime, "local_gpu_usage_only",
+                    ),
+                    "runtime_kind": self.runtime.value,
+                    "cloud_provider": self.cloud_env.provider,
                     "gpu_index": i,
                     "gpu_sku": gpu_sku,
                     "sm_util_pct": None,
@@ -372,8 +390,10 @@ class GpuAccountant:
     ) -> dict[str, Any]:
         details: dict[str, Any] = {
             "billing_model": _BILLING_MODEL_FOR_RUNTIME.get(
-                self.runtime, "per_gpu_second_active",
+                self.runtime, "local_gpu_usage_only",
             ),
+            "runtime_kind": self.runtime.value,
+            "cloud_provider": self.cloud_env.provider,
             "gpu_vendor": "nvidia",  # Decision #5 — only nvidia in v1
             "gpu_sku": gpu_sku,
             "gpu_count": gpu_count,

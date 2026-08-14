@@ -89,6 +89,30 @@ def test_init_uses_configured_buffer_for_capture(tmp_path: Path) -> None:
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
 
 
+def test_singleton_task_forwards_local_gpu_opt_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The public dexcost.task() wrapper must expose local GPU capture."""
+    dexcost.init(
+        storage="local",
+        buffer_path=str(tmp_path / "gpu-opt-in.db"),
+        track_http=False,
+        auto_instrument=[],
+    )
+    assert dexcost._global_tracker is not None
+    start_gpu = MagicMock()
+    monkeypatch.setattr(
+        dexcost._global_tracker,
+        "_start_local_gpu_accounting",
+        start_gpu,
+    )
+
+    with dexcost.task("local-whisper", track_gpu=True):
+        pass
+
+    start_gpu.assert_called_once()
+
+
 def test_double_init_does_not_create_orphan_threads(tmp_path: Path) -> None:
     """B10 / §2.2.4 (a): calling init() twice must not orphan the first
     SyncWorker thread.

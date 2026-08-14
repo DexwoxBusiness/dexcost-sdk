@@ -123,6 +123,7 @@ type taskConfig struct {
 	experimentID string
 	variant      string
 	metadata     map[string]interface{}
+	trackGPU     bool
 }
 
 // WithCustomer sets the customer_id on the task.
@@ -160,6 +161,15 @@ func WithVariant(v string) TaskOption {
 	}
 }
 
+// WithGPUUsage enables usage-only local NVIDIA GPU measurement for this task.
+// Enable it only on the leaf task that owns the GPU work; enabling it on both
+// parent and child tasks would measure the same hardware interval twice.
+func WithGPUUsage() TaskOption {
+	return func(c *taskConfig) {
+		c.trackGPU = true
+	}
+}
+
 // StartTask begins tracking a new task and returns a derived context
 // with the task attached. The parent task (if any) is linked automatically.
 func (tr *Tracker) StartTask(ctx context.Context, taskType string, opts ...TaskOption) (context.Context, *TrackedTask) {
@@ -194,6 +204,18 @@ func (tr *Tracker) StartTask(ctx context.Context, taskType string, opts ...TaskO
 	// (which sees only the task_id via context) can record byte usage
 	// via core.GetAccountant(taskID). Unregistered at EndTask.
 	RegisterAccountant(task.TaskID.String(), NewNetworkAccountant())
+	if cfg.trackGPU {
+		func() {
+			defer func() { _ = recover() }()
+			runtime := ResolveGpuRuntime()
+			if runtime != GpuRuntimeLocalGPU {
+				return
+			}
+			accountant := NewGpuAccountant(runtime, cloud.GetCloudEnv())
+			accountant.SnapshotStart()
+			RegisterGpuAccountant(task.TaskID.String(), accountant)
+		}()
+	}
 
 	tt := &TrackedTask{
 		Task:    task,

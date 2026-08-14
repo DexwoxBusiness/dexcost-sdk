@@ -194,3 +194,15 @@ func TestResolveGpuRuntimeUnknownCloudFallsToNone(t *testing.T) {
 		t.Fatalf("non-GPU AWS instance should yield NONE; got %v", r)
 	}
 }
+
+func TestResolveGpuRuntimeVisibleDeviceWithoutCloudIsLocal(t *testing.T) {
+	withNVMLMock(t, 1)
+	for _, k := range []string{"MODAL_TASK_ID", "MODAL_IMAGE_ID", "RUNPOD_POD_ID", "RUNPOD_POD_HOSTNAME", "REPLICATE_MODEL", "REPLICATE_PREDICTION_ID"} {
+		os.Unsetenv(k)
+	}
+	cloud.SetResultForTests(cloud.CloudEnv{})
+	t.Cleanup(cloud.ResetForTests)
+	if r := ResolveGpuRuntime(); r != GpuRuntimeLocalGPU {
+		t.Fatalf("visible non-cloud GPU should yield LOCAL_GPU; got %v", r)
+	}
+}

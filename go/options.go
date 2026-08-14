@@ -94,4 +94,5 @@ var (
 	WithMetadata   = core.WithMetadata
 	WithExperiment = core.WithExperiment
 	WithVariant    = core.WithVariant
+	WithGPUUsage   = core.WithGPUUsage
 )
