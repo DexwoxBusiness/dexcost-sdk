@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.15.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.2...python/v0.15.0) (2026-08-14)
+
+
+### Features
+
+* **python:** support YAML infrastructure rates ([#148](https://github.com/DexwoxBusiness/dexcost-sdk/issues/148)) ([7f53b2a](https://github.com/DexwoxBusiness/dexcost-sdk/commit/7f53b2ad673c987c5097f62c61dddbbcda33de02))
+
 ## [0.14.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.1...python/v0.14.2) (2026-08-14)
 
 
