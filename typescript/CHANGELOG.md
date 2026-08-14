@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.20.1...typescript/v0.21.0) (2026-08-14)
+
+
+### Features
+
+* **attribution:** capture OpenAI Responses billing usage ([#134](https://github.com/DexwoxBusiness/dexcost-sdk/issues/134)) ([75fa439](https://github.com/DexwoxBusiness/dexcost-sdk/commit/75fa439822b0e9371787c64f67ff4d948aba51d9))
+
 ## [0.20.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.20.0...typescript/v0.20.1) (2026-08-13)
 
 
