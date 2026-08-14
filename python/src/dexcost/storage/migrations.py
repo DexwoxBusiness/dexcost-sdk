@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 6
+TARGET_SCHEMA_VERSION = 7
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -278,3 +278,11 @@ def _sqlite_v5_to_v6(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE tasks ADD COLUMN gpu_cost_usd TEXT NOT NULL DEFAULT '0'"
         )
+
+
+@register_sqlite_migration(6, 7)
+def _sqlite_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """Add the opt-in canonical root task identity."""
+    existing = {row[1] for row in conn.execute(_TASKS_TABLE_INFO).fetchall()}
+    if "root_task_id" not in existing:
+        conn.execute("ALTER TABLE tasks ADD COLUMN root_task_id TEXT")

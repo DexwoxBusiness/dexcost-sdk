@@ -10,6 +10,9 @@ from typing import Any, cast
 
 from dexcost.attribution.types import (
     ATTRIBUTION_UNIT_BY_METRIC,
+    AttributionBusinessAssignmentV1,
+    AttributionBusinessIdentityRevisionV1,
+    AttributionBusinessTaskHierarchyV1,
     AttributionComponent,
     AttributionCostEvidenceSource,
     AttributionCostEvidenceV2,
@@ -28,6 +31,7 @@ from dexcost.models.task import Task
 _log = logging.getLogger(__name__)
 _GIB = Decimal(1024) ** 3
 _TWELVE_PLACES = Decimal("0.000000000001")
+_BUSINESS_CANONICAL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
 
 def _decimal_detail(details: dict[str, Any], *keys: str) -> Decimal | None:
@@ -448,4 +452,48 @@ def to_attribution_task_ingest_v1(task: Task) -> AttributionTaskIngestV1:
         "experiment_id": task.experiment_id,
         "variant": task.variant,
         "schema_version": "1",
+    }
+
+
+def to_business_identity_revision_v1(
+    task: Task,
+) -> AttributionBusinessIdentityRevisionV1 | None:
+    """Build the immutable revision-1 identity for an opted-in task."""
+    if task.root_task_id is None:
+        return None
+    if _BUSINESS_CANONICAL_NAME.fullmatch(task.task_type) is None:
+        raise ValueError("business-attributed task_type must be a canonical identifier")
+    if task.variant is not None and task.experiment_id is None:
+        raise ValueError("variant requires experiment_id")
+    if task.parent_task_id is None:
+        if task.root_task_id != task.task_id:
+            raise ValueError("a root task must identify itself as root_task_id")
+    elif task.root_task_id == task.task_id or task.parent_task_id == task.task_id:
+        raise ValueError("a child task cannot be its own root or parent")
+
+    hierarchy: AttributionBusinessTaskHierarchyV1 = {
+        "task_type": task.task_type,
+        "root_task_id": str(task.root_task_id),
+    }
+    if task.parent_task_id is not None:
+        hierarchy["parent_task_id"] = str(task.parent_task_id)
+    assignment: AttributionBusinessAssignmentV1 = {}
+    if task.customer_id is not None:
+        assignment["customer_id"] = task.customer_id
+    if task.project_id is not None:
+        assignment["project_id"] = task.project_id
+    if task.experiment_id is not None:
+        assignment["experiment_id"] = task.experiment_id
+    if task.variant is not None:
+        assignment["variant"] = task.variant
+    timestamp = iso_canonical(task.started_at)
+    return {
+        "schema_version": "1",
+        "task_id": str(task.task_id),
+        "revision": 1,
+        "effective_at": timestamp,
+        "observed_at": timestamp,
+        "identity_snapshot": "full",
+        "task": hierarchy,
+        "assignment": assignment,
     }

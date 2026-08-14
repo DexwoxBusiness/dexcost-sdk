@@ -19,7 +19,10 @@ from email.message import Message
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from dexcost.attribution.convert import to_attribution_task_ingest_v1
+from dexcost.attribution.convert import (
+    to_attribution_task_ingest_v1,
+    to_business_identity_revision_v1,
+)
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 
@@ -272,12 +275,22 @@ class SyncWorker:
                 list({str(event["task_id"]) for event in event_dicts})
             )
         task_dicts: list[dict[str, Any]] = [self._prepare_task_dict(t) for t in tasks]
+        business_identities = [
+            identity
+            for task in tasks
+            if (identity := self._prepare_business_identity(task)) is not None
+        ]
 
         if not event_dicts and not task_dicts:
             self._raise_conversion_failure(failed_event_ids)
             return False
 
-        posted = self._post_with_split(event_dicts, task_dicts, storage=st)
+        posted = self._post_with_split(
+            event_dicts,
+            task_dicts,
+            business_identities,
+            storage=st,
+        )
         if not posted:
             if self._stop_event.is_set():
                 return False
@@ -409,10 +422,35 @@ class SyncWorker:
 
         return d
 
+    def _prepare_business_identity(self, task: Any) -> dict[str, Any] | None:
+        """Serialize an opted-in immutable business-identity snapshot."""
+        # Running tasks may be pushed more than once. Publish the immutable
+        # revision only with the final task update so a later privacy-config
+        # change cannot rewrite revision 1 after an early running snapshot.
+        if task.ended_at is None:
+            return None
+        identity = cast(
+            dict[str, Any] | None,
+            to_business_identity_revision_v1(task),
+        )
+        if identity is None:
+            return None
+        assignment = cast(dict[str, Any], identity["assignment"])
+        if self._config.redact_fields:
+            for key in tuple(assignment):
+                if key in self._config.redact_fields:
+                    assignment.pop(key, None)
+            # The wire contract forbids a variant without its experiment.
+            if "experiment_id" not in assignment:
+                assignment.pop("variant", None)
+        self._hash_pii(assignment)
+        return identity
+
     def _post_with_split(
         self,
         events: list[dict[str, Any]],
         tasks: list[dict[str, Any]],
+        business_identities: list[dict[str, Any]] | None = None,
         depth: int = 0,
         storage: StorageBackend | None = None,
     ) -> bool:
@@ -422,7 +460,12 @@ class SyncWorker:
         sibling failure from replaying records the control plane already
         accepted. Tasks are sent before events when they must be separated.
         """
-        payload: dict[str, Any] = {"events": events, "tasks": tasks}
+        identities = business_identities or []
+        payload: dict[str, Any] = {
+            "events": events,
+            "tasks": tasks,
+            "business_identities": identities,
+        }
         body = json.dumps(payload).encode("utf-8")
 
         if len(body) <= _MAX_PAYLOAD_BYTES:
@@ -443,28 +486,47 @@ class SyncWorker:
                 len(body),
                 len(events),
             )
-            first_posted = self._post_with_split(events[:mid], tasks, depth + 1, storage)
+            first_posted = self._post_with_split(
+                events[:mid], tasks, identities, depth + 1, storage
+            )
             if not first_posted:
                 return False
-            return self._post_with_split(events[mid:], [], depth + 1, storage)
+            return self._post_with_split(events[mid:], [], [], depth + 1, storage)
 
         if len(tasks) > 1:
             mid = len(tasks) // 2
+            first_task_ids = {str(task["task_id"]) for task in tasks[:mid]}
+            first_identities = [
+                identity
+                for identity in identities
+                if str(identity["task_id"]) in first_task_ids
+            ]
+            second_identities = [
+                identity
+                for identity in identities
+                if str(identity["task_id"]) not in first_task_ids
+            ]
             _log.info(
                 "Batch too large (%d bytes, %d tasks), splitting tasks",
                 len(body),
                 len(tasks),
             )
-            first_posted = self._post_with_split([], tasks[:mid], depth + 1, storage)
+            first_posted = self._post_with_split(
+                [], tasks[:mid], first_identities, depth + 1, storage
+            )
             if not first_posted:
                 return False
-            return self._post_with_split(events, tasks[mid:], depth + 1, storage)
+            return self._post_with_split(
+                events, tasks[mid:], second_identities, depth + 1, storage
+            )
 
         if len(events) == 1 and len(tasks) == 1:
-            task_posted = self._post_with_split([], tasks, depth + 1, storage)
+            task_posted = self._post_with_split(
+                [], tasks, identities, depth + 1, storage
+            )
             if not task_posted:
                 return False
-            return self._post_with_split(events, [], depth + 1, storage)
+            return self._post_with_split(events, [], [], depth + 1, storage)
 
         if len(events) == 1:
             # A permanently oversized record cannot be delivered. Acknowledge
@@ -546,9 +608,14 @@ class SyncWorker:
         self,
         events: list[dict[str, Any]],
         tasks: list[dict[str, Any]] | None = None,
+        business_identities: list[dict[str, Any]] | None = None,
     ) -> bool:
         """POST events and tasks to the cloud ingest endpoint.
 
         Backward-compatible wrapper that delegates to :meth:`_post_with_split`.
         """
-        return self._post_with_split(events, tasks or [])
+        return self._post_with_split(
+            events,
+            tasks or [],
+            business_identities or [],
+        )

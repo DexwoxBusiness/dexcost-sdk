@@ -14,6 +14,7 @@ import contextvars
 import copy
 import functools
 import logging
+import re
 import threading
 import uuid
 import warnings
@@ -63,6 +64,80 @@ _ERROR_LIKELIHOODS: dict[str, float] = {
     "server_error": 0.85,
     "connection_error": 0.8,
 }
+_BUSINESS_CANONICAL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+
+
+def _coerce_task_uuid(name: str, value: uuid.UUID | str | None) -> uuid.UUID | None:
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(value)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a valid UUID") from exc
+
+
+def _build_task(
+    *,
+    task_type: str,
+    customer_id: str | None,
+    project_id: str | None,
+    metadata: dict[str, Any],
+    experiment_id: str | None,
+    variant: str | None,
+    task_id: uuid.UUID | str | None,
+    root_task_id: uuid.UUID | str | None,
+    parent_task_id: uuid.UUID | str | None,
+) -> Task:
+    """Create a task and resolve in-process or explicit hierarchy safely."""
+    resolved_task_id = _coerce_task_uuid("task_id", task_id) or uuid.uuid4()
+    resolved_root_id = _coerce_task_uuid("root_task_id", root_task_id)
+    resolved_parent_id = _coerce_task_uuid("parent_task_id", parent_task_id)
+
+    parent = get_current_task()
+    if resolved_parent_id is None and parent is not None:
+        resolved_parent_id = parent.task_id
+        if resolved_root_id is None and parent.root_task_id is not None:
+            resolved_root_id = parent.root_task_id
+
+    if resolved_root_id is not None:
+        if _BUSINESS_CANONICAL_NAME.fullmatch(task_type) is None:
+            raise ValueError(
+                "business-attributed task_type must be a canonical identifier"
+            )
+        if variant is not None and experiment_id is None:
+            raise ValueError("variant requires experiment_id")
+        for name, value in (
+            ("customer_id", customer_id),
+            ("project_id", project_id),
+            ("experiment_id", experiment_id),
+            ("variant", variant),
+        ):
+            if value is not None and (not value.strip() or len(value) > 256):
+                raise ValueError(f"{name} must contain between 1 and 256 characters")
+        if resolved_parent_id is None:
+            if resolved_root_id != resolved_task_id:
+                raise ValueError(
+                    "a root task must use its own task_id as root_task_id"
+                )
+        elif (
+            resolved_parent_id == resolved_task_id
+            or resolved_root_id == resolved_task_id
+        ):
+            raise ValueError("a child task cannot be its own root or parent")
+
+    return Task(
+        task_id=resolved_task_id,
+        task_type=task_type,
+        customer_id=customer_id,
+        project_id=project_id,
+        metadata=copy.deepcopy(metadata) if metadata else {},
+        parent_task_id=resolved_parent_id,
+        root_task_id=resolved_root_id,
+        experiment_id=experiment_id,
+        variant=variant,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +649,9 @@ class _TaskContextManager:
         metadata: dict[str, Any],
         experiment_id: str | None = None,
         variant: str | None = None,
+        task_id: uuid.UUID | str | None = None,
+        root_task_id: uuid.UUID | str | None = None,
+        parent_task_id: uuid.UUID | str | None = None,
         track_gpu: bool = False,
     ) -> None:
         self._tracker = tracker
@@ -583,23 +661,25 @@ class _TaskContextManager:
         self._metadata = metadata
         self._experiment_id = experiment_id
         self._variant = variant
+        self._task_id = task_id
+        self._root_task_id = root_task_id
+        self._parent_task_id = parent_task_id
         self._track_gpu = track_gpu
         self._tracked: TrackedTask | None = None
         self._token: contextvars.Token[Task | None] | None = None
 
     def _setup(self) -> TrackedTask:
-        task = Task(
+        task = _build_task(
             task_type=self._task_type,
             customer_id=self._customer_id,
             project_id=self._project_id,
-            metadata=copy.deepcopy(self._metadata) if self._metadata else {},
+            metadata=self._metadata,
             experiment_id=self._experiment_id,
             variant=self._variant,
+            task_id=self._task_id,
+            root_task_id=self._root_task_id,
+            parent_task_id=self._parent_task_id,
         )
-
-        parent = get_current_task()
-        if parent is not None and task.parent_task_id is None:
-            task.parent_task_id = parent.task_id
 
         self._tracker._storage.insert_task(task)
         if self._track_gpu:
@@ -1005,6 +1085,9 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        task_id: uuid.UUID | str | None = None,
+        root_task_id: uuid.UUID | str | None = None,
+        parent_task_id: uuid.UUID | str | None = None,
         track_gpu: bool = False,
     ) -> TrackedTask:
         """Manually start a task and return a :class:`TrackedTask` handle.
@@ -1021,6 +1104,11 @@ class CostTracker:
             metadata: Optional dict of extra metadata.
             experiment_id: Optional experiment grouping.
             variant: Optional variant label within experiment.
+            task_id: Optional caller-owned UUID for cross-process correlation.
+            root_task_id: Optional canonical root UUID. Supplying this opts the
+                task into revisioned business-identity publication.
+            parent_task_id: Optional explicit parent UUID for cross-process
+                hierarchies. Children with a root must supply both IDs.
             track_gpu: Measure local NVIDIA GPU usage for this task. Enable
                 this only on the leaf task that owns the GPU work so parent
                 and child tasks do not measure the same interval twice.
@@ -1029,18 +1117,17 @@ class CostTracker:
             A :class:`TrackedTask` whose ``task_id`` can be passed to other
             functions or processes for manual event association.
         """
-        task = Task(
+        task = _build_task(
             task_type=task_type,
             customer_id=customer_id,
             project_id=project_id,
-            metadata=copy.deepcopy(metadata) if metadata else {},
+            metadata=metadata or {},
             experiment_id=experiment_id,
             variant=variant,
+            task_id=task_id,
+            root_task_id=root_task_id,
+            parent_task_id=parent_task_id,
         )
-
-        parent = get_current_task()
-        if parent is not None and task.parent_task_id is None:
-            task.parent_task_id = parent.task_id
 
         self._storage.insert_task(task)
         if track_gpu:
@@ -1061,6 +1148,9 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        task_id: uuid.UUID | str | None = None,
+        root_task_id: uuid.UUID | str | None = None,
+        parent_task_id: uuid.UUID | str | None = None,
         track_gpu: bool = False,
     ) -> _TaskContextManager:
         """Return a context manager for explicit task tracking.
@@ -1087,6 +1177,9 @@ class CostTracker:
             metadata=copy.deepcopy(metadata) if metadata else {},
             experiment_id=experiment_id,
             variant=variant,
+            task_id=task_id,
+            root_task_id=root_task_id,
+            parent_task_id=parent_task_id,
             track_gpu=track_gpu,
         )
 
@@ -1102,6 +1195,8 @@ class CostTracker:
         metadata: dict[str, Any] | None = None,
         experiment_id: str | None = None,
         variant: str | None = None,
+        root_task_id: uuid.UUID | str | None = None,
+        parent_task_id: uuid.UUID | str | None = None,
         track_gpu: bool = False,
     ) -> Callable[[F], F]:
         """Decorator that wraps *func* with automatic task tracking.
@@ -1118,17 +1213,17 @@ class CostTracker:
 
                 @functools.wraps(func)
                 async def _async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                    task = Task(
+                    task = _build_task(
                         task_type=task_type,
                         customer_id=customer_id,
                         project_id=project_id,
-                        metadata=copy.deepcopy(meta) if meta else {},
+                        metadata=meta,
                         experiment_id=experiment_id,
                         variant=variant,
+                        task_id=None,
+                        root_task_id=root_task_id,
+                        parent_task_id=parent_task_id,
                     )
-                    parent = get_current_task()
-                    if parent is not None and task.parent_task_id is None:
-                        task.parent_task_id = parent.task_id
                     self._storage.insert_task(task)
                     if track_gpu:
                         self._start_local_gpu_accounting(task)
@@ -1150,17 +1245,17 @@ class CostTracker:
 
             @functools.wraps(func)
             def _sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                task = Task(
+                task = _build_task(
                     task_type=task_type,
                     customer_id=customer_id,
                     project_id=project_id,
-                    metadata=copy.deepcopy(meta) if meta else {},
+                    metadata=meta,
                     experiment_id=experiment_id,
                     variant=variant,
+                    task_id=None,
+                    root_task_id=root_task_id,
+                    parent_task_id=parent_task_id,
                 )
-                parent = get_current_task()
-                if parent is not None and task.parent_task_id is None:
-                    task.parent_task_id = parent.task_id
                 self._storage.insert_task(task)
                 if track_gpu:
                     self._start_local_gpu_accounting(task)

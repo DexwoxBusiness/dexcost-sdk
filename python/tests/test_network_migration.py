@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from dexcost.models.task import Task
+from dexcost.storage.migrations import TARGET_SCHEMA_VERSION
 from dexcost.storage.sqlite import SQLiteStorage
 
 
@@ -88,7 +89,7 @@ def test_v3_db_migrates_to_v4(tmp_path):
     cols = {r[1] for r in st._conn.execute("PRAGMA table_info(tasks)").fetchall()}
     assert "network_by_host" in cols
     # v3→v4 (network capture) AND v4→v5 (network_cost_usd) both run.
-    assert st.get_schema_version() == 6
+    assert st.get_schema_version() == TARGET_SCHEMA_VERSION
 
     # Verify that the pre-existing row received the column DEFAULTs.
     row = st.get_task(pre_existing_id)

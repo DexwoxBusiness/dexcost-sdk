@@ -9,6 +9,7 @@ Verifies end-to-end that:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Generator
 from decimal import Decimal
 from typing import Any
@@ -93,6 +94,39 @@ def test_task_with_explicit_context(tracker: CostTracker, storage: SQLiteStorage
     tasks = storage.query_tasks()
     assert len(tasks) >= 1
     assert any(task.customer_id == "smoke-test" for task in tasks)
+
+
+def test_singleton_task_forwards_business_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tracker: CostTracker,
+    storage: SQLiteStorage,
+) -> None:
+    """The public singleton API preserves explicit cross-process identity."""
+    root_task_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    task_id = uuid.UUID("22222222-2222-4222-8222-222222222222")
+    set_context(customer_id="internal-marketing", project_id="dexcost-marketing-campaign")
+    monkeypatch.setattr(dexcost, "_global_tracker", tracker)
+
+    with dexcost.task(
+        "openmontage.tool_execution",
+        experiment_id="campaign-creative",
+        variant="variant-a",
+        task_id=task_id,
+        root_task_id=root_task_id,
+        parent_task_id=root_task_id,
+    ) as tracked:
+        assert tracked.task.task_id == task_id
+        assert tracked.task.root_task_id == root_task_id
+        assert tracked.task.parent_task_id == root_task_id
+        assert tracked.task.customer_id == "internal-marketing"
+        assert tracked.task.project_id == "dexcost-marketing-campaign"
+        assert tracked.task.experiment_id == "campaign-creative"
+        assert tracked.task.variant == "variant-a"
+
+    persisted = storage.get_task(str(task_id))
+    assert persisted is not None
+    assert persisted.root_task_id == root_task_id
+    assert persisted.parent_task_id == root_task_id
 
 
 def test_record_cost_in_task(tracker: CostTracker, storage: SQLiteStorage) -> None:

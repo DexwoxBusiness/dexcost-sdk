@@ -221,3 +221,33 @@ class AttributionTaskIngestV1(TypedDict):
     experiment_id: str | None
     variant: str | None
     schema_version: Literal["1"]
+
+
+class _AttributionBusinessTaskHierarchyV1Required(TypedDict):
+    task_type: str
+    root_task_id: str
+
+
+class AttributionBusinessTaskHierarchyV1(
+    _AttributionBusinessTaskHierarchyV1Required,
+    total=False,
+):
+    parent_task_id: str
+
+
+class AttributionBusinessAssignmentV1(TypedDict, total=False):
+    customer_id: str
+    project_id: str
+    experiment_id: str
+    variant: str
+
+
+class AttributionBusinessIdentityRevisionV1(TypedDict):
+    schema_version: Literal["1"]
+    task_id: str
+    revision: int
+    effective_at: str
+    observed_at: str
+    identity_snapshot: Literal["full"]
+    task: AttributionBusinessTaskHierarchyV1
+    assignment: AttributionBusinessAssignmentV1
