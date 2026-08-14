@@ -35,7 +35,7 @@ const EXPECTED_REGISTRATIONS: Record<string, number> = {
   "instruments/bedrock.ts": 1,
   "instruments/cohere.ts": 3,
   "instruments/gemini.ts": 3,
-  "instruments/openai.ts": 3,
+  "instruments/openai.ts": 1, // Chat/Responses share recordUsageEvent
   "instruments/vercel-ai.ts": 1, // single shared recordEvent
   "integrations/ai-sdk.ts": 1, // single shared _recordEvent
   "integrations/langchain.ts": 2, // llm end + llm error

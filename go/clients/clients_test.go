@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/pricing"
@@ -130,6 +131,104 @@ func TestRecordOpenAIResponse_MissingOptionalFields(t *testing.T) {
 	}
 }
 
+func TestRecordOpenAIResponse_ResponsesLunaBillingBuckets(t *testing.T) {
+	buf := newTestBuffer(t)
+	engine := newTestPricingEngine(t)
+	taskID := uuid.New()
+	seedTask(t, buf, taskID)
+
+	response := map[string]interface{}{
+		"id":    "resp_luna_go",
+		"model": "gpt-5.6-luna",
+		"usage": map[string]interface{}{
+			"input_tokens": 2600,
+			"input_tokens_details": map[string]interface{}{
+				"cached_tokens":      2000,
+				"cache_write_tokens": 400,
+			},
+			"output_tokens": 300,
+			"output_tokens_details": map[string]interface{}{
+				"reasoning_tokens": 120,
+			},
+		},
+	}
+
+	event, err := clients.RecordOpenAIResponse(buf, engine, taskID, response)
+	if err != nil {
+		t.Fatalf("RecordOpenAIResponse: %v", err)
+	}
+	if event.InputTokens == nil || *event.InputTokens != 2600 {
+		t.Fatalf("InputTokens = %v, want 2600", event.InputTokens)
+	}
+	if event.OutputTokens == nil || *event.OutputTokens != 300 {
+		t.Fatalf("OutputTokens = %v, want 300", event.OutputTokens)
+	}
+	if event.CachedTokens == nil || *event.CachedTokens != 2000 {
+		t.Fatalf("CachedTokens = %v, want 2000", event.CachedTokens)
+	}
+	if event.CostConfidence != core.CostConfidenceUnknown || !event.CostUSD.IsZero() {
+		t.Fatalf("unknown local Luna pricing must remain an unpriced zero, got %s %s", event.CostConfidence, event.CostUSD)
+	}
+	if event.Details["cache_write_input_tokens"] != 400 {
+		t.Fatalf("cache write detail = %v, want 400", event.Details["cache_write_input_tokens"])
+	}
+	if event.Details["reasoning_output_tokens"] != 120 {
+		t.Fatalf("reasoning detail = %v, want 120", event.Details["reasoning_output_tokens"])
+	}
+	if event.Details["provider_record_id"] != "resp_luna_go" {
+		t.Fatalf("provider record id = %v, want resp_luna_go", event.Details["provider_record_id"])
+	}
+
+	observation := attribution.ToObservationV3(event)
+	if observation == nil {
+		t.Fatal("Luna event was not representable as attribution v3")
+	}
+	want := []struct{ metric, quantity string }{
+		{"input_tokens", "200"},
+		{"cache_read_input_tokens", "2000"},
+		{"cache_write_input_tokens", "400"},
+		{"output_tokens", "180"},
+		{"reasoning_output_tokens", "120"},
+	}
+	if len(observation.Usage) != len(want) {
+		t.Fatalf("usage lines = %d, want %d", len(observation.Usage), len(want))
+	}
+	for index, expected := range want {
+		if observation.Usage[index].Metric != expected.metric || observation.Usage[index].Quantity != expected.quantity {
+			t.Errorf("usage[%d] = %s/%s, want %s/%s", index, observation.Usage[index].Metric, observation.Usage[index].Quantity, expected.metric, expected.quantity)
+		}
+	}
+}
+
+func TestRecordOpenAIResponse_RejectsOverlappingCacheBuckets(t *testing.T) {
+	buf := newTestBuffer(t)
+	engine := newTestPricingEngine(t)
+	taskID := uuid.New()
+	seedTask(t, buf, taskID)
+
+	_, err := clients.RecordOpenAIResponse(buf, engine, taskID, map[string]interface{}{
+		"model": "gpt-5.6-luna",
+		"usage": map[string]interface{}{
+			"input_tokens": 10,
+			"input_tokens_details": map[string]interface{}{
+				"cached_tokens":      9,
+				"cache_write_tokens": 2,
+			},
+			"output_tokens": 1,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid OpenAI usage error")
+	}
+	events, queryErr := buf.QueryEvents(taskID.String())
+	if queryErr != nil {
+		t.Fatalf("QueryEvents: %v", queryErr)
+	}
+	if len(events) != 0 {
+		t.Fatalf("invalid explicit helper call persisted %d event(s), want 0", len(events))
+	}
+}
+
 // Test 3: RecordAnthropicResponse records correct event.
 func TestRecordAnthropicResponse_RecordsEvent(t *testing.T) {
 	buf := newTestBuffer(t)
@@ -189,9 +288,9 @@ func TestRecordAnthropicResponse_HandlesCacheTokens(t *testing.T) {
 	resp := map[string]interface{}{
 		"model": "claude-3-5-sonnet-20241022",
 		"usage": map[string]interface{}{
-			"input_tokens":              300,
-			"output_tokens":             100,
-			"cache_read_input_tokens":   50,
+			"input_tokens":            300,
+			"output_tokens":           100,
+			"cache_read_input_tokens": 50,
 		},
 	}
 

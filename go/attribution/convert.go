@@ -244,18 +244,27 @@ func componentAndUsage(event core.Event) (Component, []UsageLineV2, decimal.Deci
 		usage := appendUsage(nil, MetricRequestCount, decimal.NewFromInt(1))
 		return ComponentExternal, usage, decimal.Zero, true
 	case core.EventTypeLLMCall:
+		if strings.TrimSpace(stringDetail(details, "openai_usage_error")) != "" {
+			return "", nil, decimal.Zero, false
+		}
 		usage := []UsageLineV2{}
 		cached := decimal.NewFromInt(int64(intValue(event.CachedTokens)))
+		cacheWrite, _ := decimalDetail(details, "cache_write_input_tokens", "cache_creation_input_tokens")
 		input := decimal.NewFromInt(int64(intValue(event.InputTokens)))
 		provider := strings.ToLower(event.Provider)
 		if !(strings.Contains(provider, "anthropic") || strings.Contains(provider, "bedrock") || provider == "aws") {
-			input = decimal.Max(decimal.Zero, input.Sub(cached))
+			if cached.Add(cacheWrite).GreaterThan(input) {
+				return "", nil, decimal.Zero, false
+			}
+			input = input.Sub(cached).Sub(cacheWrite)
 		}
-		cacheWrite, _ := decimalDetail(details, "cache_creation_input_tokens")
 		reasoning, _ := decimalDetail(details, "reasoning_output_tokens", "reasoning_tokens")
 		output := decimal.NewFromInt(int64(intValue(event.OutputTokens)))
 		if reasoning.IsPositive() {
-			output = decimal.Max(decimal.Zero, output.Sub(reasoning))
+			if reasoning.GreaterThan(output) {
+				return "", nil, decimal.Zero, false
+			}
+			output = output.Sub(reasoning)
 		}
 		usage = appendUsage(usage, MetricInputTokens, input)
 		usage = appendUsage(usage, MetricCacheReadTokens, cached)

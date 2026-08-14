@@ -111,12 +111,15 @@ func (t *TrackedOpenAI) CreateChatCompletion(ctx context.Context, req interface{
 
 	event, recordErr := RecordOpenAIResponse(t.tracker.Buffer(), t.pricing, task.TaskID, respMap)
 	if recordErr != nil {
-		// Fallback: record a minimal event.
+		// Keep the failed normalization durable, but make it explicitly
+		// unexportable so malformed provider usage cannot become request_count
+		// or a confident synthetic zero in attribution v3.
 		event = core.NewEvent(task.TaskID, core.EventTypeLLMCall)
 		event.Provider = "openai"
 		event.CostConfidence = core.CostConfidenceUnknown
 		event.PricingSource = core.PricingSourceUnknown
 		event.LatencyMs = &latencyMs
+		event.Details["openai_usage_error"] = security.ScrubURLsInText(recordErr.Error())
 		if insErr := t.tracker.Buffer().InsertEvent(event); insErr != nil {
 			log.Printf("[dexcost] failed to persist event: %v", insErr)
 		}

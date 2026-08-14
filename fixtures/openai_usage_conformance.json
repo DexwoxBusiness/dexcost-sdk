@@ -1,0 +1,141 @@
+{
+  "schema_version": "1",
+  "valid_cases": [
+    {
+      "id": "chat.all_billing_buckets",
+      "usage": {
+        "prompt_tokens": 2600,
+        "completion_tokens": 300,
+        "prompt_tokens_details": {
+          "cached_tokens": 2000,
+          "cache_write_tokens": 400
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 120
+        }
+      },
+      "expected": {
+        "total_input_tokens": 2600,
+        "input_tokens": 200,
+        "cache_read_input_tokens": 2000,
+        "cache_write_input_tokens": 400,
+        "total_output_tokens": 300,
+        "output_tokens": 180,
+        "reasoning_output_tokens": 120
+      }
+    },
+    {
+      "id": "responses.all_billing_buckets",
+      "usage": {
+        "input_tokens": 2600,
+        "output_tokens": 300,
+        "input_tokens_details": {
+          "cached_tokens": 2000,
+          "cache_write_tokens": 400
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 120
+        }
+      },
+      "expected": {
+        "total_input_tokens": 2600,
+        "input_tokens": 200,
+        "cache_read_input_tokens": 2000,
+        "cache_write_input_tokens": 400,
+        "total_output_tokens": 300,
+        "output_tokens": 180,
+        "reasoning_output_tokens": 120
+      }
+    },
+    {
+      "id": "responses.no_cache_or_reasoning",
+      "usage": {
+        "input_tokens": 900,
+        "output_tokens": 75,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "expected": {
+        "total_input_tokens": 900,
+        "input_tokens": 900,
+        "cache_read_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "total_output_tokens": 75,
+        "output_tokens": 75,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "chat.legacy_top_level_cached_tokens",
+      "usage": {
+        "prompt_tokens": 1000,
+        "completion_tokens": 50,
+        "cached_tokens": 250
+      },
+      "expected": {
+        "total_input_tokens": 1000,
+        "input_tokens": 750,
+        "cache_read_input_tokens": 250,
+        "cache_write_input_tokens": 0,
+        "total_output_tokens": 50,
+        "output_tokens": 50,
+        "reasoning_output_tokens": 0
+      }
+    }
+  ],
+  "invalid_cases": [
+    {
+      "id": "invalid.cache_buckets_exceed_input",
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 80,
+          "cache_write_tokens": 30
+        }
+      },
+      "expected_error": "cache token buckets exceed total input tokens"
+    },
+    {
+      "id": "invalid.reasoning_exceeds_output",
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "output_tokens_details": {
+          "reasoning_tokens": 21
+        }
+      },
+      "expected_error": "reasoning tokens exceed total output tokens"
+    },
+    {
+      "id": "invalid.negative_counter",
+      "usage": {
+        "prompt_tokens": -1,
+        "completion_tokens": 20
+      },
+      "expected_error": "token counters must be non-negative integers"
+    },
+    {
+      "id": "invalid.fractional_counter",
+      "usage": {
+        "input_tokens": 10.5,
+        "output_tokens": 20
+      },
+      "expected_error": "token counters must be non-negative integers"
+    },
+    {
+      "id": "invalid.missing_totals",
+      "usage": {
+        "input_tokens_details": {
+          "cached_tokens": 10
+        }
+      },
+      "expected_error": "usage is missing input or output token totals"
+    }
+  ]
+}

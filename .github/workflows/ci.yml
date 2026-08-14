@@ -59,6 +59,7 @@ jobs:
           --ignore=tests/test_cross_sdk_parity.py
           --ignore=tests/test_attribution_v2_conformance.py
           --ignore=tests/test_attribution_v3_conformance.py
+          --ignore=tests/test_openai_usage_conformance.py
           --ignore=tests/test_service_usage_observer_conformance.py
           -v
 
@@ -77,7 +78,7 @@ jobs:
         # -skip introduced in Go 1.20.
         run: >-
           go test -race
-          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3|TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)'
+          -skip '^(TestCrossSDK|TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3|TestSharedOpenAIUsageConformance|TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)'
           ./...
 
   typescript:
@@ -104,7 +105,7 @@ jobs:
         working-directory: typescript
         run: >-
           npx vitest run
-          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,service-usage-observer-conformance}.test.ts'
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance}.test.ts'
       - name: Build + runtime smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs
@@ -233,6 +234,7 @@ jobs:
             tests/test_cross_sdk_parity.py \
             tests/test_attribution_v2_conformance.py \
             tests/test_attribution_v3_conformance.py \
+            tests/test_openai_usage_conformance.py \
             tests/test_service_usage_observer_conformance.py \
             -v
 
@@ -242,6 +244,7 @@ jobs:
         run: |
           go test -v -run '^TestCrossSDK' .
           go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3)' ./attribution
+          go test -v -run '^TestSharedOpenAIUsageConformance$' ./clients
           go test -v -run '^(TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)' ./pricing
 
       - name: Run cross-SDK conformance (typescript)
@@ -254,6 +257,7 @@ jobs:
             tests/attribution-v2-conformance.test.ts \
             tests/attribution-v3-conformance.test.ts \
             tests/attribution-v3-pusher-conformance.test.ts \
+            tests/openai-usage-conformance.test.ts \
             tests/service-usage-observer-conformance.test.ts
 
       - name: Run cross-SDK conformance (rust)

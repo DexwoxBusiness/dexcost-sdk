@@ -60,7 +60,7 @@ dexcost auto-instruments **6 LLM providers** and **5 HTTP libraries**.
 
 | Provider | Package | Auto-Patched Method |
 |----------|---------|-------------------|
-| OpenAI | `openai` | `chat.completions.create` (sync + async) |
+| OpenAI | `openai` | Chat Completions and Responses `create` (sync + async, including streams) |
 | Anthropic | `anthropic` | `messages.create` (sync + async) |
 | LiteLLM | `litellm` | `completion` / `acompletion` |
 | Google Gemini | `google-genai` | `models.generate_content` |

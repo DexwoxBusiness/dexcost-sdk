@@ -1,0 +1,108 @@
+"""Normalize OpenAI token usage into mutually exclusive billing buckets."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class OpenAIUsage:
+    """Provider totals plus the five disjoint DexCost billing quantities."""
+
+    total_input_tokens: int
+    input_tokens: int
+    cache_read_input_tokens: int
+    cache_write_input_tokens: int
+    total_output_tokens: int
+    output_tokens: int
+    reasoning_output_tokens: int
+
+
+class OpenAIUsageError(ValueError):
+    """Raised when provider usage cannot be represented without guessing."""
+
+
+def _field(value: object, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    attributes = getattr(value, "__dict__", None)
+    if isinstance(attributes, dict):
+        # Pydantic models, dataclasses, SimpleNamespace, and the SDK
+        # compatibility mocks all expose assigned fields here. Returning None
+        # for an absent key avoids treating a dynamic mock child as usage.
+        return attributes.get(key)
+    return getattr(value, key, None)
+
+
+def _counter(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _optional_counter(value: object) -> int:
+    if value is None:
+        return 0
+    parsed = _counter(value)
+    if parsed is None:
+        raise OpenAIUsageError("token counters must be non-negative integers")
+    return parsed
+
+
+def normalize_openai_usage(usage: object) -> OpenAIUsage:
+    """Normalize Chat Completions or Responses API usage.
+
+    OpenAI reports cache reads and writes inside the total input count, and
+    reasoning tokens inside the total output count.  DexCost emits each bucket
+    exactly once, so impossible overlaps fail closed instead of being clamped.
+    """
+
+    chat_input = _field(usage, "prompt_tokens")
+    responses_input = _field(usage, "input_tokens")
+    chat_output = _field(usage, "completion_tokens")
+    responses_output = _field(usage, "output_tokens")
+
+    total_input = _counter(chat_input if chat_input is not None else responses_input)
+    total_output = _counter(chat_output if chat_output is not None else responses_output)
+    if total_input is None or total_output is None:
+        if (chat_input is not None or responses_input is not None) and (
+            chat_output is not None or responses_output is not None
+        ):
+            raise OpenAIUsageError("token counters must be non-negative integers")
+        raise OpenAIUsageError("usage is missing input or output token totals")
+
+    input_details = _field(usage, "prompt_tokens_details")
+    if input_details is None:
+        input_details = _field(usage, "input_tokens_details")
+    output_details = _field(usage, "completion_tokens_details")
+    if output_details is None:
+        output_details = _field(usage, "output_tokens_details")
+
+    cached = _optional_counter(
+        _field(input_details, "cached_tokens")
+        if input_details is not None
+        else _field(usage, "cached_tokens")
+    )
+    cache_write = _optional_counter(
+        _field(input_details, "cache_write_tokens") if input_details is not None else None
+    )
+    reasoning = _optional_counter(
+        _field(output_details, "reasoning_tokens") if output_details is not None else None
+    )
+
+    if cached + cache_write > total_input:
+        raise OpenAIUsageError("cache token buckets exceed total input tokens")
+    if reasoning > total_output:
+        raise OpenAIUsageError("reasoning tokens exceed total output tokens")
+
+    return OpenAIUsage(
+        total_input_tokens=total_input,
+        input_tokens=total_input - cached - cache_write,
+        cache_read_input_tokens=cached,
+        cache_write_input_tokens=cache_write,
+        total_output_tokens=total_output,
+        output_tokens=total_output - reasoning,
+        reasoning_output_tokens=reasoning,
+    )

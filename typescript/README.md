@@ -195,7 +195,7 @@ are surfaced loudly.
 
 ```typescript
 import { wrapOpenAI, wrapAnthropic } from '@dexcost/sdk';
-const openai = wrapOpenAI(new OpenAI());       // chat.completions surface
+const openai = wrapOpenAI(new OpenAI());       // chat.completions + responses surfaces
 const anthropic = wrapAnthropic(new Anthropic()); // messages surface
 ```
 
