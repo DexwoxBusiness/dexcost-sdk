@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from dexcost._user_agent import sdk_user_agent
+
 _log = logging.getLogger(__name__)
 SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2"
 
@@ -527,7 +529,9 @@ class ServiceCatalog:
     def refresh_from_url(self, url: str, api_key: str | None = None) -> bool:
         """Atomically replace the catalog from a conformant remote envelope."""
         try:
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            headers = {"User-Agent": sdk_user_agent()}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             request = urllib.request.Request(url, headers=headers)
             with _open_catalog_request(request, timeout=10) as resp:
                 payload: Any = json.loads(resp.read().decode())

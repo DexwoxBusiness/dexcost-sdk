@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dexcost import __version__
 from dexcost.config import DexcostConfig
 from dexcost.models.event import Event
 from dexcost.models.task import Task
@@ -181,6 +182,7 @@ class TestSyncBatch:
         assert req.full_url == "https://api.dexcost.io/v1/ingest"
         assert req.get_header("Content-type") == "application/json"
         assert req.get_header("Authorization") == "Bearer dx_live_test123"
+        assert req.get_header("User-agent") == f"dexcost-python/{__version__}"
         # Verify payload — ingest format: {"events": [...], "tasks": [...]}
         body = json.loads(req.data.decode("utf-8"))
         assert isinstance(body, dict)
@@ -239,6 +241,28 @@ class TestSyncBatch:
 
         assert worker._sync_batch() is False
         assert worker._stop_event.is_set()
+        assert len(storage.query_events_for_sync()) == 1
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_edge_forbidden_preserves_batch_and_remains_retryable(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        """A non-auth 403 must not permanently disable future delivery."""
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://api.dexcost.io/v1/ingest",
+            403,
+            "Forbidden",
+            {},
+            None,
+        )
+        storage = _make_storage(tmp_path)
+        _insert_events(storage)
+        worker = SyncWorker(config=_make_config(), storage=storage)
+
+        with pytest.raises(urllib.error.HTTPError, match="HTTP Error 403"):
+            worker._sync_batch()
+
+        assert not worker._stop_event.is_set()
         assert len(storage.query_events_for_sync()) == 1
 
     @patch("dexcost.sync.urllib.request.urlopen")
@@ -530,6 +554,7 @@ class TestSyncBatch:
 
         req = mock_urlopen.call_args[0][0]
         assert req.get_header("Authorization") == "Bearer dx_live_mykey789"
+        assert req.get_header("User-agent") == f"dexcost-python/{__version__}"
 
 
 class TestBackoff:

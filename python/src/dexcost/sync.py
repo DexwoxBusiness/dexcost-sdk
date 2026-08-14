@@ -19,6 +19,7 @@ from email.message import Message
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from dexcost._user_agent import sdk_user_agent
 from dexcost.attribution.convert import (
     to_attribution_task_ingest_v1,
     to_business_identity_revision_v1,
@@ -562,6 +563,7 @@ class SyncWorker:
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self._config.api_key}",
+                "User-Agent": sdk_user_agent(),
             },
             method="POST",
         )
@@ -594,10 +596,20 @@ class SyncWorker:
             if exc.code == 413:
                 _log.warning("Server returned 413 despite pre-split check")
                 return False
-            if exc.code in (401, 403):
-                _log.error("API key rejected (HTTP %d) — disabling sync", exc.code)
+            if exc.code == 401:
+                _log.error("API key rejected (HTTP 401) — disabling sync")
                 self._stop_event.set()  # Stop retrying permanently
                 return False
+            if exc.code == 403:
+                # The ingestion contract uses 401 for invalid, revoked, and
+                # blocklisted keys. A 403 may be emitted by an edge/WAF policy
+                # and can recover without a credential change, so preserve the
+                # batch and let the worker retry with normal backoff.
+                _log.warning(
+                    "POST to %s was forbidden (HTTP 403); preserving the batch for retry",
+                    url,
+                )
+                raise
             _log.warning("POST to %s failed: %s (backoff=%.1fs)", url, exc, self._backoff)
             raise
         except urllib.error.URLError as exc:
