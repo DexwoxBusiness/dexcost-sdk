@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from dexcost.attribution.convert import to_business_identity_revision_v1
 from dexcost.models import (
     CostConfidence,
     Event,
@@ -72,6 +73,7 @@ class TestTask:
         assert task.customer_id is None
         assert task.project_id is None
         assert task.parent_task_id is None
+        assert task.root_task_id is None
         assert task.total_cost_usd == Decimal("0")
         assert task.retry_count == 0
         assert task.network_bytes_in == 0
@@ -115,11 +117,14 @@ class TestTask:
         assert task.retry_count == 2
 
     def test_serialisation_round_trip(self) -> None:
+        root_task_id = uuid.uuid4()
         original = Task(
+            task_id=root_task_id,
             task_type="classify_report",
             status=TaskStatus.FAILED.value,
             customer_id="megacorp",
             project_id="proj_beta",
+            root_task_id=root_task_id,
             llm_cost_usd=Decimal("1.23"),
             total_cost_usd=Decimal("1.50"),
             total_input_tokens=5000,
@@ -136,12 +141,17 @@ class TestTask:
         assert restored.task_type == original.task_type
         assert restored.status == original.status
         assert restored.customer_id == original.customer_id
+        assert restored.root_task_id == root_task_id
         assert restored.llm_cost_usd == original.llm_cost_usd
         assert restored.total_cost_usd == original.total_cost_usd
         assert restored.total_input_tokens == original.total_input_tokens
         assert restored.retry_count == original.retry_count
         assert restored.metadata == original.metadata
         assert restored.ended_at is None
+
+        identity = to_business_identity_revision_v1(restored)
+        assert identity is not None
+        assert identity["task"]["root_task_id"] == str(root_task_id)
 
     def test_to_dict_types(self) -> None:
         """All dict values must be JSON-primitive types."""
@@ -152,6 +162,32 @@ class TestTask:
         assert isinstance(data["total_input_tokens"], int)
         assert data["ended_at"] is None
         assert data["parent_task_id"] is None
+        assert "root_task_id" not in data
+
+    def test_root_task_id_is_keyword_only(self) -> None:
+        """Adding root identity must not shift the established positional API."""
+        task_id = uuid.uuid4()
+        started_at = datetime.now(timezone.utc)
+        parent_task_id = uuid.uuid4()
+
+        task = Task(
+            task_id,
+            "classify_report",
+            "pending",
+            started_at,
+            None,
+            {},
+            "customer-a",
+            "project-a",
+            parent_task_id,
+            "experiment-a",
+            "variant-a",
+        )
+
+        assert task.parent_task_id == parent_task_id
+        assert task.root_task_id is None
+        assert task.experiment_id == "experiment-a"
+        assert task.variant == "variant-a"
 
     def test_schema_version_in_to_dict(self) -> None:
         data = Task(task_type="test").to_dict()
