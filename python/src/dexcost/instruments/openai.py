@@ -1,7 +1,7 @@
 """Auto-instrumentation for the OpenAI Python SDK.
 
-Monkey-patches Chat Completions and Responses ``create`` calls (sync and
-async) using :pypi:`wrapt` so that every call made inside an active
+Monkey-patches Chat Completions ``create`` calls and Responses ``create`` and
+``parse`` calls (sync and async) using :pypi:`wrapt` so that every call made inside an active
 :class:`~dexcost.tracker.CostTracker` task is automatically recorded as an
 ``llm_call`` event.
 
@@ -121,6 +121,23 @@ def instrument_openai(tracker: Any) -> None:
             "AsyncResponses.create",
             _async_responses_create_wrapper,
         )
+        # Responses.parse() performs its own POST request; it does not call
+        # Responses.create(). Patch it independently when the installed
+        # OpenAI SDK exposes the structured-output helper.
+        if callable(getattr(Responses, "parse", None)):
+            _originals["responses_sync_parse"] = Responses.parse
+            wrapt.wrap_function_wrapper(
+                "openai.resources.responses.responses",
+                "Responses.parse",
+                _sync_responses_parse_wrapper,
+            )
+        if callable(getattr(AsyncResponses, "parse", None)):
+            _originals["responses_async_parse"] = AsyncResponses.parse
+            wrapt.wrap_function_wrapper(
+                "openai.resources.responses.responses",
+                "AsyncResponses.parse",
+                _async_responses_parse_wrapper,
+            )
     except ImportError:
         _log.debug("dexcost: installed OpenAI SDK has no Responses API")
 
@@ -150,6 +167,10 @@ def uninstrument_openai() -> None:
             Responses.create = _originals["responses_sync_create"]
         if "responses_async_create" in _originals:
             AsyncResponses.create = _originals["responses_async_create"]
+        if "responses_sync_parse" in _originals:
+            Responses.parse = _originals["responses_sync_parse"]
+        if "responses_async_parse" in _originals:
+            AsyncResponses.parse = _originals["responses_async_parse"]
     except ImportError:
         pass
 
@@ -174,6 +195,13 @@ def _sync_responses_create_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
     """wrapt wrapper for sync ``Responses.create``."""
+    return _sync_create_common(wrapped, args, kwargs, "openai.responses", True)
+
+
+def _sync_responses_parse_wrapper(
+    wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    """wrapt wrapper for sync ``Responses.parse``."""
     return _sync_create_common(wrapped, args, kwargs, "openai.responses", True)
 
 
@@ -248,6 +276,13 @@ def _async_responses_create_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
     """wrapt wrapper for async ``AsyncResponses.create``."""
+    return _async_create_common(wrapped, args, kwargs, "openai.responses", True)
+
+
+def _async_responses_parse_wrapper(
+    wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    """wrapt wrapper for async ``AsyncResponses.parse``."""
     return _async_create_common(wrapped, args, kwargs, "openai.responses", True)
 
 
