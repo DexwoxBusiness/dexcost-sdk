@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.15.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.0...python/v0.15.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **python:** sample GPU utilization during tasks ([#150](https://github.com/DexwoxBusiness/dexcost-sdk/issues/150)) ([482b04d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/482b04d4665d4ee273baf1f4ea347ba17763d6d3))
+
 ## [0.15.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.2...python/v0.15.0) (2026-08-14)
 
 
