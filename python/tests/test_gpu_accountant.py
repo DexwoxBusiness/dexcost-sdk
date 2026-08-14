@@ -116,11 +116,12 @@ def test_local_gpu_preserves_unknown_workstation_model(accountant_factory, monke
 
     acc = accountant_factory(GpuRuntimeKind.LOCAL_GPU, CloudEnv(None, None, "none"))
     acc.snapshot_start()
-    cost_details, _ = acc.snapshot_end_and_build(duration_ms=0)
+    cost_details, signals = acc.snapshot_end_and_build(duration_ms=0)
 
-    assert cost_details is not None
-    assert cost_details["gpu_sku"] == "nvidia geforce rtx 4090"
-    assert cost_details["billing_model"] == "local_gpu_usage_only"
+    assert cost_details is None
+    assert signals is not None
+    assert signals[0]["gpu_sku"] == "nvidia geforce rtx 4090"
+    assert signals[0]["billing_model"] == "local_gpu_usage_only"
 
 
 @pytest.mark.parametrize(
@@ -165,10 +166,63 @@ def test_local_gpu_preserves_exact_model_before_coarse_aliases(
 
     acc = accountant_factory(GpuRuntimeKind.LOCAL_GPU, CloudEnv(None, None, "none"))
     acc.snapshot_start()
-    cost_details, _ = acc.snapshot_end_and_build(duration_ms=0)
+    cost_details, signals = acc.snapshot_end_and_build(duration_ms=0)
 
-    assert cost_details is not None
-    assert cost_details["gpu_sku"] == product_name
+    assert cost_details is None
+    assert signals is not None
+    assert signals[0]["gpu_sku"] == product_name
+
+
+def test_periodic_sampling_preserves_gpu_work_that_is_idle_at_finalize(
+    accountant_factory, monkeypatch,
+):
+    """A mid-task busy sample must survive a final zero-utilization sample."""
+    from dexcost.cgroup_walker import CgroupScope
+    from dexcost.nvml_reader import MemInfo, UtilSample
+
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.init_nvml", lambda: True)
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_device_count", lambda: 1)
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_device_handle", lambda i: f"h{i}")
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_product_name",
+        lambda h: "nvidia geforce rtx 5060 ti",
+    )
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_mig_mode", lambda h: False)
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_memory_info",
+        lambda h: MemInfo(used_bytes=2 * 1024**3, total_bytes=16 * 1024**3),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.cgroup_walker.classify_scope",
+        lambda: CgroupScope(kind="process", path=None),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.cgroup_walker.enumerate_pids",
+        lambda scope: [os.getpid()],
+    )
+    snapshots = [
+        {},
+        {os.getpid(): [
+            UtilSample(pid=os.getpid(), sm_util=80, mem_util=20, time_stamp=500_000),
+        ]},
+        {os.getpid(): [
+            UtilSample(pid=os.getpid(), sm_util=0, mem_util=0, time_stamp=1_000_000),
+        ]},
+    ]
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
+        lambda h, ts: snapshots.pop(0),
+    )
+
+    acc = accountant_factory(GpuRuntimeKind.LOCAL_GPU, CloudEnv(None, None, "none"))
+    acc.snapshot_start()
+    acc._collect_samples()
+    cost, signals = acc.snapshot_end_and_build(duration_ms=1000)
+
+    assert cost is not None
+    assert cost["gpu_seconds_used"] == pytest.approx(0.4)
+    assert signals is not None
+    assert signals[0]["sample_count"] == 2
 
 
 # ─── Idempotency: capture spec §5.3 invariant ───────────────────────────────
