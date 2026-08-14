@@ -41,6 +41,7 @@ def _make_task() -> Task:
         customer_id="cust_acme_corp",
         project_id="proj_helpdesk_ai",
         parent_task_id=uuid.UUID("f0e1d2c3-b4a5-6789-0fed-cba987654321"),
+        root_task_id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
         llm_cost_usd=Decimal("0.0347"),
         external_cost_usd=Decimal("0.005"),
         compute_cost_usd=Decimal("0.0012"),
@@ -155,6 +156,13 @@ class TestInvalidPayloads:
         errors = validate(payload)
         assert len(errors) > 0
         assert any("status" in e for e in errors)
+
+    def test_invalid_task_bad_root_task_id(self) -> None:
+        payload = _make_task().to_dict()
+        payload["root_task_id"] = "not-a-uuid"
+        errors = validate(payload)
+        assert len(errors) > 0
+        assert any("root_task_id" in e for e in errors)
 
     def test_invalid_event_bad_event_type(self) -> None:
         payload = _make_event().to_dict()

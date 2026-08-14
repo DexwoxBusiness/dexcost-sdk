@@ -42,7 +42,7 @@ class Task:
     parent_task_id: uuid.UUID | None = None
     # Opt-in canonical root identity used by revisioned business attribution.
     # Legacy tasks leave this unset and retain their existing wire behavior.
-    root_task_id: uuid.UUID | None = None
+    root_task_id: uuid.UUID | None = field(default=None, kw_only=True)
 
     # Experiment tracking
     experiment_id: str | None = None
@@ -101,7 +101,7 @@ class Task:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dictionary."""
-        return {
+        data = {
             "task_id": str(self.task_id),
             "task_type": self.task_type,
             "status": self.status,
@@ -131,6 +131,9 @@ class Task:
             "network_by_host": self.network_by_host,
             "schema_version": self.schema_version,
         }
+        if self.root_task_id is not None:
+            data["root_task_id"] = str(self.root_task_id)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Task:
@@ -151,6 +154,9 @@ class Task:
                 project_id=data.get("project_id"),
                 parent_task_id=(
                     uuid.UUID(data["parent_task_id"]) if data.get("parent_task_id") else None
+                ),
+                root_task_id=(
+                    uuid.UUID(data["root_task_id"]) if data.get("root_task_id") else None
                 ),
                 experiment_id=data.get("experiment_id"),
                 variant=data.get("variant"),

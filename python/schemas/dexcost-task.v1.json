@@ -64,6 +64,12 @@
       "format": "uuid",
       "description": "UUID of the parent task, or null for top-level tasks."
     },
+    "root_task_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Canonical root task UUID for revisioned business attribution, or null when the task has not opted in."
+    },
     "experiment_id": {
       "type": ["string", "null"],
       "description": "Groups tasks into an experiment for variant comparison."
