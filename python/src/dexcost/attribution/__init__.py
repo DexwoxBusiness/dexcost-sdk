@@ -3,6 +3,7 @@
 from dexcost.attribution.convert import (
     to_attribution_event_v2,
     to_attribution_task_ingest_v1,
+    to_business_identity_revision_v1,
 )
 from dexcost.attribution.types import (
     ATTRIBUTION_COMPONENTS,
@@ -108,6 +109,7 @@ __all__ = [
     "to_attribution_event_v3",
     "to_attribution_observation_v3",
     "to_attribution_task_ingest_v1",
+    "to_business_identity_revision_v1",
     "validate_attribution_event_v2",
     "validate_attribution_observation_v3",
 ]

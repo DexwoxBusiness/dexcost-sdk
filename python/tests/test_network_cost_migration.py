@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from dexcost.models.task import Task
+from dexcost.storage.migrations import TARGET_SCHEMA_VERSION
 from dexcost.storage.sqlite import SQLiteStorage
 
 
@@ -13,7 +14,7 @@ def test_fresh_db_has_network_cost_usd_column(tmp_path):
     st = SQLiteStorage(db_path=str(tmp_path / "buffer.db"))
     cols = {r[1] for r in st._conn.execute("PRAGMA table_info(tasks)").fetchall()}
     assert "network_cost_usd" in cols
-    assert st.get_schema_version() == 6
+    assert st.get_schema_version() == TARGET_SCHEMA_VERSION
     st.close()
 
 
@@ -77,7 +78,7 @@ def test_v4_db_migrates_to_v5(tmp_path):
     st.close()
     # Re-applying the migration is a no-op (idempotent).
     st2 = SQLiteStorage(db_path=str(db))
-    assert st2.get_schema_version() == 6
+    assert st2.get_schema_version() == TARGET_SCHEMA_VERSION
     st2.close()
 
 

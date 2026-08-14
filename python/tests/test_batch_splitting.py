@@ -119,6 +119,48 @@ class TestBatchSplitting:
         for payload in payloads_sent[1:]:
             assert len(payload.get("tasks", [])) == 0
 
+    def test_business_identities_stay_paired_with_split_tasks(
+        self, tmp_path: Path
+    ) -> None:
+        config = _make_config()
+        storage = SQLiteStorage(db_path=tmp_path / "test.db")
+        worker = SyncWorker(config=config, storage=storage)
+        task_ids = [str(uuid.uuid4()) for _ in range(4)]
+        tasks = [
+            {
+                "task_id": task_id,
+                "task_type": "campaign.render",
+                "metadata": {"padding": "x" * 40_000},
+            }
+            for task_id in task_ids
+        ]
+        identities = [
+            {
+                "task_id": task_id,
+                "task": {"task_type": "campaign.render"},
+            }
+            for task_id in task_ids
+        ]
+        payloads_sent: list[dict[str, Any]] = []
+
+        def capture_post(body: bytes) -> bool:
+            payloads_sent.append(json.loads(body.decode("utf-8")))
+            return True
+
+        with patch.object(worker, "_post_raw", side_effect=capture_post):
+            worker._post_with_split([], tasks, identities)
+
+        assert len(payloads_sent) >= 2
+        observed_identity_ids: set[str] = set()
+        for payload in payloads_sent:
+            payload_task_ids = {task["task_id"] for task in payload["tasks"]}
+            payload_identity_ids = {
+                identity["task_id"] for identity in payload["business_identities"]
+            }
+            assert payload_identity_ids <= payload_task_ids
+            observed_identity_ids.update(payload_identity_ids)
+        assert observed_identity_ids == set(task_ids)
+
     def test_recursive_split_handles_very_large_batch(self, tmp_path: Path) -> None:
         """A very large batch splits recursively multiple times."""
         config = _make_config()

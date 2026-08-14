@@ -169,6 +169,18 @@ class TestTaskCrud:
         assert got is not None
         assert got.parent_task_id == parent_id
 
+    def test_root_task_id_round_trip(self, storage: SQLiteStorage) -> None:
+        root_id = uuid.uuid4()
+        task = Task(
+            task_type="campaign.scene.render",
+            parent_task_id=root_id,
+            root_task_id=root_id,
+        )
+        storage.insert_task(task)
+        got = storage.get_task(str(task.task_id))
+        assert got is not None
+        assert got.root_task_id == root_id
+
 
 # ── Event CRUD ────────────────────────────────────────────────────────
 

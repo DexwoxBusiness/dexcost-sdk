@@ -285,7 +285,89 @@ class TestSyncBatch:
         body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
         assert body["events"] == []
         assert [item["task_id"] for item in body["tasks"]] == [str(task.task_id)]
+        assert body["business_identities"] == []
         assert storage.query_pending_tasks_for_sync() == []
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_opted_in_task_posts_canonical_business_identity(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
+        storage = _make_storage(tmp_path)
+        root_id = uuid.uuid4()
+        task = Task(
+            task_type="campaign.scene.render",
+            customer_id="dexcost-internal",
+            project_id="dexcost-marketing-campaign",
+            parent_task_id=root_id,
+            root_task_id=root_id,
+            experiment_id="creative-angle",
+            variant="proof-first",
+            ended_at=datetime.now(timezone.utc),
+        )
+        storage.insert_task(task)
+
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        assert worker._sync_batch() is True
+
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assert body["business_identities"] == [
+            {
+                "schema_version": "1",
+                "task_id": str(task.task_id),
+                "revision": 1,
+                "effective_at": task.started_at.isoformat().replace("+00:00", "Z"),
+                "observed_at": task.started_at.isoformat().replace("+00:00", "Z"),
+                "identity_snapshot": "full",
+                "task": {
+                    "task_type": "campaign.scene.render",
+                    "root_task_id": str(root_id),
+                    "parent_task_id": str(root_id),
+                },
+                "assignment": {
+                    "customer_id": "dexcost-internal",
+                    "project_id": "dexcost-marketing-campaign",
+                    "experiment_id": "creative-angle",
+                    "variant": "proof-first",
+                },
+            }
+        ]
+        assert storage.query_pending_tasks_for_sync() == []
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_business_assignment_respects_hashing_and_redaction(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
+        storage = _make_storage(tmp_path)
+        root_id = uuid.uuid4()
+        task = Task(
+            task_type="campaign.variant.generate",
+            customer_id="customer-private",
+            project_id="project-private",
+            parent_task_id=root_id,
+            root_task_id=root_id,
+            experiment_id="private-experiment",
+            variant="private-variant",
+            ended_at=datetime.now(timezone.utc),
+        )
+        storage.insert_task(task)
+
+        worker = SyncWorker(
+            config=_make_config(
+                hash_customer_id=True,
+                redact_fields=["experiment_id"],
+            ),
+            storage=storage,
+        )
+        assert worker._sync_batch() is True
+
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assignment = body["business_identities"][0]["assignment"]
+        assert assignment["customer_id"] != "customer-private"
+        assert assignment["project_id"] != "project-private"
+        assert "experiment_id" not in assignment
+        assert "variant" not in assignment
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_gpu_observation_is_uploaded_without_cost_evidence(

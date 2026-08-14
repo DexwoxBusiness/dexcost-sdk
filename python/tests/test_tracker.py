@@ -38,6 +38,44 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
     return CostTracker(storage=storage, auto_instrument=[])
 
 
+def test_explicit_cross_process_hierarchy(
+    tracker: CostTracker,
+    storage: SQLiteStorage,
+) -> None:
+    root_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    with tracker.task(
+        task_type="campaign.scene.render",
+        task_id=child_id,
+        root_task_id=root_id,
+        parent_task_id=root_id,
+        experiment_id="creative-angle",
+        variant="proof-first",
+    ) as tracked:
+        assert tracked.task_id == child_id
+
+    stored = storage.get_task(str(child_id))
+    assert stored is not None
+    assert stored.root_task_id == root_id
+    assert stored.parent_task_id == root_id
+    assert stored.experiment_id == "creative-angle"
+    assert stored.variant == "proof-first"
+
+
+def test_invalid_canonical_hierarchy_fails_before_persistence(
+    tracker: CostTracker,
+    storage: SQLiteStorage,
+) -> None:
+    task_id = uuid.uuid4()
+    with pytest.raises(ValueError, match="must use its own task_id"):
+        tracker.start_task(
+            task_type="campaign.root",
+            task_id=task_id,
+            root_task_id=uuid.uuid4(),
+        )
+    assert storage.get_task(str(task_id)) is None
+
+
 def _insert_llm_event(
     storage: SQLiteStorage,
     task: Task,

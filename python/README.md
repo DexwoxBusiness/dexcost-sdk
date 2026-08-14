@@ -152,6 +152,41 @@ t = tracker.start_task(task_type="batch_job", customer_id="acme")
 t.end(status="success")
 ```
 
+### Cross-process campaign or workflow hierarchy
+
+Use stable UUIDs when a workflow spans workers or short-lived tool processes.
+Supplying `root_task_id` opts the task into the revisioned business-identity
+contract. Create the root once, then pass both root and parent IDs to children:
+
+```python
+import uuid
+
+campaign_root = uuid.uuid5(uuid.NAMESPACE_URL, "campaign:dexcost-launch")
+
+with dexcost.task(
+    task_type="campaign.run",
+    task_id=campaign_root,
+    root_task_id=campaign_root,
+    experiment_id="creative-angle",
+):
+    pass
+
+# This may execute in a different process.
+with dexcost.task(
+    task_type="campaign.scene.render",
+    root_task_id=campaign_root,
+    parent_task_id=campaign_root,
+    experiment_id="creative-angle",
+    variant="proof-first",
+):
+    render_scene()
+```
+
+The identity snapshot is published with the final task update. Task type and
+assignment fields are immutable for that SDK task identity. The Python SDK
+currently emits revision 1 only; later corrections belong in the workspace
+business-attribution API rather than rewriting provider usage.
+
 ### Local NVIDIA GPU usage
 
 Opt in only on the leaf task that owns the GPU work:

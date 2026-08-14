@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     customer_id         TEXT,
     project_id          TEXT,
     parent_task_id      TEXT,
+    root_task_id        TEXT,
     experiment_id       TEXT,
     variant             TEXT,
     sync_status         TEXT NOT NULL DEFAULT 'pending',
@@ -246,10 +247,10 @@ class SQLiteStorage:
                     llm_cost_usd, external_cost_usd, compute_cost_usd, network_cost_usd, gpu_cost_usd, total_cost_usd,
                     total_input_tokens, total_output_tokens, total_cached_tokens,
                     retry_count, retry_cost_usd, failure_count,
-                    customer_id, project_id, parent_task_id,
+                    customer_id, project_id, parent_task_id, root_task_id,
                     experiment_id, variant,
                     network_bytes_in, network_bytes_out, network_call_count, network_by_host
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(task.task_id),
                     task.task_type,
@@ -272,6 +273,7 @@ class SQLiteStorage:
                     task.customer_id,
                     task.project_id,
                     str(task.parent_task_id) if task.parent_task_id else None,
+                    str(task.root_task_id) if task.root_task_id else None,
                     task.experiment_id,
                     task.variant,
                     task.network_bytes_in,
@@ -296,7 +298,7 @@ class SQLiteStorage:
                     llm_cost_usd=?, external_cost_usd=?, compute_cost_usd=?, network_cost_usd=?, gpu_cost_usd=?, total_cost_usd=?,
                     total_input_tokens=?, total_output_tokens=?, total_cached_tokens=?,
                     retry_count=?, retry_cost_usd=?, failure_count=?,
-                    customer_id=?, project_id=?, parent_task_id=?,
+                    customer_id=?, project_id=?, parent_task_id=?, root_task_id=?,
                     experiment_id=?, variant=?,
                     network_bytes_in=?, network_bytes_out=?, network_call_count=?, network_by_host=?,
                     sync_status='pending'
@@ -322,6 +324,7 @@ class SQLiteStorage:
                     task.customer_id,
                     task.project_id,
                     str(task.parent_task_id) if task.parent_task_id else None,
+                    str(task.root_task_id) if task.root_task_id else None,
                     task.experiment_id,
                     task.variant,
                     task.network_bytes_in,
@@ -648,6 +651,14 @@ class SQLiteStorage:
             parent_task_id = uuid.UUID(row["parent_task_id"]) if row["parent_task_id"] else None
         except ValueError:
             parent_task_id = None
+        try:
+            root_task_id = (
+                uuid.UUID(row["root_task_id"])
+                if "root_task_id" in row.keys() and row["root_task_id"]
+                else None
+            )
+        except ValueError:
+            root_task_id = None
         return Task(
             task_id=task_id,
             task_type=row["task_type"],
@@ -678,6 +689,7 @@ class SQLiteStorage:
             customer_id=row["customer_id"],
             project_id=row["project_id"],
             parent_task_id=parent_task_id,
+            root_task_id=root_task_id,
             experiment_id=row["experiment_id"],
             variant=row["variant"],
             network_bytes_in=row["network_bytes_in"] or 0,

@@ -11,6 +11,7 @@ import atexit
 import logging
 import os
 import threading
+import uuid
 from typing import Any
 from urllib.parse import urlparse
 
@@ -47,6 +48,7 @@ from dexcost.attribution import (
     assert_attribution_event_v2,
     to_attribution_event_v2,
     to_attribution_task_ingest_v1,
+    to_business_identity_revision_v1,
     validate_attribution_event_v2,
 )
 from dexcost.clients import TrackedAnthropic, TrackedOpenAI
@@ -465,6 +467,11 @@ def task(
     task_type: str = "",
     metadata: dict[str, Any] | None = None,
     *,
+    experiment_id: str | None = None,
+    variant: str | None = None,
+    task_id: uuid.UUID | str | None = None,
+    root_task_id: uuid.UUID | str | None = None,
+    parent_task_id: uuid.UUID | str | None = None,
     track_gpu: bool = False,
 ) -> Generator[TrackedTask, None, None]:
     """Group multiple costs into one business task.
@@ -474,6 +481,11 @@ def task(
     Args:
         task_type: Identifier for the kind of task (e.g. ``"resolve_ticket"``).
         metadata: Optional dict of extra metadata.
+        experiment_id: Optional experiment grouping.
+        variant: Optional variant label within the experiment.
+        task_id: Optional caller-owned UUID for cross-process correlation.
+        root_task_id: Optional canonical campaign/workflow root UUID.
+        parent_task_id: Optional explicit parent UUID.
         track_gpu: Measure usage from local NVIDIA GPUs for this task. Enable
             this only on the leaf task that owns the GPU work.
 
@@ -491,6 +503,11 @@ def task(
         customer_id=ctx.customer_id if ctx else None,
         project_id=ctx.project_id if ctx else None,
         metadata=metadata,
+        experiment_id=experiment_id,
+        variant=variant,
+        task_id=task_id,
+        root_task_id=root_task_id,
+        parent_task_id=parent_task_id,
         track_gpu=track_gpu,
     ) as t:
         yield t
@@ -685,6 +702,7 @@ __all__ = [
     "task_context",
     "to_attribution_event_v2",
     "to_attribution_task_ingest_v1",
+    "to_business_identity_revision_v1",
     "uninstrument_anthropic",
     "uninstrument_bedrock",
     "uninstrument_cohere",

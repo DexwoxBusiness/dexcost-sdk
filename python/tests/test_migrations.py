@@ -97,6 +97,35 @@ class TestStartupVersionCheck:
         assert s2.get_schema_version() == TARGET_SCHEMA_VERSION
         s2.close()
 
+    def test_v6_database_adds_root_task_identity_without_rewriting_tasks(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v6.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, task_type TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE schema_version (version_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "version_number INTEGER NOT NULL, migration_name TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO schema_version (version_number, migration_name) VALUES (6, 'v6')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (task_id, task_type) VALUES (?, ?)",
+            (str(uuid.uuid4()), "legacy.task"),
+        )
+        conn.commit()
+
+        assert run_sqlite_migrations(conn, 6) == 7
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        assert "root_task_id" in columns
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
+        conn.close()
+
 
 # ── Sequential migration tests ────────────────────────────────────────
 

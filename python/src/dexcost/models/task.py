@@ -40,6 +40,9 @@ class Task:
 
     # Hierarchy
     parent_task_id: uuid.UUID | None = None
+    # Opt-in canonical root identity used by revisioned business attribution.
+    # Legacy tasks leave this unset and retain their existing wire behavior.
+    root_task_id: uuid.UUID | None = None
 
     # Experiment tracking
     experiment_id: str | None = None
