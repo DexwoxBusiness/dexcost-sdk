@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.10.1...go/v0.11.0) (2026-08-14)
+
+
+### Features
+
+* **attribution:** capture OpenAI Responses billing usage ([#134](https://github.com/DexwoxBusiness/dexcost-sdk/issues/134)) ([75fa439](https://github.com/DexwoxBusiness/dexcost-sdk/commit/75fa439822b0e9371787c64f67ff4d948aba51d9))
+
 ## [0.10.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.10.0...go/v0.10.1) (2026-08-13)
 
 
