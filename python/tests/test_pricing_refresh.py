@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from dexcost import __version__
 from dexcost.pricing import PricingEngine
 
 CONTROL_PLANE_PRICING_RESPONSE = (
@@ -39,6 +40,7 @@ class TestPricingRefreshFromServer:
 
         request = urlopen.call_args.args[0]
         assert request.get_header("Authorization") == "Bearer dx_test_refresh"
+        assert request.get_header("User-agent") == f"dexcost-python/{__version__}"
         assert engine.pricing_version == "server-v-42"
 
         # The engine should now know about the new model
@@ -118,6 +120,7 @@ class TestPricingRefreshFromServer:
 
         request = urlopen.call_args.args[0]
         assert request.get_header("Authorization") == "Bearer dx_test_new"
+        assert request.get_header("User-agent") == f"dexcost-python/{__version__}"
 
     def test_refresh_is_non_blocking(self) -> None:
         """start_background_refresh launches a daemon thread and returns immediately."""

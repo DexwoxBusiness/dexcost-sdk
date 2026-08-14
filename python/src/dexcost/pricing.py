@@ -17,6 +17,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from dexcost._user_agent import sdk_user_agent
+
 logger = logging.getLogger(__name__)
 
 
@@ -345,7 +347,10 @@ class PricingEngine:
         try:
             import urllib.request
 
-            req = urllib.request.Request(self._UPDATE_URL, headers={"User-Agent": "dexcost"})
+            req = urllib.request.Request(
+                self._UPDATE_URL,
+                headers={"User-Agent": sdk_user_agent()},
+            )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 raw = resp.read().decode("utf-8")
 
@@ -382,7 +387,7 @@ class PricingEngine:
 
         url = f"{endpoint.rstrip('/')}/v1/api/pricing-data/latest"
         try:
-            headers: dict[str, str] = {"User-Agent": "dexcost-sdk"}
+            headers: dict[str, str] = {"User-Agent": sdk_user_agent()}
             with self._lock:
                 api_key = self._api_key
             if api_key:

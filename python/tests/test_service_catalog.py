@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 import dexcost.service_catalog as service_catalog_module
+from dexcost import __version__
 from dexcost.service_catalog import ServiceCatalog
 
 # ---------------------------------------------------------------------------
@@ -440,6 +441,7 @@ class TestRemoteCatalogRefresh:
         request = captured["request"]
         assert isinstance(request, urllib.request.Request)
         assert request.get_header("Authorization") == "Bearer dx_test_key"
+        assert request.get_header("User-agent") == f"dexcost-python/{__version__}"
         assert captured["timeout"] == 10
         assert catalog.lookup("https://api.tavily.com/search") is None
         assert catalog.lookup("https://api.custom-search.test/search") is not None
