@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.14.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.13.0...python/v0.14.0) (2026-08-14)
+
+
+### Features
+
+* **python:** publish task business attribution ([#142](https://github.com/DexwoxBusiness/dexcost-sdk/issues/142)) ([b17388f](https://github.com/DexwoxBusiness/dexcost-sdk/commit/b17388fd2c64c06536aeb191fa2f9ffd8ad0542f))
+
 ## [0.13.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.12.0...python/v0.13.0) (2026-08-14)
 
 
