@@ -19,6 +19,7 @@ from decimal import Decimal
 import pytest
 
 from dexcost import cloud_detect
+from dexcost.attribution import to_attribution_observation_v3
 from dexcost.cgroup_walker import CgroupScope
 from dexcost.cloud_detect import CloudEnv
 from dexcost.gpu_accountant import GpuAccountant
@@ -227,6 +228,66 @@ def test_opt_in_local_gpu_task_emits_usage_without_synthetic_cost(tracker, monke
     assert costs[0].cost_confidence == "unknown"
     assert costs[0].pricing_version is None
     assert costs[0].details["gpu_seconds_used"] == 2.5
+
+
+def test_opt_in_local_gpu_uses_explicit_yaml_rate(tracker, monkeypatch):
+    monkeypatch.setattr(
+        cloud_detect, "_result", CloudEnv(None, None, "none"),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_runtime.resolve_gpu_runtime",
+        lambda: GpuRuntimeKind.LOCAL_GPU,
+    )
+    monkeypatch.setattr(GpuAccountant, "snapshot_start", lambda self: None)
+    monkeypatch.setattr(
+        GpuAccountant,
+        "snapshot_end_and_build",
+        lambda self, duration_ms: (
+            {
+                "billing_model": "local_gpu_usage_only",
+                "runtime_kind": "local_gpu",
+                "cloud_provider": None,
+                "gpu_vendor": "nvidia",
+                "gpu_sku": "NVIDIA GeForce RTX 5060 Ti",
+                "gpu_count": 1,
+                "duration_ms": duration_ms,
+                "gpu_seconds_used": 1800,
+                "instance_type": None,
+                "vgpu_profile": None,
+                "mig_profile": None,
+                "cost_pending": True,
+            },
+            [],
+        ),
+    )
+    tracker.register_infrastructure_rate(
+        "gpu",
+        "nvidia-geforce-rtx-5060-ti",
+        per="gpu_hour",
+        cost_usd="0.40",
+    )
+
+    task = tracker.start_task(task_type="local-whisper", track_gpu=True)
+    task.task.started_at = datetime.now(timezone.utc) - timedelta(seconds=1800)
+    task.end(status="success")
+
+    events = tracker.storage.query_events(task_id=str(task.task_id))
+    cost = next(event for event in events if event.event_type == "gpu_cost")
+    assert cost.cost_usd == Decimal("0.20")
+    assert cost.pricing_source == "rate_registry"
+    assert cost.cost_confidence == "computed"
+    assert cost.pricing_version == tracker.rate_registry.pricing_version
+    assert task.task.gpu_cost_usd == Decimal("0.20")
+    assert task.task.total_cost_usd == Decimal("0.20")
+    observation = to_attribution_observation_v3(cost)
+    assert observation is not None
+    assert observation["cost_evidence"] == {
+        "amount": "0.2",
+        "currency": "USD",
+        "source": "sdk_rate_registry",
+        "confidence": "computed",
+        "pricing_version": tracker.rate_registry.pricing_version,
+    }
 
 
 def test_local_gpu_measurement_is_not_enabled_without_opt_in(tracker, monkeypatch):

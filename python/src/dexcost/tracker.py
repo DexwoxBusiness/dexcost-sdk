@@ -20,7 +20,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -1052,6 +1052,26 @@ class CostTracker:
         entry = self._rate_registry.get(service)
         return entry.cost_usd if entry is not None else None
 
+    def register_infrastructure_rate(
+        self,
+        kind: str,
+        key: str,
+        *,
+        per: str,
+        cost_usd: Decimal | str,
+    ) -> None:
+        """Register an explicit GPU or network rate.
+
+        This is the programmatic equivalent of the version-2
+        ``infrastructure`` section in ``rates.yaml``.
+        """
+        self._rate_registry.register_infrastructure(kind, key, per, cost_usd)
+
+    def get_infrastructure_rate(self, kind: str, key: str) -> Decimal | None:
+        """Return an exact user-owned infrastructure rate, or ``None``."""
+        entry = self._rate_registry.get_infrastructure(kind, key)
+        return entry.cost_usd if entry is not None else None
+
     def load_rates(self, path: str | Path) -> None:
         """Load rates from a YAML config file.
 
@@ -1294,6 +1314,8 @@ class CostTracker:
         task.total_cached_tokens = 0
         task.retry_count = 0
         task.retry_cost_usd = Decimal("0")
+        task.network_cost_usd = Decimal("0")
+        task.gpu_cost_usd = Decimal("0")
 
         for event in events:
             if event.event_type == "llm_call":
@@ -1305,12 +1327,18 @@ class CostTracker:
                 task.external_cost_usd += event.cost_usd
             elif event.event_type == "compute_cost":
                 task.compute_cost_usd += event.cost_usd
+            elif event.event_type == "gpu_cost":
+                task.gpu_cost_usd += event.cost_usd
 
             if event.is_retry:
                 task.retry_count += 1
                 task.retry_cost_usd += event.cost_usd
 
-            task.total_cost_usd += event.cost_usd
+            # Network event costs are evidence for individual transfers. The
+            # task-level network scalar below represents the same bytes and is
+            # the authoritative roll-up, so counting both would double charge.
+            if event.event_type != "network":
+                task.total_cost_usd += event.cost_usd
 
         # Network capture — finalize the in-process accountant onto the task.
         net = task._network.finalize()
@@ -1324,19 +1352,64 @@ class CostTracker:
         try:
             from dexcost import cloud_detect
             env = cloud_detect.get_cloud_env()
-            rate = self._egress_pricing.resolve_rate(env.provider, env.region)
-            external_bytes = net["external_bytes_out"]
-            task.network_cost_usd = (
-                Decimal(external_bytes) / Decimal("1000000000") * rate.rate_per_gb
+            custom_rate = None
+            network_keys = (
+                ["local"]
+                if env.provider is None
+                else [
+                    f"{env.provider}:{env.region}" if env.region else "",
+                    env.provider,
+                ]
             )
-            pricing_version = f"egress:{self._egress_pricing.catalog_version}"
+            for key in network_keys:
+                if not key:
+                    continue
+                custom_rate = self._rate_registry.get_infrastructure("network", key)
+                if custom_rate is not None:
+                    break
+
+            if custom_rate is not None:
+                rate_per_gb = custom_rate.cost_usd
+                billing_unit = custom_rate.per
+                pricing_source = "rate_registry"
+                cost_confidence = "computed"
+                pricing_version: str | None = self._rate_registry.pricing_version
+            elif env.provider is None:
+                # Local traffic has no defensible public-list price. Preserve
+                # byte usage but do not apply the cloud-egress fallback.
+                rate_per_gb = Decimal("0")
+                billing_unit = "gb_egress"
+                pricing_source = "unpriced:local_network"
+                cost_confidence = "unknown"
+                pricing_version = None
+            else:
+                rate = self._egress_pricing.resolve_rate(env.provider, env.region)
+                rate_per_gb = rate.rate_per_gb
+                billing_unit = "gb_egress"
+                pricing_source = rate.pricing_source
+                cost_confidence = rate.cost_confidence
+                pricing_version = f"egress:{self._egress_pricing.catalog_version}"
+
+            billable_bytes = (
+                net["bytes_in"] + net["bytes_out"]
+                if billing_unit == "gb_transferred"
+                else net["external_bytes_out"]
+            )
+            task.network_cost_usd = (
+                Decimal(billable_bytes) / Decimal("1000000000") * rate_per_gb
+            )
 
             # Stamp per-host egress_cost_usd into the by_host blob.
             for host in net["by_host"]["hosts"]:
-                host_external = host.get("external_bytes_out", 0)
+                host_billable = (
+                    int(host.get("bytes_in", 0) or 0)
+                    + int(host.get("bytes_out", 0) or 0)
+                    if billing_unit == "gb_transferred"
+                    else int(host.get("external_bytes_out", 0) or 0)
+                )
                 host_cost = (
-                    Decimal(host_external) / Decimal("1000000000")
-                    * rate.rate_per_gb
+                    Decimal(host_billable) / Decimal("1000000000")
+                    * rate_per_gb
                 )
                 host["egress_cost_usd"] = str(host_cost)
             task.network_by_host = net["by_host"]
@@ -1348,26 +1421,30 @@ class CostTracker:
                 resp_bytes = int(ev.details.get("response_bytes", 0) or 0)
                 req_bytes = int(ev.details.get("request_bytes", 0) or 0)
                 is_internal = ev.details.get("is_internal_traffic")
-                billable = 0 if is_internal is True else (resp_bytes + req_bytes)
+                billable = (
+                    resp_bytes + req_bytes
+                    if billing_unit == "gb_transferred"
+                    else (0 if is_internal is True else (resp_bytes + req_bytes))
+                )
                 ev_cost = (
-                    Decimal(billable) / Decimal("1000000000") * rate.rate_per_gb
+                    Decimal(billable) / Decimal("1000000000") * rate_per_gb
                 )
                 ev.cost_usd = ev_cost
                 ev.cost_confidence = (
-                    "exact" if is_internal is True else rate.cost_confidence
+                    "exact"
+                    if is_internal is True and billing_unit == "gb_egress"
+                    else cost_confidence
                 )
                 ev.pricing_source = (
-                    "egress_catalog:internal" if is_internal is True
-                    else rate.pricing_source
+                    "egress_catalog:internal"
+                    if is_internal is True and billing_unit == "gb_egress"
+                    else pricing_source
                 )
                 ev.pricing_version = pricing_version
                 ev.details = {
                     k: v for k, v in ev.details.items() if k != "cost_pending"
                 }
                 self._storage.update_event(ev)
-                # The first-pass total summed this event as $0; add the
-                # back-filled cost so total_cost_usd reflects all dollars.
-                task.total_cost_usd += ev_cost
 
             task.total_cost_usd += task.network_cost_usd
         except Exception:  # noqa: BLE001 — Tier 5 fail-silent (spec §7.1)
@@ -1486,17 +1563,44 @@ class CostTracker:
             if not details.get("cost_pending"):
                 continue
             old_cost = ev.cost_usd
-            priced = engine.resolve_gpu_cost(
-                details, cloud_env, window_s=window_s,
-            )
-            ev.cost_usd = priced.cost_usd
-            ev.pricing_source = priced.pricing_source
-            ev.cost_confidence = priced.cost_confidence
-            ev.pricing_version = (
-                None
-                if details.get("billing_model") == "local_gpu_usage_only"
-                else f"gpu:{engine.catalog_version}"
-            )
+            custom_rate = None
+            if details.get("billing_model") == "local_gpu_usage_only":
+                for key in (
+                    details.get("gpu_sku"),
+                    details.get("_nvml_product_name_lower"),
+                ):
+                    if not isinstance(key, str) or not key.strip():
+                        continue
+                    custom_rate = self._rate_registry.get_infrastructure("gpu", key)
+                    if custom_rate is not None:
+                        break
+            if custom_rate is not None:
+                try:
+                    gpu_seconds = Decimal(str(details.get("gpu_seconds_used", "0")))
+                except (InvalidOperation, ValueError):
+                    custom_rate = None
+            if custom_rate is not None and gpu_seconds > 0:
+                rate_per_second = (
+                    custom_rate.cost_usd / Decimal("3600")
+                    if custom_rate.per == "gpu_hour"
+                    else custom_rate.cost_usd
+                )
+                ev.cost_usd = gpu_seconds * rate_per_second
+                ev.pricing_source = "rate_registry"
+                ev.cost_confidence = "computed"
+                ev.pricing_version = self._rate_registry.pricing_version
+            else:
+                priced = engine.resolve_gpu_cost(
+                    details, cloud_env, window_s=window_s,
+                )
+                ev.cost_usd = priced.cost_usd
+                ev.pricing_source = priced.pricing_source
+                ev.cost_confidence = priced.cost_confidence
+                ev.pricing_version = (
+                    None
+                    if details.get("billing_model") == "local_gpu_usage_only"
+                    else f"gpu:{engine.catalog_version}"
+                )
             ev.details = {
                 k: v for k, v in details.items()
                 if k not in ("cost_pending", "_cgroup_scope_fallback",
@@ -1504,7 +1608,7 @@ class CostTracker:
             }
             self._storage.update_event(ev)
 
-            delta = priced.cost_usd - old_cost
+            delta = ev.cost_usd - old_cost
             cost_delta += delta
             if ev.event_id in new_event_ids:
                 cost_delta += old_cost  # always $0 — explicit

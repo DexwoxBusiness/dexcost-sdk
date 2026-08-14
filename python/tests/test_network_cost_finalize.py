@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from dexcost import cloud_detect
+from dexcost.attribution import to_attribution_observation_v3
 from dexcost.models.event import Event
 from dexcost.models.task import Task
 from dexcost.storage.sqlite import SQLiteStorage
@@ -106,8 +107,8 @@ def test_below_threshold_uncataloged_bytes_still_priced(tracker):
     assert t.network_cost_usd == Decimal("0.009")
 
 
-def test_no_cloud_detected_uses_tier3_default(tmp_path, monkeypatch):
-    """When CloudEnv is "none", resolver returns _meta default at estimated."""
+def test_no_cloud_detected_does_not_invent_cloud_egress_cost(tmp_path, monkeypatch):
+    """Local transfer stays usage-only without an explicit user-owned rate."""
     monkeypatch.setattr(
         cloud_detect, "_result", cloud_detect.CloudEnv(None, None, "none")
     )
@@ -115,8 +116,60 @@ def test_no_cloud_detected_uses_tier3_default(tmp_path, monkeypatch):
     tracker = CostTracker(storage=storage, auto_instrument=[])
     t = _make_task(storage, 1_000_000_000)
     tracker._aggregate_costs(t)
-    # $0.09/GB is the universal default rate
-    assert t.network_cost_usd == Decimal("0.09")
+    assert t.network_cost_usd == Decimal("0")
+
+
+def test_local_network_rate_prices_total_transferred_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        cloud_detect, "_result", cloud_detect.CloudEnv(None, None, "none")
+    )
+    storage = SQLiteStorage(db_path=str(tmp_path / "buf.db"))
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    tracker.register_infrastructure_rate(
+        "network", "local", per="gb_transferred", cost_usd="0.02"
+    )
+    t = Task(task_id=uuid.uuid4(), task_type="x", started_at=datetime.now(timezone.utc))
+    storage.insert_task(t)
+    t._network.record(
+        "api.example.com",
+        bytes_in=600_000_000,
+        bytes_out=400_000_000,
+        is_internal=False,
+    )
+    ev = Event(
+        task_id=t.task_id,
+        event_type="network",
+        cost_usd=Decimal("0"),
+        cost_confidence="unknown",
+        service_name="api.example.com",
+        details={
+            "cost_pending": True,
+            "url": "https://api.example.com/demo",
+            "request_bytes": 400_000_000,
+            "response_bytes": 600_000_000,
+            "is_internal_traffic": False,
+        },
+    )
+    storage.insert_event(ev)
+
+    tracker._aggregate_costs(t)
+
+    assert t.network_cost_usd == Decimal("0.02")
+    assert t.total_cost_usd == Decimal("0.02")
+    refreshed = storage.query_events(task_id=str(t.task_id))[0]
+    assert refreshed.cost_usd == Decimal("0.02")
+    assert refreshed.pricing_source == "rate_registry"
+    assert refreshed.cost_confidence == "computed"
+    assert refreshed.pricing_version == tracker.rate_registry.pricing_version
+    observation = to_attribution_observation_v3(refreshed)
+    assert observation is not None
+    assert observation["cost_evidence"] == {
+        "amount": "0.02",
+        "currency": "USD",
+        "source": "sdk_rate_registry",
+        "confidence": "computed",
+        "pricing_version": tracker.rate_registry.pricing_version,
+    }
 
 
 def test_zero_external_bytes_yields_zero_network_cost(tmp_path, monkeypatch):

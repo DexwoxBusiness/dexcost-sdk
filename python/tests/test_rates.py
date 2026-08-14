@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from dexcost.rates import RateEntry, RateRegistry
+from dexcost.rates import InfrastructureRateEntry, RateEntry, RateRegistry
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
@@ -100,6 +100,33 @@ class TestRateRegistry:
         v = reg.pricing_version
         assert len(v) == 12
         int(v, 16)  # Validates it's hex
+
+    def test_registers_exact_normalized_infrastructure_rate(self) -> None:
+        reg = RateRegistry()
+        reg.register_infrastructure(
+            "gpu",
+            "NVIDIA GeForce RTX 5060 Ti",
+            "gpu_hour",
+            "0.25",
+        )
+        entry = reg.get_infrastructure("gpu", "nvidia-geforce-rtx-5060-ti")
+        assert entry == InfrastructureRateEntry(
+            kind="gpu",
+            key="nvidia-geforce-rtx-5060-ti",
+            per="gpu_hour",
+            cost_usd=Decimal("0.25"),
+        )
+
+    @pytest.mark.parametrize("cost_usd", ["0", "-1", "NaN", "Infinity"])
+    def test_rejects_non_positive_infrastructure_rate(self, cost_usd: str) -> None:
+        reg = RateRegistry()
+        with pytest.raises(ValueError, match="positive finite decimal"):
+            reg.register_infrastructure("network", "local", "gb_transferred", cost_usd)
+
+    def test_rejects_wrong_infrastructure_unit(self) -> None:
+        reg = RateRegistry()
+        with pytest.raises(ValueError, match="gpu_hour"):
+            reg.register_infrastructure("gpu", "rtx-5060-ti", "gb", "0.25")
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +264,72 @@ rates:
         z_pos = content.index("z-service")
         assert a_pos < z_pos
 
+    def test_loads_and_exports_versioned_infrastructure_rates(self, tmp_path: Path) -> None:
+        yaml_file = tmp_path / "rates.yaml"
+        yaml_file.write_text(
+            """\
+version: 2
+rates: {}
+infrastructure:
+  gpu:
+    nvidia-geforce-rtx-5060-ti:
+      per: gpu_hour
+      cost_usd: "0.25"
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+""",
+            encoding="utf-8",
+        )
+
+        reg = RateRegistry()
+        reg.load(yaml_file)
+        assert reg.get_infrastructure("gpu", "NVIDIA GeForce RTX 5060 Ti") is not None
+        assert reg.get_infrastructure("network", "local") is not None
+
+        exported = tmp_path / "exported.yaml"
+        reg.export(exported)
+        reg2 = RateRegistry()
+        reg2.load(exported)
+        assert reg2.infrastructure_rates == reg.infrastructure_rates
+        assert reg2.pricing_version == reg.pricing_version
+
+    def test_infrastructure_requires_version_two(self, tmp_path: Path) -> None:
+        yaml_file = tmp_path / "rates.yaml"
+        yaml_file.write_text(
+            """\
+infrastructure:
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+""",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="version: 2"):
+            RateRegistry().load(yaml_file)
+
+    def test_rejects_duplicate_normalized_infrastructure_keys(self, tmp_path: Path) -> None:
+        yaml_file = tmp_path / "rates.yaml"
+        yaml_file.write_text(
+            """\
+version: 2
+rates: {}
+infrastructure:
+  gpu:
+    NVIDIA GeForce RTX 5060 Ti:
+      per: gpu_hour
+      cost_usd: "0.25"
+    nvidia-geforce-rtx-5060-ti:
+      per: gpu_hour
+      cost_usd: "0.30"
+""",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="duplicates normalized key"):
+            RateRegistry().load(yaml_file)
+
 
 # ---------------------------------------------------------------------------
 # CostTracker rate registry integration tests
@@ -278,6 +371,12 @@ class TestCostTrackerRateRegistry:
 
     def test_rate_registry_property(self, tracker: CostTracker) -> None:
         assert isinstance(tracker.rate_registry, RateRegistry)
+
+    def test_register_infrastructure_rate(self, tracker: CostTracker) -> None:
+        tracker.register_infrastructure_rate(
+            "network", "local", per="gb_transferred", cost_usd="0.02"
+        )
+        assert tracker.get_infrastructure_rate("network", "local") == Decimal("0.02")
 
 
 # ---------------------------------------------------------------------------
@@ -527,3 +626,59 @@ class TestPublicAPIExports:
         import dexcost
 
         assert dexcost.RateRegistry is RateRegistry
+
+    def test_infrastructure_rate_entry_exported(self) -> None:
+        import dexcost
+
+        assert dexcost.InfrastructureRateEntry is InfrastructureRateEntry
+
+    def test_init_loads_explicit_rates_path(self, tmp_path: Path) -> None:
+        import dexcost
+
+        yaml_file = tmp_path / "rates.yaml"
+        yaml_file.write_text(
+            """\
+version: 2
+rates: {}
+infrastructure:
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+""",
+            encoding="utf-8",
+        )
+        try:
+            dexcost.init(
+                storage="local",
+                buffer_path=str(tmp_path / "buffer.db"),
+                auto_instrument=[],
+                track_http=False,
+                rates_path=yaml_file,
+            )
+            assert dexcost._global_tracker is not None
+            assert dexcost._global_tracker.get_infrastructure_rate(
+                "network", "local"
+            ) == Decimal("0.02")
+        finally:
+            dexcost.close()
+
+    def test_invalid_rates_path_does_not_leave_partial_global_tracker(
+        self, tmp_path: Path
+    ) -> None:
+        import dexcost
+
+        yaml_file = tmp_path / "rates.yaml"
+        yaml_file.write_text("version: 2\ninfrastructure: []\n", encoding="utf-8")
+        try:
+            with pytest.raises(ValueError, match="infrastructure"):
+                dexcost.init(
+                    storage="local",
+                    buffer_path=str(tmp_path / "buffer.db"),
+                    auto_instrument=[],
+                    track_http=False,
+                    rates_path=yaml_file,
+                )
+            assert dexcost._global_tracker is None
+        finally:
+            dexcost.close()
