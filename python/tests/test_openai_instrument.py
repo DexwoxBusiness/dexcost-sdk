@@ -109,9 +109,17 @@ def _install_fake_openai() -> tuple[type[Any], type[Any], type[Any], type[Any]]:
         def create(**kwargs: Any) -> Any:
             raise NotImplementedError("should be mocked per-test")
 
+        @staticmethod
+        def parse(**kwargs: Any) -> Any:
+            raise NotImplementedError("should be mocked per-test")
+
     class AsyncResponses:
         @staticmethod
         async def create(**kwargs: Any) -> Any:
+            raise NotImplementedError("should be mocked per-test")
+
+        @staticmethod
+        async def parse(**kwargs: Any) -> Any:
             raise NotImplementedError("should be mocked per-test")
 
     completions_mod.Completions = Completions  # type: ignore[attr-defined]
@@ -303,6 +311,40 @@ class TestSyncNonStreaming:
             ("output_tokens", "180"),
             ("reasoning_output_tokens", "120"),
         ]
+
+    def test_responses_parse_records_structured_output_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.responses.responses import Responses
+
+        from dexcost.instruments.openai import instrument_openai
+
+        response = SimpleNamespace(
+            id="resp_parse_python",
+            model="gpt-5.6-luna",
+            usage=SimpleNamespace(
+                input_tokens=484,
+                input_tokens_details=SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+                output_tokens=1354,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+            ),
+        )
+        Responses.parse = staticmethod(lambda **kwargs: response)  # type: ignore[assignment]
+
+        instrument_openai(tracker)
+        with tracker.task(task_type="luna.responses.parse") as task:
+            result = Responses.parse(
+                model="gpt-5.6-luna",
+                input="campaign brief",
+                text_format=dict,
+            )
+
+        assert result is response
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 484
+        assert events[0].output_tokens == 1354
+        assert events[0].details["provider_record_id"] == "resp_parse_python"
 
     def test_invalid_provider_usage_is_durable_but_not_exported(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -574,6 +616,50 @@ class TestAsyncNonStreaming:
         assert ev.output_tokens == 80
         assert ev.cost_confidence == "computed"
 
+    def test_async_responses_parse_records_structured_output_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.responses.responses import AsyncResponses
+
+        from dexcost.instruments.openai import instrument_openai
+
+        response = SimpleNamespace(
+            id="resp_async_parse_python",
+            model="gpt-5.6-luna",
+            usage=SimpleNamespace(
+                input_tokens=400,
+                input_tokens_details=SimpleNamespace(cached_tokens=100, cache_write_tokens=0),
+                output_tokens=200,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=50),
+            ),
+        )
+
+        async def fake_parse(**kwargs: Any) -> Any:
+            return response
+
+        AsyncResponses.parse = staticmethod(fake_parse)  # type: ignore[assignment]
+        instrument_openai(tracker)
+
+        async def run() -> None:
+            async with tracker.task(task_type="luna.responses.async_parse"):
+                result = await AsyncResponses.parse(
+                    model="gpt-5.6-luna",
+                    input="campaign brief",
+                    text_format=dict,
+                )
+                assert result is response
+
+        asyncio.run(run())
+
+        task = storage.query_tasks(task_type="luna.responses.async_parse")[0]
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 400
+        assert events[0].output_tokens == 200
+        assert events[0].cached_tokens == 100
+        assert events[0].details["reasoning_output_tokens"] == 50
+        assert events[0].details["provider_record_id"] == "resp_async_parse_python"
+
     def test_async_missing_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         from openai.resources.chat.completions import AsyncCompletions
 
@@ -752,6 +838,34 @@ class TestInstrumentLifecycle:
         uninstrument_openai()
 
         # After uninstrument, should be able to instrument again
+        instrument_openai(tracker)
+
+    def test_uninstrument_restores_responses_parse(self, tracker: CostTracker) -> None:
+        from openai.resources.responses.responses import AsyncResponses, Responses
+
+        from dexcost.instruments.openai import instrument_openai, uninstrument_openai
+
+        sync_parse = Responses.parse
+        async_parse = AsyncResponses.parse
+
+        instrument_openai(tracker)
+        assert Responses.parse is not sync_parse
+        assert AsyncResponses.parse is not async_parse
+
+        uninstrument_openai()
+        assert Responses.parse is sync_parse
+        assert AsyncResponses.parse is async_parse
+
+    def test_openai_sdk_without_responses_parse_remains_supported(
+        self, tracker: CostTracker
+    ) -> None:
+        from openai.resources.responses.responses import AsyncResponses, Responses
+
+        from dexcost.instruments.openai import instrument_openai
+
+        delattr(Responses, "parse")
+        delattr(AsyncResponses, "parse")
+
         instrument_openai(tracker)
 
     def test_uninstrument_when_not_patched_is_noop(self) -> None:
