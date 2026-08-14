@@ -45,6 +45,7 @@ export const GpuRuntimeKind = {
   GcpGceN1Attached: "gcp_gce_n1_attached",
   AzureVmGpu: "azure_vm_gpu",
   AzureVmVgpu: "azure_vm_vgpu",
+  LocalGpu: "local_gpu",
   None: "none",
 } as const;
 
@@ -146,6 +147,8 @@ export function resolveGpuRuntime(
     if (isAzureVgpuInstance(it)) return GpuRuntimeKind.AzureVmVgpu;
     if (isAzureGpuInstance(it)) return GpuRuntimeKind.AzureVmGpu;
   }
+
+  if (!provider) return GpuRuntimeKind.LocalGpu;
 
   return GpuRuntimeKind.None;
 }

@@ -107,12 +107,14 @@ const BILLING_MODEL_FOR_RUNTIME: Record<string, string> = {
   [GpuRuntimeKind.GcpGceBundled]: "per_instance_hour",
   [GpuRuntimeKind.AzureVmGpu]: "per_instance_hour",
   [GpuRuntimeKind.AzureVmVgpu]: "per_vgpu_hour",
+  [GpuRuntimeKind.LocalGpu]: "local_gpu_usage_only",
 };
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
 export interface GpuCostDetails {
   billing_model: string;
+  runtime_kind: string;
   cloud_provider: string | null;
   gpu_vendor: string;
   gpu_sku: string | null;
@@ -129,6 +131,9 @@ export interface GpuCostDetails {
 }
 
 export interface GpuUtilizationSignal {
+  billing_model: string;
+  runtime_kind: string;
+  cloud_provider: string | null;
   gpu_index: number;
   gpu_sku: string | null;
   sm_util_pct: number | null;
@@ -288,7 +293,13 @@ export class GpuAccountant {
     // Canonical SKU from first non-null productName (homogeneous-device assumption).
     const canonicalProductName =
       this._deviceProductNames.find((n) => n !== null && n !== undefined) ?? null;
-    const gpuSku = resolveSkuFromProductName(canonicalProductName);
+    let gpuSku = resolveSkuFromProductName(canonicalProductName);
+    if (this.runtime === GpuRuntimeKind.LocalGpu && gpuSku === null && canonicalProductName) {
+      // Workstation GPUs are often GeForce/RTX models outside the cloud
+      // pricing aliases. Keep their normalized NVML name as usage identity;
+      // this does not attach or imply a public hourly price.
+      gpuSku = [...canonicalProductName].slice(0, 256).join("");
+    }
 
     // Decision #2 transparency: MIG presence surfaced regardless of cgroup-touch.
     let migProfile: string | null = null;
@@ -388,6 +399,9 @@ export class GpuAccountant {
         const memUtilAvg = memUtilN > 0 ? memUtilSum / memUtilN : 0;
 
         signalEvents.push({
+          billing_model: BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+          runtime_kind: this.runtime,
+          cloud_provider: this.cloudEnv.provider,
           gpu_index: i,
           gpu_sku: gpuSku,
           sm_util_pct: smUtilPct,
@@ -400,6 +414,9 @@ export class GpuAccountant {
         });
       } else if (degenerateWindow) {
         signalEvents.push({
+          billing_model: BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+          runtime_kind: this.runtime,
+          cloud_provider: this.cloudEnv.provider,
           gpu_index: i,
           gpu_sku: gpuSku,
           sm_util_pct: null,
@@ -454,7 +471,8 @@ export class GpuAccountant {
   }): GpuCostDetails {
     const details: GpuCostDetails = {
       billing_model:
-        BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "per_gpu_second_active",
+        BILLING_MODEL_FOR_RUNTIME[this.runtime] ?? "local_gpu_usage_only",
+      runtime_kind: this.runtime,
       cloud_provider: this.cloudEnv.provider,
       gpu_vendor: "nvidia", // Decision #5
       gpu_sku: args.gpuSku,

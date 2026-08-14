@@ -41,6 +41,7 @@ class GpuRuntimeKind(str, Enum):
     GCP_GCE_N1_ATTACHED = "gcp_gce_n1_attached"
     AZURE_VM_GPU = "azure_vm_gpu"
     AZURE_VM_VGPU = "azure_vm_vgpu"
+    LOCAL_GPU = "local_gpu"
     NONE = "none"
 
 
@@ -108,6 +109,11 @@ def resolve_gpu_runtime() -> GpuRuntimeKind:
     # NVML must be available AND see ≥1 device for any GPU event emission.
     if not nvml_reader.nvml_available():
         return GpuRuntimeKind.NONE
+    # pynvml requires nvmlInit() before device enumeration. Initializing first
+    # avoids an expected-but-noisy "Uninitialized" warning on every opted-in
+    # local task.
+    if not nvml_reader.init_nvml():
+        return GpuRuntimeKind.NONE
     device_count = nvml_reader.get_device_count()
     if not device_count:
         return GpuRuntimeKind.NONE
@@ -147,6 +153,12 @@ def resolve_gpu_runtime() -> GpuRuntimeKind:
             return GpuRuntimeKind.AZURE_VM_VGPU
         if _is_azure_gpu_instance(instance_type):
             return GpuRuntimeKind.AZURE_VM_GPU
+
+    # A visible NVIDIA device outside a provider-owned billing runtime is a
+    # local/self-hosted GPU. Capture its usage, but do not infer a public
+    # cloud price for owned or privately leased hardware.
+    if not provider:
+        return GpuRuntimeKind.LOCAL_GPU
 
     # No matching runtime → no GPU events.
     return GpuRuntimeKind.NONE

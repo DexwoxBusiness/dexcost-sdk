@@ -316,6 +316,50 @@ func TestToObservationV3RetainsGPUSignalAsUsageOnly(t *testing.T) {
 	}
 }
 
+func TestToObservationV3MatchesSharedLocalGPUUsageContract(t *testing.T) {
+	raw, err := os.ReadFile("../../fixtures/attribution_v3/local_gpu_usage.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Details  map[string]interface{} `json:"details"`
+		Expected struct {
+			Component       string `json:"component"`
+			ProviderName    string `json:"provider_name"`
+			ProviderService string `json:"provider_service"`
+			ResourceType    string `json:"resource_type"`
+			ResourceID      string `json:"resource_id"`
+			UsageMetric     string `json:"usage_metric"`
+			UsageUnit       string `json:"usage_unit"`
+			UsageQuantity   string `json:"usage_quantity"`
+		} `json:"expected"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	event := v3TestEvent(core.EventTypeGPUCost)
+	event.CostUSD = decimal.Zero
+	event.Details = fixture.Details
+	converted := ToObservationV3(event)
+	if converted == nil {
+		t.Fatal("local GPU usage must remain representable")
+	}
+	if string(converted.Component) != fixture.Expected.Component ||
+		converted.Provider.Name != fixture.Expected.ProviderName ||
+		converted.Provider.Service != fixture.Expected.ProviderService ||
+		converted.Resource == nil || converted.Resource.Type != fixture.Expected.ResourceType ||
+		converted.Resource.ID != fixture.Expected.ResourceID || len(converted.Usage) != 1 ||
+		converted.Usage[0].Metric != fixture.Expected.UsageMetric ||
+		converted.Usage[0].Unit != fixture.Expected.UsageUnit ||
+		converted.Usage[0].Quantity != fixture.Expected.UsageQuantity ||
+		converted.CostEvidence != nil {
+		t.Fatalf("local GPU conformance drift: %+v", converted)
+	}
+	if result := ValidateObservationV3(converted); !result.Success {
+		t.Fatalf("local GPU observation is invalid: %+v", result.Issues)
+	}
+}
+
 func TestToObservationV3CountsDimensionStringCharacters(t *testing.T) {
 	event := v3TestEvent(core.EventTypeExternalCost)
 	event.ServiceName = "future-provider"

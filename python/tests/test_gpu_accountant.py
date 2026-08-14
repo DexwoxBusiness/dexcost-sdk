@@ -84,6 +84,45 @@ def test_modal_emits_gpu_cost_and_one_signal(accountant_factory, monkeypatch):
     assert sig["vram_total_bytes"] == 85899345920
 
 
+def test_local_gpu_preserves_unknown_workstation_model(accountant_factory, monkeypatch):
+    """Unknown local models retain hardware identity without acquiring a price."""
+    from dexcost.cgroup_walker import CgroupScope
+    from dexcost.nvml_reader import MemInfo
+
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.init_nvml", lambda: True)
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_device_count", lambda: 1)
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_device_handle", lambda i: f"h{i}")
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_product_name",
+        lambda h: "nvidia geforce rtx 4090",
+    )
+    monkeypatch.setattr("dexcost.gpu_accountant.nvml_reader.get_mig_mode", lambda h: False)
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_memory_info",
+        lambda h: MemInfo(used_bytes=0, total_bytes=24 * 1024**3),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.cgroup_walker.classify_scope",
+        lambda: CgroupScope(kind="process", path=None),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.cgroup_walker.enumerate_pids",
+        lambda scope: [os.getpid()],
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_accountant.nvml_reader.get_process_utilization",
+        lambda h, ts: {},
+    )
+
+    acc = accountant_factory(GpuRuntimeKind.LOCAL_GPU, CloudEnv(None, None, "none"))
+    acc.snapshot_start()
+    cost_details, _ = acc.snapshot_end_and_build(duration_ms=0)
+
+    assert cost_details is not None
+    assert cost_details["gpu_sku"] == "nvidia geforce rtx 4090"
+    assert cost_details["billing_model"] == "local_gpu_usage_only"
+
+
 # ─── Idempotency: capture spec §5.3 invariant ───────────────────────────────
 
 def test_second_call_per_task_returns_none(accountant_factory, monkeypatch):

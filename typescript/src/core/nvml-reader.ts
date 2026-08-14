@@ -94,7 +94,7 @@ export interface UtilSample {
   smUtil: number;
   /** 0–100; percent of time memory subsystem was busy. */
   memUtil: number;
-  /** Per-PID timestamp (milliseconds since process start) for Decision #8 state. */
+  /** Per-PID timestamp in microseconds for Decision #8 integration state. */
   timeStamp: number;
 }
 
@@ -254,9 +254,9 @@ export function getComputeRunningProcesses(index: number): ProcessInfo[] | null 
 /**
  * Per-PID utilization sampled from `nvidia-smi pmon -c 1 -s u`.
  *
- * Decision #8 — TS uses `Date.now()` as the per-PID timestamp proxy
+ * Decision #8 — TS uses `Date.now() * 1000` as the per-PID timestamp proxy
  * because nvidia-smi pmon does not expose the NVML sample-buffer epoch.
- * The accountant uses (endTs - startTs) ms as the active-GPU-time
+ * The accountant uses (endTs - startTs) microseconds as the active-GPU-time
  * approximation between snapshots.
  *
  * Updates `lastSeenTimestamps` in place — callers persist across snapshots.
@@ -283,8 +283,6 @@ export function getProcessUtilization(
     `1`,
     `-s`,
     `u`,
-    `-o`,
-    `T`,
     `-i`,
     String(index),
   ]);
@@ -296,7 +294,7 @@ export function getProcessUtilization(
     return null;
   }
   const out: Record<number, UtilSample[]> = {};
-  const nowMs = Date.now();
+  const nowUs = Date.now() * 1000;
   for (const rawLine of r.stdout.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
@@ -310,14 +308,14 @@ export function getProcessUtilization(
     const sm = parseInt(parts[3], 10);
     const mem = parseInt(parts[4], 10);
     if (Number.isNaN(sm) || Number.isNaN(mem)) continue;
-    const sample: UtilSample = { pid, smUtil: sm, memUtil: mem, timeStamp: nowMs };
+    const sample: UtilSample = { pid, smUtil: sm, memUtil: mem, timeStamp: nowUs };
     if (out[pid]) {
       out[pid].push(sample);
     } else {
       out[pid] = [sample];
     }
-    if (nowMs > (lastSeenTimestamps[pid] ?? 0)) {
-      lastSeenTimestamps[pid] = nowMs;
+    if (nowUs > (lastSeenTimestamps[pid] ?? 0)) {
+      lastSeenTimestamps[pid] = nowUs;
     }
   }
   // Sort each PID's samples by timestamp ascending — the integrator

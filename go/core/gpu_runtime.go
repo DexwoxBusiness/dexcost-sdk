@@ -39,6 +39,7 @@ const (
 	GpuRuntimeGCPGCEN1Attached GpuRuntimeKind = "gcp_gce_n1_attached"
 	GpuRuntimeAzureVMGPU       GpuRuntimeKind = "azure_vm_gpu"
 	GpuRuntimeAzureVMVGPU      GpuRuntimeKind = "azure_vm_vgpu"
+	GpuRuntimeLocalGPU         GpuRuntimeKind = "local_gpu"
 	GpuRuntimeNone             GpuRuntimeKind = "none"
 )
 
@@ -128,6 +129,10 @@ func ResolveGpuRuntime() GpuRuntimeKind {
 		if isAzureGPUInstance(instanceType) {
 			return GpuRuntimeAzureVMGPU
 		}
+	}
+
+	if provider == "" {
+		return GpuRuntimeLocalGPU
 	}
 
 	return GpuRuntimeNone

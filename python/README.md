@@ -152,6 +152,20 @@ t = tracker.start_task(task_type="batch_job", customer_id="acme")
 t.end(status="success")
 ```
 
+### Local NVIDIA GPU usage
+
+Opt in only on the leaf task that owns the GPU work:
+
+```python
+with tracker.task(task_type="local_whisper", track_gpu=True):
+    transcribe_on_local_gpu()
+```
+
+DexCost records measured GPU-seconds, the normalized device model, and
+utilization evidence. A locally owned GPU remains explicitly unpriced; the SDK
+does not invent a public-cloud rate. Do not enable the option on both a parent
+and its child, because they would measure the same hardware interval twice.
+
 ## TrackedTask Methods
 
 ```python

@@ -220,7 +220,9 @@ func (e *GpuPricingEngine) ResolveGPUCost(
 		// Decision #1 _cgroup_scope_fallback suffix.
 		if fb := gpuGetString(details, "_cgroup_scope_fallback"); fb != "" {
 			result.PricingSource = result.PricingSource + ":" + fb
-			result.CostConfidence = "estimated"
+			if result.CostConfidence != "unknown" {
+				result.CostConfidence = "estimated"
+			}
 		}
 	}()
 
@@ -234,6 +236,12 @@ func (e *GpuPricingEngine) dispatchGPU(
 	windowS decimal.Decimal,
 ) GpuCost {
 	switch billingModel {
+	case "local_gpu_usage_only":
+		return GpuCost{
+			CostUSD:        decimal.Zero,
+			PricingSource:  "unpriced:local_gpu",
+			CostConfidence: "unknown",
+		}
 	case "per_gpu_second_active":
 		return e.perGpuSecondActive(details, cloudEnv)
 	case "per_instance_hour":

@@ -41,8 +41,10 @@ func billingModelForGpuRuntime(r GpuRuntimeKind) string {
 		return "per_instance_hour"
 	case GpuRuntimeAzureVMVGPU:
 		return "per_vgpu_hour"
+	case GpuRuntimeLocalGPU:
+		return "local_gpu_usage_only"
 	}
-	return "per_gpu_second_active"
+	return "local_gpu_usage_only"
 }
 
 // resolveSKUFromProductName is best-effort substring → canonical key mapping.
@@ -121,16 +123,16 @@ type GpuAccountant struct {
 
 	frozen bool
 
-	scope                    CgroupScope
-	scopeSet                 bool
-	initialPIDs              map[int]struct{}
-	initialTimestamps        map[int]map[int]int64 // devIdx → PID → ts
-	deviceProductNames       map[int]string
-	deviceMIGModes           map[int]bool
-	deviceCount              int
-	vramTotal                map[int]int64
-	vramUsedPeak             map[int]int64
-	pidsTouchedPerDevice     map[int]map[int]struct{}
+	scope                CgroupScope
+	scopeSet             bool
+	initialPIDs          map[int]struct{}
+	initialTimestamps    map[int]map[int]int64 // devIdx → PID → ts
+	deviceProductNames   map[int]string
+	deviceMIGModes       map[int]bool
+	deviceCount          int
+	vramTotal            map[int]int64
+	vramUsedPeak         map[int]int64
+	pidsTouchedPerDevice map[int]map[int]struct{}
 }
 
 // NewGpuAccountant builds an accountant for the given runtime + cloud env.
@@ -248,6 +250,16 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 		}
 	}
 	gpuSku := resolveSKUFromProductName(canonicalProduct)
+	if a.Runtime == GpuRuntimeLocalGPU && gpuSku == "" && canonicalProduct != "" {
+		// Workstation GPUs are often GeForce/RTX models outside the cloud
+		// pricing aliases. Preserve their normalized product name as usage
+		// identity without implying a public hourly price.
+		runes := []rune(canonicalProduct)
+		if len(runes) > 256 {
+			runes = runes[:256]
+		}
+		gpuSku = string(runes)
+	}
 
 	// MIG-profile transparency.
 	var migProfile string
@@ -360,6 +372,9 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 			}
 
 			signals = append(signals, map[string]any{
+				"billing_model":        billingModelForGpuRuntime(a.Runtime),
+				"runtime_kind":         string(a.Runtime),
+				"cloud_provider":       a.CloudEnv.Provider,
 				"gpu_index":            i,
 				"gpu_sku":              gpuSku,
 				"sm_util_pct":          smUtilPct,
@@ -372,15 +387,18 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 			})
 		} else if degenerate {
 			signals = append(signals, map[string]any{
-				"gpu_index":             i,
-				"gpu_sku":               gpuSku,
-				"sm_util_pct":           nil,
-				"mem_util_pct":          nil,
-				"vram_used_peak_bytes":  a.vramUsedPeak[i],
-				"vram_total_bytes":      a.vramTotal[i],
-				"process_count":         len(a.pidsTouchedPerDevice[i]),
-				"sample_count":          0,
-				"task_duration_ms":      durationMS,
+				"billing_model":        billingModelForGpuRuntime(a.Runtime),
+				"runtime_kind":         string(a.Runtime),
+				"cloud_provider":       a.CloudEnv.Provider,
+				"gpu_index":            i,
+				"gpu_sku":              gpuSku,
+				"sm_util_pct":          nil,
+				"mem_util_pct":         nil,
+				"vram_used_peak_bytes": a.vramUsedPeak[i],
+				"vram_total_bytes":     a.vramTotal[i],
+				"process_count":        len(a.pidsTouchedPerDevice[i]),
+				"sample_count":         0,
+				"task_duration_ms":     durationMS,
 			})
 		}
 	}
@@ -397,6 +415,8 @@ func (a *GpuAccountant) SnapshotEndAndBuild(durationMS int64) (map[string]any, [
 	}
 	cost := map[string]any{
 		"billing_model":    billingModelForGpuRuntime(a.Runtime),
+		"runtime_kind":     string(a.Runtime),
+		"cloud_provider":   a.CloudEnv.Provider,
 		"gpu_vendor":       "nvidia",
 		"gpu_sku":          gpuSku,
 		"gpu_count":        deviceCount,

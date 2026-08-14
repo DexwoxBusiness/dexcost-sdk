@@ -181,3 +181,59 @@ def test_signal_events_never_aggregated_into_gpu_cost_usd(tracker, monkeypatch):
         "Decision #3 convention carve-out violated: gpu_utilization_signal "
         "events must NOT contribute to task.gpu_cost_usd"
     )
+
+
+def test_opt_in_local_gpu_task_emits_usage_without_synthetic_cost(tracker, monkeypatch):
+    monkeypatch.setattr(
+        cloud_detect, "_result", CloudEnv(None, None, "none"),
+    )
+    monkeypatch.setattr(
+        "dexcost.gpu_runtime.resolve_gpu_runtime",
+        lambda: GpuRuntimeKind.LOCAL_GPU,
+    )
+    monkeypatch.setattr(GpuAccountant, "snapshot_start", lambda self: None)
+    monkeypatch.setattr(
+        GpuAccountant,
+        "snapshot_end_and_build",
+        lambda self, duration_ms: (
+            {
+                "billing_model": "local_gpu_usage_only",
+                "runtime_kind": "local_gpu",
+                "cloud_provider": None,
+                "gpu_vendor": "nvidia",
+                "gpu_sku": "l4-24gb",
+                "gpu_count": 1,
+                "duration_ms": duration_ms,
+                "gpu_seconds_used": 2.5,
+                "instance_type": None,
+                "vgpu_profile": None,
+                "mig_profile": None,
+                "cost_pending": True,
+            },
+            [],
+        ),
+    )
+
+    task = tracker.start_task(task_type="local-whisper", track_gpu=True)
+    assert getattr(task.task, "_gpu").runtime == GpuRuntimeKind.LOCAL_GPU
+    task.task.started_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    task.end(status="success")
+
+    events = tracker.storage.query_events(task_id=str(task.task_id))
+    costs = [event for event in events if event.event_type == "gpu_cost"]
+    assert len(costs) == 1
+    assert costs[0].cost_usd == Decimal("0")
+    assert costs[0].pricing_source == "unpriced:local_gpu"
+    assert costs[0].cost_confidence == "unknown"
+    assert costs[0].pricing_version is None
+    assert costs[0].details["gpu_seconds_used"] == 2.5
+
+
+def test_local_gpu_measurement_is_not_enabled_without_opt_in(tracker, monkeypatch):
+    monkeypatch.setattr(
+        "dexcost.gpu_runtime.resolve_gpu_runtime",
+        lambda: GpuRuntimeKind.LOCAL_GPU,
+    )
+    task = tracker.start_task(task_type="campaign-root")
+    assert getattr(task.task, "_gpu", None) is None
+    task.end(status="success")

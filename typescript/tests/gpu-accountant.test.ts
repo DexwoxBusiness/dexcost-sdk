@@ -89,6 +89,21 @@ describe("GpuAccountant — Modal serverless emission", () => {
     expect(sig.sm_util_pct).not.toBeNull();
     expect(sig.vram_total_bytes).toBe(85899345920);
   });
+
+  it("preserves an unknown local workstation model without pricing it", () => {
+    const acc = new GpuAccountant(
+      GpuRuntimeKind.LocalGpu,
+      cloud(null, null, "none"),
+      baseHooks({
+        getProductName: () => "nvidia geforce rtx 4090",
+      }),
+    );
+    acc.snapshotStart();
+    const { costDetails } = acc.snapshotEndAndBuild(0);
+
+    expect(costDetails?.gpu_sku).toBe("nvidia geforce rtx 4090");
+    expect(costDetails?.billing_model).toBe("local_gpu_usage_only");
+  });
 });
 
 describe("GpuAccountant — idempotency", () => {

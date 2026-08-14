@@ -133,11 +133,15 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
             else:
                 name = _canonical_name(event.provider, "runtime")
             service = _canonical_name(billing_model or service_name, "compute")
-        elif event.event_type == "gpu_cost":
-            name = _canonical_name(
-                _string_detail(event.details, "cloud_provider") or event.provider, "runtime"
-            )
-            service = _canonical_name(billing_model, "gpu")
+        elif event.event_type in {"gpu_cost", "gpu_utilization_signal"}:
+            if billing_model == "local_gpu_usage_only":
+                name, service = "self_hosted", "gpu_compute"
+            else:
+                name = _canonical_name(
+                    _string_detail(event.details, "cloud_provider") or event.provider,
+                    "runtime",
+                )
+                service = _canonical_name(billing_model, "gpu")
         elif event.event_type == "network":
             name = _canonical_name(
                 _string_detail(event.details, "cloud_provider") or event.provider, "internet"
@@ -185,7 +189,7 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
             return {"type": "other", "id": reason[:256]}
     if event.model:
         return {"type": "model", "id": event.model[:256]}
-    if event.event_type == "gpu_cost":
+    if event.event_type in {"gpu_cost", "gpu_utilization_signal"}:
         sku = _string_detail(event.details, "gpu_sku", "instance_type")
         if sku:
             return {"type": "sku", "id": sku[:256]}
@@ -320,7 +324,9 @@ def _component_and_usage(
         gpu_count = _decimal_detail(details, "gpu_count") or Decimal(1)
         billing_model = _string_detail(details, "billing_model") or ""
         billed_seconds = (
-            measured if billing_model == "per_gpu_second_active" else duration_seconds * gpu_count
+            measured
+            if billing_model in {"per_gpu_second_active", "local_gpu_usage_only"}
+            else duration_seconds * gpu_count
         )
         if billed_seconds is None:
             billed_seconds = measured

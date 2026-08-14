@@ -99,8 +99,13 @@ export function attributionProviderFor(event: CostEvent): AttributionProviderIde
       else name = canonicalName(event.provider, "runtime");
       service = canonicalName(billingModel ?? serviceName, "compute");
     } else if (event.eventType === "gpu_cost" || event.eventType === "gpu_utilization_signal") {
-      name = canonicalName(stringDetail(event.details, "cloud_provider") ?? event.provider, "runtime");
-      service = canonicalName(billingModel, "gpu");
+      if (billingModel === "local_gpu_usage_only") {
+        name = "self_hosted";
+        service = "gpu_compute";
+      } else {
+        name = canonicalName(stringDetail(event.details, "cloud_provider") ?? event.provider, "runtime");
+        service = canonicalName(billingModel, "gpu");
+      }
     } else if (event.eventType === "network") {
       name = canonicalName(stringDetail(event.details, "cloud_provider") ?? event.provider, "internet");
       service = "egress";
@@ -258,7 +263,10 @@ export function attributionComponentAndUsage(event: CostEvent): {
       const measured = numberDetail(details, "gpu_seconds_used");
       const gpuCount = numberDetail(details, "gpu_count") ?? 1;
       const billingModel = stringDetail(details, "billing_model") ?? "";
-      const billedSeconds = billingModel === "per_gpu_second_active" ? measured : durationSeconds * gpuCount;
+      const billedSeconds =
+        billingModel === "per_gpu_second_active" || billingModel === "local_gpu_usage_only"
+          ? measured
+          : durationSeconds * gpuCount;
       return { component: "gpu", durationSeconds, usage: compactUsage([usageLine("gpu_seconds", billedSeconds ?? measured)]) };
     }
     case "network":

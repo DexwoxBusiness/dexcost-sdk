@@ -236,7 +236,9 @@ class GpuPricingEngine:
             return GpuCost(
                 cost_usd=cost.cost_usd,
                 pricing_source=cost.pricing_source + f":{scope_fb}",
-                cost_confidence="estimated",
+                cost_confidence=(
+                    "unknown" if cost.cost_confidence == "unknown" else "estimated"
+                ),
             )
         return cost
 
@@ -251,6 +253,12 @@ class GpuPricingEngine:
         cloud_env: CloudEnv,
         window_s: Decimal | None,
     ) -> GpuCost:
+        if billing_model == "local_gpu_usage_only":
+            return GpuCost(
+                cost_usd=Decimal("0"),
+                pricing_source="unpriced:local_gpu",
+                cost_confidence="unknown",
+            )
         if billing_model == "per_gpu_second_active":
             return self._per_gpu_second(details, cloud_env)
         if billing_model == "per_instance_hour":

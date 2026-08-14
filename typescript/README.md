@@ -86,6 +86,21 @@ await track({ taskType: 'summarise', customerId: 'acme' }, async (task) => {
 await close();
 ```
 
+### Local NVIDIA GPU usage
+
+Opt in only on the leaf task that owns the GPU work:
+
+```typescript
+await track({ taskType: "local-whisper", trackGpu: true }, async () => {
+  await transcribeOnLocalGpu();
+});
+```
+
+DexCost records measured GPU-seconds, the normalized device model, and
+utilization evidence. A locally owned GPU remains explicitly unpriced; the SDK
+does not invent a public-cloud rate. Do not enable the option on both a parent
+and its child, because they would measure the same hardware interval twice.
+
 ## Auto-Instrumentation
 
 dexcost auto-instruments **6 LLM providers** and the **global fetch API**.
