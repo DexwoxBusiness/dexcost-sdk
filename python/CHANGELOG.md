@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.14.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.0...python/v0.14.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **python:** preserve task root identity serialization ([#144](https://github.com/DexwoxBusiness/dexcost-sdk/issues/144)) ([dd8217d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/dd8217d74c65445933e22c60b2a3adbb74d37aa2))
+
 ## [0.14.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.13.0...python/v0.14.0) (2026-08-14)
 
 
