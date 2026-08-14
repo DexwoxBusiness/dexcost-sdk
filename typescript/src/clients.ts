@@ -23,14 +23,18 @@ import type { Task, CostConfidence, PricingSource } from "./core/models.js";
 import { PricingEngine } from "./pricing/engine.js";
 import type { EventBuffer } from "./transport/buffer.js";
 import type { CostTracker } from "./core/tracker.js";
+import {
+  normalizeOpenAIUsage,
+  OpenAIUsageError,
+} from "./instruments/openai-usage.js";
 
 // ---------------------------------------------------------------------------
 // TrackedOpenAI
 // ---------------------------------------------------------------------------
 
 /**
- * Wraps `openai.OpenAI` and auto-records llm_call events on every
- * `chat.completions.create` call when running inside a tracked task context.
+ * Wraps `openai.OpenAI` and auto-records llm_call events for Chat
+ * Completions and Responses calls.
  */
 export class TrackedOpenAI {
   private _client: unknown;
@@ -78,9 +82,31 @@ export class TrackedOpenAI {
       completions: {
         create: async (...args: unknown[]): Promise<unknown> => {
           const response = await client.chat.completions.create(...args);
-          recordOpenAIEvent(response, args[0], pricing, buffer);
+          recordOpenAIEvent(response, args[0], pricing, buffer, "openai.chat");
           return response;
         },
+      },
+    };
+  }
+
+  get responses(): { create: (...args: unknown[]) => Promise<unknown> } {
+    const pricing = this._pricing;
+    const buffer = this._buffer;
+    const client = this._client as {
+      responses: { create: (...args: unknown[]) => Promise<unknown> };
+    };
+
+    return {
+      create: async (...args: unknown[]): Promise<unknown> => {
+        const response = await client.responses.create(...args);
+        recordOpenAIEvent(
+          response,
+          args[0],
+          pricing,
+          buffer,
+          "openai.responses",
+        );
+        return response;
       },
     };
   }
@@ -91,6 +117,7 @@ function recordOpenAIEvent(
   body: unknown,
   pricing: PricingEngine,
   buffer: EventBuffer | null,
+  taskType: "openai.chat" | "openai.responses",
 ): void {
   if (!buffer) return;
 
@@ -98,7 +125,7 @@ function recordOpenAIEvent(
   if (!task) {
     // Auto-create a task so LLM costs are never silently lost
     // (mirrors Python create_auto_task).
-    task = createAutoTask("openai.chat");
+    task = createAutoTask(taskType);
     buffer.upsertTask(task);
   }
 
@@ -110,23 +137,50 @@ function recordOpenAIEvent(
     (bodyObj["model"] as string | undefined) ??
     "unknown";
 
-  const usage = resp["usage"] as Record<string, unknown> | undefined;
-  const hasUsage = usage != null;
-
-  const inputTokens: number = (usage?.["prompt_tokens"] as number | undefined) ?? 0;
-  const outputTokens: number = (usage?.["completion_tokens"] as number | undefined) ?? 0;
-  const promptDetails = usage?.["prompt_tokens_details"] as Record<string, unknown> | undefined;
-  const cachedTokens: number = (promptDetails?.["cached_tokens"] as number | undefined) ?? 0;
+  const rawUsage = resp["usage"];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
 
   let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
+  let pricingVersion: string | undefined;
+  const details: Record<string, unknown> = {};
+  const providerRecordId = resp["id"];
+  if (typeof providerRecordId === "string" && providerRecordId.length > 0) {
+    details.provider_record_id = providerRecordId;
+  }
 
-  if (hasUsage) {
-    const result = pricing.getCost(model, inputTokens, outputTokens, cachedTokens);
-    costUsd = result.costUsd;
-    costConfidence = result.costConfidence;
-    pricingSource = result.pricingSource;
+  if (rawUsage !== undefined && rawUsage !== null) {
+    try {
+      const usage = normalizeOpenAIUsage(rawUsage);
+      inputTokens = usage.totalInputTokens;
+      outputTokens = usage.totalOutputTokens;
+      cachedTokens = usage.cacheReadInputTokens;
+      cacheWriteTokens = usage.cacheWriteInputTokens;
+      reasoningTokens = usage.reasoningOutputTokens;
+      if (cacheWriteTokens > 0) details.cache_write_input_tokens = cacheWriteTokens;
+      if (reasoningTokens > 0) details.reasoning_output_tokens = reasoningTokens;
+
+      const result = pricing.getCost(
+        model,
+        inputTokens,
+        outputTokens,
+        cachedTokens,
+        cacheWriteTokens,
+      );
+      costUsd = result.costUsd;
+      costConfidence = result.costConfidence;
+      pricingSource = result.pricingSource;
+      pricingVersion = result.pricingVersion;
+    } catch (error) {
+      if (!(error instanceof OpenAIUsageError)) throw error;
+      details.openai_usage_error = error.message;
+      costConfidence = "unknown";
+    }
   }
 
   _addEventAndUpdateTask(task, buffer, {
@@ -138,6 +192,8 @@ function recordOpenAIEvent(
     costUsd,
     costConfidence,
     pricingSource,
+    pricingVersion,
+    details,
   });
 }
 
@@ -283,6 +339,7 @@ interface EventSpec {
   costUsd: Decimal;
   costConfidence: CostConfidence;
   pricingSource: PricingSource;
+  pricingVersion?: string;
   details?: Record<string, unknown>;
 }
 
@@ -298,6 +355,7 @@ function _addEventAndUpdateTask(
     costUsd: spec.costUsd,
     costConfidence: spec.costConfidence,
     pricingSource: spec.pricingSource,
+    pricingVersion: spec.pricingVersion,
     provider: spec.provider,
     model: spec.model,
     inputTokens: spec.inputTokens,
@@ -325,9 +383,9 @@ function _addEventAndUpdateTask(
 
 /**
  * Wrap an OpenAI client instance for cost tracking (ecosystem `wrapOpenAI`
- * convention). Returns a {@link TrackedOpenAI} exposing the chat-completions
- * surface; for FULL client-surface coverage prefer injecting a tracked
- * fetch instead: `new OpenAI({ fetch: createDexcostFetch() })`.
+ * convention). Returns a {@link TrackedOpenAI} exposing the Chat Completions
+ * and Responses surfaces; for FULL client-surface coverage prefer injecting
+ * a tracked fetch instead: `new OpenAI({ fetch: createDexcostFetch() })`.
  */
 export function wrapOpenAI(
   client: unknown,

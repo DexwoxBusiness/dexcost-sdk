@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/clients"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ import (
 // `StreamRecorder.Read` deterministically with a known SSE payload.
 type fakeBody struct {
 	*strings.Reader
-	closed bool
+	closed   bool
 	closeErr error
 }
 
@@ -40,6 +41,17 @@ func drain(t *testing.T, r io.Reader) []byte {
 		t.Fatalf("drain stream: %v", err)
 	}
 	return buf
+}
+
+func detailInt(value interface{}) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
 }
 
 // TestStream_OpenAI_RecordsUsageAndCost — final chunk carries
@@ -136,6 +148,84 @@ func TestStream_OpenAI_NoUsageRecordsZeroCost(t *testing.T) {
 	// Model from chunk wins over the fallback.
 	if ev.Model != "gpt-4o" {
 		t.Errorf("model: got %s want gpt-4o (chunk value should win)", ev.Model)
+	}
+}
+
+func TestStream_OpenAI_ResponsesLunaBillingBuckets(t *testing.T) {
+	buf := newTestBuffer(t)
+	engine := newTestPricingEngine(t)
+	taskID := uuid.New()
+	seedTask(t, buf, taskID)
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"Hello"}`,
+		``,
+		`data: {"type":"response.completed","response":{"id":"resp_stream_go","model":"gpt-5.6-luna","usage":{"input_tokens":2600,"input_tokens_details":{"cached_tokens":2000,"cache_write_tokens":400},"output_tokens":300,"output_tokens_details":{"reasoning_tokens":120}}}}`,
+		``,
+		``,
+	}, "\n")
+
+	recorder := clients.NewOpenAIStreamRecorder(
+		newFakeBody(sse), buf, engine, taskID, "gpt-5.6-luna",
+	)
+	drain(t, recorder)
+
+	events, err := buf.QueryEvents(taskID.String())
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.InputTokens == nil || *event.InputTokens != 2600 ||
+		event.OutputTokens == nil || *event.OutputTokens != 300 ||
+		event.CachedTokens == nil || *event.CachedTokens != 2000 {
+		t.Fatalf("unexpected token totals: input=%v output=%v cached=%v", event.InputTokens, event.OutputTokens, event.CachedTokens)
+	}
+	if detailInt(event.Details["cache_write_input_tokens"]) != 400 ||
+		detailInt(event.Details["reasoning_output_tokens"]) != 120 {
+		t.Fatalf("missing disjoint details: %#v", event.Details)
+	}
+	if event.Details["provider_record_id"] != "resp_stream_go" {
+		t.Fatalf("provider_record_id = %v", event.Details["provider_record_id"])
+	}
+	if event.CostConfidence != core.CostConfidenceUnknown || !event.CostUSD.IsZero() {
+		t.Fatalf("unknown Luna price must remain unpriced, got %s %s", event.CostConfidence, event.CostUSD)
+	}
+	if attribution.ToObservationV3(event) == nil {
+		t.Fatal("streamed Luna event was not representable as attribution v3")
+	}
+}
+
+func TestStream_OpenAI_InvalidUsageIsDurableButUnexportable(t *testing.T) {
+	buf := newTestBuffer(t)
+	engine := newTestPricingEngine(t)
+	taskID := uuid.New()
+	seedTask(t, buf, taskID)
+
+	sse := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_bad_go\",\"model\":\"gpt-5.6-luna\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":2},\"output_tokens\":1}}}\n\n"
+	recorder := clients.NewOpenAIStreamRecorder(
+		newFakeBody(sse), buf, engine, taskID, "gpt-5.6-luna",
+	)
+	drain(t, recorder)
+
+	events, err := buf.QueryEvents(taskID.String())
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want durable diagnostic event", len(events))
+	}
+	event := events[0]
+	if event.Details["openai_usage_error"] != "cache token buckets exceed total input tokens" {
+		t.Fatalf("openai_usage_error = %v", event.Details["openai_usage_error"])
+	}
+	if event.CostConfidence != core.CostConfidenceUnknown || !event.CostUSD.IsZero() {
+		t.Fatalf("invalid usage must remain unknown, got %s %s", event.CostConfidence, event.CostUSD)
+	}
+	if attribution.ToObservationV3(event) != nil {
+		t.Fatal("invalid OpenAI usage must be quarantined by v3 conversion")
 	}
 }
 

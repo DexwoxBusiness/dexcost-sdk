@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CostTracker } from "../src/core/tracker.js";
 import { setContext, clearContext } from "../src/core/context.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 
 let tmpDir: string;
 
@@ -153,6 +154,94 @@ describe("TrackedOpenAI", () => {
     expect(autoTask!.taskType).toBe("openai.chat");
 
     clearContext();
+    tracker.close();
+  });
+
+  it("records Luna billing buckets from responses.create", async () => {
+    const { TrackedOpenAI } = await import("../src/clients.js");
+    const mockResponse = {
+      id: "resp_luna_client",
+      model: "gpt-5.6-luna",
+      usage: {
+        input_tokens: 2_600,
+        input_tokens_details: {
+          cached_tokens: 2_000,
+          cache_write_tokens: 400,
+        },
+        output_tokens: 300,
+        output_tokens_details: { reasoning_tokens: 120 },
+      },
+    };
+    const mockCreate = vi.fn().mockResolvedValue(mockResponse);
+    const mockClient = { responses: { create: mockCreate } };
+    const tracker = new CostTracker({
+      dbPath: join(tmpDir, "responses.db"),
+      autoInstrument: [],
+    });
+
+    await tracker.track({ taskType: "campaign-script" }, async () => {
+      const client = new TrackedOpenAI({ client: mockClient, tracker });
+      await client.responses.create({ model: "gpt-5.6-luna", input: "Brief" });
+    });
+
+    const [event] = tracker.buffer.getAllEvents();
+    expect(mockCreate).toHaveBeenCalledOnce();
+    expect(event).toMatchObject({
+      model: "gpt-5.6-luna",
+      inputTokens: 2_600,
+      outputTokens: 300,
+      cachedTokens: 2_000,
+      costConfidence: "unknown",
+    });
+    expect(event.details).toMatchObject({
+      provider_record_id: "resp_luna_client",
+      cache_write_input_tokens: 400,
+      reasoning_output_tokens: 120,
+    });
+    expect(toAttributionObservationV3(event)?.usage.map((line) => ({
+      metric: line.metric,
+      quantity: line.quantity,
+    }))).toEqual([
+      { metric: "input_tokens", quantity: "200" },
+      { metric: "cache_read_input_tokens", quantity: "2000" },
+      { metric: "cache_write_input_tokens", quantity: "400" },
+      { metric: "output_tokens", quantity: "180" },
+      { metric: "reasoning_output_tokens", quantity: "120" },
+    ]);
+
+    tracker.close();
+  });
+
+  it("does not export malformed OpenAI usage as confident zero", async () => {
+    const { TrackedOpenAI } = await import("../src/clients.js");
+    const mockClient = {
+      responses: {
+        create: vi.fn().mockResolvedValue({
+          id: "resp_bad_client",
+          model: "gpt-5.6-luna",
+          usage: {
+            input_tokens: 10,
+            input_tokens_details: { cached_tokens: 9, cache_write_tokens: 2 },
+            output_tokens: 1,
+          },
+        }),
+      },
+    };
+    const tracker = new CostTracker({
+      dbPath: join(tmpDir, "invalid-responses.db"),
+      autoInstrument: [],
+    });
+
+    const client = new TrackedOpenAI({ client: mockClient, tracker });
+    await client.responses.create({ model: "gpt-5.6-luna", input: "Brief" });
+
+    const [event] = tracker.buffer.getAllEvents();
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.details.openai_usage_error).toBe(
+      "cache token buckets exceed total input tokens",
+    );
+    expect(toAttributionObservationV3(event)).toBeNull();
+
     tracker.close();
   });
 });

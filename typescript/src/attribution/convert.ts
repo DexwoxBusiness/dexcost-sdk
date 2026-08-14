@@ -208,17 +208,25 @@ export function attributionComponentAndUsage(event: CostEvent): {
         usage: [usageLine("request_count", 1)!],
       };
     case "llm_call": {
+      if (stringDetail(details, "openai_usage_error") !== undefined) return null;
       const cached = event.cachedTokens ?? 0;
+      const cacheWrite = numberDetail(
+        details,
+        "cache_write_input_tokens",
+        "cache_creation_input_tokens",
+      ) ?? 0;
       const provider = (event.provider ?? "").toLowerCase();
       const cacheCountersAreDisjoint = provider.includes("anthropic")
         || provider.includes("bedrock")
         || provider === "aws";
+      const totalInput = event.inputTokens ?? 0;
+      if (!cacheCountersAreDisjoint && cached + cacheWrite > totalInput) return null;
       const input = cacheCountersAreDisjoint
         ? event.inputTokens
-        : Math.max(0, (event.inputTokens ?? 0) - cached);
-      const cacheWrite = numberDetail(details, "cache_creation_input_tokens");
+        : totalInput - cached - cacheWrite;
       const reasoning = numberDetail(details, "reasoning_output_tokens", "reasoning_tokens");
-      const output = reasoning === undefined ? event.outputTokens : Math.max(0, (event.outputTokens ?? 0) - reasoning);
+      if (reasoning !== undefined && reasoning > (event.outputTokens ?? 0)) return null;
+      const output = reasoning === undefined ? event.outputTokens : (event.outputTokens ?? 0) - reasoning;
       const usage = compactUsage([
         usageLine("input_tokens", input),
         usageLine("cache_read_input_tokens", cached),

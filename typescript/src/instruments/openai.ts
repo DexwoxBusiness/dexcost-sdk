@@ -1,8 +1,9 @@
 /**
  * OpenAI auto-instrumentation for dexcost TypeScript SDK.
  *
- * Monkey-patches `OpenAI.Chat.Completions.prototype.create` to automatically
- * record cost events and aggregate token usage on the active task context.
+ * Monkey-patches OpenAI Chat Completions and Responses `create` methods to
+ * automatically record cost events and aggregate token usage on the active
+ * task context.
  *
  * Supports both non-streaming and streaming responses.
  */
@@ -17,13 +18,16 @@ import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { normalizeOpenAIUsage, OpenAIUsageError } from "./openai-usage.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _patched = false;
+let _instrumenting: Promise<void> | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-let _original: Function | null = null;
+const _patches: Array<{ prototype: any; original: Function }> = [];
 let _completionsClass: any = null;
+let _responsesClass: any = null;
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
 
@@ -37,19 +41,42 @@ export function _resetCompletionsClass(): void {
   _completionsClass = null;
 }
 
+/** Test helper: inject a mock Responses class. */
+export function _setResponsesClass(cls: any): void {
+  _responsesClass = cls;
+}
+
+/** Test helper: reset Responses module resolution. */
+export function _resetResponsesClass(): void {
+  _responsesClass = null;
+}
+
 /**
  * Patch `OpenAI.Chat.Completions.prototype.create` to record cost events.
  *
  * If `openai` is not installed and no mock class is injected, the dynamic
  * import will throw and the function will reject.
  */
-export async function instrumentOpenai(
+export function instrumentOpenai(
+  pricing: PricingEngine,
+  buffer: EventBuffer,
+): Promise<void> {
+  if (_patched) return Promise.resolve();
+  if (_instrumenting) return _instrumenting;
+  _instrumenting = installOpenai(pricing, buffer).finally(() => {
+    _instrumenting = null;
+  });
+  return _instrumenting;
+}
+
+async function installOpenai(
   pricing: PricingEngine,
   buffer: EventBuffer,
 ): Promise<void> {
   if (_patched) return;
 
   let CompletionsProto: any;
+  let ResponsesProto: any;
   if (_completionsClass) {
     CompletionsProto = _completionsClass.prototype;
   } else {
@@ -59,13 +86,31 @@ export async function instrumentOpenai(
     const openai = await import("openai");
     const OpenAI = openai.default ?? openai;
     CompletionsProto = OpenAI.Chat.Completions.prototype;
+    ResponsesProto = OpenAI.Responses?.prototype;
+  }
+  if (_responsesClass) ResponsesProto = _responsesClass.prototype;
+  if (!ResponsesProto) {
+    try {
+      // @ts-ignore -- optional peer dependency and version-dependent export
+      const responses = await import("openai/resources/responses/responses");
+      ResponsesProto = responses.Responses?.prototype;
+    } catch {
+      // OpenAI SDK versions predating Responses remain Chat-compatible.
+    }
   }
 
-  _original = CompletionsProto.create;
   _buffer = buffer;
   _pricing = pricing;
 
-  CompletionsProto.create = async function (
+  patchCreate(CompletionsProto, "openai.chat", false);
+  if (ResponsesProto) patchCreate(ResponsesProto, "openai.responses", true);
+  _patched = true;
+}
+
+function patchCreate(prototype: any, taskType: string, responsesApi: boolean): void {
+  const original = prototype.create as Function;
+  _patches.push({ prototype, original });
+  prototype.create = async function (
     this: any,
     body: any,
     options?: any,
@@ -80,9 +125,9 @@ export async function instrumentOpenai(
       // in the same context) when session tracking is active; the
       // session sweep owns its lifecycle. Otherwise fall back to a
       // per-call auto-task owned (and finalized) here.
-      task = getAmbientSessionTask("openai.chat");
+      task = getAmbientSessionTask(taskType);
       if (!task) {
-        task = createAutoTask("openai.chat");
+        task = createAutoTask(taskType);
         _buffer?.upsertTask(task);
         autoCreated = true;
       }
@@ -94,9 +139,9 @@ export async function instrumentOpenai(
     if (body?.stream) {
       try {
         const rawStream = await suppressNetworkEvent(() =>
-          runWithTask(task, () => _original!.call(self, body, options)),
+          runWithTask(task, () => original.call(self, body, options)),
         );
-        return wrapStream(rawStream, task, startTime, autoCreated);
+        return wrapStream(rawStream, task, startTime, autoCreated, responsesApi);
       } catch (err) {
         if (autoCreated) {
           finalizeAutoTask(task, "failed", _buffer);
@@ -107,7 +152,7 @@ export async function instrumentOpenai(
 
     try {
       const response = await suppressNetworkEvent(() =>
-        runWithTask(task, () => _original!.call(self, body, options)),
+        runWithTask(task, () => original.call(self, body, options)),
       );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
@@ -126,21 +171,15 @@ export async function instrumentOpenai(
       throw err;
     }
   };
-
-  _patched = true;
 }
 
 /**
  * Remove the monkey-patch and restore the original `create` method.
  */
 export function uninstrumentOpenai(): void {
-  if (!_patched || !_original) return;
-
-  if (_completionsClass) {
-    _completionsClass.prototype.create = _original;
-  }
-
-  _original = null;
+  if (!_patched) return;
+  for (const patch of _patches) patch.prototype.create = patch.original;
+  _patches.length = 0;
   _buffer = null;
   _pricing = null;
   _patched = false;
@@ -154,22 +193,60 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   if (!_buffer || !_pricing) return;
 
   const model: string = response?.model ?? "unknown";
-  const usage = response?.usage;
-  const hasUsage = usage != null;
+  recordUsageEvent(task, model, response?.usage, latencyMs, response?.id);
+}
 
-  const inputTokens: number = usage?.prompt_tokens ?? 0;
-  const outputTokens: number = usage?.completion_tokens ?? 0;
-  const cachedTokens: number = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+function recordUsageEvent(
+  task: Task,
+  model: string,
+  rawUsage: unknown,
+  latencyMs: number,
+  providerRecordId?: unknown,
+): void {
+  if (!_buffer || !_pricing) return;
 
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedTokens = 0;
+  let cacheWriteTokens = 0;
+  let reasoningTokens = 0;
   let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
+  let pricingVersion: string | undefined;
+  const details: Record<string, unknown> = {};
 
-  if (hasUsage) {
-    const result: CostResult = _pricing.getCost(model, inputTokens, outputTokens, cachedTokens);
-    costUsd = result.costUsd;
-    costConfidence = result.costConfidence;
-    pricingSource = result.pricingSource;
+  if (typeof providerRecordId === "string" && providerRecordId.length > 0) {
+    details.provider_record_id = providerRecordId;
+  }
+
+  if (rawUsage !== undefined && rawUsage !== null) {
+    try {
+      const usage = normalizeOpenAIUsage(rawUsage);
+      inputTokens = usage.totalInputTokens;
+      outputTokens = usage.totalOutputTokens;
+      cachedTokens = usage.cacheReadInputTokens;
+      cacheWriteTokens = usage.cacheWriteInputTokens;
+      reasoningTokens = usage.reasoningOutputTokens;
+      if (cacheWriteTokens > 0) details.cache_write_input_tokens = cacheWriteTokens;
+      if (reasoningTokens > 0) details.reasoning_output_tokens = reasoningTokens;
+
+      const result: CostResult = _pricing.getCost(
+        model,
+        inputTokens,
+        outputTokens,
+        cachedTokens,
+        cacheWriteTokens,
+      );
+      costUsd = result.costUsd;
+      costConfidence = result.costConfidence;
+      pricingSource = result.pricingSource;
+      pricingVersion = result.pricingVersion;
+    } catch (error) {
+      if (!(error instanceof OpenAIUsageError)) throw error;
+      details.openai_usage_error = error.message;
+      costConfidence = "unknown";
+    }
   }
 
   const event = createCostEvent({
@@ -179,6 +256,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
     costUsd,
     costConfidence,
     pricingSource,
+    pricingVersion,
     provider: "openai",
     model,
     inputTokens,
@@ -186,10 +264,11 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
     cachedTokens,
     latencyMs,
     isRetry: false,
+    details,
   });
 
   _buffer.addEvent(event);
-  registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
+  registerLlmCapture(task.taskId, inputTokens, outputTokens);
 
   task.llmCostUsd = task.llmCostUsd.plus(costUsd);
   task.totalCostUsd = task.totalCostUsd.plus(costUsd);
@@ -199,12 +278,16 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   _buffer.upsertTask(task);
 }
 
-function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: boolean = false): AsyncIterable<any> {
+function wrapStream(
+  rawStream: any,
+  task: Task,
+  startTime: number,
+  autoCreated: boolean = false,
+  responsesApi: boolean = false,
+): AsyncIterable<any> {
   let model = "unknown";
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cachedTokens = 0;
-  let hasUsage = false;
+  let usage: unknown;
+  let providerRecordId: unknown;
   let finalized = false;
 
   return {
@@ -231,50 +314,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
             finalized = true;
             try {
               const latencyMs = Math.round(performance.now() - startTime);
-              if (hasUsage && _pricing && _buffer) {
-                const costResult = _pricing.getCost(model, inputTokens, outputTokens, cachedTokens);
-                const event = createCostEvent({
-                  eventId: randomUUID(),
-                  taskId: task.taskId,
-                  eventType: "llm_call",
-                  costUsd: costResult.costUsd,
-                  costConfidence: costResult.costConfidence,
-                  pricingSource: costResult.pricingSource,
-                  provider: "openai",
-                  model,
-                  inputTokens,
-                  outputTokens,
-                  cachedTokens,
-                  latencyMs,
-                  isRetry: false,
-                });
-                _buffer.addEvent(event);
-                registerLlmCapture(task.taskId, inputTokens, outputTokens);
-                task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-                task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-                task.totalInputTokens += inputTokens;
-                task.totalOutputTokens += outputTokens;
-                task.totalCachedTokens += cachedTokens;
-                _buffer.upsertTask(task);
-              } else if (_buffer) {
-                const event = createCostEvent({
-                  eventId: randomUUID(),
-                  taskId: task.taskId,
-                  eventType: "llm_call",
-                  costUsd: 0,
-                  costConfidence: "estimated",
-                  pricingSource: "unknown",
-                  provider: "openai",
-                  model,
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  latencyMs,
-                  isRetry: false,
-                });
-                _buffer.addEvent(event);
-                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
-                _buffer.upsertTask(task);
-              }
+              recordUsageEvent(task, model, usage, latencyMs, providerRecordId);
             } catch {
               // dexcost errors must never crash user code
             }
@@ -285,13 +325,12 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
           }
 
           const chunk = result.value;
-          if (chunk?.model) model = chunk.model;
-          if (chunk?.usage) {
-            hasUsage = true;
-            inputTokens = chunk.usage.prompt_tokens ?? inputTokens;
-            outputTokens = chunk.usage.completion_tokens ?? outputTokens;
-            cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? cachedTokens;
-          }
+          const response = responsesApi && chunk?.type === "response.completed"
+            ? chunk.response
+            : chunk;
+          if (response?.model) model = response.model;
+          if (response?.id) providerRecordId = response.id;
+          if (response?.usage) usage = response.usage;
           return result;
         },
         async return(value?: any): Promise<IteratorResult<any>> {
@@ -313,4 +352,6 @@ registerInstrument("openai", instrumentOpenai, uninstrumentOpenai, (ref: any) =>
   // Accept the OpenAI class, the module namespace, or Completions directly.
   const mod = ref?.default ?? ref;
   _setCompletionsClass(mod?.Chat?.Completions ?? mod);
+  const responses = mod?.Responses ?? ref?.Responses;
+  if (responses) _setResponsesClass(responses);
 });

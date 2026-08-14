@@ -21,7 +21,10 @@ import (
 //	  "usage": {
 //	    "prompt_tokens":     100,
 //	    "completion_tokens": 50,
-//	    "cached_tokens":     20,   // optional
+//	    "prompt_tokens_details": {
+//	      "cached_tokens": 20,
+//	      "cache_write_tokens": 10,
+//	    },
 //	  }
 //	}
 //
@@ -42,11 +45,18 @@ func RecordOpenAIResponse(
 		return core.Event{}, fmt.Errorf("clients: response missing map field \"usage\"")
 	}
 
-	promptTokens := intFromMap(usage, "prompt_tokens")
-	completionTokens := intFromMap(usage, "completion_tokens")
-	cachedTokens := intFromMap(usage, "cached_tokens")
+	normalized, err := NormalizeOpenAIUsage(usage)
+	if err != nil {
+		return core.Event{}, fmt.Errorf("clients: invalid openai usage: %w", err)
+	}
 
-	costResult := pricingEngine.GetCost(model, promptTokens, completionTokens, cachedTokens, 0)
+	costResult := pricingEngine.GetCost(
+		model,
+		normalized.TotalInputTokens,
+		normalized.TotalOutputTokens,
+		normalized.CacheReadInputTokens,
+		normalized.CacheWriteInputTokens,
+	)
 
 	event := core.NewEvent(taskID, core.EventTypeLLMCall)
 	event.Provider = "openai"
@@ -56,10 +66,19 @@ func RecordOpenAIResponse(
 	event.PricingSource = core.PricingSource(costResult.PricingSource)
 	event.PricingVersion = costResult.PricingVersion
 
-	event.InputTokens = intPtr(promptTokens)
-	event.OutputTokens = intPtr(completionTokens)
-	if cachedTokens > 0 {
-		event.CachedTokens = intPtr(cachedTokens)
+	event.InputTokens = intPtr(normalized.TotalInputTokens)
+	event.OutputTokens = intPtr(normalized.TotalOutputTokens)
+	if normalized.CacheReadInputTokens > 0 {
+		event.CachedTokens = intPtr(normalized.CacheReadInputTokens)
+	}
+	if normalized.CacheWriteInputTokens > 0 {
+		event.Details["cache_write_input_tokens"] = normalized.CacheWriteInputTokens
+	}
+	if normalized.ReasoningOutputTokens > 0 {
+		event.Details["reasoning_output_tokens"] = normalized.ReasoningOutputTokens
+	}
+	if recordID, ok := response["id"].(string); ok && recordID != "" {
+		event.Details["provider_record_id"] = recordID
 	}
 
 	if err := buffer.InsertEvent(event); err != nil {

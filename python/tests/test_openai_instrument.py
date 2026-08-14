@@ -13,12 +13,12 @@ import sys
 import types
 from collections.abc import Generator
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from dexcost.context import get_current_task
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
@@ -31,18 +31,23 @@ def _make_usage(
     prompt_tokens: int = 100,
     completion_tokens: int = 50,
     cached_tokens: int | None = None,
-) -> MagicMock:
+    cache_write_tokens: int = 0,
+    reasoning_tokens: int = 0,
+) -> SimpleNamespace:
     """Build a mock ``CompletionUsage`` object."""
-    usage = MagicMock()
-    usage.prompt_tokens = prompt_tokens
-    usage.completion_tokens = completion_tokens
+    usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        prompt_tokens_details=None,
+        completion_tokens_details=SimpleNamespace(reasoning_tokens=reasoning_tokens),
+    )
 
     if cached_tokens is not None:
-        details = MagicMock()
-        details.cached_tokens = cached_tokens
+        details = SimpleNamespace(
+            cached_tokens=cached_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
         usage.prompt_tokens_details = details
-    else:
-        usage.prompt_tokens_details = None
 
     return usage
 
@@ -53,10 +58,9 @@ def _make_response(
     completion_tokens: int = 50,
     cached_tokens: int | None = None,
     usage_present: bool = True,
-) -> MagicMock:
+) -> SimpleNamespace:
     """Build a mock ``ChatCompletion`` response."""
-    resp = MagicMock()
-    resp.model = model
+    resp = SimpleNamespace(model=model, id="chatcmpl_test")
     if usage_present:
         resp.usage = _make_usage(prompt_tokens, completion_tokens, cached_tokens)
     else:
@@ -75,7 +79,7 @@ def _make_chunk(
     return chunk
 
 
-def _install_fake_openai() -> tuple[MagicMock, MagicMock]:
+def _install_fake_openai() -> tuple[type[Any], type[Any], type[Any], type[Any]]:
     """Install a fake ``openai`` package into ``sys.modules``.
 
     Returns the sync ``Completions`` class and async ``AsyncCompletions``
@@ -87,6 +91,8 @@ def _install_fake_openai() -> tuple[MagicMock, MagicMock]:
     resources_mod = types.ModuleType("openai.resources")
     chat_mod = types.ModuleType("openai.resources.chat")
     completions_mod = types.ModuleType("openai.resources.chat.completions")
+    responses_pkg = types.ModuleType("openai.resources.responses")
+    responses_mod = types.ModuleType("openai.resources.responses.responses")
 
     class Completions:
         @staticmethod
@@ -98,19 +104,35 @@ def _install_fake_openai() -> tuple[MagicMock, MagicMock]:
         async def create(**kwargs: Any) -> Any:
             raise NotImplementedError("should be mocked per-test")
 
+    class Responses:
+        @staticmethod
+        def create(**kwargs: Any) -> Any:
+            raise NotImplementedError("should be mocked per-test")
+
+    class AsyncResponses:
+        @staticmethod
+        async def create(**kwargs: Any) -> Any:
+            raise NotImplementedError("should be mocked per-test")
+
     completions_mod.Completions = Completions  # type: ignore[attr-defined]
     completions_mod.AsyncCompletions = AsyncCompletions  # type: ignore[attr-defined]
+    responses_mod.Responses = Responses  # type: ignore[attr-defined]
+    responses_mod.AsyncResponses = AsyncResponses  # type: ignore[attr-defined]
 
     chat_mod.completions = completions_mod  # type: ignore[attr-defined]
     resources_mod.chat = chat_mod  # type: ignore[attr-defined]
+    responses_pkg.responses = responses_mod  # type: ignore[attr-defined]
+    resources_mod.responses = responses_pkg  # type: ignore[attr-defined]
     openai_mod.resources = resources_mod  # type: ignore[attr-defined]
 
     sys.modules["openai"] = openai_mod
     sys.modules["openai.resources"] = resources_mod
     sys.modules["openai.resources.chat"] = chat_mod
     sys.modules["openai.resources.chat.completions"] = completions_mod
+    sys.modules["openai.resources.responses"] = responses_pkg
+    sys.modules["openai.resources.responses.responses"] = responses_mod
 
-    return Completions, AsyncCompletions  # type: ignore[return-value]
+    return Completions, AsyncCompletions, Responses, AsyncResponses
 
 
 def _uninstall_fake_openai() -> None:
@@ -192,7 +214,7 @@ class TestSyncNonStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.cost_usd >= Decimal("0")
 
     def test_missing_usage_sets_estimated(
@@ -241,6 +263,74 @@ class TestSyncNonStreaming:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         assert events[0].cached_tokens == 50
+
+    def test_responses_api_preserves_luna_billing_buckets(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.responses.responses import Responses
+
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+        from dexcost.instruments.openai import instrument_openai
+
+        usage = SimpleNamespace(
+            input_tokens=2600,
+            output_tokens=300,
+            input_tokens_details=SimpleNamespace(cached_tokens=2000, cache_write_tokens=400),
+            output_tokens_details=SimpleNamespace(reasoning_tokens=120),
+        )
+        response = SimpleNamespace(id="resp_luna_1", model="gpt-5.6-luna", usage=usage)
+        Responses.create = staticmethod(lambda **kwargs: response)  # type: ignore[assignment]
+
+        instrument_openai(tracker)
+        with tracker.task(task_type="luna.responses") as task:
+            assert Responses.create(model="gpt-5.6-luna", input="hello") is response
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.input_tokens == 2600
+        assert event.output_tokens == 300
+        assert event.cached_tokens == 2000
+        assert event.details["cache_write_input_tokens"] == 400
+        assert event.details["reasoning_output_tokens"] == 120
+        assert event.details["provider_record_id"] == "resp_luna_1"
+        assert event.cost_confidence == "unknown"
+
+        wire = to_attribution_observation_v3(event)
+        assert wire is not None
+        assert [(line["metric"], line["quantity"]) for line in wire["usage"]] == [
+            ("input_tokens", "200"),
+            ("cache_read_input_tokens", "2000"),
+            ("cache_write_input_tokens", "400"),
+            ("output_tokens", "180"),
+            ("reasoning_output_tokens", "120"),
+        ]
+
+    def test_invalid_provider_usage_is_durable_but_not_exported(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.responses.responses import Responses
+
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+        from dexcost.instruments.openai import instrument_openai
+
+        usage = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            input_tokens_details=SimpleNamespace(cached_tokens=80, cache_write_tokens=30),
+            output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+        )
+        response = SimpleNamespace(id="resp_invalid", model="gpt-5.6-luna", usage=usage)
+        Responses.create = staticmethod(lambda **kwargs: response)  # type: ignore[assignment]
+
+        instrument_openai(tracker)
+        with tracker.task(task_type="luna.invalid") as task:
+            Responses.create(model="gpt-5.6-luna", input="hello")
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.cost_confidence == "unknown"
+        assert event.details["openai_usage_error"] == (
+            "cache token buckets exceed total input tokens"
+        )
+        assert to_attribution_observation_v3(event) is None
 
     def test_latency_recorded(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """latency_ms is populated on the event."""
@@ -345,7 +435,7 @@ class TestSyncStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 120
         assert ev.output_tokens == 60
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_streaming_without_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """When no usage appears in the stream, cost_confidence is 'estimated'."""
@@ -395,6 +485,49 @@ class TestSyncStreaming:
         assert events[0].latency_ms is not None
         assert events[0].latency_ms >= 0
 
+    def test_responses_stream_without_explicit_task_keeps_luna_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.responses.responses import Responses
+
+        from dexcost.instruments.openai import instrument_openai
+
+        response = SimpleNamespace(
+            id="resp_stream_python",
+            model="gpt-5.6-luna",
+            usage=SimpleNamespace(
+                input_tokens=2600,
+                input_tokens_details=SimpleNamespace(
+                    cached_tokens=2000,
+                    cache_write_tokens=400,
+                ),
+                output_tokens=300,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=120),
+            ),
+        )
+        chunks = [
+            SimpleNamespace(type="response.output_text.delta", delta="Hello"),
+            SimpleNamespace(type="response.completed", response=response),
+        ]
+        Responses.create = staticmethod(lambda **kwargs: iter(chunks))  # type: ignore[assignment]
+
+        instrument_openai(tracker)
+        stream = Responses.create(model="gpt-5.6-luna", input="Brief", stream=True)
+        assert len(list(stream)) == 2
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.input_tokens == 2600
+        assert event.output_tokens == 300
+        assert event.cached_tokens == 2000
+        assert event.details["cache_write_input_tokens"] == 400
+        assert event.details["reasoning_output_tokens"] == 120
+        assert event.details["provider_record_id"] == "resp_stream_python"
+        tasks = storage.query_tasks(task_type="openai.responses")
+        assert len(tasks) == 1
+        assert tasks[0].status == "success"
+
 
 # ---------------------------------------------------------------------------
 # Async non-streaming tests
@@ -439,7 +572,7 @@ class TestAsyncNonStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 200
         assert ev.output_tokens == 80
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_missing_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         from openai.resources.chat.completions import AsyncCompletions
@@ -553,7 +686,7 @@ class TestAsyncStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 90
         assert ev.output_tokens == 40
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_streaming_without_usage(
         self, tracker: CostTracker, storage: SQLiteStorage

@@ -6,12 +6,15 @@ import { randomUUID } from "node:crypto";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { createTask } from "../src/core/models.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import { runWithTask, setContext, clearContext } from "../src/core/context.js";
 import {
   instrumentOpenai,
   uninstrumentOpenai,
   _setCompletionsClass,
   _resetCompletionsClass,
+  _setResponsesClass,
+  _resetResponsesClass,
 } from "../src/instruments/openai.js";
 
 let tmpDir: string;
@@ -58,6 +61,7 @@ describe("OpenAI instrumentation", () => {
     buffer.close();
     uninstrumentOpenai();
     _resetCompletionsClass();
+    _resetResponsesClass();
   });
 
   it("records llm_call event inside tracked task", async () => {
@@ -181,6 +185,87 @@ describe("OpenAI instrumentation", () => {
     expect(events[0].latencyMs).toBeDefined();
     expect(typeof events[0].latencyMs).toBe("number");
   });
+
+  it("records disjoint Luna usage from the Responses API", async () => {
+    class FakeResponses {
+      async create(): Promise<unknown> {
+        return {
+          id: "resp_luna_123",
+          model: "gpt-5.6-luna",
+          usage: {
+            input_tokens: 2_600,
+            input_tokens_details: {
+              cached_tokens: 2_000,
+              cache_write_tokens: 400,
+            },
+            output_tokens: 300,
+            output_tokens_details: { reasoning_tokens: 120 },
+          },
+        };
+      }
+    }
+    _setResponsesClass(FakeResponses);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      await new FakeResponses().create({ model: "gpt-5.6-luna" });
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      inputTokens: 2_600,
+      outputTokens: 300,
+      cachedTokens: 2_000,
+      costConfidence: "unknown",
+    });
+    expect(events[0].details).toMatchObject({
+      provider_record_id: "resp_luna_123",
+      cache_write_input_tokens: 400,
+      reasoning_output_tokens: 120,
+    });
+
+    expect(toAttributionObservationV3(events[0])?.usage).toEqual([
+      expect.objectContaining({ metric: "input_tokens", quantity: "200" }),
+      expect.objectContaining({ metric: "cache_read_input_tokens", quantity: "2000" }),
+      expect.objectContaining({ metric: "cache_write_input_tokens", quantity: "400" }),
+      expect.objectContaining({ metric: "output_tokens", quantity: "180" }),
+      expect.objectContaining({ metric: "reasoning_output_tokens", quantity: "120" }),
+    ]);
+  });
+
+  it("keeps invalid provider usage durable but unexportable", async () => {
+    class InvalidResponses {
+      async create(): Promise<unknown> {
+        return {
+          id: "resp_invalid",
+          model: "gpt-5.6-luna",
+          usage: {
+            input_tokens: 10,
+            input_tokens_details: { cached_tokens: 8, cache_write_tokens: 4 },
+            output_tokens: 1,
+          },
+        };
+      }
+    }
+    _setResponsesClass(InvalidResponses);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      await new InvalidResponses().create({ model: "gpt-5.6-luna" });
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.details.openai_usage_error).toBe(
+      "cache token buckets exceed total input tokens",
+    );
+    expect(toAttributionObservationV3(event)).toBeNull();
+  });
 });
 
 describe("OpenAI streaming instrumentation", () => {
@@ -196,6 +281,7 @@ describe("OpenAI streaming instrumentation", () => {
     buffer.close();
     uninstrumentOpenai();
     _resetCompletionsClass();
+    _resetResponsesClass();
   });
 
   it("records event after stream completes", async () => {
@@ -246,5 +332,61 @@ describe("OpenAI streaming instrumentation", () => {
     expect(events[0].model).toBe("gpt-4o");
     expect(events[0].inputTokens).toBe(100);
     expect(events[0].outputTokens).toBe(20);
+  });
+
+  it("records a Responses completed stream event", async () => {
+    class StreamingResponses {
+      async create(): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "response.output_text.delta", delta: "Hello" };
+            yield {
+              type: "response.completed",
+              response: {
+                id: "resp_stream_luna",
+                model: "gpt-5.6-luna",
+                usage: {
+                  input_tokens: 1_300,
+                  input_tokens_details: {
+                    cached_tokens: 1_000,
+                    cache_write_tokens: 100,
+                  },
+                  output_tokens: 90,
+                  output_tokens_details: { reasoning_tokens: 30 },
+                },
+              },
+            };
+          },
+        };
+      }
+    }
+
+    _setCompletionsClass(FakeCompletions);
+    _setResponsesClass(StreamingResponses);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const stream = await new StreamingResponses().create({
+        model: "gpt-5.6-luna",
+        stream: true,
+      });
+      for await (const _chunk of stream as AsyncIterable<unknown>) {
+        // drain
+      }
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event).toMatchObject({
+      model: "gpt-5.6-luna",
+      inputTokens: 1_300,
+      outputTokens: 90,
+      cachedTokens: 1_000,
+    });
+    expect(event.details).toMatchObject({
+      provider_record_id: "resp_stream_luna",
+      cache_write_input_tokens: 100,
+      reasoning_output_tokens: 30,
+    });
   });
 });

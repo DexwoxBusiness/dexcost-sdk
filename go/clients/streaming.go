@@ -62,9 +62,11 @@ type StreamRecorder struct {
 
 	startTime time.Time
 
-	scanBuf bytes.Buffer
-	model   string
-	usage   map[string]int
+	scanBuf          bytes.Buffer
+	model            string
+	usage            map[string]int
+	providerRecordID string
+	usageError       string
 
 	mu        sync.Mutex
 	finalized bool
@@ -223,19 +225,27 @@ func (s *StreamRecorder) processSSEEvent(event []byte) {
 func (s *StreamRecorder) processOpenAIChunk(chunk map[string]interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if response, ok := chunk["response"].(map[string]interface{}); ok && chunk["type"] == "response.completed" {
+		chunk = response
+	}
 	if m, ok := chunk["model"].(string); ok && m != "" {
 		s.model = m
 	}
+	if id, ok := chunk["id"].(string); ok && id != "" {
+		s.providerRecordID = id
+	}
 	if usage, ok := chunk["usage"].(map[string]interface{}); ok {
-		if v := intFromMap(usage, "prompt_tokens"); v > 0 {
-			s.usage["input"] = v
+		normalized, err := NormalizeOpenAIUsage(usage)
+		if err != nil {
+			s.usageError = err.Error()
+			return
 		}
-		if v := intFromMap(usage, "completion_tokens"); v > 0 {
-			s.usage["output"] = v
-		}
-		if v := intFromMap(usage, "cached_tokens"); v > 0 {
-			s.usage["cached"] = v
-		}
+		s.usage["input"] = normalized.TotalInputTokens
+		s.usage["output"] = normalized.TotalOutputTokens
+		s.usage["cached"] = normalized.CacheReadInputTokens
+		s.usage["cache_write"] = normalized.CacheWriteInputTokens
+		s.usage["reasoning"] = normalized.ReasoningOutputTokens
+		s.usageError = ""
 	}
 }
 
@@ -291,22 +301,36 @@ func (s *StreamRecorder) finalize() {
 	input := s.usage["input"]
 	output := s.usage["output"]
 	cached := s.usage["cached"]
+	cacheWrite := s.usage["cache_write"]
+	reasoning := s.usage["reasoning"]
+	providerRecordID := s.providerRecordID
+	usageError := s.usageError
 	s.mu.Unlock()
-
 	latencyMs := int(time.Since(s.startTime).Milliseconds())
 
 	event := core.NewEvent(s.taskID, core.EventTypeLLMCall)
 	event.Provider = s.providerName()
 	event.Model = model
 	event.LatencyMs = &latencyMs
+	event.Details["streaming"] = true
+	if providerRecordID != "" {
+		event.Details["provider_record_id"] = providerRecordID
+	}
 
-	if input == 0 && output == 0 {
+	if usageError != "" {
+		// Keep the malformed provider observation durable for diagnostics, but
+		// tag it so attribution conversion quarantines it instead of inventing
+		// a request count or a confident zero-dollar result.
 		event.CostUSD = decimal.Zero
 		event.CostConfidence = core.CostConfidenceUnknown
 		event.PricingSource = core.PricingSourceUnknown
-		event.Details["streaming"] = true
+		event.Details["openai_usage_error"] = usageError
+	} else if input == 0 && output == 0 {
+		event.CostUSD = decimal.Zero
+		event.CostConfidence = core.CostConfidenceUnknown
+		event.PricingSource = core.PricingSourceUnknown
 	} else {
-		costResult := s.pricingEng.GetCost(model, input, output, cached, 0)
+		costResult := s.pricingEng.GetCost(model, input, output, cached, cacheWrite)
 		event.CostUSD = costResult.CostUSD
 		event.CostConfidence = core.CostConfidence(costResult.CostConfidence)
 		event.PricingSource = core.PricingSource(costResult.PricingSource)
@@ -316,7 +340,12 @@ func (s *StreamRecorder) finalize() {
 		if cached > 0 {
 			event.CachedTokens = intPtr(cached)
 		}
-		event.Details["streaming"] = true
+		if cacheWrite > 0 {
+			event.Details["cache_write_input_tokens"] = cacheWrite
+		}
+		if reasoning > 0 {
+			event.Details["reasoning_output_tokens"] = reasoning
+		}
 	}
 
 	if err := s.buffer.InsertEvent(event); err != nil {

@@ -170,7 +170,14 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
 def _resource_for(event: Event) -> AttributionResourceV2 | None:
     explicit_type = _string_detail(event.details, "attribution_resource_type")
     explicit_id = _string_detail(event.details, "attribution_resource_id")
-    if explicit_id and explicit_type in {"model", "sku", "instance", "endpoint", "session", "other"}:
+    if explicit_id and explicit_type in {
+        "model",
+        "sku",
+        "instance",
+        "endpoint",
+        "session",
+        "other",
+    }:
         return {"type": cast(Any, explicit_type), "id": explicit_id[:256]}
     if event.event_type == "retry_marker" and event.retry_reason:
         reason = event.retry_reason.strip()
@@ -251,19 +258,29 @@ def _component_and_usage(
             None,
         )
     if event.event_type == "llm_call":
+        if _string_detail(details, "openai_usage_error") is not None:
+            return None
         cached = event.cached_tokens or 0
+        cache_write = _decimal_detail(
+            details,
+            "cache_write_input_tokens",
+            "cache_creation_input_tokens",
+        ) or Decimal(0)
         provider = (event.provider or "").lower()
         cache_counters_are_disjoint = (
             "anthropic" in provider or "bedrock" in provider or provider == "aws"
         )
         input_tokens = event.input_tokens or 0
         if not cache_counters_are_disjoint:
-            input_tokens = max(0, input_tokens - cached)
-        cache_write = _decimal_detail(details, "cache_creation_input_tokens")
+            if Decimal(cached) + cache_write > Decimal(input_tokens):
+                return None
+            input_tokens = Decimal(input_tokens) - Decimal(cached) - cache_write
         reasoning = _decimal_detail(details, "reasoning_output_tokens", "reasoning_tokens")
         output_tokens = Decimal(event.output_tokens or 0)
         if reasoning is not None:
-            output_tokens = max(Decimal(0), output_tokens - reasoning)
+            if reasoning > output_tokens:
+                return None
+            output_tokens -= reasoning
         usage = _compact_usage(
             [
                 _usage_line("input_tokens", input_tokens),
