@@ -196,17 +196,14 @@ class GpuAccountant:
         canonical_product_name = next(
             (n for n in self._device_product_names if n), None,
         )
-        gpu_sku = self._resolve_sku_from_product_name(canonical_product_name)
-        if (
-            self.runtime == GpuRuntimeKind.LOCAL_GPU
-            and gpu_sku is None
-            and canonical_product_name
-        ):
-            # Local workstation GPUs are commonly GeForce/RTX models that do
-            # not belong in the cloud pricing alias table. Preserve the
-            # normalized NVML product name as usage identity without implying
-            # that DexCost knows a public hourly price for the owned device.
+        if self.runtime == GpuRuntimeKind.LOCAL_GPU and canonical_product_name:
+            # A normalized NVML product name is the authoritative identity for
+            # owned hardware. Coarse cloud aliases collapse distinct devices
+            # (for example H100 PCIe/NVL/SXM and RTX 6000 Ada/Quadro), so local
+            # usage must retain the exact model without implying a public rate.
             gpu_sku = canonical_product_name[:256]
+        else:
+            gpu_sku = self._resolve_sku_from_product_name(canonical_product_name)
 
         # MIG profile is set from the START snapshot — independent of whether
         # cgroup PIDs ended up touching the device. Decision #2 transparency:

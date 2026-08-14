@@ -28,6 +28,7 @@
  */
 
 import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { execFile as nodeExecFile } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 
 // Indirection so tests can swap the spawn implementation. The TS ESM bound
@@ -293,9 +294,23 @@ export function getProcessUtilization(
     );
     return null;
   }
+  const out = parsePmonUtilization(r.stdout, Date.now() * 1000);
+  for (const [pidKey, samples] of Object.entries(out)) {
+    const pid = Number(pidKey);
+    const latest = samples.length > 0 ? samples[samples.length - 1].timeStamp : 0;
+    if (latest > (lastSeenTimestamps[pid] ?? 0)) {
+      lastSeenTimestamps[pid] = latest;
+    }
+  }
+  return out;
+}
+
+function parsePmonUtilization(
+  stdout: string,
+  nowUs: number,
+): Record<number, UtilSample[]> {
   const out: Record<number, UtilSample[]> = {};
-  const nowUs = Date.now() * 1000;
-  for (const rawLine of r.stdout.split("\n")) {
+  for (const rawLine of stdout.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     // Skip header lines and N/A rows.
@@ -314,9 +329,6 @@ export function getProcessUtilization(
     } else {
       out[pid] = [sample];
     }
-    if (nowUs > (lastSeenTimestamps[pid] ?? 0)) {
-      lastSeenTimestamps[pid] = nowUs;
-    }
   }
   // Sort each PID's samples by timestamp ascending — the integrator
   // assumes monotonic ordering.
@@ -324,6 +336,40 @@ export function getProcessUtilization(
     out[pid].sort((a, b) => a.timeStamp - b.timeStamp);
   }
   return out;
+}
+
+/**
+ * Non-blocking pmon sample used by the task-lifetime sampler. The existing
+ * synchronous reader remains available for start/final boundaries, while
+ * periodic instrumentation must never pause the application's event loop.
+ */
+export function getProcessUtilizationAsync(
+  index: number,
+): Promise<Record<number, UtilSample[]> | null> {
+  if (!_isNode()) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    nodeExecFile(
+      "nvidia-smi",
+      ["pmon", "-c", "1", "-s", "u", "-i", String(index)],
+      {
+        encoding: "utf8",
+        timeout: 5_000,
+        windowsHide: true,
+        maxBuffer: 1_048_576,
+      },
+      (error, stdout) => {
+        if (error) {
+          _warnOnce(
+            "gpu_process_utilization_failed",
+            `nvidia-smi pmon failed for device ${index}`,
+          );
+          resolve(null);
+          return;
+        }
+        resolve(parsePmonUtilization(String(stdout), Date.now() * 1000));
+      },
+    );
+  });
 }
 
 // ─── Memory + MIG ───────────────────────────────────────────────────────────
