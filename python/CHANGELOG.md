@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.14.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.1...python/v0.14.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **python:** send versioned user agent on control-plane requests ([#146](https://github.com/DexwoxBusiness/dexcost-sdk/issues/146)) ([c25e9b3](https://github.com/DexwoxBusiness/dexcost-sdk/commit/c25e9b3bbe6b2967413b13e36544d8384d1e9270))
+
 ## [0.14.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.14.0...python/v0.14.1) (2026-08-14)
 
 
