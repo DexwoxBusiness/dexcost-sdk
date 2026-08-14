@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.15.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.1...python/v0.15.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **python:** capture OpenAI Responses parse usage ([#152](https://github.com/DexwoxBusiness/dexcost-sdk/issues/152)) ([08bfc18](https://github.com/DexwoxBusiness/dexcost-sdk/commit/08bfc18c2959ab3bdebd55730d2b2f1dde1e3b02))
+
 ## [0.15.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.0...python/v0.15.1) (2026-08-14)
 
 
