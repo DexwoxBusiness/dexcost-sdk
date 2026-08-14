@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.11.0...go/v0.12.0) (2026-08-14)
+
+
+### Features
+
+* **python-typescript-go:** capture local NVIDIA GPU usage ([#138](https://github.com/DexwoxBusiness/dexcost-sdk/issues/138)) ([4997613](https://github.com/DexwoxBusiness/dexcost-sdk/commit/499761322a11a516b07b04d7c37053704f2003b7))
+
 ## [0.11.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.10.1...go/v0.11.0) (2026-08-14)
 
 
