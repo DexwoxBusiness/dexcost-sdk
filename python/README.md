@@ -197,9 +197,41 @@ with tracker.task(task_type="local_whisper", track_gpu=True):
 ```
 
 DexCost records measured GPU-seconds, the normalized device model, and
-utilization evidence. A locally owned GPU remains explicitly unpriced; the SDK
-does not invent a public-cloud rate. Do not enable the option on both a parent
-and its child, because they would measure the same hardware interval twice.
+utilization evidence. Without an explicit user-owned rate, a local GPU and
+local network transfer remain unpriced; the SDK does not apply public-cloud
+fallbacks to locally owned infrastructure.
+
+To attribute your own amortized hardware, electricity, hosting, or bandwidth
+rate, load a versioned YAML file during initialization. The values below are
+illustrative user inputs, not DexCost public-list prices:
+
+```yaml
+version: 2
+rates: {}
+infrastructure:
+  gpu:
+    nvidia-geforce-rtx-5060-ti:
+      per: gpu_hour
+      cost_usd: "0.25"
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+```
+
+```python
+dexcost.init(
+    api_key="dx_live_...",
+    rates_path="rates.yaml",
+)
+```
+
+GPU units can be ``gpu_second`` or ``gpu_hour``. Network units can be
+``gb_transferred`` (request plus response bytes) or ``gb_egress``. Keys are
+normalized and matched exactly; there is no default-rate fallback. Configured
+costs carry ``sdk_rate_registry`` evidence and a deterministic pricing version.
+Do not enable GPU measurement on both a parent and its child, because they
+would measure the same hardware interval twice.
 
 ## TrackedTask Methods
 

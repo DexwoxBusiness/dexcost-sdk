@@ -150,22 +150,34 @@ def rates(
     # If importing, load the file first
     if import_path:
         registry.load(import_path)
-        click.echo(f"Loaded {len(registry.rates)} rate(s) from {import_path}")
+        total = len(registry.rates) + len(registry.infrastructure_rates)
+        click.echo(f"Loaded {total} rate(s) from {import_path}")
 
     if list_rates:
         all_rates = registry.rates
-        if not all_rates:
+        infrastructure = registry.infrastructure_rates
+        if not all_rates and not infrastructure:
             click.echo("No rates registered.")
-        else:
+        if all_rates:
             click.echo(f"{'Service':<40} {'Per':<15} {'Cost (USD)':<15}")
             click.echo("-" * 70)
             for service in sorted(all_rates):
                 entry = all_rates[service]
                 click.echo(f"{service:<40} {entry.per:<15} {entry.cost_usd:<15}")
+        if infrastructure:
+            click.echo()
+            click.echo(f"{'Infrastructure':<40} {'Per':<15} {'Cost (USD)':<15}")
+            click.echo("-" * 70)
+            for kind, key in sorted(infrastructure):
+                entry = infrastructure[(kind, key)]
+                click.echo(
+                    f"{kind + '.' + key:<40} {entry.per:<15} {entry.cost_usd:<15}"
+                )
 
     if export_path:
         registry.export(export_path)
-        click.echo(f"Exported {len(registry.rates)} rate(s) to {export_path}")
+        total = len(registry.rates) + len(registry.infrastructure_rates)
+        click.echo(f"Exported {total} rate(s) to {export_path}")
 
     if not list_rates and not import_path and not export_path:
         click.echo("No action specified. Use --list, --import, or --export.")

@@ -100,7 +100,7 @@ from dexcost.models import (
     TaskStatus,
 )
 from dexcost.pricing import CostResult, PricingEngine
-from dexcost.rates import RateEntry, RateRegistry
+from dexcost.rates import InfrastructureRateEntry, RateEntry, RateRegistry
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.schema import validate
 from dexcost.sync import SyncWorker
@@ -278,6 +278,7 @@ def init(
     network_event_latency_ms: int = 0,
     compute_billing_overrides: dict[str, str] | None = None,
     k8s_node_aware: bool = False,
+    rates_path: str | os.PathLike[str] | None = None,
 ) -> DexcostConfig:
     """Initialize dexcost SDK configuration (US-017).
 
@@ -307,6 +308,8 @@ def init(
             whose response status is >= 400. Default ``True``.
         network_event_latency_ms: Emit a ``network`` event when call latency exceeds
             this many milliseconds. ``0`` disables latency-based emission (default).
+        rates_path: Optional explicit path to a versioned ``rates.yaml`` file.
+            User-owned GPU and network rates are loaded before capture starts.
     """
     global _global_config, _sync_worker, _global_tracker, _pricing_engine
     global _fork_hook_registered
@@ -373,7 +376,7 @@ def init(
     from dexcost.storage.sqlite import SQLiteStorage
 
     tracker_storage = SQLiteStorage(db_path=_global_config.buffer_path)
-    _global_tracker = CostTracker(
+    candidate_tracker = CostTracker(
         storage=tracker_storage,
         auto_instrument=auto_instrument,
         enable_retry_heuristics=enable_retry_heuristics,
@@ -382,6 +385,13 @@ def init(
         compute_billing_overrides=compute_billing_overrides,
         k8s_node_aware=k8s_node_aware,
     )
+    try:
+        if rates_path is not None:
+            candidate_tracker.load_rates(rates_path)
+    except Exception:
+        candidate_tracker.storage.close()
+        raise
+    _global_tracker = candidate_tracker
 
     # Wire the browser adapter to the tracker's storage so track_browser()
     # cost events are persisted durably and shipped by the SyncWorker. The
@@ -663,6 +673,7 @@ __all__ = [
     "DexcostContext",
     "Event",
     "EventType",
+    "InfrastructureRateEntry",
     "InvalidAPIKeyError",
     "PricingEngine",
     "PricingSource",

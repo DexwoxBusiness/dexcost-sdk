@@ -223,3 +223,27 @@ class TestRatesCommand:
         result = runner.invoke(main, ["rates", "--import", str(rates_file)])
         assert result.exit_code == 0
         assert "Loaded 3 rate(s)" in result.output
+
+    def test_rates_lists_infrastructure_entries(self, runner: CliRunner, tmp_path: Any) -> None:
+        rates_file = tmp_path / "rates.yaml"
+        rates_file.write_text(
+            """\
+version: 2
+rates: {}
+infrastructure:
+  gpu:
+    nvidia-geforce-rtx-5060-ti:
+      per: gpu_hour
+      cost_usd: "0.25"
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+""",
+            encoding="utf-8",
+        )
+        result = runner.invoke(main, ["rates", "--import", str(rates_file), "--list"])
+        assert result.exit_code == 0
+        assert "Loaded 2 rate(s)" in result.output
+        assert "gpu.nvidia-geforce-rtx-5060-ti" in result.output
+        assert "network.local" in result.output
