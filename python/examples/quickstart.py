@@ -24,6 +24,8 @@ with tracker.task(task_type="summarise_doc", customer_id="acme-corp") as t:
     t.record_llm_call("openai", "gpt-4o", input_tokens=800, output_tokens=150)
     # Record a non-LLM service fee
     t.record_cost(service="pdf_parser", cost_usd="0.002")
+    # Outcomes are explicit business facts, not inferred from task success.
+    t.record_outcome("document_delivered", value=True)
 
 # Fetch the completed task and inspect the aggregated costs
 task = storage.get_task(str(t.task_id))

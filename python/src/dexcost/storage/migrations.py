@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 7
+TARGET_SCHEMA_VERSION = 8
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -286,3 +286,13 @@ def _sqlite_v6_to_v7(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute(_TASKS_TABLE_INFO).fetchall()}
     if "root_task_id" not in existing:
         conn.execute("ALTER TABLE tasks ADD COLUMN root_task_id TEXT")
+
+
+@register_sqlite_migration(7, 8)
+def _sqlite_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """Add the durable revisioned business-outcome queue."""
+    from dexcost.storage.sqlite import _CREATE_OUTCOMES, _CREATE_OUTCOME_INDEXES
+
+    conn.execute(_CREATE_OUTCOMES)
+    for index_sql in _CREATE_OUTCOME_INDEXES:
+        conn.execute(index_sql)

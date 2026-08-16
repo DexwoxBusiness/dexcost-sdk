@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from dexcost.models.event import Event
+from dexcost.models.outcome import OutcomeRevision
 from dexcost.models.task import Task
 
 
@@ -93,6 +94,24 @@ class StorageBackend(Protocol):
 
     def mark_tasks_synced(self, task_ids: list[str]) -> None:
         """Transition tasks from pending to synced."""
+        ...
+
+    # ── Outcome revision CRUD ────────────────────────────────────────
+
+    def insert_outcome(self, outcome: OutcomeRevision) -> None:
+        """Append one validated business-outcome revision."""
+        ...
+
+    def query_outcomes_for_sync(self, limit: int = 1000) -> list[OutcomeRevision]:
+        """Return pending outcome revisions, oldest first."""
+        ...
+
+    def mark_outcomes_synced(self, revisions: list[tuple[str, int]]) -> None:
+        """Transition outcome revisions from pending to synced."""
+        ...
+
+    def mark_outcomes_quarantined(self, revisions: list[tuple[str, int]]) -> None:
+        """Retain undeliverable outcome revisions outside the pending queue."""
         ...
 
     def purge_synced(self, retention_hours: int = 48) -> int:

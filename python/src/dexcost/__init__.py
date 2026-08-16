@@ -12,6 +12,7 @@ import logging
 import os
 import threading
 import uuid
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -74,6 +75,13 @@ from dexcost.context import (
     set_context as _set_context_impl,
     set_current_task,
     task_context,
+)
+from dexcost.models.outcome import (
+    OutcomeInput,
+    OutcomeRevision,
+    OutcomeState,
+    OutcomeValue,
+    OutcomeValueType,
 )
 from dexcost.instruments import (
     instrument_anthropic,
@@ -567,6 +575,43 @@ def record_cost(
     )
 
 
+def record_outcome(
+    name: str,
+    *,
+    state: OutcomeState = "achieved",
+    value: OutcomeInput | OutcomeValue | None = None,
+    outcome_id: uuid.UUID | str | None = None,
+    revision: int = 1,
+    task_id: uuid.UUID | str | None = None,
+    effective_at: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> OutcomeRevision:
+    """Append an explicit business outcome for a task.
+
+    When ``task_id`` is omitted, the current :func:`task` context owns the
+    outcome. Pass the same ``outcome_id`` with the next revision number when
+    correcting or superseding an earlier record.
+    """
+    if _global_tracker is None:
+        raise RuntimeError("dexcost not initialized — call dexcost.init() first")
+    current = get_current_task()
+    resolved_task_id = task_id or (current.task_id if current is not None else None)
+    if resolved_task_id is None:
+        raise RuntimeError(
+            "No active task — use dexcost.task() or provide task_id explicitly"
+        )
+    return _global_tracker.record_outcome(
+        name,
+        task_id=resolved_task_id,
+        state=state,
+        value=value,
+        outcome_id=outcome_id,
+        revision=revision,
+        effective_at=effective_at,
+        observed_at=observed_at,
+    )
+
+
 def set_api_key(new_key: str) -> bool:
     """Update the SDK's API key and resume sync after auth failure.
 
@@ -675,6 +720,11 @@ __all__ = [
     "EventType",
     "InfrastructureRateEntry",
     "InvalidAPIKeyError",
+    "OutcomeInput",
+    "OutcomeRevision",
+    "OutcomeState",
+    "OutcomeValue",
+    "OutcomeValueType",
     "PricingEngine",
     "PricingSource",
     "RateEntry",
@@ -706,6 +756,7 @@ __all__ = [
     "instrument_mcp",
     "instrument_openai",
     "record_cost",
+    "record_outcome",
     "redact_dict",
     "set_context",
     "set_current_task",

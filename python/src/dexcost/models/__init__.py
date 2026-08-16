@@ -11,12 +11,24 @@ from dexcost.models.enums import (
     TaskStatus,
 )
 from dexcost.models.event import Event
+from dexcost.models.outcome import (
+    OutcomeInput,
+    OutcomeRevision,
+    OutcomeState,
+    OutcomeValue,
+    OutcomeValueType,
+)
 from dexcost.models.task import Task
 
 __all__ = [
     "CostConfidence",
     "Event",
     "EventType",
+    "OutcomeInput",
+    "OutcomeRevision",
+    "OutcomeState",
+    "OutcomeValue",
+    "OutcomeValueType",
     "PricingSource",
     "Task",
     "TaskStatus",

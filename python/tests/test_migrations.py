@@ -118,11 +118,14 @@ class TestStartupVersionCheck:
         )
         conn.commit()
 
-        assert run_sqlite_migrations(conn, 6) == 7
+        assert run_sqlite_migrations(conn, 6) == TARGET_SCHEMA_VERSION
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
         }
         assert "root_task_id" in columns
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='outcomes'"
+        ).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
         conn.close()
 
