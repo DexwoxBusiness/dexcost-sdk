@@ -281,7 +281,12 @@ class SyncWorker:
             for task in tasks
             if (identity := self._prepare_business_identity(task)) is not None
         ]
-        outcomes = st.query_outcomes_for_sync(limit=batch_size)
+        # Outcome persistence was added after the public StorageBackend
+        # protocol had already been adopted by custom backends. Keep outcome
+        # sync capability-based so upgrading dexcost cannot block their
+        # existing event/task delivery when no outcomes are recorded.
+        query_outcomes = getattr(st, "query_outcomes_for_sync", None)
+        outcomes = query_outcomes(limit=batch_size) if callable(query_outcomes) else []
         outcome_dicts = [outcome.to_dict() for outcome in outcomes]
 
         if not event_dicts and not task_dicts and not outcome_dicts:

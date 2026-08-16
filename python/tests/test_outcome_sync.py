@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import urllib.error
 import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from dexcost.config import DexcostConfig
+from dexcost.models.event import Event
 from dexcost.models.outcome import OutcomeRevision, OutcomeValue
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.sync import SyncWorker
@@ -31,6 +34,38 @@ def _success_response() -> MagicMock:
     response.__enter__.return_value = response
     response.__exit__.return_value = False
     return response
+
+
+class _LegacyStorageBackend:
+    """Pre-outcome custom backend used to verify upgrade compatibility."""
+
+    def __init__(self, event: Event) -> None:
+        self.pending_events = [event]
+
+    def query_events_for_sync(self, limit: int = 1000) -> list[Event]:
+        return self.pending_events[:limit]
+
+    def mark_quarantined(self, event_ids: list[str]) -> None:
+        self.pending_events = [
+            event for event in self.pending_events if str(event.event_id) not in event_ids
+        ]
+
+    def query_tasks_for_sync(self, task_ids: list[str]) -> list[object]:
+        return []
+
+    def mark_synced(self, event_ids: list[str]) -> None:
+        self.pending_events = [
+            event for event in self.pending_events if str(event.event_id) not in event_ids
+        ]
+
+    def mark_tasks_synced(self, task_ids: list[str]) -> None:
+        return None
+
+    def purge_synced(self, retention_hours: int = 48) -> int:
+        return 0
+
+    def purge_old_pending(self, max_age_days: int = 7) -> int:
+        return 0
 
 
 @patch("dexcost.sync.urllib.request.urlopen")
@@ -57,6 +92,34 @@ def test_outcome_only_batch_is_uploaded_and_acknowledged(
     assert payload["outcomes"] == [outcome.to_dict()]
     assert storage.query_outcomes_for_sync() == []
     storage.close()
+
+
+@patch("dexcost.sync.urllib.request.urlopen")
+def test_legacy_backend_without_outcome_methods_still_uploads_events(
+    mock_urlopen: MagicMock,
+) -> None:
+    mock_urlopen.return_value = _success_response()
+    event = Event(
+        task_id=uuid.uuid4(),
+        event_type="llm_call",
+        occurred_at=datetime.now(timezone.utc),
+        cost_usd=Decimal("0.001"),
+        cost_confidence="exact",
+        pricing_source="manual",
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=10,
+        output_tokens=5,
+    )
+    storage = _LegacyStorageBackend(event)
+    worker = SyncWorker(config=_config(), storage=storage)  # type: ignore[arg-type]
+
+    assert worker._sync_batch() is True
+    request = mock_urlopen.call_args.args[0]
+    payload = json.loads(request.data)
+    assert [item["event_id"] for item in payload["events"]] == [str(event.event_id)]
+    assert payload["outcomes"] == []
+    assert storage.pending_events == []
 
 
 @patch("dexcost.sync.urllib.request.urlopen")
