@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from collections.abc import Generator
 from decimal import Decimal
 
-__version__ = "0.15.2"
+__version__ = "0.16.0"
 
 from dexcost.attribution import (
     ATTRIBUTION_COMPONENTS,

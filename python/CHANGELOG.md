@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.16.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.2...python/v0.16.0) (2026-08-16)
+
+
+### Features
+
+* **python:** add revisioned business outcomes ([#154](https://github.com/DexwoxBusiness/dexcost-sdk/issues/154)) ([572f7a8](https://github.com/DexwoxBusiness/dexcost-sdk/commit/572f7a8dee6fdf9ba23edfe6f5ab77b658a7ff48))
+
 ## [0.15.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.1...python/v0.15.2) (2026-08-14)
 
 
