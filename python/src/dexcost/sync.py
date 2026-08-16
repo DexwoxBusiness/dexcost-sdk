@@ -281,8 +281,15 @@ class SyncWorker:
             for task in tasks
             if (identity := self._prepare_business_identity(task)) is not None
         ]
+        # Outcome persistence was added after the public StorageBackend
+        # protocol had already been adopted by custom backends. Keep outcome
+        # sync capability-based so upgrading dexcost cannot block their
+        # existing event/task delivery when no outcomes are recorded.
+        query_outcomes = getattr(st, "query_outcomes_for_sync", None)
+        outcomes = query_outcomes(limit=batch_size) if callable(query_outcomes) else []
+        outcome_dicts = [outcome.to_dict() for outcome in outcomes]
 
-        if not event_dicts and not task_dicts:
+        if not event_dicts and not task_dicts and not outcome_dicts:
             self._raise_conversion_failure(failed_event_ids)
             return False
 
@@ -291,6 +298,7 @@ class SyncWorker:
             task_dicts,
             business_identities,
             storage=st,
+            outcomes=outcome_dicts,
         )
         if not posted:
             if self._stop_event.is_set():
@@ -307,11 +315,21 @@ class SyncWorker:
         task_ids = [task["task_id"] for task in task_dicts]
         if task_ids:
             st.mark_tasks_synced(task_ids)
+        outcome_revisions = [
+            (
+                str(outcome["outcome_id"]),
+                int(cast(dict[str, Any], outcome["lifecycle"])["revision"]),
+            )
+            for outcome in outcome_dicts
+        ]
+        if outcome_revisions:
+            st.mark_outcomes_synced(outcome_revisions)
 
         _log.info(
-            "Synced %d events and %d tasks to %s",
+            "Synced %d events, %d tasks, and %d outcomes to %s",
             len(event_ids),
             len(task_dicts),
+            len(outcome_revisions),
             self._config.endpoint,
         )
 
@@ -454,18 +472,21 @@ class SyncWorker:
         business_identities: list[dict[str, Any]] | None = None,
         depth: int = 0,
         storage: StorageBackend | None = None,
+        outcomes: list[dict[str, Any]] | None = None,
     ) -> bool:
-        """POST records, splitting both arrays to stay below the queue limit.
+        """POST records, splitting every durable stream below the queue limit.
 
         Successful leaves are acknowledged immediately. This prevents a later
         sibling failure from replaying records the control plane already
         accepted. Tasks are sent before events when they must be separated.
         """
         identities = business_identities or []
+        outcome_revisions = outcomes or []
         payload: dict[str, Any] = {
             "events": events,
             "tasks": tasks,
             "business_identities": identities,
+            "outcomes": outcome_revisions,
         }
         body = json.dumps(payload).encode("utf-8")
 
@@ -474,10 +495,19 @@ class SyncWorker:
             if posted and storage is not None:
                 event_ids = [str(event["event_id"]) for event in events]
                 task_ids = [str(task["task_id"]) for task in tasks]
+                outcome_ids = [
+                    (
+                        str(outcome["outcome_id"]),
+                        int(cast(dict[str, Any], outcome["lifecycle"])["revision"]),
+                    )
+                    for outcome in outcome_revisions
+                ]
                 if event_ids:
                     storage.mark_synced(event_ids)
                 if task_ids:
                     storage.mark_tasks_synced(task_ids)
+                if outcome_ids:
+                    storage.mark_outcomes_synced(outcome_ids)
             return posted
 
         if len(events) > 1:
@@ -488,11 +518,16 @@ class SyncWorker:
                 len(events),
             )
             first_posted = self._post_with_split(
-                events[:mid], tasks, identities, depth + 1, storage
+                events[:mid],
+                tasks,
+                identities,
+                depth + 1,
+                storage,
+                outcome_revisions,
             )
             if not first_posted:
                 return False
-            return self._post_with_split(events[mid:], [], [], depth + 1, storage)
+            return self._post_with_split(events[mid:], [], [], depth + 1, storage, [])
 
         if len(tasks) > 1:
             mid = len(tasks) // 2
@@ -513,21 +548,69 @@ class SyncWorker:
                 len(tasks),
             )
             first_posted = self._post_with_split(
-                [], tasks[:mid], first_identities, depth + 1, storage
+                [], tasks[:mid], first_identities, depth + 1, storage, []
             )
             if not first_posted:
                 return False
             return self._post_with_split(
-                events, tasks[mid:], second_identities, depth + 1, storage
+                events,
+                tasks[mid:],
+                second_identities,
+                depth + 1,
+                storage,
+                outcome_revisions,
+            )
+
+        if len(outcome_revisions) > 1:
+            mid = len(outcome_revisions) // 2
+            _log.info(
+                "Batch too large (%d bytes, %d outcomes), splitting outcomes",
+                len(body),
+                len(outcome_revisions),
+            )
+            first_posted = self._post_with_split(
+                events,
+                tasks,
+                identities,
+                depth + 1,
+                storage,
+                outcome_revisions[:mid],
+            )
+            if not first_posted:
+                return False
+            return self._post_with_split(
+                [], [], [], depth + 1, storage, outcome_revisions[mid:]
             )
 
         if len(events) == 1 and len(tasks) == 1:
             task_posted = self._post_with_split(
-                [], tasks, identities, depth + 1, storage
+                [], tasks, identities, depth + 1, storage, []
             )
             if not task_posted:
                 return False
-            return self._post_with_split(events, [], [], depth + 1, storage)
+            return self._post_with_split(
+                events, [], [], depth + 1, storage, outcome_revisions
+            )
+
+        if len(events) == 1 and len(outcome_revisions) == 1:
+            event_posted = self._post_with_split(
+                events, [], [], depth + 1, storage, []
+            )
+            if not event_posted:
+                return False
+            return self._post_with_split(
+                [], [], [], depth + 1, storage, outcome_revisions
+            )
+
+        if len(tasks) == 1 and len(outcome_revisions) == 1:
+            task_posted = self._post_with_split(
+                [], tasks, identities, depth + 1, storage, []
+            )
+            if not task_posted:
+                return False
+            return self._post_with_split(
+                [], [], [], depth + 1, storage, outcome_revisions
+            )
 
         if len(events) == 1:
             # A permanently oversized record cannot be delivered. Acknowledge
@@ -547,6 +630,20 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_tasks_synced([str(tasks[0]["task_id"])])
+            return True
+
+        if len(outcome_revisions) == 1:
+            outcome = outcome_revisions[0]
+            revision = (
+                str(outcome["outcome_id"]),
+                int(cast(dict[str, Any], outcome["lifecycle"])["revision"]),
+            )
+            _log.warning(
+                "Single outcome exceeds payload limit (%d bytes), quarantining",
+                len(body),
+            )
+            if storage is not None:
+                storage.mark_outcomes_quarantined([revision])
         return True
 
     def _post_raw(self, body: bytes) -> bool:
@@ -621,6 +718,7 @@ class SyncWorker:
         events: list[dict[str, Any]],
         tasks: list[dict[str, Any]] | None = None,
         business_identities: list[dict[str, Any]] | None = None,
+        outcomes: list[dict[str, Any]] | None = None,
     ) -> bool:
         """POST events and tasks to the cloud ingest endpoint.
 
@@ -630,4 +728,5 @@ class SyncWorker:
             events,
             tasks or [],
             business_identities or [],
+            outcomes=outcomes or [],
         )

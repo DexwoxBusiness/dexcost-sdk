@@ -36,6 +36,10 @@ with dexcost.task(task_type="summarise_doc") as t:
     # Record non-LLM costs manually
     t.record_cost(service="pdf_parser", cost_usd="0.002")
 
+    # Record an actual business result explicitly; task success alone is not
+    # treated as an achieved outcome.
+    t.record_outcome("document_delivered", value=True)
+
 dexcost.close()
 ```
 
@@ -51,6 +55,39 @@ with tracker.task(task_type="summarise_doc", customer_id="acme") as t:
     t.record_llm_call("openai", "gpt-4o", input_tokens=800, output_tokens=150)
     t.record_cost(service="pdf_parser", cost_usd="0.002")
 ```
+
+## Business outcomes
+
+Outcomes are durable, revisioned business facts linked to a task. DexCost does
+not infer them from a successful task because completing technical work is not
+the same as achieving a customer result.
+
+```python
+from decimal import Decimal
+
+with dexcost.task(task_type="campaign_export") as task:
+    # ...generate and export the campaign...
+    exported = task.record_outcome("campaign_exported", value=True)
+    task.record_outcome("approved_creative_count", value=2)
+    task.record_outcome("quality_score", value=Decimal("0.92"))
+
+# Correct a previously recorded outcome by preserving its identity and
+# incrementing the revision. The local ledger rejects gaps and invalid state
+# transitions before they reach the control plane.
+dexcost.record_outcome(
+    "campaign_exported",
+    task_id=task.task_id,
+    outcome_id=exported.outcome_id,
+    revision=2,
+    state="missed",
+    value=False,
+)
+```
+
+Values are exact typed facts: Python strings, booleans, integers, and
+`Decimal` values map to the corresponding wire types. Use canonical lowercase
+names such as `campaign_exported`; do not place secrets or personal data in an
+outcome name or value.
 
 ## Auto-Instrumentation
 

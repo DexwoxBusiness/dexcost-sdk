@@ -14,6 +14,7 @@ from typing import Any
 import dexcost.storage.migrations as _migrations
 from dexcost.models._serde import parse_canonical
 from dexcost.models.event import Event
+from dexcost.models.outcome import OutcomeRevision, OutcomeValue
 from dexcost.models.task import Task
 from dexcost.storage.migrations import run_sqlite_migrations
 
@@ -83,6 +84,23 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
+_CREATE_OUTCOMES = """
+CREATE TABLE IF NOT EXISTS outcomes (
+    outcome_id      TEXT NOT NULL,
+    revision        INTEGER NOT NULL,
+    task_id         TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    lifecycle_state TEXT NOT NULL,
+    effective_at    TEXT NOT NULL,
+    observed_at     TEXT NOT NULL,
+    value_type      TEXT,
+    value_json      TEXT,
+    schema_version  TEXT NOT NULL DEFAULT '1',
+    sync_status     TEXT NOT NULL DEFAULT 'pending',
+    PRIMARY KEY (outcome_id, revision)
+);
+"""
+
 _CREATE_SCHEMA_VERSION = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version_id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +118,10 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id);",
     "CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_events_sync ON events(sync_status, timestamp);",
+]
+
+_CREATE_OUTCOME_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_sync ON outcomes(sync_status, observed_at);",
 ]
 
 
@@ -204,8 +226,11 @@ class SQLiteStorage:
             cur = self._conn.cursor()
             cur.execute(_CREATE_TASKS)
             cur.execute(_CREATE_EVENTS)
+            cur.execute(_CREATE_OUTCOMES)
             cur.execute(_CREATE_SCHEMA_VERSION)
             for idx_sql in _CREATE_INDEXES:
+                cur.execute(idx_sql)
+            for idx_sql in _CREATE_OUTCOME_INDEXES:
                 cur.execute(idx_sql)
 
             # Seed version if the table is empty
@@ -595,8 +620,114 @@ class SQLiteStorage:
             self._conn.execute(sql, task_ids)
             self._conn.commit()
 
+    # ── Outcome revision CRUD ────────────────────────────────────────
+
+    def insert_outcome(self, outcome: OutcomeRevision) -> None:
+        """Append one outcome revision with local ledger invariants."""
+        payload = outcome.to_dict()
+        value = payload.get("value")
+        value_type = outcome.value.type if outcome.value is not None else None
+        value_json = json.dumps(value, sort_keys=True) if value is not None else None
+
+        with self._lock:
+            same = self._conn.execute(
+                "SELECT * FROM outcomes WHERE outcome_id=? AND revision=?",
+                (str(outcome.outcome_id), outcome.revision),
+            ).fetchone()
+            if same is not None:
+                if self._row_to_outcome(same).to_dict() != payload:
+                    raise ValueError(
+                        f"outcome {outcome.outcome_id} revision {outcome.revision} "
+                        "already exists with different contents"
+                    )
+                return
+
+            previous = self._conn.execute(
+                "SELECT * FROM outcomes WHERE outcome_id=? ORDER BY revision DESC LIMIT 1",
+                (str(outcome.outcome_id),),
+            ).fetchone()
+            expected_revision = (int(previous["revision"]) if previous is not None else 0) + 1
+            if outcome.revision != expected_revision:
+                raise ValueError(
+                    f"outcome {outcome.outcome_id} expected revision "
+                    f"{expected_revision}, received {outcome.revision}"
+                )
+            if previous is not None:
+                if previous["task_id"] != str(outcome.task_id) or previous["name"] != outcome.name:
+                    raise ValueError("an outcome cannot change task_id or name across revisions")
+                allowed = {
+                    "pending": {"pending", "achieved", "missed", "voided"},
+                    "achieved": {"achieved", "missed", "voided"},
+                    "missed": {"missed", "achieved", "voided"},
+                    "voided": set(),
+                }
+                if outcome.state not in allowed[str(previous["lifecycle_state"])]:
+                    raise ValueError(
+                        "invalid outcome lifecycle transition "
+                        f"{previous['lifecycle_state']} -> {outcome.state}"
+                    )
+
+            self._conn.execute(
+                """INSERT INTO outcomes (
+                    outcome_id, revision, task_id, name, lifecycle_state,
+                    effective_at, observed_at, value_type, value_json,
+                    schema_version, sync_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (
+                    str(outcome.outcome_id),
+                    outcome.revision,
+                    str(outcome.task_id),
+                    outcome.name,
+                    outcome.state,
+                    outcome.effective_at.isoformat(),
+                    outcome.observed_at.isoformat(),
+                    value_type,
+                    value_json,
+                    outcome.schema_version,
+                ),
+            )
+            self._conn.commit()
+
+    def query_outcomes_for_sync(self, limit: int = 1000) -> list[OutcomeRevision]:
+        """Return pending outcome revisions, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM outcomes WHERE sync_status='pending' "
+                "ORDER BY observed_at ASC, outcome_id ASC, revision ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._row_to_outcome(row) for row in rows]
+
+    def mark_outcomes_synced(self, revisions: list[tuple[str, int]]) -> None:
+        """Transition the identified outcome revisions to synced."""
+        if not revisions:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE outcomes SET sync_status='synced' "
+                "WHERE outcome_id=? AND revision=?",
+                revisions,
+            )
+            self._conn.commit()
+
+    def mark_outcomes_quarantined(self, revisions: list[tuple[str, int]]) -> None:
+        """Retain undeliverable outcome revisions without blocking later rows."""
+        if not revisions:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE outcomes SET sync_status='quarantined' "
+                "WHERE sync_status='pending' AND outcome_id=? AND revision=?",
+                revisions,
+            )
+            self._conn.commit()
+
     def purge_synced(self, retention_hours: int = 48) -> int:
-        """Delete synced events older than *retention_hours* and VACUUM.
+        """Delete synced telemetry events older than *retention_hours* and VACUUM.
+
+        Outcome revisions are intentionally retained. They form a local
+        append-only ledger whose latest revision is required to validate a
+        correction recorded days or months later.
 
         Returns the number of deleted rows.
         """
@@ -612,9 +743,11 @@ class SQLiteStorage:
         return deleted
 
     def purge_old_pending(self, max_age_days: int = 7) -> int:
-        """Remove pending or quarantined events older than *max_age_days*.
+        """Remove pending or quarantined telemetry older than *max_age_days*.
 
         Safety net for events that can never be synced (invalid API key, etc.).
+        Outcome revisions are retained because removing one revision would
+        corrupt the local sequence required by a later correction.
         Returns the number of deleted rows.
         """
         with self._lock:
@@ -640,6 +773,22 @@ class SQLiteStorage:
             self._conn.close()
 
     # ── Private row converters ────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_outcome(row: sqlite3.Row) -> OutcomeRevision:
+        raw_value = json.loads(row["value_json"]) if row["value_json"] is not None else None
+        value = OutcomeValue.from_dict(raw_value) if raw_value is not None else None
+        return OutcomeRevision(
+            outcome_id=uuid.UUID(row["outcome_id"]),
+            revision=int(row["revision"]),
+            task_id=uuid.UUID(row["task_id"]),
+            name=row["name"],
+            state=row["lifecycle_state"],
+            effective_at=parse_canonical(row["effective_at"]),
+            observed_at=parse_canonical(row["observed_at"]),
+            value=value,
+            schema_version=row["schema_version"],
+        )
 
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> Task:

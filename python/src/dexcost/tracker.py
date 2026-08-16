@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 from dexcost.context import async_task_context, get_current_task, set_current_task, task_context
 from dexcost.dev_console import is_dev_mode, log_event, log_task_complete
 from dexcost.models.event import Event
+from dexcost.models.outcome import (
+    OutcomeInput,
+    OutcomeRevision,
+    OutcomeState,
+    OutcomeValue,
+)
 from dexcost.models.task import Task
 from dexcost.pricing import CostResult, PricingEngine
 from dexcost.rates import RateRegistry
@@ -346,6 +352,34 @@ class TrackedTask:
             details=attribution_details,
         )
         return event
+
+    def record_outcome(
+        self,
+        name: str,
+        *,
+        state: OutcomeState = "achieved",
+        value: OutcomeInput | OutcomeValue | None = None,
+        outcome_id: uuid.UUID | str | None = None,
+        revision: int = 1,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> OutcomeRevision:
+        """Append a business outcome revision for this task.
+
+        Outcomes are explicit domain facts. Ending a task successfully never
+        manufactures an achieved outcome; callers record one only after the
+        business condition represented by *name* has actually occurred.
+        """
+        return self._tracker.record_outcome(
+            name,
+            task_id=self._task.task_id,
+            state=state,
+            value=value,
+            outcome_id=outcome_id,
+            revision=revision,
+            effective_at=effective_at,
+            observed_at=observed_at,
+        )
 
     def mark_retry(
         self,
@@ -1071,6 +1105,42 @@ class CostTracker:
         """Return an exact user-owned infrastructure rate, or ``None``."""
         entry = self._rate_registry.get_infrastructure(kind, key)
         return entry.cost_usd if entry is not None else None
+
+    def record_outcome(
+        self,
+        name: str,
+        *,
+        task_id: uuid.UUID | str,
+        state: OutcomeState = "achieved",
+        value: OutcomeInput | OutcomeValue | None = None,
+        outcome_id: uuid.UUID | str | None = None,
+        revision: int = 1,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> OutcomeRevision:
+        """Append a durable, revisioned business outcome.
+
+        Use the same ``outcome_id`` and increment ``revision`` for a
+        correction or lifecycle transition. The storage ledger rejects gaps,
+        mutations of task/name identity, and invalid state transitions before
+        the record reaches the control plane.
+        """
+        now = datetime.now(timezone.utc)
+        resolved_task_id = _coerce_task_uuid("task_id", task_id)
+        if resolved_task_id is None:  # Defensive for dynamically typed callers.
+            raise ValueError("task_id must be a valid UUID")
+        outcome = OutcomeRevision(
+            task_id=resolved_task_id,
+            name=name,
+            state=state,
+            value=(OutcomeValue.from_input(value) if value is not None else None),
+            outcome_id=_coerce_task_uuid("outcome_id", outcome_id) or uuid.uuid4(),
+            revision=revision,
+            effective_at=effective_at or now,
+            observed_at=observed_at or now,
+        )
+        self._storage.insert_outcome(outcome)
+        return outcome
 
     def load_rates(self, path: str | Path) -> None:
         """Load rates from a YAML config file.
