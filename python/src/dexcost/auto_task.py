@@ -26,21 +26,27 @@ def needs_auto_task() -> bool:
 def create_auto_task(task_type: str) -> Task:
     """Create a task with attribution from the current DexcostContext.
 
-    Reads ``customer_id``, ``project_id``, ``metadata``, and ``agent``
-    from :func:`set_context`.  When ``agent`` is set in the context it
-    overrides the provided *task_type*.
+    Agent and workflow identity remain separate from *task_type*. When the
+    context contains business identity, the automatic task becomes its own
+    canonical root so the identity snapshot is deliverable.
     """
     ctx = get_context()
-    effective_task_type = task_type
-    if ctx and ctx.agent:
-        effective_task_type = ctx.agent
+    task_id = uuid.uuid4()
+    has_business_identity = ctx is not None and any(
+        (ctx.customer_id, ctx.project_id, ctx.agent, ctx.workflow_id)
+    )
     return Task(
-        task_id=uuid.uuid4(),
-        task_type=effective_task_type,
+        task_id=task_id,
+        task_type=task_type,
         status="pending",
         started_at=datetime.now(timezone.utc),
         customer_id=ctx.customer_id if ctx else None,
         project_id=ctx.project_id if ctx else None,
+        root_task_id=task_id if has_business_identity else None,
+        agent_id=ctx.agent if ctx else None,
+        agent_version=ctx.agent_version if ctx else None,
+        workflow_id=ctx.workflow_id if ctx else None,
+        workflow_session_id=ctx.workflow_session_id if ctx else None,
         metadata=dict(ctx.metadata) if ctx and ctx.metadata else {},
     )
 

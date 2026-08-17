@@ -71,16 +71,22 @@ class SessionManager:
 
         # Create a new session task
         ctx = get_context()
-        agent = getattr(ctx, "agent", None) if ctx else None
-        task_type = agent if agent else "agent_session"
-
+        task_id = uuid.uuid4()
+        has_business_identity = ctx is not None and any(
+            (ctx.customer_id, ctx.project_id, ctx.agent, ctx.workflow_id)
+        )
         session = Task(
-            task_id=uuid.uuid4(),
-            task_type=task_type,
+            task_id=task_id,
+            task_type="agent_session",
             status="pending",
             started_at=datetime.now(timezone.utc),
             customer_id=ctx.customer_id if ctx else None,
             project_id=ctx.project_id if ctx else None,
+            root_task_id=task_id if has_business_identity else None,
+            agent_id=ctx.agent if ctx else None,
+            agent_version=ctx.agent_version if ctx else None,
+            workflow_id=ctx.workflow_id if ctx else None,
+            workflow_session_id=ctx.workflow_session_id if ctx else None,
             metadata=dict(ctx.metadata) if ctx and ctx.metadata else {},
         )
 

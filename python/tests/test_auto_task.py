@@ -41,6 +41,27 @@ def test_create_auto_task_with_context() -> None:
     assert task.metadata == {"env": "prod"}
     assert task.task_type == "resolve_ticket"
     assert task.status == "pending"
+    assert task.root_task_id == task.task_id
+
+
+def test_create_auto_task_preserves_agent_and_workflow_identity() -> None:
+    set_context(
+        customer_id="dexcost-internal",
+        project_id="dexcost-marketing-campaign",
+        agent="campaign_director",
+        agent_version="demo-v1",
+        workflow_id="campaign_generation",
+        workflow_session_id="campaign-001",
+    )
+
+    task = create_auto_task("llm_call")
+
+    assert task.task_type == "llm_call"
+    assert task.agent_id == "campaign_director"
+    assert task.agent_version == "demo-v1"
+    assert task.workflow_id == "campaign_generation"
+    assert task.workflow_session_id == "campaign-001"
+    assert task.root_task_id == task.task_id
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,36 @@ Values are exact typed facts: Python strings, booleans, integers, and
 names such as `campaign_exported`; do not place secrets or personal data in an
 outcome name or value.
 
+## Agent and workflow identity
+
+Keep the business workflow, deployed agent, and technical task type as separate
+dimensions. Set the stable identity once; nested tasks inherit it automatically.
+
+```python
+dexcost.set_context(
+    customer_id="dexcost-internal",
+    project_id="dexcost-marketing-campaign",
+    agent="campaign_director",
+    agent_version="demo-v1",
+    workflow_id="campaign_generation",
+    workflow_session_id="campaign-2026-08-17",
+)
+
+with dexcost.task(task_type="campaign.run") as campaign:
+    with dexcost.task(task_type="campaign.script.generate"):
+        generate_script()
+
+    with dexcost.task(task_type="campaign.narration.generate"):
+        generate_narration()
+
+    campaign.record_outcome("campaign_exported", value=True)
+```
+
+This produces one canonical campaign hierarchy while preserving the actual
+work-step task types. Agent identity never replaces `task_type`, and technical
+success is not presented as a business outcome unless the application records
+one explicitly.
+
 ## Auto-Instrumentation
 
 dexcost auto-instruments **6 LLM providers** and **5 HTTP libraries**.

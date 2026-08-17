@@ -44,6 +44,13 @@ class Task:
     # Legacy tasks leave this unset and retain their existing wire behavior.
     root_task_id: uuid.UUID | None = field(default=None, kw_only=True)
 
+    # Canonical agent/workflow identity. These fields are keyword-only so
+    # extending business attribution cannot shift the public positional API.
+    agent_id: str | None = field(default=None, kw_only=True)
+    agent_version: str | None = field(default=None, kw_only=True)
+    workflow_id: str | None = field(default=None, kw_only=True)
+    workflow_session_id: str | None = field(default=None, kw_only=True)
+
     # Experiment tracking
     experiment_id: str | None = None
     variant: str | None = None
@@ -133,6 +140,14 @@ class Task:
         }
         if self.root_task_id is not None:
             data["root_task_id"] = str(self.root_task_id)
+        if self.agent_id is not None:
+            data["agent_id"] = self.agent_id
+        if self.agent_version is not None:
+            data["agent_version"] = self.agent_version
+        if self.workflow_id is not None:
+            data["workflow_id"] = self.workflow_id
+        if self.workflow_session_id is not None:
+            data["workflow_session_id"] = self.workflow_session_id
         return data
 
     @classmethod
@@ -158,6 +173,10 @@ class Task:
                 root_task_id=(
                     uuid.UUID(data["root_task_id"]) if data.get("root_task_id") else None
                 ),
+                agent_id=data.get("agent_id"),
+                agent_version=data.get("agent_version"),
+                workflow_id=data.get("workflow_id"),
+                workflow_session_id=data.get("workflow_session_id"),
                 experiment_id=data.get("experiment_id"),
                 variant=data.get("variant"),
                 llm_cost_usd=Decimal(data["llm_cost_usd"]),

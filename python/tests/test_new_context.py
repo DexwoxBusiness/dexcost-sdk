@@ -52,6 +52,40 @@ def test_set_context_with_metadata() -> None:
     clear_context()
 
 
+def test_set_context_with_agent_and_workflow_identity() -> None:
+    clear_context()
+    set_context(
+        agent="campaign_director",
+        agent_version="demo-v1",
+        workflow_id="campaign_generation",
+        workflow_session_id="campaign-001",
+    )
+
+    ctx = get_context()
+
+    assert ctx is not None
+    assert ctx.agent == "campaign_director"
+    assert ctx.agent_version == "demo-v1"
+    assert ctx.workflow_id == "campaign_generation"
+    assert ctx.workflow_session_id == "campaign-001"
+    clear_context()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"agent": "campaign_director"}, "agent and agent_version"),
+        ({"agent_version": "demo-v1"}, "agent and agent_version"),
+        ({"workflow_session_id": "campaign-001"}, "requires workflow_id"),
+    ],
+)
+def test_set_context_rejects_incomplete_business_identity(
+    kwargs: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        set_context(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # 4. set_context replaces previous context
 # ---------------------------------------------------------------------------

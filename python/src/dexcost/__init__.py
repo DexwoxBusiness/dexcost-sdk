@@ -246,6 +246,9 @@ def set_context(
     project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     agent: str | None = None,
+    agent_version: str | None = None,
+    workflow_id: str | None = None,
+    workflow_session_id: str | None = None,
 ) -> None:
     """Set the attribution context for subsequent LLM calls and tasks.
 
@@ -253,14 +256,19 @@ def set_context(
         customer_id: Identifier for the customer.
         project_id: Identifier for the project.
         metadata: Optional dict of extra metadata.
-        agent: Optional agent name — used as task_type for auto-created
-            session tasks instead of the default ``"agent_session"``.
+        agent: Stable agent identifier, kept separate from task type.
+        agent_version: Version or deployment identifier for ``agent``.
+        workflow_id: Stable workflow identifier.
+        workflow_session_id: Optional workflow execution/session identifier.
     """
     _set_context_impl(
         customer_id=customer_id,
         project_id=project_id,
         metadata=metadata,
         agent=agent,
+        agent_version=agent_version,
+        workflow_id=workflow_id,
+        workflow_session_id=workflow_session_id,
     )
 
 
@@ -494,7 +502,8 @@ def task(
 ) -> Generator[TrackedTask, None, None]:
     """Group multiple costs into one business task.
 
-    Reads ``customer_id`` and ``project_id`` from :func:`set_context` if set.
+    Reads customer, project, agent, and workflow identity from
+    :func:`set_context` if set.
 
     Args:
         task_type: Identifier for the kind of task (e.g. ``"resolve_ticket"``).
@@ -516,16 +525,23 @@ def task(
     if _global_tracker is None:
         raise RuntimeError("dexcost not initialized — call dexcost.init() first")
     ctx = get_context()
+    merged_metadata = dict(ctx.metadata) if ctx and ctx.metadata else {}
+    if metadata:
+        merged_metadata.update(metadata)
     with _global_tracker.task(
         task_type=task_type,
         customer_id=ctx.customer_id if ctx else None,
         project_id=ctx.project_id if ctx else None,
-        metadata=metadata,
+        metadata=merged_metadata,
         experiment_id=experiment_id,
         variant=variant,
         task_id=task_id,
         root_task_id=root_task_id,
         parent_task_id=parent_task_id,
+        agent_id=ctx.agent if ctx else None,
+        agent_version=ctx.agent_version if ctx else None,
+        workflow_id=ctx.workflow_id if ctx else None,
+        workflow_session_id=ctx.workflow_session_id if ctx else None,
         track_gpu=track_gpu,
     ) as t:
         yield t

@@ -10,9 +10,11 @@ from typing import Any, cast
 
 from dexcost.attribution.types import (
     ATTRIBUTION_UNIT_BY_METRIC,
+    AttributionBusinessAgentIdentityV1,
     AttributionBusinessAssignmentV1,
     AttributionBusinessIdentityRevisionV1,
     AttributionBusinessTaskHierarchyV1,
+    AttributionBusinessWorkflowIdentityV1,
     AttributionComponent,
     AttributionCostEvidenceSource,
     AttributionCostEvidenceV2,
@@ -465,6 +467,10 @@ def to_business_identity_revision_v1(
         raise ValueError("business-attributed task_type must be a canonical identifier")
     if task.variant is not None and task.experiment_id is None:
         raise ValueError("variant requires experiment_id")
+    if (task.agent_id is None) != (task.agent_version is None):
+        raise ValueError("agent_id and agent_version must be supplied together")
+    if task.workflow_session_id is not None and task.workflow_id is None:
+        raise ValueError("workflow_session_id requires workflow_id")
     if task.parent_task_id is None:
         if task.root_task_id != task.task_id:
             raise ValueError("a root task must identify itself as root_task_id")
@@ -487,7 +493,7 @@ def to_business_identity_revision_v1(
     if task.variant is not None:
         assignment["variant"] = task.variant
     timestamp = iso_canonical(task.started_at)
-    return {
+    identity: AttributionBusinessIdentityRevisionV1 = {
         "schema_version": "1",
         "task_id": str(task.task_id),
         "revision": 1,
@@ -497,3 +503,15 @@ def to_business_identity_revision_v1(
         "task": hierarchy,
         "assignment": assignment,
     }
+    if task.workflow_id is not None:
+        workflow: AttributionBusinessWorkflowIdentityV1 = {"id": task.workflow_id}
+        if task.workflow_session_id is not None:
+            workflow["session_id"] = task.workflow_session_id
+        identity["workflow"] = workflow
+    if task.agent_id is not None and task.agent_version is not None:
+        agent: AttributionBusinessAgentIdentityV1 = {
+            "id": task.agent_id,
+            "version": task.agent_version,
+        }
+        identity["agent"] = agent
+    return identity

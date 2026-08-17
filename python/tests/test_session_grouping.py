@@ -76,15 +76,18 @@ class TestSessionReuse:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentTaskType:
-    """set_context(agent='foo') makes session task_type = 'foo'."""
+class TestAgentIdentity:
+    """Agent identity remains separate from the session task type."""
 
-    def test_agent_sets_task_type(self) -> None:
-        set_context(agent="research_agent")
+    def test_agent_does_not_replace_task_type(self) -> None:
+        set_context(agent="research_agent", agent_version="v1")
         mgr = SessionManager()
         task = mgr.get_or_create_session("llm_call")
 
-        assert task.task_type == "research_agent"
+        assert task.task_type == "agent_session"
+        assert task.agent_id == "research_agent"
+        assert task.agent_version == "v1"
+        assert task.root_task_id == task.task_id
 
     def test_no_agent_defaults_to_agent_session(self) -> None:
         set_context(customer_id="cust-1")
@@ -98,13 +101,21 @@ class TestAgentTaskType:
             customer_id="cust-123",
             project_id="proj-456",
             agent="support_bot",
+            agent_version="demo-v2",
+            workflow_id="support_resolution",
+            workflow_session_id="ticket-123",
         )
         mgr = SessionManager()
         task = mgr.get_or_create_session("llm_call")
 
         assert task.customer_id == "cust-123"
         assert task.project_id == "proj-456"
-        assert task.task_type == "support_bot"
+        assert task.task_type == "agent_session"
+        assert task.agent_id == "support_bot"
+        assert task.agent_version == "demo-v2"
+        assert task.workflow_id == "support_resolution"
+        assert task.workflow_session_id == "ticket-123"
+        assert task.root_task_id == task.task_id
 
 
 # ---------------------------------------------------------------------------

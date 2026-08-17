@@ -362,6 +362,33 @@ class TestNestedTracking:
         assert len(child_tasks) == 1
         assert child_tasks[0].parent_task_id == parent_tasks[0].task_id
 
+    def test_nested_tasks_inherit_agent_and_workflow_identity(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        with tracker.task(
+            task_type="campaign.root",
+            customer_id="dexcost-internal",
+            project_id="dexcost-marketing-campaign",
+            agent_id="campaign_director",
+            agent_version="demo-v1",
+            workflow_id="campaign_generation",
+            workflow_session_id="campaign-001",
+        ) as root:
+            with tracker.task(task_type="campaign.scene.render"):
+                pass
+
+        parent = storage.query_tasks(task_type="campaign.root")[0]
+        child = storage.query_tasks(task_type="campaign.scene.render")[0]
+        assert parent.root_task_id == root.task_id
+        assert child.parent_task_id == root.task_id
+        assert child.root_task_id == root.task_id
+        assert child.customer_id == "dexcost-internal"
+        assert child.project_id == "dexcost-marketing-campaign"
+        assert child.agent_id == "campaign_director"
+        assert child.agent_version == "demo-v1"
+        assert child.workflow_id == "campaign_generation"
+        assert child.workflow_session_id == "campaign-001"
+
 
 # ---------------------------------------------------------------------------
 # Integration test (simulated OpenAI call)

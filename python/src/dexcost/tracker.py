@@ -95,6 +95,10 @@ def _build_task(
     task_id: uuid.UUID | str | None,
     root_task_id: uuid.UUID | str | None,
     parent_task_id: uuid.UUID | str | None,
+    agent_id: str | None,
+    agent_version: str | None,
+    workflow_id: str | None,
+    workflow_session_id: str | None,
 ) -> Task:
     """Create a task and resolve in-process or explicit hierarchy safely."""
     resolved_task_id = _coerce_task_uuid("task_id", task_id) or uuid.uuid4()
@@ -106,6 +110,37 @@ def _build_task(
         resolved_parent_id = parent.task_id
         if resolved_root_id is None and parent.root_task_id is not None:
             resolved_root_id = parent.root_task_id
+        if customer_id is None:
+            customer_id = parent.customer_id
+        if project_id is None:
+            project_id = parent.project_id
+        if experiment_id is None:
+            experiment_id = parent.experiment_id
+            variant = parent.variant
+        if agent_id is None:
+            agent_id = parent.agent_id
+            agent_version = parent.agent_version
+        if workflow_id is None:
+            workflow_id = parent.workflow_id
+            workflow_session_id = parent.workflow_session_id
+
+    if (agent_id is None) != (agent_version is None):
+        raise ValueError("agent_id and agent_version must be supplied together")
+    if workflow_session_id is not None and workflow_id is None:
+        raise ValueError("workflow_session_id requires workflow_id")
+
+    has_business_identity = any(
+        (
+            customer_id,
+            project_id,
+            experiment_id,
+            variant,
+            agent_id,
+            workflow_id,
+        )
+    )
+    if resolved_root_id is None and parent is None and has_business_identity:
+        resolved_root_id = resolved_task_id
 
     if resolved_root_id is not None:
         if _BUSINESS_CANONICAL_NAME.fullmatch(task_type) is None:
@@ -119,6 +154,10 @@ def _build_task(
             ("project_id", project_id),
             ("experiment_id", experiment_id),
             ("variant", variant),
+            ("agent_id", agent_id),
+            ("agent_version", agent_version),
+            ("workflow_id", workflow_id),
+            ("workflow_session_id", workflow_session_id),
         ):
             if value is not None and (not value.strip() or len(value) > 256):
                 raise ValueError(f"{name} must contain between 1 and 256 characters")
@@ -141,6 +180,10 @@ def _build_task(
         metadata=copy.deepcopy(metadata) if metadata else {},
         parent_task_id=resolved_parent_id,
         root_task_id=resolved_root_id,
+        agent_id=agent_id,
+        agent_version=agent_version,
+        workflow_id=workflow_id,
+        workflow_session_id=workflow_session_id,
         experiment_id=experiment_id,
         variant=variant,
     )
@@ -686,6 +729,10 @@ class _TaskContextManager:
         task_id: uuid.UUID | str | None = None,
         root_task_id: uuid.UUID | str | None = None,
         parent_task_id: uuid.UUID | str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        workflow_id: str | None = None,
+        workflow_session_id: str | None = None,
         track_gpu: bool = False,
     ) -> None:
         self._tracker = tracker
@@ -698,6 +745,10 @@ class _TaskContextManager:
         self._task_id = task_id
         self._root_task_id = root_task_id
         self._parent_task_id = parent_task_id
+        self._agent_id = agent_id
+        self._agent_version = agent_version
+        self._workflow_id = workflow_id
+        self._workflow_session_id = workflow_session_id
         self._track_gpu = track_gpu
         self._tracked: TrackedTask | None = None
         self._token: contextvars.Token[Task | None] | None = None
@@ -713,6 +764,10 @@ class _TaskContextManager:
             task_id=self._task_id,
             root_task_id=self._root_task_id,
             parent_task_id=self._parent_task_id,
+            agent_id=self._agent_id,
+            agent_version=self._agent_version,
+            workflow_id=self._workflow_id,
+            workflow_session_id=self._workflow_session_id,
         )
 
         self._tracker._storage.insert_task(task)
@@ -1178,6 +1233,10 @@ class CostTracker:
         task_id: uuid.UUID | str | None = None,
         root_task_id: uuid.UUID | str | None = None,
         parent_task_id: uuid.UUID | str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        workflow_id: str | None = None,
+        workflow_session_id: str | None = None,
         track_gpu: bool = False,
     ) -> TrackedTask:
         """Manually start a task and return a :class:`TrackedTask` handle.
@@ -1217,6 +1276,10 @@ class CostTracker:
             task_id=task_id,
             root_task_id=root_task_id,
             parent_task_id=parent_task_id,
+            agent_id=agent_id,
+            agent_version=agent_version,
+            workflow_id=workflow_id,
+            workflow_session_id=workflow_session_id,
         )
 
         self._storage.insert_task(task)
@@ -1241,6 +1304,10 @@ class CostTracker:
         task_id: uuid.UUID | str | None = None,
         root_task_id: uuid.UUID | str | None = None,
         parent_task_id: uuid.UUID | str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        workflow_id: str | None = None,
+        workflow_session_id: str | None = None,
         track_gpu: bool = False,
     ) -> _TaskContextManager:
         """Return a context manager for explicit task tracking.
@@ -1270,6 +1337,10 @@ class CostTracker:
             task_id=task_id,
             root_task_id=root_task_id,
             parent_task_id=parent_task_id,
+            agent_id=agent_id,
+            agent_version=agent_version,
+            workflow_id=workflow_id,
+            workflow_session_id=workflow_session_id,
             track_gpu=track_gpu,
         )
 
@@ -1287,6 +1358,10 @@ class CostTracker:
         variant: str | None = None,
         root_task_id: uuid.UUID | str | None = None,
         parent_task_id: uuid.UUID | str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        workflow_id: str | None = None,
+        workflow_session_id: str | None = None,
         track_gpu: bool = False,
     ) -> Callable[[F], F]:
         """Decorator that wraps *func* with automatic task tracking.
@@ -1313,6 +1388,10 @@ class CostTracker:
                         task_id=None,
                         root_task_id=root_task_id,
                         parent_task_id=parent_task_id,
+                        agent_id=agent_id,
+                        agent_version=agent_version,
+                        workflow_id=workflow_id,
+                        workflow_session_id=workflow_session_id,
                     )
                     self._storage.insert_task(task)
                     if track_gpu:
@@ -1345,6 +1424,10 @@ class CostTracker:
                     task_id=None,
                     root_task_id=root_task_id,
                     parent_task_id=parent_task_id,
+                    agent_id=agent_id,
+                    agent_version=agent_version,
+                    workflow_id=workflow_id,
+                    workflow_session_id=workflow_session_id,
                 )
                 self._storage.insert_task(task)
                 if track_gpu:

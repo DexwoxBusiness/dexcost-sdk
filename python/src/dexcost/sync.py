@@ -462,6 +462,15 @@ class SyncWorker:
             # The wire contract forbids a variant without its experiment.
             if "experiment_id" not in assignment:
                 assignment.pop("variant", None)
+            redact_fields = set(self._config.redact_fields)
+            if redact_fields.intersection({"agent", "agent_id", "agent_version"}):
+                identity.pop("agent", None)
+            if redact_fields.intersection({"workflow", "workflow_id"}):
+                identity.pop("workflow", None)
+            elif "workflow_session_id" in redact_fields:
+                workflow = identity.get("workflow")
+                if isinstance(workflow, dict):
+                    workflow.pop("session_id", None)
         self._hash_pii(assignment)
         return identity
 

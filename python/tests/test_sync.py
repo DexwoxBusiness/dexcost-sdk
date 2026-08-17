@@ -325,6 +325,10 @@ class TestSyncBatch:
             project_id="dexcost-marketing-campaign",
             parent_task_id=root_id,
             root_task_id=root_id,
+            agent_id="campaign_director",
+            agent_version="demo-v1",
+            workflow_id="campaign_generation",
+            workflow_session_id="campaign-001",
             experiment_id="creative-angle",
             variant="proof-first",
             ended_at=datetime.now(timezone.utc),
@@ -354,6 +358,11 @@ class TestSyncBatch:
                     "experiment_id": "creative-angle",
                     "variant": "proof-first",
                 },
+                "workflow": {
+                    "id": "campaign_generation",
+                    "session_id": "campaign-001",
+                },
+                "agent": {"id": "campaign_director", "version": "demo-v1"},
             }
         ]
         assert storage.query_pending_tasks_for_sync() == []
@@ -371,6 +380,10 @@ class TestSyncBatch:
             project_id="project-private",
             parent_task_id=root_id,
             root_task_id=root_id,
+            agent_id="private-agent",
+            agent_version="private-version",
+            workflow_id="private-workflow",
+            workflow_session_id="private-session",
             experiment_id="private-experiment",
             variant="private-variant",
             ended_at=datetime.now(timezone.utc),
@@ -380,7 +393,7 @@ class TestSyncBatch:
         worker = SyncWorker(
             config=_make_config(
                 hash_customer_id=True,
-                redact_fields=["experiment_id"],
+                redact_fields=["experiment_id", "agent_id", "workflow_session_id"],
             ),
             storage=storage,
         )
@@ -392,6 +405,9 @@ class TestSyncBatch:
         assert assignment["project_id"] != "project-private"
         assert "experiment_id" not in assignment
         assert "variant" not in assignment
+        identity = body["business_identities"][0]
+        assert "agent" not in identity
+        assert identity["workflow"] == {"id": "private-workflow"}
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_gpu_observation_is_uploaded_without_cost_evidence(

@@ -31,6 +31,9 @@ class DexcostContext:
     project_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     agent: str | None = None
+    agent_version: str | None = None
+    workflow_id: str | None = None
+    workflow_session_id: str | None = None
 
 
 _current_context: contextvars.ContextVar[DexcostContext | None] = contextvars.ContextVar(
@@ -43,14 +46,37 @@ def set_context(
     project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     agent: str | None = None,
+    agent_version: str | None = None,
+    workflow_id: str | None = None,
+    workflow_session_id: str | None = None,
 ) -> None:
-    """Set the attribution context for subsequent LLM calls and tasks."""
+    """Set business attribution for subsequent calls and tasks.
+
+    ``agent`` is a stable agent identifier, separate from the task type.
+    Agent identity is only valid when ``agent_version`` is supplied as well.
+    A workflow session similarly requires ``workflow_id``.
+    """
+    if (agent is None) != (agent_version is None):
+        raise ValueError("agent and agent_version must be supplied together")
+    if workflow_session_id is not None and workflow_id is None:
+        raise ValueError("workflow_session_id requires workflow_id")
+    for name, value in (
+        ("agent", agent),
+        ("agent_version", agent_version),
+        ("workflow_id", workflow_id),
+        ("workflow_session_id", workflow_session_id),
+    ):
+        if value is not None and (not value.strip() or len(value) > 256):
+            raise ValueError(f"{name} must contain between 1 and 256 characters")
     _current_context.set(
         DexcostContext(
             customer_id=customer_id,
             project_id=project_id,
             metadata=metadata or {},
             agent=agent,
+            agent_version=agent_version,
+            workflow_id=workflow_id,
+            workflow_session_id=workflow_session_id,
         )
     )
 
