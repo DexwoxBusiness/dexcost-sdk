@@ -12,7 +12,6 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
 from dexcost.context import get_context, get_current_task, set_current_task
 from dexcost.models.task import Task
@@ -51,23 +50,40 @@ class SessionManager:
         Returns:
             The active or newly-created session task.
         """
-        # If an explicit task is already active, use it
+        ctx_id = threading.get_ident()
+
+        # If an explicit task is already active, use it. Automatic sessions
+        # also live in the task ContextVar, so distinguish the managed session
+        # for this thread from an explicit task before updating activity.
         existing = get_current_task()
         if existing is not None:
-            ctx_id = id(existing)
             with self._lock:
-                self._last_activity[ctx_id] = time.monotonic()
-            return existing
+                managed = self._sessions.get(ctx_id)
+                if existing is managed and existing.ended_at is None:
+                    self._last_activity[ctx_id] = time.monotonic()
+                    return existing
+                if existing is managed:
+                    self._sessions.pop(ctx_id, None)
+                    self._last_activity.pop(ctx_id, None)
+                elif existing.ended_at is None:
+                    return existing
+
+            # An automatic session can be finalized by the background sync
+            # thread, which cannot clear another thread's ContextVar. Clear
+            # the stale local reference before creating the next session.
+            set_current_task(None)
 
         # Check if we already have a session for this thread/async context
-        ctx_id = threading.get_ident()
         with self._lock:
             session = self._sessions.get(ctx_id)
-            if session is not None:
+            if session is not None and session.ended_at is None:
                 self._last_activity[ctx_id] = time.monotonic()
                 # Ensure it's set as current task
                 set_current_task(session)
                 return session
+            if session is not None:
+                self._sessions.pop(ctx_id, None)
+                self._last_activity.pop(ctx_id, None)
 
         # Create a new session task
         ctx = get_context()
@@ -103,8 +119,17 @@ class SessionManager:
         set_current_task(session)
         return session
 
-    def finalize_idle_sessions(self, idle_seconds: float = 30.0) -> list[Task]:
+    def finalize_idle_sessions(
+        self,
+        idle_seconds: float = 30.0,
+        storage: StorageBackend | None = None,
+    ) -> list[Task]:
         """Finalize sessions that have had no activity for *idle_seconds*.
+
+        When *storage* is supplied, the finalized task is persisted before it
+        is removed from the manager. ``update_task`` also marks a previously
+        synced running snapshot pending again, allowing the final immutable
+        business identity to be delivered by the next sync batch.
 
         Returns:
             List of finalized session tasks.
@@ -119,12 +144,33 @@ class SessionManager:
                 if (now - last) >= idle_seconds
             ]
             for ctx_id in idle_ids:
-                session = self._sessions.pop(ctx_id, None)
+                session = self._sessions.get(ctx_id)
+                if session is None:
+                    self._last_activity.pop(ctx_id, None)
+                    continue
+
+                previous_status = session.status
+                previous_ended_at = session.ended_at
+                session.status = "success"
+                session.ended_at = datetime.now(timezone.utc)
+
+                if storage is not None:
+                    try:
+                        storage.update_task(session)
+                    except Exception:
+                        # Keep the session managed and retry persistence on a
+                        # later sync cycle instead of losing its final state.
+                        session.status = previous_status
+                        session.ended_at = previous_ended_at
+                        _log.warning(
+                            "Failed to persist finalized session task",
+                            exc_info=True,
+                        )
+                        continue
+
+                self._sessions.pop(ctx_id, None)
                 self._last_activity.pop(ctx_id, None)
-                if session is not None:
-                    session.status = "success"
-                    session.ended_at = datetime.now(timezone.utc)
-                    finalized.append(session)
+                finalized.append(session)
 
         return finalized
 

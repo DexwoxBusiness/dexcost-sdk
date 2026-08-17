@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,7 +18,7 @@ from dexcost.context import (
 )
 from dexcost.models.task import Task
 from dexcost.session import SessionManager, get_session_manager, reset_session_manager
-
+from dexcost.storage.sqlite import SQLiteStorage
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -222,3 +223,31 @@ class TestIdleFinalization:
         # With a very high idle threshold, nothing should be finalized
         finalized = mgr.finalize_idle_sessions(idle_seconds=9999.0)
         assert len(finalized) == 0
+
+    def test_finalization_persists_and_requeues_synced_session(self, tmp_path: Path) -> None:
+        storage = SQLiteStorage(db_path=tmp_path / "session.db")
+        mgr = SessionManager()
+        task = mgr.get_or_create_session("http_call", storage=storage)
+        storage.mark_tasks_synced([str(task.task_id)])
+
+        finalized = mgr.finalize_idle_sessions(
+            idle_seconds=0.0,
+            storage=storage,
+        )
+
+        assert [item.task_id for item in finalized] == [task.task_id]
+        persisted = storage.get_task(str(task.task_id))
+        assert persisted is not None
+        assert persisted.status == "success"
+        assert persisted.ended_at is not None
+        assert [item.task_id for item in storage.query_pending_tasks_for_sync()] == [task.task_id]
+
+    def test_finalized_context_session_is_not_reused(self) -> None:
+        mgr = SessionManager()
+        original = mgr.get_or_create_session("http_call")
+        mgr.finalize_idle_sessions(idle_seconds=0.0)
+
+        replacement = mgr.get_or_create_session("http_call")
+
+        assert replacement.task_id != original.task_id
+        assert replacement.ended_at is None

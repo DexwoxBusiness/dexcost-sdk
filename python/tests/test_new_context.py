@@ -14,10 +14,10 @@ from dexcost.context import (
     set_context,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1. set_context + get_context returns correct values
 # ---------------------------------------------------------------------------
+
 
 def test_set_and_get_context_basic() -> None:
     clear_context()
@@ -33,6 +33,7 @@ def test_set_and_get_context_basic() -> None:
 # 2. get_context returns None when not set
 # ---------------------------------------------------------------------------
 
+
 def test_get_context_returns_none_when_not_set() -> None:
     clear_context()
     assert get_context() is None
@@ -41,6 +42,7 @@ def test_get_context_returns_none_when_not_set() -> None:
 # ---------------------------------------------------------------------------
 # 3. set_context with metadata
 # ---------------------------------------------------------------------------
+
 
 def test_set_context_with_metadata() -> None:
     clear_context()
@@ -86,9 +88,17 @@ def test_set_context_rejects_incomplete_business_identity(
         set_context(**kwargs)
 
 
+@pytest.mark.parametrize("field", ["customer_id", "project_id"])
+@pytest.mark.parametrize("value", ["   ", "x" * 257])
+def test_set_context_rejects_invalid_legacy_assignment_ids(field: str, value: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        set_context(**{field: value})
+
+
 # ---------------------------------------------------------------------------
 # 4. set_context replaces previous context
 # ---------------------------------------------------------------------------
+
 
 def test_set_context_replaces_previous() -> None:
     clear_context()
@@ -105,6 +115,7 @@ def test_set_context_replaces_previous() -> None:
 # 5. clear_context works
 # ---------------------------------------------------------------------------
 
+
 def test_clear_context() -> None:
     set_context(customer_id="cust-003")
     assert get_context() is not None
@@ -115,6 +126,7 @@ def test_clear_context() -> None:
 # ---------------------------------------------------------------------------
 # 6. Thread safety — two threads with different customer_ids don't cross-contaminate
 # ---------------------------------------------------------------------------
+
 
 def test_thread_safety() -> None:
     results: dict[str, str | None] = {}
@@ -140,6 +152,7 @@ def test_thread_safety() -> None:
 # ---------------------------------------------------------------------------
 # 7. Async safety — two coroutines with different customer_ids don't cross-contaminate
 # ---------------------------------------------------------------------------
+
 
 def test_async_safety() -> None:
     results: dict[str, str | None] = {}

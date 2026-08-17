@@ -61,6 +61,8 @@ def set_context(
     if workflow_session_id is not None and workflow_id is None:
         raise ValueError("workflow_session_id requires workflow_id")
     for name, value in (
+        ("customer_id", customer_id),
+        ("project_id", project_id),
         ("agent", agent),
         ("agent_version", agent_version),
         ("workflow_id", workflow_id),

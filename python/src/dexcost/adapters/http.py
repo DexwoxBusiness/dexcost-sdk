@@ -634,9 +634,6 @@ def _handle_http_call(
 
 def _resolve_task() -> Any | None:
     """Return the active task, or an auto-session task, or None."""
-    task = get_current_task()
-    if task is not None:
-        return task
     session_mgr = get_session_manager()
     return session_mgr.get_or_create_session("http_call", _storage)
 
