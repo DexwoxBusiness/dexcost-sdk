@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.17.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.16.0...python/v0.17.0) (2026-08-17)
+
+
+### Features
+
+* **python:** preserve agent and workflow attribution ([#156](https://github.com/DexwoxBusiness/dexcost-sdk/issues/156)) ([7db8384](https://github.com/DexwoxBusiness/dexcost-sdk/commit/7db83849ded3c1178d836676a401c72b792cf10c))
+
 ## [0.16.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.15.2...python/v0.16.0) (2026-08-16)
 
 
