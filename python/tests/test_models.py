@@ -125,6 +125,10 @@ class TestTask:
             customer_id="megacorp",
             project_id="proj_beta",
             root_task_id=root_task_id,
+            agent_id="campaign_director",
+            agent_version="2026-08-demo",
+            workflow_id="marketing_campaign",
+            workflow_session_id="campaign-run-001",
             llm_cost_usd=Decimal("1.23"),
             total_cost_usd=Decimal("1.50"),
             total_input_tokens=5000,
@@ -142,6 +146,10 @@ class TestTask:
         assert restored.status == original.status
         assert restored.customer_id == original.customer_id
         assert restored.root_task_id == root_task_id
+        assert restored.agent_id == "campaign_director"
+        assert restored.agent_version == "2026-08-demo"
+        assert restored.workflow_id == "marketing_campaign"
+        assert restored.workflow_session_id == "campaign-run-001"
         assert restored.llm_cost_usd == original.llm_cost_usd
         assert restored.total_cost_usd == original.total_cost_usd
         assert restored.total_input_tokens == original.total_input_tokens
@@ -152,6 +160,14 @@ class TestTask:
         identity = to_business_identity_revision_v1(restored)
         assert identity is not None
         assert identity["task"]["root_task_id"] == str(root_task_id)
+        assert identity["agent"] == {
+            "id": "campaign_director",
+            "version": "2026-08-demo",
+        }
+        assert identity["workflow"] == {
+            "id": "marketing_campaign",
+            "session_id": "campaign-run-001",
+        }
 
     def test_to_dict_types(self) -> None:
         """All dict values must be JSON-primitive types."""

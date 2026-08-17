@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 8
+TARGET_SCHEMA_VERSION = 9
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -296,3 +296,17 @@ def _sqlite_v7_to_v8(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_OUTCOMES)
     for index_sql in _CREATE_OUTCOME_INDEXES:
         conn.execute(index_sql)
+
+
+@register_sqlite_migration(8, 9)
+def _sqlite_v8_to_v9(conn: sqlite3.Connection) -> None:
+    """Persist canonical agent and workflow identity on buffered tasks."""
+    existing = {row[1] for row in conn.execute(_TASKS_TABLE_INFO).fetchall()}
+    for column in (
+        "agent_id",
+        "agent_version",
+        "workflow_id",
+        "workflow_session_id",
+    ):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")

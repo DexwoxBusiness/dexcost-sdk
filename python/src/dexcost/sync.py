@@ -26,6 +26,7 @@ from dexcost.attribution.convert import (
 )
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
+from dexcost.session import get_session_manager
 
 if TYPE_CHECKING:
     from dexcost.config import DexcostConfig
@@ -40,6 +41,7 @@ _MAX_PAYLOAD_BYTES: int = 120_000  # Headroom below the control-plane 128KB queu
 _MAX_CONVERSION_SCAN: int = 1000
 _CONVERSION_SCAN_MULTIPLIER: int = 10
 _CONVERSION_WARNING_INTERVAL: float = 3600.0
+_AUTO_SESSION_IDLE_SECONDS: float = 30.0
 
 
 class _AttributionBatchRejectedError(RuntimeError):
@@ -101,6 +103,7 @@ class SyncWorker:
         self._wake_event = threading.Event()
         self._flush_done = threading.Event()
         self._flush_requested = False
+        self._finalize_sessions_requested = False
         self._flush_lock = threading.Lock()
 
         self._backoff: float = _INITIAL_BACKOFF
@@ -138,6 +141,10 @@ class SyncWorker:
         self._flush_done.clear()
         with self._flush_lock:
             self._flush_requested = True
+            # An explicit flush (including close()) is a session boundary.
+            # The worker consumes this request using its thread-local storage
+            # connection before it acknowledges the flush.
+            self._finalize_sessions_requested = True
         self._wake_event.set()
         self._flush_done.wait(timeout=30.0)
 
@@ -169,6 +176,11 @@ class SyncWorker:
                     continue
                 # Nothing to send — mark flush done if requested
                 with self._flush_lock:
+                    # A flush request can arrive while a batch is already in
+                    # progress. Do another immediate cycle so its forced
+                    # session finalization is not acknowledged prematurely.
+                    if self._finalize_sessions_requested:
+                        continue
                     if self._flush_requested:
                         self._flush_requested = False
                         self._flush_done.set()
@@ -216,6 +228,15 @@ class SyncWorker:
             ``_storage`` is used (suitable for same-thread calls).
         """
         st = storage if storage is not None else self._storage
+        with self._flush_lock:
+            force_finalize_sessions = self._finalize_sessions_requested
+            self._finalize_sessions_requested = False
+        get_session_manager().finalize_idle_sessions(
+            idle_seconds=(
+                0.0 if force_finalize_sessions else _AUTO_SESSION_IDLE_SECONDS
+            ),
+            storage=st,
+        )
         self._purge_if_due(st)
         batch_size = max(1, self._config.batch_size)
 
@@ -462,6 +483,19 @@ class SyncWorker:
             # The wire contract forbids a variant without its experiment.
             if "experiment_id" not in assignment:
                 assignment.pop("variant", None)
+            redact_fields = set(self._config.redact_fields)
+            if redact_fields.intersection({"agent", "agent_id", "id"}):
+                identity.pop("agent", None)
+            elif redact_fields.intersection({"agent_version", "version"}):
+                agent = identity.get("agent")
+                if isinstance(agent, dict):
+                    agent.pop("version", None)
+            if redact_fields.intersection({"workflow", "workflow_id", "id"}):
+                identity.pop("workflow", None)
+            elif redact_fields.intersection({"workflow_session_id", "session_id"}):
+                workflow = identity.get("workflow")
+                if isinstance(workflow, dict):
+                    workflow.pop("session_id", None)
         self._hash_pii(assignment)
         return identity
 

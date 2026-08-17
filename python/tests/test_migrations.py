@@ -123,6 +123,12 @@ class TestStartupVersionCheck:
             row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
         }
         assert "root_task_id" in columns
+        assert {
+            "agent_id",
+            "agent_version",
+            "workflow_id",
+            "workflow_session_id",
+        }.issubset(columns)
         assert conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='outcomes'"
         ).fetchone()[0] == 1

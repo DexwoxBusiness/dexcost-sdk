@@ -181,6 +181,27 @@ class TestTaskCrud:
         assert got is not None
         assert got.root_task_id == root_id
 
+    def test_agent_and_workflow_identity_round_trip(self, storage: SQLiteStorage) -> None:
+        root_id = uuid.uuid4()
+        task = Task(
+            task_id=root_id,
+            task_type="campaign.generate",
+            root_task_id=root_id,
+            agent_id="campaign_director",
+            agent_version="demo-v1",
+            workflow_id="campaign_generation",
+            workflow_session_id="campaign-001",
+        )
+        storage.insert_task(task)
+
+        got = storage.get_task(str(task.task_id))
+
+        assert got is not None
+        assert got.agent_id == "campaign_director"
+        assert got.agent_version == "demo-v1"
+        assert got.workflow_id == "campaign_generation"
+        assert got.workflow_session_id == "campaign-001"
+
 
 # ── Event CRUD ────────────────────────────────────────────────────────
 

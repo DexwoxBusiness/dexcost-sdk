@@ -242,7 +242,23 @@ class AttributionBusinessAssignmentV1(TypedDict, total=False):
     variant: str
 
 
-class AttributionBusinessIdentityRevisionV1(TypedDict):
+class _AttributionBusinessWorkflowIdentityV1Required(TypedDict):
+    id: str
+
+
+class AttributionBusinessWorkflowIdentityV1(
+    _AttributionBusinessWorkflowIdentityV1Required,
+    total=False,
+):
+    session_id: str
+
+
+class AttributionBusinessAgentIdentityV1(TypedDict):
+    id: str
+    version: str
+
+
+class _AttributionBusinessIdentityRevisionV1Required(TypedDict):
     schema_version: Literal["1"]
     task_id: str
     revision: int
@@ -251,3 +267,11 @@ class AttributionBusinessIdentityRevisionV1(TypedDict):
     identity_snapshot: Literal["full"]
     task: AttributionBusinessTaskHierarchyV1
     assignment: AttributionBusinessAssignmentV1
+
+
+class AttributionBusinessIdentityRevisionV1(
+    _AttributionBusinessIdentityRevisionV1Required,
+    total=False,
+):
+    workflow: AttributionBusinessWorkflowIdentityV1
+    agent: AttributionBusinessAgentIdentityV1

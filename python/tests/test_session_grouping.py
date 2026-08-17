@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,7 +18,7 @@ from dexcost.context import (
 )
 from dexcost.models.task import Task
 from dexcost.session import SessionManager, get_session_manager, reset_session_manager
-
+from dexcost.storage.sqlite import SQLiteStorage
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,15 +77,18 @@ class TestSessionReuse:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentTaskType:
-    """set_context(agent='foo') makes session task_type = 'foo'."""
+class TestAgentIdentity:
+    """Agent identity remains separate from the session task type."""
 
-    def test_agent_sets_task_type(self) -> None:
-        set_context(agent="research_agent")
+    def test_agent_does_not_replace_task_type(self) -> None:
+        set_context(agent="research_agent", agent_version="v1")
         mgr = SessionManager()
         task = mgr.get_or_create_session("llm_call")
 
-        assert task.task_type == "research_agent"
+        assert task.task_type == "agent_session"
+        assert task.agent_id == "research_agent"
+        assert task.agent_version == "v1"
+        assert task.root_task_id == task.task_id
 
     def test_no_agent_defaults_to_agent_session(self) -> None:
         set_context(customer_id="cust-1")
@@ -98,13 +102,21 @@ class TestAgentTaskType:
             customer_id="cust-123",
             project_id="proj-456",
             agent="support_bot",
+            agent_version="demo-v2",
+            workflow_id="support_resolution",
+            workflow_session_id="ticket-123",
         )
         mgr = SessionManager()
         task = mgr.get_or_create_session("llm_call")
 
         assert task.customer_id == "cust-123"
         assert task.project_id == "proj-456"
-        assert task.task_type == "support_bot"
+        assert task.task_type == "agent_session"
+        assert task.agent_id == "support_bot"
+        assert task.agent_version == "demo-v2"
+        assert task.workflow_id == "support_resolution"
+        assert task.workflow_session_id == "ticket-123"
+        assert task.root_task_id == task.task_id
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +223,31 @@ class TestIdleFinalization:
         # With a very high idle threshold, nothing should be finalized
         finalized = mgr.finalize_idle_sessions(idle_seconds=9999.0)
         assert len(finalized) == 0
+
+    def test_finalization_persists_and_requeues_synced_session(self, tmp_path: Path) -> None:
+        storage = SQLiteStorage(db_path=tmp_path / "session.db")
+        mgr = SessionManager()
+        task = mgr.get_or_create_session("http_call", storage=storage)
+        storage.mark_tasks_synced([str(task.task_id)])
+
+        finalized = mgr.finalize_idle_sessions(
+            idle_seconds=0.0,
+            storage=storage,
+        )
+
+        assert [item.task_id for item in finalized] == [task.task_id]
+        persisted = storage.get_task(str(task.task_id))
+        assert persisted is not None
+        assert persisted.status == "success"
+        assert persisted.ended_at is not None
+        assert [item.task_id for item in storage.query_pending_tasks_for_sync()] == [task.task_id]
+
+    def test_finalized_context_session_is_not_reused(self) -> None:
+        mgr = SessionManager()
+        original = mgr.get_or_create_session("http_call")
+        mgr.finalize_idle_sessions(idle_seconds=0.0)
+
+        replacement = mgr.get_or_create_session("http_call")
+
+        assert replacement.task_id != original.task_id
+        assert replacement.ended_at is None

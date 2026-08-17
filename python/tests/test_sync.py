@@ -17,8 +17,10 @@ import pytest
 
 from dexcost import __version__
 from dexcost.config import DexcostConfig
+from dexcost.context import clear_context, set_context, set_current_task
 from dexcost.models.event import Event
 from dexcost.models.task import Task
+from dexcost.session import SessionManager
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.sync import (
     _INITIAL_BACKOFF,
@@ -325,6 +327,10 @@ class TestSyncBatch:
             project_id="dexcost-marketing-campaign",
             parent_task_id=root_id,
             root_task_id=root_id,
+            agent_id="campaign_director",
+            agent_version="demo-v1",
+            workflow_id="campaign_generation",
+            workflow_session_id="campaign-001",
             experiment_id="creative-angle",
             variant="proof-first",
             ended_at=datetime.now(timezone.utc),
@@ -354,9 +360,50 @@ class TestSyncBatch:
                     "experiment_id": "creative-angle",
                     "variant": "proof-first",
                 },
+                "workflow": {
+                    "id": "campaign_generation",
+                    "session_id": "campaign-001",
+                },
+                "agent": {"id": "campaign_director", "version": "demo-v1"},
             }
         ]
         assert storage.query_pending_tasks_for_sync() == []
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_forced_sync_finalizes_persisted_session_before_identity_upload(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
+        storage = _make_storage(tmp_path)
+        manager = SessionManager()
+        set_context(
+            customer_id="customer-1",
+            agent="support-agent",
+            agent_version="v1",
+            workflow_id="ticket-resolution",
+        )
+        try:
+            task = manager.get_or_create_session("http_call", storage=storage)
+            # Reproduce the real lifecycle: a running session may already
+            # have been uploaded before an explicit flush closes it.
+            storage.mark_tasks_synced([str(task.task_id)])
+            worker = SyncWorker(config=_make_config(), storage=storage)
+            worker._finalize_sessions_requested = True
+
+            with patch("dexcost.sync.get_session_manager", return_value=manager):
+                assert worker._sync_batch() is True
+
+            body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+            assert body["business_identities"][0]["task_id"] == str(task.task_id)
+            assert body["business_identities"][0]["agent"] == {
+                "id": "support-agent",
+                "version": "v1",
+            }
+            assert body["business_identities"][0]["workflow"] == {"id": "ticket-resolution"}
+            assert body["tasks"][0]["status"] == "success"
+        finally:
+            set_current_task(None)
+            clear_context()
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_business_assignment_respects_hashing_and_redaction(
@@ -371,6 +418,10 @@ class TestSyncBatch:
             project_id="project-private",
             parent_task_id=root_id,
             root_task_id=root_id,
+            agent_id="private-agent",
+            agent_version="private-version",
+            workflow_id="private-workflow",
+            workflow_session_id="private-session",
             experiment_id="private-experiment",
             variant="private-variant",
             ended_at=datetime.now(timezone.utc),
@@ -380,7 +431,7 @@ class TestSyncBatch:
         worker = SyncWorker(
             config=_make_config(
                 hash_customer_id=True,
-                redact_fields=["experiment_id"],
+                redact_fields=["experiment_id", "agent_id", "workflow_session_id"],
             ),
             storage=storage,
         )
@@ -392,6 +443,55 @@ class TestSyncBatch:
         assert assignment["project_id"] != "project-private"
         assert "experiment_id" not in assignment
         assert "variant" not in assignment
+        identity = body["business_identities"][0]
+        assert "agent" not in identity
+        assert identity["workflow"] == {"id": "private-workflow"}
+
+    def test_business_identity_redaction_honors_nested_wire_keys(self, tmp_path: Path) -> None:
+        task_id = uuid.uuid4()
+        task = Task(
+            task_id=task_id,
+            task_type="campaign.variant.generate",
+            root_task_id=task_id,
+            agent_id="private-agent",
+            agent_version="private-version",
+            workflow_id="private-workflow",
+            workflow_session_id="private-session",
+            ended_at=datetime.now(timezone.utc),
+        )
+
+        worker = SyncWorker(
+            config=_make_config(redact_fields=["version", "session_id"]),
+            storage=_make_storage(tmp_path),
+        )
+        identity = worker._prepare_business_identity(task)
+
+        assert identity is not None
+        assert identity["agent"] == {"id": "private-agent"}
+        assert identity["workflow"] == {"id": "private-workflow"}
+
+    def test_redacting_nested_id_drops_required_identity_carriers(self, tmp_path: Path) -> None:
+        task_id = uuid.uuid4()
+        task = Task(
+            task_id=task_id,
+            task_type="campaign.variant.generate",
+            root_task_id=task_id,
+            agent_id="private-agent",
+            agent_version="private-version",
+            workflow_id="private-workflow",
+            workflow_session_id="private-session",
+            ended_at=datetime.now(timezone.utc),
+        )
+
+        worker = SyncWorker(
+            config=_make_config(redact_fields=["id"]),
+            storage=_make_storage(tmp_path),
+        )
+        identity = worker._prepare_business_identity(task)
+
+        assert identity is not None
+        assert "agent" not in identity
+        assert "workflow" not in identity
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_gpu_observation_is_uploaded_without_cost_evidence(
