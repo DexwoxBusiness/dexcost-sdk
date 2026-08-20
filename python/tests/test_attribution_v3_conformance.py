@@ -281,4 +281,7 @@ def test_retry_chain_persists_one_operation_root_and_increasing_attempts(
             "number": 3,
             "retry_of": str(second.event_id),
         },
+        # The failure marker that drives status="failed" also carries the
+        # error identity onto the wire.
+        "error": {"type": "rate_limit"},
     }

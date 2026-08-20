@@ -36,6 +36,11 @@ from dexcost.context import (
     set_current_task,
     suppress_network_event,
 )
+from dexcost.instruments._errors import (
+    finalize_failed_auto_task,
+    record_call_failure,
+    requested_model,
+)
 from dexcost.instruments.openai_usage import OpenAIUsageError, normalize_openai_usage
 from dexcost.models.event import Event
 
@@ -205,6 +210,34 @@ def _sync_responses_parse_wrapper(
     return _sync_create_common(wrapped, args, kwargs, "openai.responses", True)
 
 
+def _record_call_failure(
+    exc: BaseException,
+    start_time: float,
+    kwargs: dict[str, Any],
+    task: Any = None,
+    auto_task_obj: Any = None,
+) -> Event | None:
+    """Record a raised OpenAI call as a failed operation.
+
+    Never raises: the caller re-raises the user's original exception with a
+    bare ``raise`` immediately after.
+    """
+    try:
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    event = record_call_failure(
+        tracker=_active_tracker,
+        exc=exc,
+        provider="openai",
+        model=requested_model(kwargs),
+        latency_ms=latency_ms,
+        task=task,
+    )
+    finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+    return event
+
+
 def _sync_create_common(
     wrapped: Any,
     args: tuple[Any, ...],
@@ -227,8 +260,12 @@ def _sync_create_common(
         start_time = time.perf_counter()
 
         if stream:
-            with suppress_network_event():
-                raw_stream = wrapped(*args, **kwargs)
+            try:
+                with suppress_network_event():
+                    raw_stream = wrapped(*args, **kwargs)
+            except Exception as exc:
+                _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+                raise
             return _SyncStreamWrapper(
                 raw_stream,
                 start_time,
@@ -237,8 +274,12 @@ def _sync_create_common(
                 auto_task_obj,
             )
 
-        with suppress_network_event():
-            response = wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -331,8 +372,12 @@ async def _async_non_stream_handler(
 ) -> Any:
     """Await the async create call and record the response."""
     try:
-        with suppress_network_event():
-            response = await wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, None, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -366,8 +411,12 @@ async def _async_stream_handler(
 ) -> Any:
     """Wrap async streaming to capture usage from the final chunk."""
     try:
-        with suppress_network_event():
-            raw_stream = await wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                raw_stream = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+            raise
         return _AsyncStreamWrapper(
             raw_stream,
             start_time,

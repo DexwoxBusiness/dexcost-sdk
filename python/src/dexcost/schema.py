@@ -11,20 +11,54 @@ import jsonschema
 
 _log = logging.getLogger(__name__)
 
-_SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+
+class SchemaNotFoundError(FileNotFoundError):
+    """Raised when a bundled JSON schema is missing from the installed package.
+
+    Silently skipping validation hides an entire class of packaging bugs: a
+    wheel built without the schema files would accept every malformed payload.
+    Loading now fails loudly instead.
+    """
+
+
+# Wheels ship the schemas inside the package (see ``force-include`` in
+# pyproject.toml); source checkouts and editable installs read them from the
+# repository directory next to ``src/``.
+_PACKAGE_SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
+_REPO_SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+_SCHEMA_DIRS = (_PACKAGE_SCHEMA_DIR, _REPO_SCHEMA_DIR)
 _schema_cache: dict[str, dict[str, Any]] = {}
 
 
-def _load_schema(name: str) -> dict[str, Any] | None:
-    """Load and cache a JSON schema file by name."""
+def _load_schema(name: str) -> dict[str, Any]:
+    """Load and cache a JSON schema file by name.
+
+    Raises:
+        SchemaNotFoundError: the schema is absent from every packaged and
+            repository location, so validation cannot be performed at all.
+        ValueError: the schema file exists but is not readable JSON.
+    """
     if name not in _schema_cache:
-        schema_path = _SCHEMA_DIR / name
-        try:
-            with open(schema_path, encoding="utf-8") as f:
-                _schema_cache[name] = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
-            _log.warning("Failed to load schema %s: %s", schema_path, exc)
-            return None
+        searched: list[str] = []
+        for directory in _SCHEMA_DIRS:
+            schema_path = directory / name
+            searched.append(str(schema_path))
+            if not schema_path.is_file():
+                continue
+            try:
+                with open(schema_path, encoding="utf-8") as f:
+                    _schema_cache[name] = json.load(f)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Schema {schema_path} is not valid JSON: {exc}") from exc
+            except OSError as exc:
+                raise ValueError(f"Schema {schema_path} could not be read: {exc}") from exc
+            break
+        else:
+            raise SchemaNotFoundError(
+                f"Bundled schema {name!r} is missing from the installed dexcost package. "
+                f"Searched: {', '.join(searched)}. Reinstall dexcost from a wheel built with "
+                "the schemas packaged (pyproject force-include)."
+            )
     return _schema_cache[name]
 
 
@@ -33,6 +67,9 @@ def validate(payload: dict[str, Any]) -> list[str]:
 
     Returns an empty list on success, or a list of human-readable error
     messages describing each validation failure.
+
+    Raises:
+        SchemaNotFoundError: the bundled schema is missing from the install.
     """
     sv = payload.get("schema_version", "1")
     if sv != "1":
@@ -44,9 +81,6 @@ def validate(payload: dict[str, Any]) -> list[str]:
         schema = _load_schema("dexcost-task.v1.json")
     else:
         return ["Cannot determine payload type: missing task_id or event_id"]
-
-    if schema is None:
-        return []  # Can't validate without schema
 
     errors: list[str] = []
     validator = jsonschema.Draft7Validator(schema)

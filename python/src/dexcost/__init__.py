@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from collections.abc import Generator
 from decimal import Decimal
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 from dexcost.attribution import (
     ATTRIBUTION_COMPONENTS,
@@ -110,7 +110,7 @@ from dexcost.models import (
 from dexcost.pricing import CostResult, PricingEngine
 from dexcost.rates import InfrastructureRateEntry, RateEntry, RateRegistry
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
-from dexcost.schema import validate
+from dexcost.schema import SchemaNotFoundError, validate
 from dexcost.sync import SyncWorker
 from dexcost.service_catalog import ServiceCatalog
 from dexcost.session import SessionManager, get_session_manager
@@ -245,6 +245,8 @@ def set_context(
     customer_id: str | None = None,
     project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    user_id: str | None = None,
+    product_id: str | None = None,
     agent: str | None = None,
     agent_version: str | None = None,
     workflow_id: str | None = None,
@@ -256,6 +258,8 @@ def set_context(
         customer_id: Identifier for the customer.
         project_id: Identifier for the project.
         metadata: Optional dict of extra metadata.
+        user_id: Identifier for the end user the work is performed for.
+        product_id: Identifier for the product surface driving the work.
         agent: Stable agent identifier, kept separate from task type.
         agent_version: Version or deployment identifier for ``agent``.
         workflow_id: Stable workflow identifier.
@@ -265,6 +269,8 @@ def set_context(
         customer_id=customer_id,
         project_id=project_id,
         metadata=metadata,
+        user_id=user_id,
+        product_id=product_id,
         agent=agent,
         agent_version=agent_version,
         workflow_id=workflow_id,
@@ -502,8 +508,8 @@ def task(
 ) -> Generator[TrackedTask, None, None]:
     """Group multiple costs into one business task.
 
-    Reads customer, project, agent, and workflow identity from
-    :func:`set_context` if set.
+    Reads customer, project, user, product, agent, and workflow identity
+    from :func:`set_context` if set.
 
     Args:
         task_type: Identifier for the kind of task (e.g. ``"resolve_ticket"``).
@@ -532,6 +538,8 @@ def task(
         task_type=task_type,
         customer_id=ctx.customer_id if ctx else None,
         project_id=ctx.project_id if ctx else None,
+        user_id=ctx.user_id if ctx else None,
+        product_id=ctx.product_id if ctx else None,
         metadata=merged_metadata,
         experiment_id=experiment_id,
         variant=variant,
@@ -745,6 +753,7 @@ __all__ = [
     "PricingSource",
     "RateEntry",
     "RateRegistry",
+    "SchemaNotFoundError",
     "ServiceCatalog",
     "SessionManager",
     "SyncWorker",

@@ -32,6 +32,7 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.instruments._errors import finalize_failed_auto_task, record_call_failure
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -127,6 +128,38 @@ def uninstrument_bedrock() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _record_call_failure(
+    exc: BaseException,
+    start_time: float,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    auto_task_obj: Any = None,
+) -> Event | None:
+    """Record a raised Bedrock invoke as a failed operation. Never raises."""
+    try:
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    model: str | None = None
+    try:
+        api_params = args[1] if len(args) > 1 else kwargs.get("api_params", {})
+        if isinstance(api_params, dict):
+            raw_model = api_params.get("modelId")
+            if isinstance(raw_model, str) and raw_model.strip():
+                model = raw_model.strip()
+    except Exception:  # pragma: no cover - defensive
+        model = None
+    event = record_call_failure(
+        tracker=_active_tracker,
+        exc=exc,
+        provider="aws_bedrock",
+        model=model,
+        latency_ms=latency_ms,
+    )
+    finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+    return event
+
+
 def _make_api_call_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -161,8 +194,12 @@ def _make_api_call_wrapper(
     try:
         start_time = time.perf_counter()
 
-        with suppress_network_event():
-            response = wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, args, kwargs, auto_task_obj)
+            raise
         api_params = args[1] if len(args) > 1 else kwargs.get("api_params", {})
 
         if streaming:

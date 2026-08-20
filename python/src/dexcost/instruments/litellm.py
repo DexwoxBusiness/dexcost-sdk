@@ -30,6 +30,11 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.instruments._errors import (
+    finalize_failed_auto_task,
+    record_call_failure,
+    requested_model,
+)
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -128,6 +133,37 @@ def uninstrument_litellm() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _record_call_failure(
+    exc: BaseException,
+    start_time: float,
+    kwargs: dict[str, Any],
+    auto_task_obj: Any = None,
+) -> Event | None:
+    """Record a raised LiteLLM call as a failed operation. Never raises.
+
+    No response exists, so the provider is resolved from the requested model
+    string prefix alone (``"openai/gpt-4o"`` -> ``"openai"``).
+    """
+    try:
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    model = requested_model(kwargs)
+    try:
+        provider = _resolve_provider(request_model=model)
+    except Exception:  # pragma: no cover - defensive
+        provider = "unknown"
+    event = record_call_failure(
+        tracker=_active_tracker,
+        exc=exc,
+        provider=provider,
+        model=model,
+        latency_ms=latency_ms,
+    )
+    finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+    return event
+
+
 def _sync_completion_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -146,12 +182,20 @@ def _sync_completion_wrapper(
         start_time = time.perf_counter()
 
         if stream:
-            with suppress_network_event():
-                raw_stream = wrapped(*args, **kwargs)
+            try:
+                with suppress_network_event():
+                    raw_stream = wrapped(*args, **kwargs)
+            except Exception as exc:
+                _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+                raise
             return _SyncStreamWrapper(raw_stream, start_time, kwargs.get("model"))
 
-        with suppress_network_event():
-            response = wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -212,8 +256,12 @@ async def _async_non_stream_handler(
 ) -> Any:
     """Await the async acompletion call and record the response."""
     try:
-        with suppress_network_event():
-            response = await wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -245,8 +293,12 @@ async def _async_stream_handler(
 ) -> Any:
     """Wrap async streaming to capture usage from the final chunk."""
     try:
-        with suppress_network_event():
-            raw_stream = await wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                raw_stream = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
         return _AsyncStreamWrapper(raw_stream, start_time, kwargs.get("model"))
     finally:
         if auto_token is not None:

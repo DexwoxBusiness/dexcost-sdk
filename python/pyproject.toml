@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dexcost"
-version = "0.17.0"
+version = "0.18.0"
 description = "Agent Unit Economics SDK — track end-to-end business-task costs for AI agents."
 readme = "README.md"
 license = "MIT"
@@ -56,6 +56,26 @@ Changelog = "https://github.com/DexwoxBusiness/dexcost-sdk/blob/main/python/CHAN
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["src/dexcost"]
+
+# Non-Python assets. Files under ``src/dexcost`` (``data/*.json``,
+# ``adapters/data/*.json``, ``attribution/attribution-v3-schema.json``) ship with
+# the package automatically. The Standard Event Schema v1 documents live beside
+# the package in ``schemas/``, so they are force-included into ``dexcost/schemas``
+# — without this, ``dexcost.validate()`` has no schema to validate against in a
+# wheel install.
+[tool.hatch.build.targets.wheel.force-include]
+"schemas/dexcost-event.v1.json" = "dexcost/schemas/dexcost-event.v1.json"
+"schemas/dexcost-task.v1.json" = "dexcost/schemas/dexcost-task.v1.json"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/dexcost",
+    "schemas",
+    "tests",
+    "fixtures",
+    "README.md",
+    "CHANGELOG.md",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff (linter + formatter)

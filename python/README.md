@@ -119,6 +119,57 @@ work-step task types. Agent identity never replaces `task_type`, and technical
 success is not presented as a business outcome unless the application records
 one explicitly.
 
+## Attribution observation fields (contract v3)
+
+Observations are emitted on the `schema_version: "3"` wire contract. The
+following optional fields were added to v3 in place — old payloads that omit
+them stay valid, and the bundled JSON schema
+(`dexcost/attribution/attribution-v3-schema.json`) is validated strictly on
+every emit.
+
+| Field | Type | Rule | Source |
+|-------|------|------|--------|
+| `environment` | `str` | `^[a-z0-9][a-z0-9._-]{0,63}$` (max 64) | `init(environment=...)` / `DEXCOST_ENV` |
+| `operation.latency_ms` | `int` | `0`–`86400000` whole milliseconds | Measured call latency |
+| `operation.error` | `object` | `{type, code?}`; rejected when `operation.status == "succeeded"` | Instrument failure marker |
+| `operation.error.type` | `str` | `^[a-z0-9][a-z0-9._-]{0,127}$` — canonical taxonomy (`timeout`, `rate_limit`) | Instrument failure marker |
+| `operation.error.code` | `str` | 1–64 chars, opaque provider code | Provider response |
+| `resource.type` | `enum` | `model`, `sku`, `instance`, `endpoint`, `session`, `tool`, `other` | `"tool"` covers MCP/agent tool calls |
+| `assignment.user_id` | `str` | 1–512 chars, opaque | `set_context(user_id=...)` |
+| `assignment.product_id` | `str` | 1–512 chars, opaque | `set_context(product_id=...)` |
+
+```python
+dexcost.init(environment="production")  # emitted as observation.environment
+
+dexcost.set_context(
+    customer_id="acme-corp",
+    project_id="proj-alpha",
+    user_id="user-42",              # the end user the work is performed for
+    product_id="support-console",   # the product surface driving the work
+)
+```
+
+A failed tool call therefore reaches the control plane as:
+
+```json
+{
+  "schema_version": "3",
+  "environment": "production",
+  "component": "external",
+  "resource": { "type": "tool", "id": "web_browser" },
+  "operation": {
+    "status": "failed",
+    "latency_ms": 1250,
+    "error": { "type": "timeout", "code": "ETIMEDOUT" }
+  },
+  "usage_snapshot": "full",
+  "usage": []
+}
+```
+
+A succeeded operation must not carry `operation.error`; the SDK rejects that
+observation locally instead of shipping it.
+
 ## Auto-Instrumentation
 
 dexcost auto-instruments **6 LLM providers** and **5 HTTP libraries**.
@@ -174,7 +225,7 @@ dexcost.init(track_http=False)
 | `flush_interval` | `float` | `5.0` | Seconds between sync pushes |
 | `redact_fields` | `list[str]` | `None` | Field names to redact from event details |
 | `hash_customer_id` | `bool` | `False` | SHA-256 hash customer_id before storage |
-| `environment` | `str` | `None` | Set to `"development"` for dev console mode |
+| `environment` | `str` | `None` | Deployment environment (`"production"`, `"staging"`, …), emitted as `observation.environment`. `"development"` also enables dev console mode |
 | `storage` | `str` | `None` | Storage mode (`"local"` or auto-detect) |
 | `endpoint` | `str` | `https://api.dexcost.io` | Control Layer URL. Must start with `http://` or `https://`. The **only** way to override the endpoint — it is not read from the environment. |
 | `buffer_path` | `str` | `~/.dexcost/buffer.db` | Path to local SQLite buffer |
@@ -184,7 +235,7 @@ dexcost.init(track_http=False)
 | Variable | Description |
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
-| `DEXCOST_ENV` | Set to `development` for dev console output |
+| `DEXCOST_ENV` | Deployment environment emitted on every observation. Set to `development` for dev console output |
 
 > **Note:** `DEXCOST_ENDPOINT` is **no longer read**. The Control Layer URL is
 > configured only via `init(endpoint="https://...")` (default
@@ -323,9 +374,15 @@ with dexcost.task(task_type="...") as t:
 ## Customer Attribution
 
 ```python
-dexcost.set_context(customer_id="acme-corp", project_id="proj-alpha")
+dexcost.set_context(
+    customer_id="acme-corp",
+    project_id="proj-alpha",
+    user_id="user-42",
+    product_id="support-console",
+)
 
-# All tasks created after this inherit customer_id and project_id
+# All tasks created after this inherit customer_id, project_id, user_id and
+# product_id; they are shipped as the business identity `assignment` snapshot.
 with dexcost.task(task_type="...") as t:
     pass  # t.task.customer_id == "acme-corp"
 ```
@@ -362,7 +419,8 @@ make test        # pytest
 
 Releases are generated from Conventional Commit pull-request titles and are
 squash-merged to `main`. Use `feat(python): ...` for features and
-`fix(python): ...` for fixes. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+`fix(python): ...` for fixes. See [CONTRIBUTING.md](../CONTRIBUTING.md) and
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Privacy
 

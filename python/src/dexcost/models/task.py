@@ -51,6 +51,12 @@ class Task:
     workflow_id: str | None = field(default=None, kw_only=True)
     workflow_session_id: str | None = field(default=None, kw_only=True)
 
+    # Canonical end-user / product assignment. Keyword-only for the same
+    # reason as the agent/workflow identity above: extending business
+    # attribution must not shift the public positional API.
+    user_id: str | None = field(default=None, kw_only=True)
+    product_id: str | None = field(default=None, kw_only=True)
+
     # Experiment tracking
     experiment_id: str | None = None
     variant: str | None = None
@@ -148,6 +154,10 @@ class Task:
             data["workflow_id"] = self.workflow_id
         if self.workflow_session_id is not None:
             data["workflow_session_id"] = self.workflow_session_id
+        if self.user_id is not None:
+            data["user_id"] = self.user_id
+        if self.product_id is not None:
+            data["product_id"] = self.product_id
         return data
 
     @classmethod
@@ -177,6 +187,8 @@ class Task:
                 agent_version=data.get("agent_version"),
                 workflow_id=data.get("workflow_id"),
                 workflow_session_id=data.get("workflow_session_id"),
+                user_id=data.get("user_id"),
+                product_id=data.get("product_id"),
                 experiment_id=data.get("experiment_id"),
                 variant=data.get("variant"),
                 llm_cost_usd=Decimal(data["llm_cost_usd"]),

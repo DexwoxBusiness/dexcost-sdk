@@ -264,6 +264,7 @@
               "instance",
               "endpoint",
               "session",
+              "tool",
               "other"
             ]
           },
@@ -322,6 +323,28 @@
         ],
         "additionalProperties": false
       },
+      "AttributionOperationError": {
+        "type": "object",
+        "description": "Terminal failure classification. Rejected when operation.status is succeeded.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128,
+            "description": "Canonical error taxonomy name (e.g. timeout, rate_limit)."
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Opaque provider error code for drill-down."
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
       "AttributionOperationIdentity": {
         "type": "object",
         "properties": {
@@ -349,6 +372,15 @@
           },
           "trace": {
             "$ref": "#/components/schemas/AttributionTraceIdentity"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000,
+            "description": "Observed operation latency in whole milliseconds."
+          },
+          "error": {
+            "$ref": "#/components/schemas/AttributionOperationError"
           }
         },
         "required": [
@@ -357,7 +389,25 @@
           "status",
           "attempt"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "if": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "const": "succeeded"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "then": {
+          "not": {
+            "required": [
+              "error"
+            ]
+          }
+        }
       },
       "AttributionCostEvidence": {
         "type": "object",
@@ -478,6 +528,12 @@
             "type": "string",
             "format": "date-time",
             "description": "Offset-aware ISO 8601 instant with at most six fractional-second digits."
+          },
+          "environment": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "maxLength": 64,
+            "description": "Canonical deployment environment the observation was produced in (e.g. production, staging)."
           },
           "component": {
             "type": "string",
@@ -1074,6 +1130,16 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 256
+          },
+          "user_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "product_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
           },
           "experiment_id": {
             "type": "string",

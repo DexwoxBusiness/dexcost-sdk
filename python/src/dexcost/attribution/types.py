@@ -238,6 +238,8 @@ class AttributionBusinessTaskHierarchyV1(
 class AttributionBusinessAssignmentV1(TypedDict, total=False):
     customer_id: str
     project_id: str
+    user_id: str
+    product_id: str
     experiment_id: str
     variant: str
 

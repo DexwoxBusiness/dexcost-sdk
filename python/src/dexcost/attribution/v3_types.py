@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias, TypedDict
+from typing import Literal, TypedDict
 
 from dexcost.attribution.types import (
     AttributionComponent,
     AttributionConfidence,
     AttributionCostEvidenceSource,
     AttributionLifecycleState,
-    AttributionResourceV2,
 )
 
-ATTRIBUTION_V3_CONTRACT_VERSION = "3.0.0"
+ATTRIBUTION_V3_CONTRACT_VERSION = "3.1.0"
 
 AttributionUsageMetricV3 = str
 AttributionUsageUnitV3 = str
@@ -72,7 +71,16 @@ class AttributionProviderIdentityV3(_AttributionProviderIdentityV3Required, tota
     region: str
 
 
-AttributionResourceV3: TypeAlias = AttributionResourceV2
+AttributionResourceTypeV3 = Literal[
+    "model", "sku", "instance", "endpoint", "session", "other", "tool"
+]
+
+
+class AttributionResourceV3(TypedDict):
+    """Resource identity. ``"tool"`` was added by the in-place v3 extension."""
+
+    type: AttributionResourceTypeV3
+    id: str
 
 
 class AttributionTraceIdentityV3(TypedDict):
@@ -89,6 +97,21 @@ class AttributionAttemptIdentityV3(_AttributionAttemptIdentityV3Required, total=
     retry_of: str
 
 
+class _AttributionOperationErrorV3Required(TypedDict):
+    type: str
+
+
+class AttributionOperationErrorV3(_AttributionOperationErrorV3Required, total=False):
+    """Error identity for a non-succeeded operation.
+
+    ``type`` is canonical (``^[a-z0-9][a-z0-9._-]{0,127}$``); ``code`` is the
+    optional provider error code (1-64 chars). The server rejects this object
+    on an operation whose ``status`` is ``"succeeded"``.
+    """
+
+    code: str
+
+
 class _AttributionOperationIdentityV3Required(TypedDict):
     id: str
     name: str
@@ -98,6 +121,8 @@ class _AttributionOperationIdentityV3Required(TypedDict):
 
 class AttributionOperationIdentityV3(_AttributionOperationIdentityV3Required, total=False):
     trace: AttributionTraceIdentityV3
+    latency_ms: int
+    error: AttributionOperationErrorV3
 
 
 class _AttributionCostEvidenceV3Required(TypedDict):
@@ -139,6 +164,7 @@ class _AttributionObservationV3Required(TypedDict):
 
 
 class AttributionObservationV3(_AttributionObservationV3Required, total=False):
+    environment: str
     resource: AttributionResourceV3
     usage_period: AttributionUsagePeriodV3
     cost_evidence: AttributionCostEvidenceV3

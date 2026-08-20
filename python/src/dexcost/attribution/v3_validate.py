@@ -13,6 +13,9 @@ from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
 
 from dexcost.attribution.types import ATTRIBUTION_UNIT_BY_METRIC
+from dexcost.schema import SchemaNotFoundError
+
+ATTRIBUTION_V3_SCHEMA_FILENAME = "attribution-v3-schema.json"
 
 _TIMESTAMP = re.compile(
     r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})"
@@ -35,8 +38,16 @@ _TIME_METRICS = {
 
 
 def _load_schema() -> dict[str, Any]:
-    schema_path = files("dexcost.attribution").joinpath("attribution-v3-schema.json")
-    document = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema_path = files("dexcost.attribution").joinpath(ATTRIBUTION_V3_SCHEMA_FILENAME)
+    try:
+        raw = schema_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SchemaNotFoundError(
+            f"Bundled attribution v3 schema {ATTRIBUTION_V3_SCHEMA_FILENAME!r} is missing from "
+            "the installed dexcost.attribution package. Reinstall dexcost from a wheel built "
+            "with the schema packaged (pyproject package data)."
+        ) from exc
+    document = json.loads(raw)
     return {
         "$schema": document["$schema"],
         "$id": document["$id"],
@@ -200,6 +211,14 @@ def _semantic_issues(value: object) -> list[AttributionV3ValidationIssue]:
                     "operation.attempt.retry_of", "Attempt cannot retry itself"
                 )
             )
+
+    # A succeeded operation cannot carry a terminal failure classification.
+    if operation is not None and operation.get("status") == "succeeded" and "error" in operation:
+        issues.append(
+            AttributionV3ValidationIssue(
+                "operation.error", "A succeeded operation cannot carry an error"
+            )
+        )
 
     raw_lifecycle = event.get("lifecycle")
     lifecycle = raw_lifecycle if isinstance(raw_lifecycle, dict) else None
