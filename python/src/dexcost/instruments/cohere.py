@@ -33,6 +33,7 @@ from dexcost.context import _current_task, get_current_task, set_current_task, s
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
+    record_stream_failure,
     requested_model,
 )
 from dexcost.models.event import Event
@@ -302,6 +303,7 @@ def _sync_chat_stream_wrapper(
     """
     task = get_current_task()
     auto = task is None
+    auto_task_obj = None
     auto_token = None
 
     if auto:
@@ -317,7 +319,13 @@ def _sync_chat_stream_wrapper(
         except Exception as exc:
             _record_call_failure(exc, start_time, kwargs, auto_task_obj)
             raise
-        return _SyncStreamWrapper(raw_stream, start_time, str(model))
+        return _SyncStreamWrapper(
+            raw_stream,
+            start_time,
+            str(model),
+            task=task,
+            auto_task_obj=auto_task_obj,
+        )
     finally:
         if auto and auto_token is not None:
             _current_task.reset(auto_token)
@@ -333,6 +341,7 @@ def _async_chat_stream_wrapper(
     """
     task = get_current_task()
     auto = task is None
+    auto_task_obj = None
     auto_token = None
 
     if auto:
@@ -348,7 +357,13 @@ def _async_chat_stream_wrapper(
         except Exception as exc:
             _record_call_failure(exc, start_time, kwargs, auto_task_obj)
             raise
-        return _AsyncStreamWrapper(raw_stream, start_time, str(model))
+        return _AsyncStreamWrapper(
+            raw_stream,
+            start_time,
+            str(model),
+            task=task,
+            auto_task_obj=auto_task_obj,
+        )
     finally:
         if auto and auto_token is not None:
             _current_task.reset(auto_token)
@@ -375,12 +390,21 @@ def _extract_stream_usage(event: Any) -> Any | None:
 class _SyncStreamWrapper(Iterator[Any]):
     """Wraps a sync Cohere chat stream to capture usage on completion."""
 
-    def __init__(self, stream: Any, start_time: float, model: str) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        model: str,
+        task: Any = None,
+        auto_task_obj: Any = None,
+    ) -> None:
         self._stream = stream
         self._start_time = start_time
         self._model = model
         self._billed_units: Any | None = None
         self._finalized: bool = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -395,6 +419,29 @@ class _SyncStreamWrapper(Iterator[Any]):
         except StopIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="cohere",
+            model=self._model,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _finalize(self) -> None:
         if self._finalized:
@@ -424,12 +471,21 @@ class _SyncStreamWrapper(Iterator[Any]):
 class _AsyncStreamWrapper:
     """Wraps an async Cohere chat stream to capture usage on completion."""
 
-    def __init__(self, stream: Any, start_time: float, model: str) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        model: str,
+        task: Any = None,
+        auto_task_obj: Any = None,
+    ) -> None:
         self._stream = stream
         self._start_time = start_time
         self._model = model
         self._billed_units: Any | None = None
         self._finalized: bool = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -444,6 +500,29 @@ class _AsyncStreamWrapper:
         except StopAsyncIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="cohere",
+            model=self._model,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _finalize(self) -> None:
         if self._finalized:

@@ -245,12 +245,13 @@ def set_context(
     customer_id: str | None = None,
     project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
-    user_id: str | None = None,
-    product_id: str | None = None,
     agent: str | None = None,
     agent_version: str | None = None,
     workflow_id: str | None = None,
     workflow_session_id: str | None = None,
+    *,
+    user_id: str | None = None,
+    product_id: str | None = None,
 ) -> None:
     """Set the attribution context for subsequent LLM calls and tasks.
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -177,6 +178,58 @@ def record_call_failure(
     except Exception:
         _log.debug("dexcost: failed to record call failure", exc_info=True)
         return None
+
+
+def record_stream_failure(
+    *,
+    tracker: Any,
+    exc: BaseException,
+    start_time: float | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    task: Any = None,
+    auto_task_obj: Any = None,
+    event_type: str = "llm_call",
+    service_name: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> Event | None:
+    """Record a provider error raised *while a stream was being consumed*.
+
+    Streaming calls have two distinct failure points. The provider SDK can
+    raise when the stream is created, which the call-site ``try`` around
+    ``wrapped(...)`` already covers; or it can return a stream successfully and
+    raise later, from ``next()`` / ``__anext__()``, as the response is pulled
+    over the wire. The second is the more common failure for long generations,
+    and without this path the call is silently lost: no failed event is
+    persisted and an auto-task started for the call never closes.
+
+    By consumption time the wrapper's contextvar token has already been reset,
+    so the owning task is passed in explicitly instead of being read from the
+    ambient context — reading it there would attribute the failure to whatever
+    task happens to be current, or to nothing at all.
+
+    Latency is measured from stream creation, so it covers the time actually
+    spent streaming before the error. Never raises.
+    """
+    latency_ms: int | None = None
+    try:
+        if start_time is not None:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    event = record_call_failure(
+        tracker=tracker,
+        exc=exc,
+        provider=provider,
+        model=model,
+        latency_ms=latency_ms,
+        event_type=event_type,
+        service_name=service_name,
+        details=details,
+        task=task if task is not None else auto_task_obj,
+    )
+    finalize_failed_auto_task(tracker, auto_task_obj, event)
+    return event
 
 
 def finalize_failed_auto_task(tracker: Any, auto_task_obj: Any, event: Event | None) -> None:

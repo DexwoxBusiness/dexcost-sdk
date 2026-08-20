@@ -745,9 +745,10 @@ class _TaskContextManager:
         agent_version: str | None = None,
         workflow_id: str | None = None,
         workflow_session_id: str | None = None,
+        track_gpu: bool = False,
+        *,
         user_id: str | None = None,
         product_id: str | None = None,
-        track_gpu: bool = False,
     ) -> None:
         self._tracker = tracker
         self._task_type = task_type
@@ -1255,9 +1256,10 @@ class CostTracker:
         agent_version: str | None = None,
         workflow_id: str | None = None,
         workflow_session_id: str | None = None,
+        track_gpu: bool = False,
+        *,
         user_id: str | None = None,
         product_id: str | None = None,
-        track_gpu: bool = False,
     ) -> TrackedTask:
         """Manually start a task and return a :class:`TrackedTask` handle.
 
@@ -1330,9 +1332,10 @@ class CostTracker:
         agent_version: str | None = None,
         workflow_id: str | None = None,
         workflow_session_id: str | None = None,
+        track_gpu: bool = False,
+        *,
         user_id: str | None = None,
         product_id: str | None = None,
-        track_gpu: bool = False,
     ) -> _TaskContextManager:
         """Return a context manager for explicit task tracking.
 
@@ -1388,9 +1391,10 @@ class CostTracker:
         agent_version: str | None = None,
         workflow_id: str | None = None,
         workflow_session_id: str | None = None,
+        track_gpu: bool = False,
+        *,
         user_id: str | None = None,
         product_id: str | None = None,
-        track_gpu: bool = False,
     ) -> Callable[[F], F]:
         """Decorator that wraps *func* with automatic task tracking.
 

@@ -39,6 +39,7 @@ from dexcost.context import (
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
+    record_stream_failure,
     requested_model,
 )
 from dexcost.instruments.openai_usage import OpenAIUsageError, normalize_openai_usage
@@ -272,6 +273,7 @@ def _sync_create_common(
                 responses_stream,
                 task,
                 auto_task_obj,
+                requested_model(kwargs),
             )
 
         try:
@@ -423,6 +425,7 @@ async def _async_stream_handler(
             responses_stream,
             task,
             auto_task_obj,
+            requested_model(kwargs),
         )
     finally:
         if auto_token is not None:
@@ -444,9 +447,11 @@ class _SyncStreamWrapper(Iterator[Any]):
         responses_stream: bool = False,
         task: Any = None,
         auto_task_obj: Any = None,
+        requested: str | None = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
+        self._requested = requested
         self._model: str | None = None
         self._usage: Any | None = None
         self._record_id: str | None = None
@@ -466,6 +471,29 @@ class _SyncStreamWrapper(Iterator[Any]):
         except StopIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="openai",
+            model=self._model or self._requested,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_chunk(self, chunk: Any) -> None:
         """Extract model and usage info from streaming chunks."""
@@ -525,9 +553,11 @@ class _AsyncStreamWrapper:
         responses_stream: bool = False,
         task: Any = None,
         auto_task_obj: Any = None,
+        requested: str | None = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
+        self._requested = requested
         self._model: str | None = None
         self._usage: Any | None = None
         self._record_id: str | None = None
@@ -547,6 +577,29 @@ class _AsyncStreamWrapper:
         except StopAsyncIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="openai",
+            model=self._model or self._requested,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_chunk(self, chunk: Any) -> None:
         """Extract model and usage info from streaming chunks."""

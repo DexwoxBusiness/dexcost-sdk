@@ -32,7 +32,11 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
-from dexcost.instruments._errors import finalize_failed_auto_task, record_call_failure
+from dexcost.instruments._errors import (
+    finalize_failed_auto_task,
+    record_call_failure,
+    record_stream_failure,
+)
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -189,6 +193,7 @@ def _make_api_call_wrapper(
 
     if auto:
         auto_task_obj = create_auto_task("bedrock.invoke")
+        task = auto_task_obj
         auto_token = set_current_task(auto_task_obj)
 
     try:
@@ -205,7 +210,9 @@ def _make_api_call_wrapper(
         if streaming:
             # Streaming: wrap the response body EventStream so usage is
             # captured once the caller fully consumes the stream.
-            return _wrap_stream_response(response, start_time, api_params)
+            return _wrap_stream_response(
+                response, start_time, api_params, task, auto_task_obj
+            )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
@@ -241,14 +248,20 @@ def _make_api_call_wrapper(
 
 
 def _wrap_stream_response(
-    response: Any, start_time: float, api_params: dict[str, Any]
+    response: Any,
+    start_time: float,
+    api_params: dict[str, Any],
+    task: Any = None,
+    auto_task_obj: Any = None,
 ) -> Any:
     """Wrap a streaming InvokeModel response so usage is captured on consume."""
     try:
         model_id = api_params.get("modelId", "unknown") if api_params else "unknown"
         body = response.get("body") if isinstance(response, dict) else None
         if body is not None:
-            response["body"] = _StreamBodyWrapper(body, start_time, model_id)
+            response["body"] = _StreamBodyWrapper(
+                body, start_time, model_id, task, auto_task_obj
+            )
     except Exception:
         _log.debug("dexcost: failed to wrap stream body", exc_info=True)
     return response
@@ -321,7 +334,14 @@ class _StreamBodyWrapper(Iterator[Any]):
     recorded once the stream is fully consumed.
     """
 
-    def __init__(self, stream: Any, start_time: float, model_id: str) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        model_id: str,
+        task: Any = None,
+        auto_task_obj: Any = None,
+    ) -> None:
         self._stream = stream
         # botocore EventStream is iterable; obtain its iterator once.
         self._iter = iter(stream)
@@ -330,6 +350,8 @@ class _StreamBodyWrapper(Iterator[Any]):
         self._input_tokens = 0
         self._output_tokens = 0
         self._finalized = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __iter__(self) -> _StreamBodyWrapper:
         return self
@@ -342,6 +364,29 @@ class _StreamBodyWrapper(Iterator[Any]):
         except StopIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="aws_bedrock",
+            model=self._model_id,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_event(self, event: Any) -> None:
         payload = _decode_stream_event(event)
