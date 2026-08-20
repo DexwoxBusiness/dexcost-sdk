@@ -2,6 +2,13 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## [0.18.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.17.0...python/v0.18.0) (2026-08-20)
+
+
+### Features
+
+* **python:** attribute failed calls with operation.error, tool resource, environment and user/product context ([#158](https://github.com/DexwoxBusiness/dexcost-sdk/issues/158)) ([117930f](https://github.com/DexwoxBusiness/dexcost-sdk/commit/117930fbb641082ca668ce19b7f5bfd53ea9f809))
+
 ## [0.17.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.16.0...python/v0.17.0) (2026-08-17)
 
 
