@@ -26,9 +26,14 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.instruments._errors import error_type_of, finalize_failed_auto_task
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
+
+# ``operation.error.type`` for a tool that returned a protocol-level error
+# (``CallToolResult.isError``) rather than raising.
+TOOL_ERROR_TYPE = "tool_error"
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -476,8 +481,7 @@ async def _async_call_tool_handler(
         try:
             with suppress_network_event():
                 result = await wrapped(*args, **kwargs)
-        except Exception:
-            is_error = True
+        except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             try:
                 event = _record_tool_call(
@@ -485,16 +489,19 @@ async def _async_call_tool_handler(
                     instance=instance,
                     latency_ms=latency_ms,
                     is_error=True,
+                    error_type=error_type_of(exc),
                 )
             except Exception:
                 _log.debug("dexcost: failed to record MCP error event", exc_info=True)
+            if auto:
+                finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
             raise
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Check if the MCP result itself signals an error
-        if hasattr(result, "isError") and result.isError:
-            is_error = True
+        # Check if the MCP result itself signals an error. The MCP SDK spells
+        # it ``isError``; ``is_error`` is accepted for other client shapes.
+        is_error = _result_is_error(result)
 
         try:
             event = _record_tool_call(
@@ -502,17 +509,21 @@ async def _async_call_tool_handler(
                 instance=instance,
                 latency_ms=latency_ms,
                 is_error=is_error,
+                error_type=TOOL_ERROR_TYPE if is_error else None,
             )
         except Exception:
             _log.debug("dexcost: failed to record MCP event", exc_info=True)
 
         if auto and auto_task_obj is not None and event is not None:
-            try:
-                finalize_auto_task(auto_task_obj, event, status="success")
-                if _active_tracker is not None:
-                    _active_tracker._storage.insert_task(auto_task_obj)
-            except Exception:
-                _log.debug("dexcost: failed to finalize MCP auto-task", exc_info=True)
+            if is_error:
+                finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+            else:
+                try:
+                    finalize_auto_task(auto_task_obj, event, status="success")
+                    if _active_tracker is not None:
+                        _active_tracker._storage.insert_task(auto_task_obj)
+                except Exception:
+                    _log.debug("dexcost: failed to finalize MCP auto-task", exc_info=True)
 
         return result
     except Exception:
@@ -568,14 +579,35 @@ def _resolve_cost(
 # ---------------------------------------------------------------------------
 
 
+def _result_is_error(result: Any) -> bool:
+    """Return whether an MCP tool result signals a protocol-level error."""
+    for attribute in ("isError", "is_error"):
+        try:
+            value = getattr(result, attribute, None)
+        except Exception:  # pragma: no cover - defensive; properties can raise
+            continue
+        if value:
+            return True
+    if isinstance(result, dict):
+        return bool(result.get("isError") or result.get("is_error"))
+    return False
+
+
 def _record_tool_call(
     *,
     tool_name: str,
     instance: Any,
     latency_ms: int,
     is_error: bool,
+    error_type: str | None = None,
 ) -> Event | None:
-    """Create and persist an external_cost event for an MCP tool call."""
+    """Create and persist an external_cost event for an MCP tool call.
+
+    The tool itself is the resource being charged for, so the event carries a
+    ``resource = {"type": "tool", "id": <tool name>}`` identity. The provider
+    name/service stay derived from ``service_name`` exactly as before
+    (``mcp`` / ``<tool name>``).
+    """
     tracker = _active_tracker
     if tracker is None:
         return None
@@ -588,6 +620,17 @@ def _record_tool_call(
     # Best-effort extraction of MCP server info
     mcp_server: str = getattr(instance, "_server_name", None) or "unknown"
 
+    details: dict[str, Any] = {
+        "mcp_tool": tool_name,
+        "mcp_server": mcp_server,
+        "latency_ms": latency_ms,
+        "is_error": is_error,
+        "attribution_resource_type": "tool",
+        "attribution_resource_id": tool_name,
+    }
+    if is_error:
+        details["error_type"] = error_type or TOOL_ERROR_TYPE
+
     event = Event(
         task_id=task.task_id,
         event_type="external_cost",
@@ -597,12 +640,7 @@ def _record_tool_call(
         pricing_version=pricing_version,
         service_name=f"mcp:{tool_name}",
         latency_ms=latency_ms,
-        details={
-            "mcp_tool": tool_name,
-            "mcp_server": mcp_server,
-            "latency_ms": latency_ms,
-            "is_error": is_error,
-        },
+        details=details,
     )
     tracker._storage.insert_event(event)
     return event

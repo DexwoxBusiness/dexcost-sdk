@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "corpus_version": "2026-08-11.1",
-  "observation_contract_version": "3.0.0",
+  "corpus_version": "2026-08-20.1",
+  "observation_contract_version": "3.1.0",
   "business_contract_version": "1.0.0",
   "valid_observations": [
     {
@@ -131,6 +131,25 @@
         "usage_snapshot": "full",
         "usage": []
       }
+    },
+    {
+      "id": "observation.failed_final_with_extensions",
+      "covers": ["lifecycle.failed_final_no_usage", "observation.environment", "observation.operation_latency", "observation.operation_error", "observation.tool_resource"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111117",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:40:00.123456Z",
+        "observed_at": "2026-08-11T10:40:01.123456Z",
+        "environment": "production",
+        "component": "external",
+        "provider": { "name": "browserbase", "service": "sessions", "record_id": "sess_9" },
+        "resource": { "type": "tool", "id": "web_browser" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333339", "name": "agent.answer", "status": "failed", "attempt": { "id": "44444444-4444-4444-8444-444444444451", "number": 1 }, "trace": { "trace_id": "0123456789abcdef0123456789abcdef", "span_id": "0123456789abcdef" }, "latency_ms": 1250, "error": { "type": "timeout", "code": "ETIMEDOUT" } },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": []
+      }
     }
   ],
   "invalid_observations": [
@@ -149,7 +168,11 @@
     { "id": "observation.invalid.synthetic_zero", "covers": ["cost.no_synthetic_zero"], "expected_error_path": "cost_evidence.amount", "mutate_from": "observation.final_known_meter", "set": { "cost_evidence.amount": "0.000000" } },
     { "id": "observation.invalid.voided_revision_one", "covers": [], "expected_error_path": "lifecycle.revision", "mutate_from": "observation.failed_final_without_usage", "set": { "lifecycle.state": "voided" } },
     { "id": "observation.invalid.attempt_two_without_retry", "covers": [], "expected_error_path": "operation.attempt.retry_of", "mutate_from": "observation.retry_attempt", "delete": ["operation.attempt.retry_of"] },
-    { "id": "observation.invalid.details_carrier", "covers": ["privacy.arbitrary_details_not_transported"], "expected_error_path": "details", "mutate_from": "observation.retry_attempt", "set": { "details": { "price": "0.01", "prompt": "secret" } } }
+    { "id": "observation.invalid.details_carrier", "covers": ["privacy.arbitrary_details_not_transported"], "expected_error_path": "details", "mutate_from": "observation.retry_attempt", "set": { "details": { "price": "0.01", "prompt": "secret" } } },
+    { "id": "observation.invalid.error_on_succeeded", "covers": ["observation.operation_error"], "expected_error_path": "operation.error", "mutate_from": "observation.final_known_meter", "set": { "operation.error": { "type": "timeout" } } },
+    { "id": "observation.invalid.environment_charset", "covers": ["observation.environment"], "expected_error_path": "environment", "mutate_from": "observation.final_known_meter", "set": { "environment": "Production" } },
+    { "id": "observation.invalid.negative_latency", "covers": ["observation.operation_latency"], "expected_error_path": "operation.latency_ms", "mutate_from": "observation.final_known_meter", "set": { "operation.latency_ms": -1 } },
+    { "id": "observation.invalid.overlarge_latency", "covers": ["observation.operation_latency"], "expected_error_path": "operation.latency_ms", "mutate_from": "observation.final_known_meter", "set": { "operation.latency_ms": 86400001 } }
   ],
   "revision_sequences": [
     {
@@ -169,7 +192,7 @@
     "valid": [
       {
         "id": "business.identity.child_assignment",
-        "covers": ["business.task_hierarchy", "business.workflow_agent_assignment"],
+        "covers": ["business.task_hierarchy", "business.workflow_agent_assignment", "business.user_product_assignment"],
         "record": {
           "schema_version": "1",
           "task_id": "20000000-0000-4000-8000-000000000001",
@@ -180,7 +203,7 @@
           "task": { "task_type": "support.resolve_ticket", "root_task_id": "20000000-0000-4000-8000-000000000002", "parent_task_id": "20000000-0000-4000-8000-000000000002" },
           "workflow": { "id": "support-workflow", "session_id": "ticket-123" },
           "agent": { "id": "support-agent", "version": "2026.08.11" },
-          "assignment": { "customer_id": "customer-a", "project_id": "support", "experiment_id": "prompt-test", "variant": "b" }
+          "assignment": { "customer_id": "customer-a", "project_id": "support", "user_id": "user-42", "product_id": "support-console", "experiment_id": "prompt-test", "variant": "b" }
         }
       }
     ],

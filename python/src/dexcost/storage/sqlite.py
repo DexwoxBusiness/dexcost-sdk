@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     agent_version       TEXT,
     workflow_id         TEXT,
     workflow_session_id TEXT,
+    user_id             TEXT,
+    product_id          TEXT,
     experiment_id       TEXT,
     variant             TEXT,
     sync_status         TEXT NOT NULL DEFAULT 'pending',
@@ -278,9 +280,10 @@ class SQLiteStorage:
                     retry_count, retry_cost_usd, failure_count,
                     customer_id, project_id, parent_task_id, root_task_id,
                     agent_id, agent_version, workflow_id, workflow_session_id,
+                    user_id, product_id,
                     experiment_id, variant,
                     network_bytes_in, network_bytes_out, network_call_count, network_by_host
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(task.task_id),
                     task.task_type,
@@ -308,6 +311,8 @@ class SQLiteStorage:
                     task.agent_version,
                     task.workflow_id,
                     task.workflow_session_id,
+                    task.user_id,
+                    task.product_id,
                     task.experiment_id,
                     task.variant,
                     task.network_bytes_in,
@@ -334,6 +339,7 @@ class SQLiteStorage:
                     retry_count=?, retry_cost_usd=?, failure_count=?,
                     customer_id=?, project_id=?, parent_task_id=?, root_task_id=?,
                     agent_id=?, agent_version=?, workflow_id=?, workflow_session_id=?,
+                    user_id=?, product_id=?,
                     experiment_id=?, variant=?,
                     network_bytes_in=?, network_bytes_out=?, network_call_count=?, network_by_host=?,
                     sync_status='pending'
@@ -364,6 +370,8 @@ class SQLiteStorage:
                     task.agent_version,
                     task.workflow_id,
                     task.workflow_session_id,
+                    task.user_id,
+                    task.product_id,
                     task.experiment_id,
                     task.variant,
                     task.network_bytes_in,
@@ -859,6 +867,8 @@ class SQLiteStorage:
             workflow_session_id=(
                 row["workflow_session_id"] if "workflow_session_id" in row.keys() else None
             ),
+            user_id=row["user_id"] if "user_id" in row.keys() else None,
+            product_id=row["product_id"] if "product_id" in row.keys() else None,
             experiment_id=row["experiment_id"],
             variant=row["variant"],
             network_bytes_in=row["network_bytes_in"] or 0,

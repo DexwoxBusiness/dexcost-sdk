@@ -488,6 +488,10 @@ def to_business_identity_revision_v1(
         assignment["customer_id"] = task.customer_id
     if task.project_id is not None:
         assignment["project_id"] = task.project_id
+    if task.user_id is not None:
+        assignment["user_id"] = task.user_id
+    if task.product_id is not None:
+        assignment["product_id"] = task.product_id
     if task.experiment_id is not None:
         assignment["experiment_id"] = task.experiment_id
     if task.variant is not None:

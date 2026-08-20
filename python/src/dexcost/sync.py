@@ -436,7 +436,12 @@ class SyncWorker:
                         and candidate.get("key") in self._config.redact_fields
                     )
                 ]
-        return cast(dict[str, Any] | None, to_attribution_observation_v3(sanitized))
+        return cast(
+            dict[str, Any] | None,
+            to_attribution_observation_v3(
+                sanitized, environment=self._config.environment
+            ),
+        )
 
     def _prepare_task_dict(self, task: Any) -> dict[str, Any]:
         """Serialise a task and apply the same redaction policy as events.

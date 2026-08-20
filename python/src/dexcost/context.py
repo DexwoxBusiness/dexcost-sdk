@@ -29,6 +29,8 @@ class DexcostContext:
 
     customer_id: str | None = None
     project_id: str | None = None
+    user_id: str | None = None
+    product_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     agent: str | None = None
     agent_version: str | None = None
@@ -49,12 +51,19 @@ def set_context(
     agent_version: str | None = None,
     workflow_id: str | None = None,
     workflow_session_id: str | None = None,
+    *,
+    user_id: str | None = None,
+    product_id: str | None = None,
 ) -> None:
     """Set business attribution for subsequent calls and tasks.
 
     ``agent`` is a stable agent identifier, separate from the task type.
     Agent identity is only valid when ``agent_version`` is supplied as well.
     A workflow session similarly requires ``workflow_id``.
+
+    ``user_id`` (the end user the work is performed for) and ``product_id``
+    (the product surface driving it) are validated exactly like
+    ``customer_id`` and land on the business identity assignment.
     """
     if (agent is None) != (agent_version is None):
         raise ValueError("agent and agent_version must be supplied together")
@@ -63,6 +72,8 @@ def set_context(
     for name, value in (
         ("customer_id", customer_id),
         ("project_id", project_id),
+        ("user_id", user_id),
+        ("product_id", product_id),
         ("agent", agent),
         ("agent_version", agent_version),
         ("workflow_id", workflow_id),
@@ -74,6 +85,8 @@ def set_context(
         DexcostContext(
             customer_id=customer_id,
             project_id=project_id,
+            user_id=user_id,
+            product_id=product_id,
             metadata=metadata or {},
             agent=agent,
             agent_version=agent_version,

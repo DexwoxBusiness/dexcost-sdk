@@ -89,7 +89,14 @@ class SessionManager:
         ctx = get_context()
         task_id = uuid.uuid4()
         has_business_identity = ctx is not None and any(
-            (ctx.customer_id, ctx.project_id, ctx.agent, ctx.workflow_id)
+            (
+                ctx.customer_id,
+                ctx.project_id,
+                ctx.user_id,
+                ctx.product_id,
+                ctx.agent,
+                ctx.workflow_id,
+            )
         )
         session = Task(
             task_id=task_id,
@@ -98,6 +105,8 @@ class SessionManager:
             started_at=datetime.now(timezone.utc),
             customer_id=ctx.customer_id if ctx else None,
             project_id=ctx.project_id if ctx else None,
+            user_id=ctx.user_id if ctx else None,
+            product_id=ctx.product_id if ctx else None,
             root_task_id=task_id if has_business_identity else None,
             agent_id=ctx.agent if ctx else None,
             agent_version=ctx.agent_version if ctx else None,

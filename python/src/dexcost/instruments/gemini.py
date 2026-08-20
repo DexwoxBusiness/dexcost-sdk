@@ -30,6 +30,11 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.instruments._errors import (
+    finalize_failed_auto_task,
+    record_call_failure,
+    record_stream_failure,
+)
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -138,6 +143,33 @@ def uninstrument_gemini() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _record_call_failure(
+    exc: BaseException,
+    start_time: float,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    auto_task_obj: Any = None,
+) -> Event | None:
+    """Record a raised Gemini call as a failed operation. Never raises."""
+    try:
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    try:
+        model = _resolve_model_name(args, kwargs)
+    except Exception:  # pragma: no cover - defensive
+        model = None
+    event = record_call_failure(
+        tracker=_active_tracker,
+        exc=exc,
+        provider="google",
+        model=model,
+        latency_ms=latency_ms,
+    )
+    finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+    return event
+
+
 def _sync_generate_content_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -154,8 +186,12 @@ def _sync_generate_content_wrapper(
     try:
         start_time = time.perf_counter()
 
-        with suppress_network_event():
-            response = wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, args, kwargs, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -200,14 +236,19 @@ def _sync_generate_content_stream_wrapper(
 
     if auto:
         auto_task_obj = create_auto_task("gemini.generate_content")
+        task = auto_task_obj
         auto_token = set_current_task(auto_task_obj)
 
     try:
         start_time = time.perf_counter()
         model = _resolve_model_name(args, kwargs)
-        with suppress_network_event():
-            raw_stream = wrapped(*args, **kwargs)
-        return _SyncStreamWrapper(raw_stream, start_time, model)
+        try:
+            with suppress_network_event():
+                raw_stream = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, args, kwargs, auto_task_obj)
+            raise
+        return _SyncStreamWrapper(raw_stream, start_time, model, task, auto_task_obj)
     finally:
         if auto and auto_token is not None:
             _current_task.reset(auto_token)
@@ -226,12 +267,21 @@ class _SyncStreamWrapper(Iterator[Any]):
     that carries usage wins.
     """
 
-    def __init__(self, stream: Any, start_time: float, model: str) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        model: str,
+        task: Any = None,
+        auto_task_obj: Any = None,
+    ) -> None:
         self._stream = stream
         self._start_time = start_time
         self._model = model
         self._usage: Any | None = None
         self._finalized: bool = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -244,6 +294,29 @@ class _SyncStreamWrapper(Iterator[Any]):
         except StopIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="google",
+            model=self._model,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_chunk(self, chunk: Any) -> None:
         """Extract usage info from streaming chunks."""

@@ -30,6 +30,12 @@ import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.instruments._errors import (
+    finalize_failed_auto_task,
+    record_call_failure,
+    record_stream_failure,
+    requested_model,
+)
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -129,6 +135,28 @@ def uninstrument_anthropic() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _record_call_failure(
+    exc: BaseException,
+    start_time: float,
+    kwargs: dict[str, Any],
+    auto_task_obj: Any = None,
+) -> Event | None:
+    """Record a raised Anthropic call as a failed operation. Never raises."""
+    try:
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+    except Exception:  # pragma: no cover - defensive
+        latency_ms = None
+    event = record_call_failure(
+        tracker=_active_tracker,
+        exc=exc,
+        provider="anthropic",
+        model=requested_model(kwargs),
+        latency_ms=latency_ms,
+    )
+    finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
+    return event
+
+
 def _sync_create_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -147,12 +175,26 @@ def _sync_create_wrapper(
         start_time = time.perf_counter()
 
         if stream:
-            with suppress_network_event():
-                raw_stream = wrapped(*args, **kwargs)
-            return _SyncStreamWrapper(raw_stream, start_time)
+            try:
+                with suppress_network_event():
+                    raw_stream = wrapped(*args, **kwargs)
+            except Exception as exc:
+                _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+                raise
+            return _SyncStreamWrapper(
+                raw_stream,
+                start_time,
+                task,
+                auto_task_obj,
+                requested_model(kwargs),
+            )
 
-        with suppress_network_event():
-            response = wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -198,7 +240,9 @@ def _async_create_wrapper(
     start_time = time.perf_counter()
 
     if stream:
-        return _async_stream_handler(wrapped, args, kwargs, start_time, auto_task_obj, auto_token)
+        return _async_stream_handler(
+            wrapped, args, kwargs, start_time, auto_task_obj, auto_token, task
+        )
 
     return _async_non_stream_handler(wrapped, args, kwargs, start_time, auto_task_obj, auto_token)
 
@@ -213,8 +257,12 @@ async def _async_non_stream_handler(
 ) -> Any:
     """Await the async create call and record the response."""
     try:
-        with suppress_network_event():
-            response = await wrapped(*args, **kwargs)
+        try:
+            with suppress_network_event():
+                response = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
@@ -243,12 +291,23 @@ async def _async_stream_handler(
     start_time: float,
     auto_task_obj: Any = None,
     auto_token: Any = None,
+    task: Any = None,
 ) -> Any:
     """Wrap async streaming to capture usage from the final events."""
     try:
-        with suppress_network_event():
-            raw_stream = await wrapped(*args, **kwargs)
-        return _AsyncStreamWrapper(raw_stream, start_time)
+        try:
+            with suppress_network_event():
+                raw_stream = await wrapped(*args, **kwargs)
+        except Exception as exc:
+            _record_call_failure(exc, start_time, kwargs, auto_task_obj)
+            raise
+        return _AsyncStreamWrapper(
+            raw_stream,
+            start_time,
+            task,
+            auto_task_obj,
+            requested_model(kwargs),
+        )
     finally:
         if auto_token is not None:
             _current_task.reset(auto_token)
@@ -268,15 +327,25 @@ class _SyncStreamWrapper(Iterator[Any]):
     - ``message_stop``: signals stream end
     """
 
-    def __init__(self, stream: Any, start_time: float) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        task: Any = None,
+        auto_task_obj: Any = None,
+        requested: str | None = None,
+    ) -> None:
         self._stream = stream
         self._start_time = start_time
+        self._requested = requested
         self._model: str | None = None
         self._input_tokens: int = 0
         self._output_tokens: int = 0
         self._cache_creation_input_tokens: int = 0
         self._cache_read_input_tokens: int = 0
         self._finalized: bool = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -289,6 +358,29 @@ class _SyncStreamWrapper(Iterator[Any]):
         except StopIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="anthropic",
+            model=self._model or self._requested,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_event(self, event: Any) -> None:
         """Extract model and usage info from streaming events."""
@@ -352,15 +444,25 @@ class _SyncStreamWrapper(Iterator[Any]):
 class _AsyncStreamWrapper:
     """Wraps an async Anthropic stream to capture usage on completion."""
 
-    def __init__(self, stream: Any, start_time: float) -> None:
+    def __init__(
+        self,
+        stream: Any,
+        start_time: float,
+        task: Any = None,
+        auto_task_obj: Any = None,
+        requested: str | None = None,
+    ) -> None:
         self._stream = stream
         self._start_time = start_time
+        self._requested = requested
         self._model: str | None = None
         self._input_tokens: int = 0
         self._output_tokens: int = 0
         self._cache_creation_input_tokens: int = 0
         self._cache_read_input_tokens: int = 0
         self._finalized: bool = False
+        self._task = task
+        self._auto_task_obj = auto_task_obj
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -373,6 +475,29 @@ class _AsyncStreamWrapper:
         except StopAsyncIteration:
             self._finalize()
             raise
+        except Exception as exc:
+            self._record_failure(exc)
+            raise
+
+    def _record_failure(self, exc: BaseException) -> None:
+        """Persist a provider error raised while the stream was being consumed.
+
+        Marks the wrapper finalized so the success path can no longer fire: a
+        stream that died mid-flight has no trustworthy usage total, and
+        recording one would overstate what the provider actually delivered.
+        """
+        if self._finalized:
+            return
+        self._finalized = True
+        record_stream_failure(
+            tracker=_active_tracker,
+            exc=exc,
+            start_time=self._start_time,
+            provider="anthropic",
+            model=self._model or self._requested,
+            task=self._task,
+            auto_task_obj=self._auto_task_obj,
+        )
 
     def _process_event(self, event: Any) -> None:
         """Extract model and usage info from streaming events."""

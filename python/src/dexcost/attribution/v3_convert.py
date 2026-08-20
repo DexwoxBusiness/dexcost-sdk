@@ -29,8 +29,10 @@ from dexcost.attribution.v3_types import (
     AttributionBillingDimension,
     AttributionBillingDimensionValue,
     AttributionEventV3,
+    AttributionOperationErrorV3,
     AttributionOperationIdentityV3,
     AttributionOperationStatusV3,
+    AttributionResourceV3,
     AttributionUsageLineV3,
 )
 from dexcost.attribution.v3_validate import validate_attribution_observation_v3
@@ -48,6 +50,16 @@ _TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
 _SPAN_ID = re.compile(r"^[0-9a-f]{16}$")
 _INTEGER = re.compile(r"^-?(?:0|[1-9]\d{0,25})$")
 _DECIMAL = re.compile(r"^-?(?:0|[1-9]\d{0,25})(?:\.\d{1,12})?$")
+_ENVIRONMENT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_NON_CANONICAL_ERROR = re.compile(r"[^a-z0-9._-]")
+_LEADING_ERROR_JUNK = re.compile(r"^[^a-z0-9]+")
+_MAX_ERROR_TYPE_LENGTH = 127
+_MAX_ERROR_CODE_LENGTH = 64
+_MAX_LATENCY_MS = 86_400_000
+# ``resource.type`` accepted by the v3 contract after the in-place extension.
+_V3_RESOURCE_TYPES = frozenset(
+    {"model", "sku", "instance", "endpoint", "session", "other", "tool"}
+)
 _COMPONENTS = set(ATTRIBUTION_COMPONENTS)
 _OPERATION_NAMES: dict[str, str] = {
     "llm_call": "llm.call",
@@ -68,6 +80,53 @@ def _number_detail(details: dict[str, Any], *keys: str) -> float | None:
         return float(decimal)
     except (OverflowError, ValueError):
         return None
+
+
+def _normalized_environment(value: object) -> str | None:
+    """Return the canonical deployment environment, or ``None`` to omit it.
+
+    The SDK never raises into user code: a value that cannot satisfy the
+    server charset is dropped with a warning rather than failing the push.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        _log.warning("dexcost: environment=%r dropped — must be a string", value)
+        return None
+    candidate = value.strip().lower()
+    if not candidate:
+        return None
+    if _ENVIRONMENT.fullmatch(candidate) is None:
+        _log.warning(
+            "dexcost: environment=%r dropped — must match %s",
+            value,
+            _ENVIRONMENT.pattern,
+        )
+        return None
+    return candidate
+
+
+def _latency_ms(event: Event) -> int | None:
+    """Return the operation latency in whole milliseconds, clamped to range.
+
+    ``None`` is returned when the event carries no usable latency, so the
+    optional wire field is simply omitted.
+    """
+    raw: object = getattr(event, "latency_ms", None)
+    if raw is None:
+        raw = _decimal_detail(event.details, "latency_ms")
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        latency = raw
+    elif isinstance(raw, (float, Decimal)):
+        try:
+            latency = int(Decimal(str(raw)).to_integral_value(rounding=ROUND_HALF_UP))
+        except (ArithmeticError, ValueError):
+            return None
+    else:
+        return None
+    return max(0, min(latency, _MAX_LATENCY_MS))
 
 
 def _deterministic_uuid(namespace: str, *parts: str) -> str:
@@ -192,6 +251,42 @@ def _valid_uuid(value: str | None) -> bool:
     return value is not None and _UUID.fullmatch(value) is not None
 
 
+def _error_code(details: dict[str, Any]) -> str | None:
+    """Return the optional provider error code, bounded to the wire limit."""
+    for key in ("attribution_error_code", "error_code"):
+        value = details.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        if not isinstance(value, (str, int)):
+            continue
+        code = str(value).strip()
+        if code:
+            return code[:_MAX_ERROR_CODE_LENGTH]
+    return None
+
+
+def _operation_error(event: Event) -> AttributionOperationErrorV3 | None:
+    """Return ``operation.error`` for a non-succeeded operation, if identifiable.
+
+    The error type is canonicalised here rather than at the call sites so that
+    *any* producer of ``details["error_type"]`` — auto-instruments, the manual
+    ``record_llm_call(error_type=...)`` API, integrations — lands on a value the
+    server accepts.
+    """
+    raw_type = _string_detail(event.details, "attribution_error_type", "error_type")
+    if raw_type is None:
+        return None
+    error_type = _NON_CANONICAL_ERROR.sub("_", raw_type.strip().lower())
+    error_type = _LEADING_ERROR_JUNK.sub("", error_type)[:_MAX_ERROR_TYPE_LENGTH]
+    if not error_type or _CANONICAL_NAME.fullmatch(error_type) is None:
+        return None
+    error: AttributionOperationErrorV3 = {"type": error_type}
+    code = _error_code(event.details)
+    if code is not None:
+        error["code"] = code
+    return error
+
+
 def _operation_for(event: Event) -> AttributionOperationIdentityV3 | None:
     explicit_operation_id = _string_detail(event.details, "attribution_operation_id")
     retry_of = str(event.retry_of).lower() if event.retry_of is not None else None
@@ -230,6 +325,15 @@ def _operation_for(event: Event) -> AttributionOperationIdentityV3 | None:
     }
     if retry_of is not None:
         operation["attempt"]["retry_of"] = retry_of
+    # The server rejects an observation that carries an error on a succeeded
+    # operation, so the guard lives here rather than at the call sites.
+    if operation["status"] != "succeeded":
+        error = _operation_error(event)
+        if error is not None:
+            operation["error"] = error
+    latency_ms = _latency_ms(event)
+    if latency_ms is not None:
+        operation["latency_ms"] = latency_ms
     trace_id = _string_detail(event.details, "trace_id")
     span_id = _string_detail(event.details, "span_id")
     if trace_id is not None and span_id is not None:
@@ -238,6 +342,22 @@ def _operation_for(event: Event) -> AttributionOperationIdentityV3 | None:
         if _TRACE_ID.fullmatch(trace_id) and _SPAN_ID.fullmatch(span_id):
             operation["trace"] = {"trace_id": trace_id, "span_id": span_id}
     return operation
+
+
+def _resource_for_v3(event: Event) -> AttributionResourceV3 | None:
+    """Return the v3 resource identity.
+
+    Identical to v2 apart from the ``"tool"`` type added by the in-place v3
+    extension, which the shared v2 helper cannot emit.
+    """
+    explicit_type = _string_detail(event.details, "attribution_resource_type")
+    explicit_id = _string_detail(event.details, "attribution_resource_id")
+    if explicit_id and explicit_type == "tool":
+        return {"type": cast(Any, "tool"), "id": explicit_id[:256]}
+    resource = _resource_for(event)
+    if resource is not None and resource.get("type") not in _V3_RESOURCE_TYPES:
+        return None
+    return cast("AttributionResourceV3 | None", resource)
 
 
 def _unknown_explicit_usage(
@@ -263,8 +383,18 @@ def _unknown_explicit_usage(
     )
 
 
-def to_attribution_observation_v3(event: Event) -> AttributionEventV3 | None:
-    """Convert one durable SDK event into a strict, details-free v3 observation."""
+def to_attribution_observation_v3(
+    event: Event,
+    *,
+    environment: str | None = None,
+) -> AttributionEventV3 | None:
+    """Convert one durable SDK event into a strict, details-free v3 observation.
+
+    ``environment`` is the configured deployment environment
+    (``dexcost.init(environment=...)`` / ``DEXCOST_ENV``). It is normalised
+    to lower case and dropped — never raised — when it cannot satisfy the
+    server charset.
+    """
     explicit = _unknown_explicit_usage(event)
     gpu_signal = _gpu_signal_usage(event) if event.event_type == "gpu_utilization_signal" else None
     legacy = _component_and_usage(event) if explicit is None and gpu_signal is None else None
@@ -321,9 +451,12 @@ def to_attribution_observation_v3(event: Event) -> AttributionEventV3 | None:
         "usage_snapshot": "full",
         "usage": usage,
     }
-    resource = _resource_for(event)
+    normalized_environment = _normalized_environment(environment)
+    if normalized_environment is not None:
+        converted["environment"] = normalized_environment
+    resource = _resource_for_v3(event)
     if resource is not None:
-        converted["resource"] = resource
+        converted["resource"] = cast(Any, resource)
     if event.event_type != "gpu_utilization_signal":
         evidence = _evidence_for(event)
         if evidence is not None:

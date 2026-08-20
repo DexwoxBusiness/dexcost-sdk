@@ -201,6 +201,8 @@ class TestMCPToolCallRecording:
         assert len(events) == 1
         assert events[0].details["is_error"] is True
         assert events[0].service_name == "mcp:broken_tool"
+        # A raised call carries the exception identity, canonicalised.
+        assert events[0].details["error_type"] == "connectionerror"
 
     def test_mcp_result_error_flag(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -226,6 +228,131 @@ class TestMCPToolCallRecording:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         assert events[0].details["is_error"] is True
+        assert events[0].details["error_type"] == "tool_error"
+
+
+# ---------------------------------------------------------------------------
+# attribution-v3 identity: resource type "tool" + failed operations
+# ---------------------------------------------------------------------------
+
+
+async def _succeeding_call(self: Any, name: str, arguments: Any = None) -> Any:
+    """A tool call that returns a normal, non-error result."""
+    return _FakeCallToolResult()
+
+
+def _call(tracker: CostTracker, tool_name: str, call_tool: Any = None) -> Any:
+    """Run one instrumented MCP tool call and return the recorded event.
+
+    Always installs an explicit ``call_tool`` and puts the class attribute
+    back exactly as it was found, so these tests neither depend on nor add to
+    the leakage between the older tests in this module.
+    """
+    from mcp.client.session import ClientSession
+
+    from dexcost.instruments.mcp import instrument_mcp, uninstrument_mcp
+
+    previous = ClientSession.call_tool
+    ClientSession.call_tool = call_tool or _succeeding_call  # type: ignore[assignment]
+    try:
+        instrument_mcp(tracker)
+        session = ClientSession()
+        with tracker.task(task_type="v3_identity") as task:
+            try:
+                asyncio.run(session.call_tool(tool_name))
+            except Exception:
+                pass
+    finally:
+        # uninstrument first: it restores whatever was installed when the
+        # patch was applied, which would otherwise undo the line below.
+        uninstrument_mcp()
+        ClientSession.call_tool = previous  # type: ignore[assignment]
+
+    events = tracker._storage.query_events(task_id=str(task.task_id))
+    assert len(events) == 1
+    return events[0]
+
+
+class TestMCPToolIdentityV3:
+    """The tool is the resource; failures become failed operations."""
+
+    def test_resource_is_the_tool(self, tracker: CostTracker) -> None:
+        """A successful tool call converts to resource={'type':'tool','id':<tool>}."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        event = _call(tracker, "tavily_search")
+        assert event.details["attribution_resource_type"] == "tool"
+        assert event.details["attribution_resource_id"] == "tavily_search"
+
+        converted = to_attribution_observation_v3(event)
+        assert converted is not None
+        assert converted["resource"] == {"type": "tool", "id": "tavily_search"}
+
+    def test_provider_identity_is_unchanged(self, tracker: CostTracker) -> None:
+        """provider name/service keep their existing mcp:<tool> derivation."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        converted = to_attribution_observation_v3(_call(tracker, "brave_web_search"))
+        assert converted is not None
+        assert converted["provider"]["name"] == "mcp"
+        assert converted["provider"]["service"] == "brave_web_search"
+
+    def test_successful_call_has_no_error(self, tracker: CostTracker) -> None:
+        """A succeeded operation never carries operation.error."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        converted = to_attribution_observation_v3(_call(tracker, "tavily_search"))
+        assert converted is not None
+        assert converted["operation"]["status"] == "succeeded"
+        assert "error" not in converted["operation"]
+
+    def test_is_error_result_maps_to_failed_tool_error(self, tracker: CostTracker) -> None:
+        """result.isError -> status 'failed' + operation.error.type 'tool_error'."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        async def _error_result(self: Any, name: str, arguments: Any = None) -> Any:
+            return _FakeCallToolResult(is_error=True)
+
+        converted = to_attribution_observation_v3(
+            _call(tracker, "failing_tool", _error_result)
+        )
+        assert converted is not None
+        assert converted["operation"]["status"] == "failed"
+        assert converted["operation"]["error"] == {"type": "tool_error"}
+        assert converted["resource"] == {"type": "tool", "id": "failing_tool"}
+
+    def test_snake_case_is_error_result_is_honoured(self, tracker: CostTracker) -> None:
+        """A client that spells the flag ``is_error`` is handled too."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        class _SnakeCaseResult:
+            is_error = True
+
+        async def _error_result(self: Any, name: str, arguments: Any = None) -> Any:
+            return _SnakeCaseResult()
+
+        converted = to_attribution_observation_v3(
+            _call(tracker, "snake_tool", _error_result)
+        )
+        assert converted is not None
+        assert converted["operation"]["status"] == "failed"
+        assert converted["operation"]["error"] == {"type": "tool_error"}
+
+    def test_raised_call_maps_to_failed_with_exception_identity(
+        self, tracker: CostTracker
+    ) -> None:
+        """A raising tool call becomes a failed operation naming the exception."""
+        from dexcost.attribution.v3_convert import to_attribution_observation_v3
+
+        async def _failing_call(self: Any, name: str, arguments: Any = None) -> Any:
+            raise ConnectionError("MCP server unreachable")
+
+        converted = to_attribution_observation_v3(
+            _call(tracker, "broken_tool", _failing_call)
+        )
+        assert converted is not None
+        assert converted["operation"]["status"] == "failed"
+        assert converted["operation"]["error"] == {"type": "connectionerror"}
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 9
+TARGET_SCHEMA_VERSION = 10
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -308,5 +308,14 @@ def _sqlite_v8_to_v9(conn: sqlite3.Connection) -> None:
         "workflow_id",
         "workflow_session_id",
     ):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
+
+
+@register_sqlite_migration(9, 10)
+def _sqlite_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """Persist canonical end-user and product assignment on buffered tasks."""
+    existing = {row[1] for row in conn.execute(_TASKS_TABLE_INFO).fetchall()}
+    for column in ("user_id", "product_id"):
         if column not in existing:
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
