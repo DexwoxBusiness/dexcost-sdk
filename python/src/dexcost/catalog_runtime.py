@@ -82,7 +82,10 @@ class CatalogRuntime:
         self._refresh_jitter_ratio = refresh_jitter_ratio
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
+        # Bundle import holds the runtime lock across durable activation and the
+        # in-memory swap.  _apply() also owns the swap lock, so imports require
+        # re-entrant acquisition to preserve that ordering without deadlocking.
+        self._lock = threading.RLock()
         self._snapshot: CatalogSnapshot | None = None
         self._overlay: CatalogWorkspaceOverlay | None = None
         self._last_result: CatalogRefreshResult | None = None

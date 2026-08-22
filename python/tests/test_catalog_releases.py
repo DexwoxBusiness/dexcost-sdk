@@ -8,6 +8,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 import urllib.error
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
@@ -652,6 +653,48 @@ def test_runtime_applies_one_cached_release_to_every_pricing_engine(
         )
     finally:
         runtime.close()
+        tracker.pricing.close()
+        tracker_storage.close()
+
+
+def test_runtime_import_bundle_completes_without_recursive_lock_deadlock(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "catalog.db"
+    tracker_storage = SQLiteStorage(db_path)
+    tracker = CostTracker(storage=tracker_storage, auto_instrument=[])
+    runtime = CatalogRuntime(
+        endpoint="https://api.dexcost.test",
+        db_path=db_path,
+        tracker=tracker,
+        track_http=False,
+    )
+    manifest_raw, payloads = _release(71)
+    bundle = encode_catalog_bundle(parse_catalog_manifest(manifest_raw), payloads)
+    imported: list[Any] = []
+    failures: list[BaseException] = []
+
+    def run_import() -> None:
+        try:
+            imported.append(runtime.import_bundle(bundle))
+        except BaseException as exc:  # pragma: no cover - asserted in parent thread
+            failures.append(exc)
+
+    worker = threading.Thread(target=run_import, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    try:
+        assert not worker.is_alive(), "catalog bundle import deadlocked on runtime lock"
+        assert failures == []
+        assert imported[0].manifest.release_sequence == 71
+        assert runtime.status().release_sequence == 71
+        assert tracker.pricing.pricing_version.startswith("catalog-release:71:")
+        assert tracker._compute_pricing.catalog_version.startswith("catalog-release:71:")
+        assert tracker._gpu_pricing.catalog_version.startswith("catalog-release:71:")
+        assert tracker._egress_pricing.catalog_version.startswith("catalog-release:71:")
+    finally:
+        if not worker.is_alive():
+            runtime.close()
         tracker.pricing.close()
         tracker_storage.close()
 
