@@ -7,12 +7,12 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
 
-from dexcost.attribution.types import ATTRIBUTION_UNIT_BY_METRIC
+from dexcost.attribution.types import ATTRIBUTION_UNIT_BY_METRIC, AttributionUsageMetric
 from dexcost.schema import SchemaNotFoundError
 
 ATTRIBUTION_V3_SCHEMA_FILENAME = "attribution-v3-schema.json"
@@ -25,6 +25,7 @@ _MISSING_PROPERTY = re.compile(r"^'([^']+)' is a required property$")
 _EXTRA_PROPERTY = re.compile(
     r"^Additional properties are not allowed \('([^']+)' was unexpected\)$"
 )
+_DEPENDENT_REQUIRED = re.compile(r"^'([^']+)' is a dependency of '([^']+)'$")
 _TIME_METRICS = {
     "audio_seconds",
     "connected_seconds",
@@ -85,6 +86,10 @@ def _schema_error_path(error: ValidationError) -> str:
         match = _EXTRA_PROPERTY.fullmatch(error.message)
         if match is not None:
             parts.append(match.group(1))
+    elif error.validator == "dependentRequired":
+        match = _DEPENDENT_REQUIRED.fullmatch(error.message)
+        if match is not None:
+            parts.append(match.group(2))
     return ".".join(parts)
 
 
@@ -154,7 +159,9 @@ def _semantic_issues(value: object) -> list[AttributionV3ValidationIssue]:
             )
         metric = raw_line.get("metric")
         canonical_unit = (
-            ATTRIBUTION_UNIT_BY_METRIC.get(metric) if isinstance(metric, str) else None
+            ATTRIBUTION_UNIT_BY_METRIC.get(cast(AttributionUsageMetric, metric))
+            if isinstance(metric, str)
+            else None
         )
         if canonical_unit is not None and raw_line.get("unit") != canonical_unit:
             issues.append(

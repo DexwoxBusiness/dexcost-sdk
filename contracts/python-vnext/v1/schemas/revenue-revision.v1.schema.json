@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/revenue-revision.v1.json",
+  "title": "DexCost revenue revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "revenue_id", "task_id", "effective_at", "observed_at", "lifecycle", "source"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "revenue_id": { "$ref": "#/$defs/uuid" },
+    "task_id": { "$ref": "#/$defs/uuid" },
+    "outcome_id": { "$ref": "#/$defs/uuid" },
+    "effective_at": { "$ref": "#/$defs/timestamp" },
+    "observed_at": { "$ref": "#/$defs/timestamp" },
+    "lifecycle": {
+      "type": "object", "additionalProperties": false, "required": ["state", "revision"],
+      "properties": {
+        "state": { "enum": ["pending", "provisional", "recognized", "voided"] },
+        "revision": { "$ref": "#/$defs/revision" }
+      }
+    },
+    "amount": {
+      "type": "object", "additionalProperties": false, "required": ["value", "currency"],
+      "properties": {
+        "value": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,25})(?:\\.[0-9]{1,12})?$" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "properties": {
+        "type": { "enum": ["sdk", "workspace_api", "import", "manual"] },
+        "record_id": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "lifecycle": { "properties": { "state": { "enum": ["provisional", "recognized"] } } } } },
+      "then": { "required": ["amount"] },
+      "else": { "not": { "required": ["amount"] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "properties": { "state": { "const": "voided" } } } } },
+      "then": { "properties": { "lifecycle": { "properties": { "revision": { "minimum": 2 } } } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+  }
+}

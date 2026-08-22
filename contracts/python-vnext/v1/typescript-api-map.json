@@ -1,0 +1,1536 @@
+{
+  "freeze_version": 1,
+  "authority": "contracts/python-vnext/v1/public-api.json",
+  "python_export_count": 170,
+  "typescript_export_count": 322,
+  "equivalent_count": 167,
+  "language_specific_count": 3,
+  "unresolved_count": 0,
+  "mappings": [
+    {
+      "python_name": "ALL_SUPPORTED_INSTRUMENTS",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ALL_SUPPORTED_INSTRUMENTS"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_COMPONENTS",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_COMPONENTS"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_UNIT_BY_METRIC",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_UNIT_BY_METRIC"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_USAGE_METRICS",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_USAGE_METRICS"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_USAGE_UNITS",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_USAGE_UNITS"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_V2_CONTRACT_VERSION",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_V2_CONTRACT_VERSION"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ATTRIBUTION_V3_CONTRACT_VERSION",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ATTRIBUTION_V3_CONTRACT_VERSION"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttachedTask",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TrackedTask"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "AttributionAttemptIdentityV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionAttemptIdentityV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionBillingDimension",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionBillingDimension"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionBillingDimensionValue",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionBillingDimensionValue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCapabilityIdentityV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCapabilityIdentityV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCapabilityInvocationV3",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCapabilityInvocationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCapabilityKindV3",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCapabilityKindV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCapabilitySourceV3",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCapabilitySourceV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionComponent",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionComponent"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionConfidence",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionConfidence"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCostEvidenceSource",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCostEvidenceSource"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCostEvidenceV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCostEvidenceV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionCostEvidenceV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionCostEvidenceV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionEventV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionEventV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionEventV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionEventV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionLifecycleState",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionLifecycleState"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionLifecycleV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionLifecycleV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionLifecycleV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionLifecycleV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionObservationV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionObservationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionOperationErrorV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionOperationErrorV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionOperationIdentityV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionOperationIdentityV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionOperationStatusV3",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionOperationStatusV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionProviderIdentityV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionProviderIdentityV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionProviderIdentityV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionProviderIdentityV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionResourceV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionResourceV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionResourceV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionResourceV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionTaskIngestV1",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionTaskIngestV1"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageLineV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageLineV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageLineV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageLineV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageMetric",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageMetric"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageMetricV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageMetricV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsagePeriodV2",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsagePeriodV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsagePeriodV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsagePeriodV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageUnit",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageUnit"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionUsageUnitV3",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionUsageUnitV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionV2ValidationIssue",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionV2ValidationIssue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionV2ValidationResult",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionV2ValidationResult"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionV3ValidationIssue",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionV3ValidationIssue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "AttributionV3ValidationResult",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "AttributionV3ValidationResult"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CapabilityIdentity",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CapabilityIdentity"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CapabilityInvocation",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CapabilityInvocation"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CapabilityKind",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CapabilityKind"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CapabilitySource",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CapabilitySource"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CatalogRuntimeStatus",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CatalogRuntimeStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CostConfidence",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CostConfidence"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CostResult",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CostResult"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "CostTracker",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CostTracker"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "DeliveryErrorCallback",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "DeliveryErrorCallback"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "DeliveryErrorEvent",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "DeliveryErrorEvent"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "DeliveryStatus",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "DeliveryStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "DexcostConfig",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TrackerOptions",
+        "ResolvedConfig"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "DexcostContext",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "DexcostContext"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "Event",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "CostEvent"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "EventType",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "EventType"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "InfrastructureRateEntry",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "InfrastructureRateEntry"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "InvalidAPIKeyError",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "InvalidAPIKeyError"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "OutcomeInput",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "OutcomeInput"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "OutcomeRevision",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "OutcomeRevision"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "OutcomeState",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "OutcomeState"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "OutcomeValue",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "OutcomeValue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "OutcomeValueType",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "OutcomeValueType"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "PricingEngine",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "PricingEngine"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "PricingExplanation",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "PricingExplanation"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "PricingExplanationStatus",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "PricingExplanationStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "PricingProvenance",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "PricingProvenance"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "PricingSource",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "PricingSource"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RateEntry",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RateEntry"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RateRegistry",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RateRegistry"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueAmount",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueAmount"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueInput",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueInput"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueRevision",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueRevision"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueSource",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueSource"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueSourceType",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueSourceType"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "RevenueState",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "RevenueState"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "SchemaNotFoundError",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "SchemaNotFoundError"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ServiceCatalog",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ServiceCatalog"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "SessionManager",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "SessionManager"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "SyncWorker",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "EventPusher"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "Task",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "Task"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "TaskStatus",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TaskStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ToolDimensionInput",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ToolDimensionInput"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ToolOperationStatus",
+      "python_kind": "type_alias",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ToolOperationStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ToolQuantityInput",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ToolQuantityInput"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "ToolUsage",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "ToolUsage"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "TrackedAnthropic",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TrackedAnthropic"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "TrackedOpenAI",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TrackedOpenAI"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "TrackedTask",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "TrackedTask"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "WebhookHeader",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "WebhookHeader"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "WebhookSecret",
+      "python_kind": "constant",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "WebhookSecret"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "WebhookVerificationError",
+      "python_kind": "class",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "WebhookVerificationError"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "__version__",
+      "python_kind": "constant",
+      "classification": "language_specific",
+      "typescript_exports": [],
+      "notes": "Node package version is authoritative in package.json rather than a root runtime export."
+    },
+    {
+      "python_name": "assert_attribution_event_v2",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "assertAttributionEventV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "assert_attribution_observation_v3",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "assertAttributionObservationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "assert_webhook_signature",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "assertWebhookSignature"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "async_task_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "runWithTask"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "attach_task",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "attachTask"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "capability_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "capabilityContext"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "catalog_status",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "catalogStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "clear_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "clearContext"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "close",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "close"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "delivery_status",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "deliveryStatus"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "enforce_metadata_limit",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "enforceMetadataLimit"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "explain_pricing",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "explainPricing"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "export_catalog_bundle",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "exportCatalogBundle"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "flush",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "flush"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_capability",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getCapability"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getContext"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_current_task",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getCurrentTask"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_idempotency_key",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getIdempotencyKey"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_outcome_history",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getOutcomeHistory"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "get_revenue_history",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "getRevenueHistory"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "hash_value",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "hashValue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "idempotency_key",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "idempotencyKey"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "import_catalog_bundle",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "importCatalogBundle"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "init",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "init"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_anthropic",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentAnthropic"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_bedrock",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentBedrock"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_cohere",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentCohere"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_fal",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentFal"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_gemini",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentGemini"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_litellm",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentLiteLLM"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "instrument_mcp",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentMcp"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_ollama",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentOllama"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_openai",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentOpenAI"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "instrument_openrouter",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentOpenRouter"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "instrument_perplexity",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentPerplexity"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "on_delivery_error",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "onDeliveryError"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_cost",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordCost"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_outcome",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordOutcome"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_revenue",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordRevenue"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "redact_dict",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "redactDict"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "remove_delivery_error_callback",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "removeDeliveryErrorCallback"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "report_tool_call",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "reportToolCall"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "set_capability",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "setCapability"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "set_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "setContext"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "set_current_task",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "setCurrentTask"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "set_idempotency_key",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "setIdempotencyKey"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "task",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "task"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "task_context",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "runWithTask"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "to_attribution_event_v2",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "toAttributionEventV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "to_attribution_event_v3",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "toAttributionEventV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "to_attribution_observation_v3",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "toAttributionObservationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "to_attribution_task_ingest_v1",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "toAttributionTaskIngestV1"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "to_business_identity_revision_v1",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "toBusinessIdentityRevision"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "track_crewai",
+      "python_kind": "function",
+      "classification": "language_specific",
+      "typescript_exports": [],
+      "notes": "CrewAI is a Python-only framework; TypeScript exposes equivalent generic task/tool/capability primitives."
+    },
+    {
+      "python_name": "track_griptape",
+      "python_kind": "function",
+      "classification": "language_specific",
+      "typescript_exports": [],
+      "notes": "Griptape is a Python-only framework; TypeScript exposes equivalent generic task/tool/capability primitives."
+    },
+    {
+      "python_name": "track_tool",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "trackTool"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_anthropic",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentAnthropic"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_bedrock",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentBedrock"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_cohere",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentCohere"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_fal",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentFal"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_gemini",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentGemini"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_litellm",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentLiteLLM"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "uninstrument_mcp",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentMcp"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_ollama",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentOllama"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_openai",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentOpenAI"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "uninstrument_openrouter",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentOpenRouter"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "uninstrument_perplexity",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentPerplexity"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "validate",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "validate"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "validate_api_key",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "validateApiKey"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "validate_attribution_event_v2",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "validateAttributionEventV2"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "validate_attribution_observation_v3",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "validateAttributionObservationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "verify_webhook_signature",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "verifyWebhookSignature"
+      ],
+      "notes": null
+    }
+  ]
+}

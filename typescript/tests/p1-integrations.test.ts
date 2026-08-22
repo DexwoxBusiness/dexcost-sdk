@@ -179,7 +179,8 @@ describe("DexcostInterceptor (NestJS)", () => {
     const task = tracker.buffer.getAllTasks().find((t) => t.taskId === taskIdInsideHandler)!;
     expect(task.status).toBe("success");
     expect(task.customerId).toBe("acme");
-    expect(task.taskType).toBe("POST /reviews");
+    expect(task.taskType).toBe("http.request");
+    expect(task.metadata).toMatchObject({ httpMethod: "POST", httpRoute: "/reviews" });
     expect((request.dexcostTask as any).task.taskId).toBe(taskIdInsideHandler);
   });
 

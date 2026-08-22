@@ -271,6 +271,10 @@ export class ServiceUsageObservers {
     this.observers = manifest.observers;
   }
 
+  get observerCount(): number {
+    return this.observers.length;
+  }
+
   private lookup(url: string): { parsed: URL; observers: UsageObserverDefinition[] } | undefined {
     let parsed: URL;
     try {
@@ -397,7 +401,7 @@ export class ServiceUsageObservers {
   }
 }
 
-export const serviceUsageObservers: ServiceUsageObservers | null = (() => {
+export let serviceUsageObservers: ServiceUsageObservers | null = (() => {
   try {
     return new ServiceUsageObservers();
   } catch (error) {
@@ -405,3 +409,8 @@ export const serviceUsageObservers: ServiceUsageObservers | null = (() => {
     return null;
   }
 })();
+
+/** Atomically replace the process-wide declarative observer release. */
+export function setServiceUsageObservers(observers: ServiceUsageObservers | null): void {
+  serviceUsageObservers = observers;
+}

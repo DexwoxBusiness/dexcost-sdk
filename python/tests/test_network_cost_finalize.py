@@ -8,6 +8,7 @@ import pytest
 
 from dexcost import cloud_detect
 from dexcost.attribution import to_attribution_observation_v3
+from dexcost.egress_pricing import EgressPricingEngine
 from dexcost.models.event import Event
 from dexcost.models.task import Task
 from dexcost.storage.sqlite import SQLiteStorage
@@ -74,8 +75,12 @@ def test_internal_host_has_zero_egress_cost(tracker):
     assert t.network_cost_usd == Decimal("0")
 
 
-def test_network_event_cost_stamped_at_finalize(tracker):
-    t = _make_task(tracker._storage, 1_000_000_000)
+def test_inbound_response_bytes_are_not_priced_as_cloud_egress(tracker):
+    t = Task(task_id=uuid.uuid4(), task_type="x",
+             started_at=datetime.now(timezone.utc))
+    tracker._storage.insert_task(t)
+    t._network.record("api.example.com", bytes_in=1_000_000_000, bytes_out=0,
+                      is_internal=False)
     ev = Event(
         task_id=t.task_id, event_type="network",
         cost_usd=Decimal("0"), cost_confidence="unknown",
@@ -88,7 +93,8 @@ def test_network_event_cost_stamped_at_finalize(tracker):
     tracker._aggregate_costs(t)
 
     refreshed = tracker._storage.query_events(task_id=str(t.task_id))[0]
-    assert refreshed.cost_usd == Decimal("0.09")
+    assert refreshed.cost_usd == Decimal("0")
+    assert t.network_cost_usd == Decimal("0")
     assert refreshed.cost_confidence == "computed"
     assert refreshed.pricing_source == "egress_catalog:aws:us-east-1"
     assert refreshed.pricing_version is not None
@@ -170,6 +176,33 @@ def test_local_network_rate_prices_total_transferred_bytes(tmp_path, monkeypatch
         "confidence": "computed",
         "pricing_version": tracker.rate_registry.pricing_version,
     }
+
+
+def test_workspace_overlay_can_price_bidirectional_cloud_transfer(tracker):
+    tracker._egress_pricing = EgressPricingEngine(
+        rate_overrides={
+            "aws:us-east-1": (Decimal("0.02"), "gb_transferred")
+        }
+    )
+    task = Task(
+        task_id=uuid.uuid4(),
+        task_type="x",
+        started_at=datetime.now(timezone.utc),
+    )
+    tracker._storage.insert_task(task)
+    task._network.record(
+        "api.example.com",
+        bytes_in=600_000_000,
+        bytes_out=400_000_000,
+        is_internal=False,
+    )
+
+    tracker._aggregate_costs(task)
+
+    assert task.network_cost_usd == Decimal("0.02")
+    assert Decimal(task.network_by_host["hosts"][0]["egress_cost_usd"]) == Decimal(
+        "0.02"
+    )
 
 
 def test_zero_external_bytes_yields_zero_network_cost(tmp_path, monkeypatch):

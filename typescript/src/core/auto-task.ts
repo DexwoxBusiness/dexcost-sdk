@@ -26,9 +26,8 @@ export function needsAutoTask(): boolean {
 /**
  * Create an auto-task with attribution from the current DexcostContext.
  *
- * Reads `customerId`, `projectId`, `metadata`, and `agent` from the
- * ambient context (set via `setContext`). When `agent` is set in the
- * context it overrides the provided `taskType`.
+ * Reads business identity from the ambient context (set via `setContext`).
+ * Agent identity remains separate from the canonical operation task type.
  *
  * The returned task is NOT bound to AsyncLocalStorage. Callers must
  * either pass it explicitly or scope it with `runWithTask()`. The
@@ -39,13 +38,23 @@ export function needsAutoTask(): boolean {
  */
 export function createAutoTask(taskType: string): Task {
   const ctx = getContext();
-  const effectiveTaskType = ctx?.agent ? ctx.agent : taskType;
+  const taskId = randomUUID();
+  const hasBusinessIdentity = ctx !== undefined && [
+    ctx.customerId, ctx.projectId, ctx.userId, ctx.productId, ctx.agent, ctx.workflowId,
+  ].some((value) => value !== undefined);
   const task = createTask({
-    taskId: randomUUID(),
-    taskType: effectiveTaskType,
+    taskId,
+    taskType,
     customerId: ctx?.customerId,
     projectId: ctx?.projectId,
+    userId: ctx?.userId,
+    productId: ctx?.productId,
+    rootTaskId: hasBusinessIdentity ? taskId : undefined,
     metadata: ctx?.metadata ? { ...ctx.metadata } : {},
+    agentId: ctx?.agent,
+    agentVersion: ctx?.agentVersion,
+    workflowId: ctx?.workflowId,
+    workflowSessionId: ctx?.workflowSessionId,
   });
   // Register a NetworkAccountant so the patched fetch attributes the
   // call's bytes to this task (same as TrackedTask does for explicit

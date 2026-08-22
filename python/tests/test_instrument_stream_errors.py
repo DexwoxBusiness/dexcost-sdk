@@ -129,6 +129,12 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 
 @pytest.fixture(autouse=True)
 def _fake_sdks() -> Generator[None, None, None]:
+    prefixes = ("openai", "cohere")
+    installed_modules = {
+        key: module
+        for key, module in sys.modules.items()
+        if any(key == prefix or key.startswith(f"{prefix}.") for prefix in prefixes)
+    }
     _install_fake_openai()
     _install_fake_cohere()
     yield
@@ -139,6 +145,10 @@ def _fake_sdks() -> Generator[None, None, None]:
     uninstrument_cohere()
     _uninstall("openai")
     _uninstall("cohere")
+    for key in list(sys.modules):
+        if any(key == prefix or key.startswith(f"{prefix}.") for prefix in prefixes):
+            sys.modules.pop(key, None)
+    sys.modules.update(installed_modules)
 
 
 def _chunk(model: str = "gpt-4o") -> MagicMock:

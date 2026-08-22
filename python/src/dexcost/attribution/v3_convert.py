@@ -28,6 +28,7 @@ from dexcost.attribution.types import (
 from dexcost.attribution.v3_types import (
     AttributionBillingDimension,
     AttributionBillingDimensionValue,
+    AttributionCapabilityIdentityV3,
     AttributionEventV3,
     AttributionOperationErrorV3,
     AttributionOperationIdentityV3,
@@ -37,6 +38,7 @@ from dexcost.attribution.v3_types import (
 )
 from dexcost.attribution.v3_validate import validate_attribution_observation_v3
 from dexcost.models._serde import iso_canonical
+from dexcost.models.capability import CapabilityIdentity
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -232,7 +234,7 @@ def _selected_component(
 def _operation_name(event: Event) -> str:
     explicit = _string_detail(event.details, "attribution_operation_name")
     if explicit is not None and _CANONICAL_NAME.fullmatch(explicit):
-        return cast(str, explicit)
+        return explicit
     return _OPERATION_NAMES.get(event.event_type, "external.call")
 
 
@@ -360,11 +362,58 @@ def _resource_for_v3(event: Event) -> AttributionResourceV3 | None:
     return cast("AttributionResourceV3 | None", resource)
 
 
+def _capability_for_v3(event: Event) -> AttributionCapabilityIdentityV3 | None:
+    raw = event.details.get("attribution_capability")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        _log.warning("Event %s has a non-object attribution_capability", event.event_id)
+        return None
+    try:
+        capability = CapabilityIdentity.from_dict(raw)
+    except (TypeError, ValueError) as exc:
+        _log.warning("Event %s has an invalid attribution_capability: %s", event.event_id, exc)
+        return None
+    return cast("AttributionCapabilityIdentityV3", capability.to_dict())
+
+
 def _unknown_explicit_usage(
     event: Event,
 ) -> tuple[AttributionComponent, list[dict[str, str]], Decimal | None] | None:
     if event.event_type != "external_cost":
         return None
+    explicit_lines = event.details.get("attribution_usage_lines")
+    if explicit_lines is not None:
+        if not isinstance(explicit_lines, list) or not 1 <= len(explicit_lines) <= 32:
+            return None
+        parsed_lines: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_line in explicit_lines:
+            if not isinstance(raw_line, dict):
+                return None
+            metric = raw_line.get("metric")
+            unit = raw_line.get("unit")
+            quantity = _positive_quantity(raw_line.get("quantity"))
+            if (
+                not isinstance(metric, str)
+                or _CANONICAL_NAME.fullmatch(metric) is None
+                or not isinstance(unit, str)
+                or _UNIT.fullmatch(unit) is None
+                or quantity is None
+            ):
+                return None
+            identity = (metric, unit)
+            if identity in seen:
+                return None
+            seen.add(identity)
+            parsed_lines.append(
+                {"metric": metric, "quantity": quantity, "unit": unit}
+            )
+        return (
+            "external",
+            parsed_lines,
+            _decimal_detail(event.details, "attribution_usage_duration_seconds"),
+        )
     metric = _string_detail(event.details, "attribution_usage_metric")
     if (
         metric is None
@@ -395,7 +444,11 @@ def to_attribution_observation_v3(
     to lower case and dropped — never raised — when it cannot satisfy the
     server charset.
     """
+    has_multiline_usage = "attribution_usage_lines" in event.details
     explicit = _unknown_explicit_usage(event)
+    if has_multiline_usage and explicit is None:
+        _log.warning("Event %s has invalid attribution_usage_lines", event.event_id)
+        return None
     gpu_signal = _gpu_signal_usage(event) if event.event_type == "gpu_utilization_signal" else None
     legacy = _component_and_usage(event) if explicit is None and gpu_signal is None else None
     mapped = explicit or gpu_signal or legacy
@@ -457,6 +510,9 @@ def to_attribution_observation_v3(
     resource = _resource_for_v3(event)
     if resource is not None:
         converted["resource"] = cast(Any, resource)
+    capability = _capability_for_v3(event)
+    if capability is not None:
+        converted["capability"] = capability
     if event.event_type != "gpu_utilization_signal":
         evidence = _evidence_for(event)
         if evidence is not None:

@@ -29,16 +29,63 @@ dependencies = [
     "click>=8.1",
     "pyyaml>=6.0",
     "jsonschema>=4.20",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
+crewai = [
+    "crewai>=1.0",
+]
+griptape = [
+    "griptape>=1.0",
+]
+openai = [
+    "openai>=1.0,<3.0",
+]
+anthropic = [
+    "anthropic>=0.18,<1.0",
+]
+litellm = [
+    "litellm>=1.0,<2.0",
+]
+gemini = [
+    "google-genai>=1.0,<3.0.0",
+]
+bedrock = [
+    "boto3>=1.34,<2.0",
+]
+cohere = [
+    "cohere>=5.0,<6.0",
+]
+mcp = [
+    "mcp>=1.0,<2.0",
+]
+ollama = [
+    "ollama>=0.6,<1.0",
+]
+openrouter = [
+    "openrouter>=1.0,<2.0",
+]
+perplexity = [
+    "perplexityai>=0.43,<2.0",
+]
+fal = [
+    "fal-client>=0.14,<1.0",
+]
 all = [
-    "openai>=1.0",
-    "anthropic>=0.18",
-    "litellm>=1.0",
-    "google-genai>=1.0",
-    "boto3>=1.34",
-    "cohere>=5.0",
+    "openai>=1.0,<3.0",
+    "anthropic>=0.18,<1.0",
+    "litellm>=1.0,<2.0",
+    "google-genai>=1.0,<3.0.0",
+    "boto3>=1.34,<2.0",
+    "cohere>=5.0,<6.0",
+    "mcp>=1.0,<2.0",
+    "ollama>=0.6,<1.0",
+    "openrouter>=1.0,<2.0",
+    "perplexityai>=0.43,<2.0",
+    "fal-client>=0.14,<1.0",
+    "crewai>=1.0",
+    "griptape>=1.0",
 ]
 
 [project.scripts]
@@ -74,6 +121,8 @@ include = [
     "tests",
     "fixtures",
     "README.md",
+    "FRAMEWORK-COMPATIBILITY.md",
+    "PROVIDER-COMPATIBILITY.md",
     "CHANGELOG.md",
 ]
 
@@ -120,6 +169,14 @@ disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = ["wrapt", "wrapt.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["crewai", "crewai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["griptape", "griptape.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

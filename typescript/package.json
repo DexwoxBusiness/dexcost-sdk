@@ -54,6 +54,8 @@
   "scripts": {
     "build": "tsc && node scripts/copy-assets.mjs && node scripts/build-cjs.mjs",
     "test": "vitest run",
+    "test:types": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck tests/package-types.consumer.ts",
+    "test:catalog-probe": "node scripts/catalog-release-probe-selftest.mjs",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -68,8 +70,17 @@
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.30.0",
+    "@aws-sdk/client-bedrock-runtime": ">=3.0.0",
+    "@fal-ai/client": ">=1.0.0",
+    "@google/generative-ai": ">=0.20.0",
+    "@google/genai": ">=2.0.0",
+    "@modelcontextprotocol/sdk": ">=1.0.0",
+    "@openrouter/sdk": ">=1.0.0",
+    "@perplexity-ai/perplexity_ai": ">=0.30.0",
     "ai": ">=3.0.0",
     "better-sqlite3": ">=11.0.0",
+    "cohere-ai": ">=7.0.0",
+    "ollama": ">=0.5.0",
     "openai": ">=4.0.0",
     "playwright": ">=1.40.0"
   },
@@ -80,10 +91,37 @@
     "@anthropic-ai/sdk": {
       "optional": true
     },
+    "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
+    },
+    "@fal-ai/client": {
+      "optional": true
+    },
+    "@google/generative-ai": {
+      "optional": true
+    },
+    "@google/genai": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
+    "@openrouter/sdk": {
+      "optional": true
+    },
+    "@perplexity-ai/perplexity_ai": {
+      "optional": true
+    },
     "ai": {
       "optional": true
     },
     "better-sqlite3": {
+      "optional": true
+    },
+    "cohere-ai": {
+      "optional": true
+    },
+    "ollama": {
       "optional": true
     },
     "playwright": {

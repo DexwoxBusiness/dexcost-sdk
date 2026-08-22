@@ -51,6 +51,8 @@ export function _resetEgressWarningStateForTests(): void {
 export interface EgressRate {
   /** Rate string from the catalog (e.g. "0.09", "0.1093"); caller parses. */
   ratePerGb: string;
+  /** Billing unit selected by a workspace override or the base catalog. */
+  billingUnit?: string;
   /** Audit-trail identifier (e.g. "egress_catalog:aws:us-east-1"). */
   pricingSource: string;
   /** Confidence band: "exact" | "computed" | "estimated". */
@@ -109,20 +111,25 @@ function _normaliseRate(value: unknown): string | null {
 export class EgressPricingEngine {
   private _catalog: CatalogJson = {};
   private _catalogVersion: string = "unknown";
+  private _rateOverrides: ReadonlyMap<string, { rateUsd: string; per: string }>;
 
   /**
    * @param catalogJson Optional override — already-parsed JSON object. When
    *   omitted, the bundled `data/egress_prices.json` is loaded.
    */
-  constructor(catalogJson?: object) {
+  constructor(
+    catalogJson?: object,
+    catalogVersion?: string,
+    rateOverrides: ReadonlyMap<string, { rateUsd: string; per: string }> = new Map(),
+  ) {
+    this._rateOverrides = rateOverrides;
     if (catalogJson !== undefined) {
       // Accept already-parsed JSON object (used by tests).
       try {
         this._catalog = catalogJson as CatalogJson;
         const meta = this._catalog._meta;
-        if (meta && typeof meta === "object") {
-          this._catalogVersion = String(meta.version ?? "unknown");
-        }
+        this._catalogVersion = catalogVersion
+          ?? (meta && typeof meta === "object" ? String(meta.version ?? "unknown") : "unknown");
       } catch {
         _warnOnce(
           "catalog_malformed",
@@ -203,6 +210,7 @@ export class EgressPricingEngine {
   rateForInternal(): EgressRate {
     return {
       ratePerGb: "0",
+      billingUnit: "gb_egress",
       pricingSource: "egress_catalog:internal",
       costConfidence: "exact",
     };
@@ -220,6 +228,20 @@ export class EgressPricingEngine {
    *           `"0.09"`, `estimated`.
    */
   resolveRate(provider: string | null, region: string | null): EgressRate {
+    if (provider) {
+      const keys = region ? [`${provider}:${region}`, provider] : [provider];
+      for (const key of keys) {
+        const override = this._rateOverrides.get(key);
+        if (override) {
+          return {
+            ratePerGb: override.rateUsd,
+            billingUnit: override.per,
+            pricingSource: `workspace_overlay:egress:${key}:${override.per}`,
+            costConfidence: "computed",
+          };
+        }
+      }
+    }
     if (provider) {
       const block = this._catalog[provider];
       if (block && typeof block === "object" && !this._isMeta(block)) {

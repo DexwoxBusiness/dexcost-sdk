@@ -20,7 +20,8 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from dexcost.cgroup_reader import read_memory_peak
 from dexcost.compute_accountant import ComputeAccountant
@@ -31,11 +32,11 @@ from dexcost.models.event import Event
 _log = logging.getLogger(__name__)
 
 
-def _persist_compute_event(task, details: dict[str, Any]) -> None:
+def _persist_compute_event(task: Any, details: dict[str, Any]) -> None:
     """Insert the compute_cost event with cost_pending=true via the global
     tracker's storage. Tracker.init() back-fills cost_usd at task finalize."""
     try:
-        from dexcost import _global_tracker  # type: ignore[attr-defined]
+        from dexcost import _global_tracker
     except ImportError:
         return
     if _global_tracker is None:
@@ -49,15 +50,15 @@ def _persist_compute_event(task, details: dict[str, Any]) -> None:
     )
     try:
         _global_tracker.storage.insert_event(ev)
-    except Exception:  # noqa: BLE001 — fail-silent per convention §9
+    except Exception:
         _log.warning("compute_wrap failed to persist event", exc_info=True)
 
 
 def _time_and_capture(
     accountant: ComputeAccountant,
     handler: Callable[..., Any],
-    args: tuple,
-    kwargs: dict,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
 ) -> Any:
     """Run ``handler`` while measuring duration_ms and peak memory; persist a
     serverless compute_cost event on exit. Exceptions from the handler are
@@ -76,7 +77,7 @@ def _time_and_capture(
             task = get_current_task()
             if details is not None and task is not None:
                 _persist_compute_event(task, details)
-        except Exception:  # noqa: BLE001 — fail-silent
+        except Exception:
             _log.warning(
                 "compute_wrap event-build failed", exc_info=True,
             )
@@ -91,7 +92,13 @@ def wrap_lambda_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     the architecture detected at runtime, and the initialization type."""
 
     @functools.wraps(fn)
-    def _wrapped(event, context, /, *args, **kwargs):
+    def _wrapped(
+        event: Any,
+        context: Any,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         task = get_current_task()
         if task is None:
             return fn(event, context, *args, **kwargs)
@@ -126,7 +133,7 @@ def wrap_cloud_run_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     {'cloud_run': 'instance'}) for instance-based billing customers."""
 
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)
@@ -145,7 +152,7 @@ def wrap_cloud_run_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def wrap_cloud_functions_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)
@@ -164,7 +171,7 @@ def wrap_cloud_functions_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def wrap_azure_functions_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)
@@ -183,7 +190,7 @@ def wrap_azure_functions_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def wrap_vercel_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)

@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "json": {
+    "encoding": "utf-8",
+    "object_key_order": "lexicographic for canonical hashing; semantic parsers must not depend on order",
+    "separators": [",", ":"],
+    "unicode": "unescaped except where JSON requires escaping",
+    "non_finite_numbers": "forbidden",
+    "undefined": "forbidden",
+    "timestamps": "timezone-aware ISO 8601 instants normalized to UTC, at most six fractional digits",
+    "uuid": "lowercase canonical string on SDK serialization"
+  },
+  "decimal": {
+    "wire_type": "string",
+    "binary_float_input": "forbidden for money and business outcome decimals",
+    "notation": "plain base-10, no exponent, no leading plus, no insignificant trailing fractional zeroes",
+    "negative_zero": "0",
+    "money_precision": "up to 26 integer digits and 12 fractional digits unless a narrower schema applies",
+    "catalog_rate_precision": "up to 18 integer digits and 18 fractional digits",
+    "rounding": "no implicit rounding at SDK contract boundaries"
+  },
+  "revision_ledgers": {
+    "identity": "logical id plus positive revision",
+    "ordering": "revision ascending",
+    "mutation": "append-only immutable full snapshots",
+    "duplicate": "same identity and same canonical payload is idempotent; different payload conflicts",
+    "observed_at": "may advance without changing the immutable economic snapshot only through a new revision"
+  },
+  "idempotency": {
+    "caller_key_storage": "persist SHA-256 digest only",
+    "event_identity": "deterministic UUIDv5-compatible SHA-256 derivation defined by the SDK",
+    "provider_jobs": "provider, service, and opaque provider record id form durable delayed-work identity"
+  }
+}

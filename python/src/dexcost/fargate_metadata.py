@@ -23,7 +23,7 @@ _log = logging.getLogger(__name__)
 _PROBE_TIMEOUT = 0.25  # seconds
 
 _lock = threading.Lock()
-_cached: "FargateTaskMetadata | None" = None
+_cached: FargateTaskMetadata | None = None
 _resolved = False
 _warned = False
 

@@ -27,15 +27,17 @@ from __future__ import annotations
 import logging
 import threading
 import unicodedata
+from contextlib import suppress
 from dataclasses import dataclass
+from typing import Any
 
 _log = logging.getLogger(__name__)
 
 try:
-    import pynvml as _pynvml
+    import pynvml as _pynvml  # type: ignore[import-untyped]
     _NVML_AVAILABLE = True
 except ImportError:
-    _pynvml = None  # type: ignore[assignment]
+    _pynvml = None
     _NVML_AVAILABLE = False
 
 # Module-level set of warning-mode tokens already logged in this process
@@ -130,10 +132,8 @@ def shutdown_nvml() -> None:
     """Best-effort ``nvmlShutdown()``. Silent on any error."""
     if not nvml_available():
         return
-    try:
+    with suppress(_pynvml.NVMLError):
         _pynvml.nvmlShutdown()
-    except _pynvml.NVMLError:
-        pass
 
 
 # ─── Device enumeration ──────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ def get_device_count() -> int | None:
         return None
 
 
-def get_device_handle(index: int):
+def get_device_handle(index: int) -> Any | None:
     """Opaque device handle (used by other accessors). ``None`` on failure."""
     if not nvml_available():
         return None
@@ -179,7 +179,7 @@ def _normalize_product_name(raw: str) -> str:
     return " ".join(nfc.split()).lower()
 
 
-def get_product_name(handle) -> str | None:
+def get_product_name(handle: Any) -> str | None:
     """Return the NVML productName, NFC-normalized + lowercased.
 
     Decision #4 — alias matching against the catalog depends on byte-level
@@ -203,7 +203,7 @@ def get_product_name(handle) -> str | None:
 # ─── Per-PID compute processes (Decision #1 measurement-side primitive) ──────
 
 
-def get_compute_running_processes(handle) -> list[ProcessInfo] | None:
+def get_compute_running_processes(handle: Any) -> list[ProcessInfo] | None:
     """List of PIDs holding the GPU + their VRAM usage.
 
     Returns ``None`` on ``NVML_ERROR_NO_PERMISSION`` — the load-bearing
@@ -235,7 +235,8 @@ def get_compute_running_processes(handle) -> list[ProcessInfo] | None:
 
 
 def get_process_utilization(
-    handle, last_seen_timestamps: dict[int, int],
+    handle: Any,
+    last_seen_timestamps: dict[int, int],
 ) -> dict[int, list[UtilSample]] | None:
     """Return per-PID utilization samples; UPDATE timestamps dict in place.
 
@@ -287,7 +288,7 @@ def get_process_utilization(
 # ─── Memory + MIG ────────────────────────────────────────────────────────────
 
 
-def get_memory_info(handle) -> MemInfo | None:
+def get_memory_info(handle: Any) -> MemInfo | None:
     """Device-level used / total VRAM bytes. ``None`` on failure."""
     if not nvml_available():
         return None
@@ -302,7 +303,7 @@ def get_memory_info(handle) -> MemInfo | None:
     return MemInfo(used_bytes=int(info.used), total_bytes=int(info.total))
 
 
-def get_mig_mode(handle) -> bool:
+def get_mig_mode(handle: Any) -> bool:
     """True when MIG is enabled on this device (Decision #2 detection)."""
     if not nvml_available():
         return False
@@ -312,4 +313,4 @@ def get_mig_mode(handle) -> bool:
         # Older GPUs without MIG support → fail-silent (NOT an error)
         return False
     enable_const = getattr(_pynvml, "NVML_DEVICE_MIG_ENABLE", 1)
-    return current == enable_const
+    return bool(current == enable_const)

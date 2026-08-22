@@ -1,0 +1,93 @@
+{
+  "schema_version": "1",
+  "release_id": "catalog-release-fixture-184",
+  "release_sequence": 184,
+  "channel": "stable",
+  "published_at": "2026-08-21T06:00:00.000Z",
+  "expires_at": "2027-08-21T06:00:00.000Z",
+  "safety_policy_version": "2026-07-14.2",
+  "sdk_contract": { "min": 1, "max": 1 },
+  "server_pricing_reference": {
+    "catalog_version": "provider-public-r6",
+    "activation_id": "42"
+  },
+  "artifacts": {
+    "observer_rules": {
+      "kind": "observer_rules",
+      "schema_version": "1",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "byte_size": 17000,
+      "item_count": 52,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/1111111111111111111111111111111111111111111111111111111111111111",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "llm_prices": {
+      "kind": "llm_prices",
+      "schema_version": "1",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "byte_size": 1380000,
+      "item_count": 2591,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/2222222222222222222222222222222222222222222222222222222222222222",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "service_prices": {
+      "kind": "service_prices",
+      "schema_version": "1",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "byte_size": 34000,
+      "item_count": 73,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/3333333333333333333333333333333333333333333333333333333333333333",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "compute_prices": {
+      "kind": "compute_prices",
+      "schema_version": "1",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "byte_size": 11000,
+      "item_count": 4,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/4444444444444444444444444444444444444444444444444444444444444444",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "gpu_prices": {
+      "kind": "gpu_prices",
+      "schema_version": "1",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "byte_size": 50000,
+      "item_count": 9,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/5555555555555555555555555555555555555555555555555555555555555555",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "egress_prices": {
+      "kind": "egress_prices",
+      "schema_version": "1",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "byte_size": 14500,
+      "item_count": 5,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/6666666666666666666666666666666666666666666666666666666666666666",
+      "sdk_contract": { "min": 1, "max": 1 }
+    },
+    "server_pricing_reference": {
+      "kind": "server_pricing_reference",
+      "schema_version": "1",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "byte_size": 256,
+      "item_count": 68,
+      "media_type": "application/json",
+      "path": "/v1/catalogs/artifacts/sha256/7777777777777777777777777777777777777777777777777777777777777777",
+      "sdk_contract": { "min": 1, "max": 1 }
+    }
+  },
+  "signatures": [
+    {
+      "algorithm": "ed25519",
+      "key_id": "dexcost-test-rfc8032-1",
+      "signature": "1wlhn7fzJcBmexaXOcHozDVh76fZ0M6hwCtcuvcWawRAxbCf1MByS-5ixvexIfbYbpYl3kZUYOFr8h0jrZU3Aw"
+    }
+  ]
+}

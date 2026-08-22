@@ -11,8 +11,11 @@ from dexcost.config import (
     _DEFAULT_ENDPOINT,
     DexcostConfig,
     InvalidAPIKeyError,
+    resolve_catalog_trust_policy,
     validate_api_key,
 )
+
+_CATALOG_PUBLIC_KEY = "11qYAYdk9JNu81kOIyRUDn69brTa7WHqmX84xB6sSPA"
 
 
 class TestValidateAPIKey:
@@ -108,3 +111,77 @@ class TestDexcostConfig:
         with mock.patch.dict(os.environ, {}, clear=True):
             cfg = DexcostConfig()
             assert cfg.is_sandbox is False
+
+
+class TestCatalogTrustPolicy:
+    def test_no_configuration_keeps_unsigned_bootstrap_compatibility(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            assert resolve_catalog_trust_policy(None, None) == ({}, False)
+
+    def test_environment_keys_require_signatures_by_default(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEXCOST_CATALOG_TRUSTED_KEYS": (
+                    '{"dexcost-prod-2026-01":"' + _CATALOG_PUBLIC_KEY + '"}'
+                )
+            },
+            clear=True,
+        ):
+            assert resolve_catalog_trust_policy(None, None) == (
+                {"dexcost-prod-2026-01": _CATALOG_PUBLIC_KEY},
+                True,
+            )
+
+    def test_explicit_policy_overrides_environment(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEXCOST_CATALOG_TRUSTED_KEYS": "not-json",
+                "DEXCOST_CATALOG_REQUIRE_SIGNATURE": "true",
+            },
+            clear=True,
+        ):
+            assert resolve_catalog_trust_policy({}, False) == ({}, False)
+
+    def test_environment_can_explicitly_allow_unsigned_migration(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEXCOST_CATALOG_TRUSTED_KEYS": (
+                    '{"dexcost-prod-2026-01":"' + _CATALOG_PUBLIC_KEY + '"}'
+                ),
+                "DEXCOST_CATALOG_REQUIRE_SIGNATURE": "false",
+            },
+            clear=True,
+        ):
+            assert resolve_catalog_trust_policy(None, None)[1] is False
+
+    @pytest.mark.parametrize(
+        ("environment", "message"),
+        [
+            ({"DEXCOST_CATALOG_TRUSTED_KEYS": "not-json"}, "not valid JSON"),
+            ({"DEXCOST_CATALOG_TRUSTED_KEYS": "{}"}, "1-8 public keys"),
+            ({"DEXCOST_CATALOG_TRUSTED_KEYS": "[]"}, "1-8 public keys"),
+            (
+                {"DEXCOST_CATALOG_TRUSTED_KEYS": '{"BAD KEY":"' + _CATALOG_PUBLIC_KEY + '"}'},
+                "key ID is invalid",
+            ),
+            (
+                {"DEXCOST_CATALOG_TRUSTED_KEYS": '{"dexcost-prod":"AAAA"}'},
+                "wrong byte length",
+            ),
+            ({"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "1"}, "must be true or false"),
+            ({"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "true"}, "requires at least one"),
+        ],
+    )
+    def test_invalid_environment_fails_closed(
+        self,
+        environment: dict[str, str],
+        message: str,
+    ) -> None:
+        with (
+            mock.patch.dict(os.environ, environment, clear=True),
+            pytest.raises(ValueError, match=message),
+        ):
+            resolve_catalog_trust_policy(None, None)

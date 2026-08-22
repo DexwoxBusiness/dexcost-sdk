@@ -98,6 +98,10 @@ export interface ComputePricingEngineOptions {
   catalogPath?: string;
   /** Already-parsed catalog object — overrides both `catalogPath` and bundled load. */
   catalog?: Record<string, any>;
+  /** Explicit immutable release version for audit provenance. */
+  catalogVersion?: string;
+  /** key is `${billing_model}\0${billing_unit}`, value is an exact decimal string. */
+  rateOverrides?: ReadonlyMap<string, string>;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -123,14 +127,15 @@ function parseRateBlock(block: Record<string, unknown>, keys: string[]): RateBlo
 export class ComputePricingEngine {
   private _catalog: Record<string, any> = {};
   private _catalogVersion: string = "unknown";
+  private _rateOverrides: ReadonlyMap<string, string>;
 
   constructor(opts?: ComputePricingEngineOptions) {
+    this._rateOverrides = opts?.rateOverrides ?? new Map();
     if (opts?.catalog !== undefined) {
       this._catalog = opts.catalog;
       const meta = (this._catalog as any)._meta;
-      if (meta && typeof meta === "object") {
-        this._catalogVersion = String(meta.version ?? "unknown");
-      }
+      this._catalogVersion = opts.catalogVersion
+        ?? (meta && typeof meta === "object" ? String(meta.version ?? "unknown") : "unknown");
       return;
     }
     this._load(opts?.catalogPath);
@@ -271,7 +276,9 @@ export class ComputePricingEngine {
   private _lambda(details: Record<string, any>): ComputeCost {
     const region = details.region as string | undefined | null;
     const architecture = (details.architecture as string | undefined) || "x86_64";
-    const { rate, source, confidence } = this._resolveLambdaRate(region, architecture);
+    const { rate, source, confidence } = this._applyComponentOverrides(
+      "lambda", this._resolveLambdaRate(region, architecture),
+    );
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     const memoryGb = toDecimal(details.memory_bytes_limit).dividedBy(GB_DECIMAL);
     const gbSeconds = memoryGb.times(durationS);
@@ -336,7 +343,9 @@ export class ComputePricingEngine {
     }
     const region = details.region as string | undefined | null;
     const architecture = (details.architecture as string | undefined) || "x86_64";
-    const { rate, source, confidence } = this._resolveFargateRate(region, architecture);
+    const { rate, source, confidence } = this._applyComponentOverrides(
+      "fargate", this._resolveFargateRate(region, architecture),
+    );
     const memoryGib = toDecimal(details.memory_bytes_limit).dividedBy(GIB_BINARY);
     const vcpuCount = toDecimal(details.vcpu_count);
     const cost = vcpuCount
@@ -395,11 +404,18 @@ export class ComputePricingEngine {
 
   private _cloudRunRequest(details: Record<string, any>): ComputeCost {
     const region = details.region as string | undefined | null;
-    const { rate } = this._resolveCloudRunRate(region);
+    const resolved = this._applyComponentOverrides(
+      "cloud_run_request", this._resolveCloudRunRate(region),
+    );
+    const { rate } = resolved;
     // Decision #1: Cloud Run defaults to request-based with estimated
     // confidence — the container cannot discover the actual billing mode.
-    const source = "compute_catalog:cloud_run:request_based_default";
-    const confidence: ComputeCost["costConfidence"] = "estimated";
+    const source = resolved.source.startsWith("workspace_overlay")
+      ? resolved.source
+      : "compute_catalog:cloud_run:request_based_default";
+    const confidence: ComputeCost["costConfidence"] = resolved.source.startsWith("workspace_overlay")
+      ? resolved.confidence
+      : "estimated";
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     const memoryGib = toDecimal(details.memory_bytes_limit).dividedBy(GIB_BINARY);
     const vcpuCount = toDecimal(details.vcpu_count);
@@ -420,7 +436,10 @@ export class ComputePricingEngine {
       w = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     }
     const region = details.region as string | undefined | null;
-    const { rate } = this._resolveCloudRunRate(region);
+    const resolved = this._applyComponentOverrides(
+      "cloud_run_instance", this._resolveCloudRunRate(region),
+    );
+    const { rate } = resolved;
     const memoryGib = toDecimal(details.memory_bytes_limit).dividedBy(GIB_BINARY);
     const vcpuCount = toDecimal(details.vcpu_count);
     const cost = vcpuCount
@@ -429,8 +448,12 @@ export class ComputePricingEngine {
       .plus(memoryGib.times(w).times(rate.gib_second_usd));
     return {
       costUsd: cost,
-      pricingSource: "compute_catalog:cloud_run:instance_override",
-      costConfidence: "computed",
+      pricingSource: resolved.source.startsWith("workspace_overlay")
+        ? resolved.source
+        : "compute_catalog:cloud_run:instance_override",
+      costConfidence: resolved.source.startsWith("workspace_overlay")
+        ? resolved.confidence
+        : "computed",
     };
   }
 
@@ -484,7 +507,9 @@ export class ComputePricingEngine {
 
   private _cloudFunctions(details: Record<string, any>): ComputeCost {
     const region = details.region as string | undefined | null;
-    const { rate, source: cloudRunSource, confidence } = this._resolveCloudRunRate(region);
+    const { rate, source: cloudRunSource, confidence } = this._applyComponentOverrides(
+      "cloud_functions", this._resolveCloudRunRate(region),
+    );
     const source = cloudRunSource.replace("cloud_run", "cloud_functions");
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     const memoryGib = toDecimal(details.memory_bytes_limit).dividedBy(GIB_BINARY);
@@ -501,7 +526,9 @@ export class ComputePricingEngine {
 
   private _azureFunctions(details: Record<string, any>): ComputeCost {
     const region = details.region as string | undefined | null;
-    const { rate, source, confidence } = this._resolveAzureFunctionsRate(region);
+    const { rate, source, confidence } = this._applyComponentOverrides(
+      "azure_functions", this._resolveAzureFunctionsRate(region),
+    );
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     const memoryGb = toDecimal(details.memory_bytes_limit).dividedBy(GB_DECIMAL);
     const invocations = toDecimal(details.invocation_count);
@@ -555,7 +582,9 @@ export class ComputePricingEngine {
   // ─── Vercel Fluid ──────────────────────────────────────────────────────────
 
   private _vercel(details: Record<string, any>): ComputeCost {
-    const { rate, source, confidence } = this._resolveVercelRate();
+    const { rate, source, confidence } = this._applyComponentOverrides(
+      "vercel_fluid", this._resolveVercelRate(),
+    );
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     const memoryGb = toDecimal(details.memory_bytes_limit).dividedBy(GB_DECIMAL);
     const invocations = toDecimal(details.invocation_count);
@@ -627,6 +656,14 @@ export class ComputePricingEngine {
       region,
       instanceType,
     );
+    const vcpuOverride = this._rateOverrides.get(`${billingModel}\0vcpu_hour`);
+    if (vcpuOverride !== undefined) {
+      return {
+        costUsd: toDecimal(details.vcpu_seconds_used).div(HOUR_S).mul(new Decimal(vcpuOverride)),
+        pricingSource: `workspace_overlay:compute:${billingModel}:vcpu_hour`,
+        costConfidence: "computed",
+      };
+    }
     const vcpuCount = toDecimal(details.vcpu_count);
     const vcpuSeconds = toDecimal(details.vcpu_seconds_used);
     if (vcpuCount.lte(0) || w.lte(0)) {
@@ -701,7 +738,13 @@ export class ComputePricingEngine {
     if (!w || w.lte(0)) {
       w = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
     }
-    const { rate, source, confidence } = this._resolveK8sPodRate();
+    let { rate, source, confidence } = this._resolveK8sPodRate();
+    const override = this._rateOverrides.get("k8s_pod\0vcpu_hour");
+    if (override !== undefined) {
+      rate = new Decimal(override);
+      source = "workspace_overlay:compute:k8s_pod:vcpu_hour";
+      confidence = "computed";
+    }
     const vcpuCount = toDecimal(details.vcpu_count);
     const cost = vcpuCount.times(w.dividedBy(HOUR_S)).times(rate);
     return { costUsd: cost, pricingSource: source, costConfidence: confidence };
@@ -726,5 +769,36 @@ export class ComputePricingEngine {
         confidence: "estimated",
       };
     }
+  }
+
+  private _applyComponentOverrides(
+    billingModel: string,
+    resolved: { rate: RateBlock; source: string; confidence: ComputeCost["costConfidence"] },
+  ): { rate: RateBlock; source: string; confidence: ComputeCost["costConfidence"] } {
+    const fieldByUnit: Record<string, string> = {
+      request: "request_usd",
+      execution: "execution_usd",
+      gb_second: "gb_second_usd",
+      gib_second: "gib_second_usd",
+      vcpu_second: "vcpu_second_usd",
+      active_cpu_hour: "active_cpu_hour_usd",
+      memory_gb_hour: "memory_gb_hour_usd",
+      invocation: "invocation_usd",
+    };
+    const rate = { ...resolved.rate };
+    const applied: string[] = [];
+    for (const [unit, field] of Object.entries(fieldByUnit)) {
+      const override = this._rateOverrides.get(`${billingModel}\0${unit}`);
+      if (override !== undefined && field in rate) {
+        rate[field] = new Decimal(override);
+        applied.push(unit);
+      }
+    }
+    if (applied.length === 0) return { ...resolved, rate };
+    return {
+      rate,
+      source: `workspace_overlay:compute:${billingModel}:${applied.sort().join("+")}`,
+      confidence: "computed",
+    };
   }
 }

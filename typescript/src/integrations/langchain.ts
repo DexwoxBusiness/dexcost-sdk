@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentTask } from "../core/context.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { createCostEvent } from "../core/models.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { CostTracker } from "../core/tracker.js";
@@ -113,6 +114,7 @@ export class DexcostCallbackHandler {
       latencyMs,
       isRetry: false,
     });
+    stampAmbientAttribution(event);
 
     // Persist event
     this._buffer.addEvent(event);
@@ -167,6 +169,7 @@ export class DexcostCallbackHandler {
         isRetry: false,
         details: { error: String(error?.message ?? error), error_type: errorType },
       });
+      stampAmbientAttribution(event);
       this._buffer.addEvent(event);
       registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
       this._buffer.upsertTask(task);

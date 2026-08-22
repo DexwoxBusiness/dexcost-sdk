@@ -135,6 +135,70 @@ class TestStartupVersionCheck:
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
         conn.close()
 
+    def test_v12_database_adds_revenue_ledger(self, tmp_path: Path) -> None:
+        """The v12→v13 migration adds revenue storage and its indexes."""
+        db_path = tmp_path / "v12.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE schema_version (version_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "version_number INTEGER NOT NULL, migration_name TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO schema_version (version_number, migration_name) "
+            "VALUES (12, 'workspace_catalog_overlays')"
+        )
+        conn.commit()
+
+        assert run_sqlite_migrations(conn, 12) == TARGET_SCHEMA_VERSION == 14
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name='revenues'"
+        ).fetchone()[0] == 1
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='revenues'"
+            ).fetchall()
+        }
+        assert {"idx_revenues_sync", "idx_revenues_task"} <= indexes
+        conn.close()
+
+    def test_v13_database_adds_provider_job_revision_ledger(
+        self, tmp_path: Path
+    ) -> None:
+        """The v13→v14 migration preserves data and adds job reconciliation."""
+        db_path = tmp_path / "v13.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE schema_version (version_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "version_number INTEGER NOT NULL, migration_name TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO schema_version (version_number, migration_name) "
+            "VALUES (13, 'revenue_ledger')"
+        )
+        conn.commit()
+
+        assert run_sqlite_migrations(conn, 13) == TARGET_SCHEMA_VERSION == 14
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name='provider_job_revisions'"
+        ).fetchone()[0] == 1
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='provider_job_revisions'"
+            ).fetchall()
+        }
+        assert {
+            "idx_provider_jobs_sync",
+            "idx_provider_jobs_identity",
+            "idx_provider_jobs_task",
+        } <= indexes
+        conn.close()
+
 
 # ── Sequential migration tests ────────────────────────────────────────
 

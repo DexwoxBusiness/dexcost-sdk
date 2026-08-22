@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/ingestion-response.v1.json",
+  "title": "DexCost control-plane ingestion response",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["receipt_id", "queued", "rejected", "errors"],
+      "properties": {
+        "receipt_id": { "type": "string", "format": "uuid" },
+        "queued": { "type": "integer", "minimum": 1 },
+        "rejected": { "type": "integer", "minimum": 0 },
+        "errors": { "$ref": "#/$defs/errors" }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["queued", "rejected", "errors"],
+      "properties": {
+        "queued": { "const": 0 },
+        "rejected": { "type": "integer", "minimum": 1 },
+        "errors": { "$ref": "#/$defs/errors" }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false, "required": ["error"],
+      "properties": { "error": { "type": "string", "minLength": 1 } }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["error", "limit_kind", "max_bytes"],
+      "properties": {
+        "error": { "const": "Payload too large. Reduce the batch size." },
+        "limit_kind": { "const": "queue_message" },
+        "max_bytes": { "type": "integer", "minimum": 1 }
+      }
+    }
+  ],
+  "$defs": {
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["index", "reason"],
+        "properties": { "index": { "type": "integer", "minimum": 0 }, "reason": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

@@ -208,8 +208,10 @@ def track_http() -> list[str]:
     Returns:
         List of library names that were successfully patched.
     """
-    global _requests_patched, _httpx_patched, _aiohttp_patched, _botocore_patched, _urllib3_patched
-    global _original_requests_send, _original_httpx_send, _original_aiohttp_request, _original_botocore_send, _original_urllib3_urlopen
+    global _aiohttp_patched, _botocore_patched, _httpx_patched
+    global _requests_patched, _urllib3_patched
+    global _original_aiohttp_request, _original_botocore_send
+    global _original_httpx_send, _original_requests_send, _original_urllib3_urlopen
     patched: list[str] = []
 
     # Ensure catalog is loaded
@@ -220,7 +222,7 @@ def track_http() -> list[str]:
         try:
             import requests
 
-            _original_requests_send = requests.Session.send
+            _original_requests_send = (requests.Session, requests.Session.send)
             wrapt.wrap_function_wrapper("requests", "Session.send", _requests_wrapper)
             _requests_patched = True
             patched.append("requests")
@@ -232,7 +234,7 @@ def track_http() -> list[str]:
         try:
             import httpx
 
-            _original_httpx_send = httpx.Client.send
+            _original_httpx_send = (httpx.Client, httpx.Client.send)
             wrapt.wrap_function_wrapper("httpx", "Client.send", _httpx_wrapper)
             _httpx_patched = True
             patched.append("httpx")
@@ -242,9 +244,12 @@ def track_http() -> list[str]:
     # Try aiohttp
     if not _aiohttp_patched:
         try:
-            import aiohttp  # noqa: F401
+            import aiohttp
 
-            _original_aiohttp_request = aiohttp.ClientSession._request
+            _original_aiohttp_request = (
+                aiohttp.ClientSession,
+                aiohttp.ClientSession._request,
+            )
             wrapt.wrap_function_wrapper("aiohttp", "ClientSession._request", _aiohttp_wrapper)
             _aiohttp_patched = True
             patched.append("aiohttp")
@@ -254,9 +259,12 @@ def track_http() -> list[str]:
     # Try botocore (boto3's HTTP transport)
     if not _botocore_patched:
         try:
-            import botocore.httpsession  # noqa: F401
+            import botocore.httpsession
 
-            _original_botocore_send = botocore.httpsession.URLLib3Session.send
+            _original_botocore_send = (
+                botocore.httpsession.URLLib3Session,
+                botocore.httpsession.URLLib3Session.send,
+            )
             wrapt.wrap_function_wrapper(
                 "botocore.httpsession",
                 "URLLib3Session.send",
@@ -272,9 +280,12 @@ def track_http() -> list[str]:
     # requests/botocore which also use urllib3 internally.
     if not _urllib3_patched:
         try:
-            import urllib3  # noqa: F401
+            import urllib3
 
-            _original_urllib3_urlopen = urllib3.HTTPConnectionPool.urlopen
+            _original_urllib3_urlopen = (
+                urllib3.HTTPConnectionPool,
+                urllib3.HTTPConnectionPool.urlopen,
+            )
             wrapt.wrap_function_wrapper(
                 "urllib3",
                 "HTTPConnectionPool.urlopen",
@@ -290,56 +301,38 @@ def track_http() -> list[str]:
 
 def untrack_http() -> None:
     """Restore original methods for all patched HTTP libraries."""
-    global _requests_patched, _httpx_patched, _aiohttp_patched, _botocore_patched, _urllib3_patched
-    global _original_requests_send, _original_httpx_send, _original_aiohttp_request, _original_botocore_send, _original_urllib3_urlopen
+    global _aiohttp_patched, _botocore_patched, _httpx_patched
+    global _requests_patched, _urllib3_patched
+    global _original_aiohttp_request, _original_botocore_send
+    global _original_httpx_send, _original_requests_send, _original_urllib3_urlopen
 
     if _requests_patched and _original_requests_send is not None:
-        try:
-            import requests
-
-            requests.Session.send = _original_requests_send
-        except ImportError:
-            pass
+        owner, original = _original_requests_send
+        owner.send = original
         _requests_patched = False
         _original_requests_send = None
 
     if _httpx_patched and _original_httpx_send is not None:
-        try:
-            import httpx
-
-            httpx.Client.send = _original_httpx_send
-        except ImportError:
-            pass
+        owner, original = _original_httpx_send
+        owner.send = original
         _httpx_patched = False
         _original_httpx_send = None
 
     if _aiohttp_patched and _original_aiohttp_request is not None:
-        try:
-            import aiohttp
-
-            aiohttp.ClientSession._request = _original_aiohttp_request
-        except ImportError:
-            pass
+        owner, original = _original_aiohttp_request
+        owner._request = original
         _aiohttp_patched = False
         _original_aiohttp_request = None
 
     if _botocore_patched and _original_botocore_send is not None:
-        try:
-            import botocore.httpsession
-
-            botocore.httpsession.URLLib3Session.send = _original_botocore_send
-        except ImportError:
-            pass
+        owner, original = _original_botocore_send
+        owner.send = original
         _botocore_patched = False
         _original_botocore_send = None
 
     if _urllib3_patched and _original_urllib3_urlopen is not None:
-        try:
-            import urllib3
-
-            urllib3.HTTPConnectionPool.urlopen = _original_urllib3_urlopen
-        except ImportError:
-            pass
+        owner, original = _original_urllib3_urlopen
+        owner.urlopen = original
         _urllib3_patched = False
         _original_urllib3_urlopen = None
 
@@ -387,9 +380,21 @@ def _httpx_wrapper(
     if args:
         req = args[0]
         url = str(getattr(req, "url", "") or "")
-        content = getattr(req, "content", None)
-        body_len = len(content) if isinstance(content, (bytes, bytearray)) else 0
         headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
+        # httpx raises RequestNotRead when ``Request.content`` is accessed for
+        # a streaming upload (multipart files, generators, etc.).  Observability
+        # must never consume or break the provider request body.  Use content
+        # only when it is already buffered and otherwise trust Content-Length.
+        try:
+            content = req.content
+        except Exception:
+            content = None
+        body_len = len(content) if isinstance(content, (bytes, bytearray)) else 0
+        if body_len == 0:
+            try:
+                body_len = max(0, int(headers.get("content-length", "0")))
+            except (TypeError, ValueError):
+                body_len = 0
         _handle_http_call(url, method=str(getattr(req, "method", "GET")),
                           request_headers=headers, request_body_len=body_len,
                           request_body=content,
@@ -613,7 +618,11 @@ def _handle_http_call(
             if isinstance(request_body, dict):
                 observer_request_body = request_body
             elif isinstance(request_body, (str, bytes, bytearray)):
-                raw = request_body.encode() if isinstance(request_body, str) else bytes(request_body)
+                raw = (
+                    request_body.encode()
+                    if isinstance(request_body, str)
+                    else bytes(request_body)
+                )
                 if len(raw) <= 1_048_576:
                     try:
                         decoded = json.loads(raw)

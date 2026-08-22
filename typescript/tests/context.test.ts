@@ -104,7 +104,7 @@ describe("runWithContext (scoped ambient context)", () => {
     expect(getContext()).toBeUndefined();
 
     const inside = await runWithContext(
-      { customerId: "org-1", projectId: "repo-a", agent: "kodus_code_review" },
+      { customerId: "org-1", projectId: "repo-a", agent: "kodus_code_review", agentVersion: "1" },
       async () => {
         await new Promise((r) => setTimeout(r, 5));
         return getContext();

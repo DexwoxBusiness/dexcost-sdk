@@ -62,7 +62,7 @@ def resolve_runtime() -> RuntimeKind:
         return RuntimeKind.VERCEL
 
     # 2. Kubernetes wins over the underlying VM. A pod on EC2 reports as
-    #    k8s_pod (billed at pod-limits × duration); the EC2 instance share
+    #    k8s_pod (billed at pod-limits x duration); the EC2 instance share
     #    would double-count the same compute hour.
     if os.environ.get("KUBERNETES_SERVICE_HOST"):
         return RuntimeKind.K8S_POD

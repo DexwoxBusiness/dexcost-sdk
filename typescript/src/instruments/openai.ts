@@ -19,6 +19,16 @@ import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import { normalizeOpenAIUsage, OpenAIUsageError } from "./openai-usage.js";
+import { applyEventCapability } from "../core/capabilities.js";
+import { applyEventIdempotency } from "../core/idempotency.js";
+import { nonNegativeDecimal, prefixedModel } from "./provider-extract.js";
+import { mapProviderResult, recordProviderFailure } from "./provider-metering.js";
+import {
+  installOpenAIModern,
+  recordOpenAIResponseTools,
+  uninstallOpenAIModern,
+} from "./openai-modern.js";
+import { installOpenAIRealtime, uninstallOpenAIRealtime } from "./openai-realtime.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,6 +38,8 @@ let _instrumenting: Promise<void> | null = null;
 const _patches: Array<{ prototype: any; original: Function }> = [];
 let _completionsClass: any = null;
 let _responsesClass: any = null;
+let _providedModule: any = null;
+let _modernInstalled = false;
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
 
@@ -49,6 +61,11 @@ export function _setResponsesClass(cls: any): void {
 /** Test helper: reset Responses module resolution. */
 export function _resetResponsesClass(): void {
   _responsesClass = null;
+}
+
+/** Test/bundler reset helper for an explicitly supplied OpenAI module. */
+export function _resetOpenAIModule(): void {
+  _providedModule = null;
 }
 
 /**
@@ -77,6 +94,7 @@ async function installOpenai(
 
   let CompletionsProto: any;
   let ResponsesProto: any;
+  let OpenAIRoot: any = _providedModule;
   if (_completionsClass) {
     CompletionsProto = _completionsClass.prototype;
   } else {
@@ -85,6 +103,7 @@ async function installOpenai(
     // @ts-ignore -- openai is an optional peer dependency
     const openai = await import("openai");
     const OpenAI = openai.default ?? openai;
+    OpenAIRoot = OpenAI;
     CompletionsProto = OpenAI.Chat.Completions.prototype;
     ResponsesProto = OpenAI.Responses?.prototype;
   }
@@ -102,6 +121,24 @@ async function installOpenai(
   _buffer = buffer;
   _pricing = pricing;
 
+  if (OpenAIRoot) {
+    _modernInstalled = installOpenAIModern(OpenAIRoot, pricing, buffer);
+    installOpenAIRealtime(OpenAIRoot, pricing, buffer);
+  }
+  if (!_providedModule && !_completionsClass) {
+    try {
+      // @ts-ignore -- optional peer dependency and version-dependent export
+      installOpenAIRealtime(await import("openai/realtime/ws"), pricing, buffer);
+    } catch {
+      // Older OpenAI SDKs do not expose the Realtime ws helper.
+    }
+    try {
+      // @ts-ignore -- optional peer dependency and version-dependent export
+      installOpenAIRealtime(await import("openai/realtime/websocket"), pricing, buffer);
+    } catch {
+      // Older OpenAI SDKs do not expose the native WebSocket helper.
+    }
+  }
   patchCreate(CompletionsProto, "openai.chat", false);
   if (ResponsesProto) patchCreate(ResponsesProto, "openai.responses", true);
   _patched = true;
@@ -110,11 +147,11 @@ async function installOpenai(
 function patchCreate(prototype: any, taskType: string, responsesApi: boolean): void {
   const original = prototype.create as Function;
   _patches.push({ prototype, original });
-  prototype.create = async function (
+  prototype.create = function (
     this: any,
     body: any,
     options?: any,
-  ): Promise<any> {
+  ): any {
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -135,28 +172,39 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
 
     const startTime = performance.now();
     const self = this;
+    const routedProvider = providerForResource(self);
+    const requestedModel = typeof body?.model === "string" ? body.model : "unknown";
 
-    if (body?.stream) {
-      try {
-        const rawStream = await suppressNetworkEvent(() =>
-          runWithTask(task, () => original.call(self, body, options)),
-        );
-        return wrapStream(rawStream, task, startTime, autoCreated, responsesApi);
-      } catch (err) {
-        if (autoCreated) {
-          finalizeAutoTask(task, "failed", _buffer);
-        }
-        throw err;
-      }
-    }
-
+    let result: any;
     try {
-      const response = await suppressNetworkEvent(() =>
+      result = suppressNetworkEvent(() =>
         runWithTask(task, () => original.call(self, body, options)),
       );
+    } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType, provider: routedProvider, service: responsesApi ? "responses" : "chat",
+        operation: `${routedProvider}.${responsesApi ? "responses" : "chat"}.create`,
+        component: "llm", model: routedModel(routedProvider, undefined, requestedModel), eventType: "llm_call",
+      }, err, startTime);
+      if (autoCreated) finalizeAutoTask(task, "failed", _buffer);
+      throw err;
+    }
+    const complete = (response: any): any => {
+      if (body?.stream) {
+        return wrapStream(
+          response, task, startTime, autoCreated, responsesApi, routedProvider, requestedModel,
+        );
+      }
+      if (_modernInstalled && responsesApi && body?.background === true) {
+        if (autoCreated) finalizeAutoTask(task, "success", _buffer);
+        return response;
+      }
       try {
         const latencyMs = Math.round(performance.now() - startTime);
-        recordEvent(response, task, latencyMs);
+        recordEvent(response, task, latencyMs, routedProvider, requestedModel);
+        if (responsesApi && routedProvider === "openai" && _pricing && _buffer) {
+          recordOpenAIResponseTools(response, task, _pricing, _buffer);
+        }
       } catch {
         // dexcost errors must never crash user code
       }
@@ -164,12 +212,18 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
         finalizeAutoTask(task, "success", _buffer);
       }
       return response;
-    } catch (err) {
+    };
+    return mapProviderResult(result, complete, (err) => {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType, provider: routedProvider, service: responsesApi ? "responses" : "chat",
+        operation: `${routedProvider}.${responsesApi ? "responses" : "chat"}.create`,
+        component: "llm", model: routedModel(routedProvider, undefined, requestedModel), eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
-    }
+    });
   };
 }
 
@@ -180,6 +234,9 @@ export function uninstrumentOpenai(): void {
   if (!_patched) return;
   for (const patch of _patches) patch.prototype.create = patch.original;
   _patches.length = 0;
+  uninstallOpenAIModern();
+  uninstallOpenAIRealtime();
+  _modernInstalled = false;
   _buffer = null;
   _pricing = null;
   _patched = false;
@@ -189,11 +246,42 @@ export function uninstrumentOpenai(): void {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function recordEvent(response: any, task: Task, latencyMs: number): void {
+type RoutedProvider = "openai" | "openrouter" | "perplexity" | "azure_openai";
+
+function providerForResource(resource: any): RoutedProvider {
+  try {
+    const raw = String(resource?._client?.baseURL ?? resource?._client?.base_url ?? "");
+    const hostname = new URL(raw).hostname.toLowerCase();
+    if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
+    if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
+    if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
+      return "azure_openai";
+    }
+  } catch { /* the default OpenAI client may expose a relative/opaque URL */ }
+  return "openai";
+}
+
+function routedModel(provider: RoutedProvider, responseModel: unknown, requestedModel: string): string {
+  if (provider === "openai") {
+    return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
+  }
+  const selected = provider === "azure_openai"
+    ? requestedModel
+    : (typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel);
+  return prefixedModel(provider, selected);
+}
+
+function recordEvent(
+  response: any,
+  task: Task,
+  latencyMs: number,
+  provider: RoutedProvider,
+  requestedModel: string,
+): void {
   if (!_buffer || !_pricing) return;
 
-  const model: string = response?.model ?? "unknown";
-  recordUsageEvent(task, model, response?.usage, latencyMs, response?.id);
+  const model = routedModel(provider, response?.model, requestedModel);
+  recordUsageEvent(task, model, response?.usage, latencyMs, response?.id, provider);
 }
 
 function recordUsageEvent(
@@ -202,6 +290,7 @@ function recordUsageEvent(
   rawUsage: unknown,
   latencyMs: number,
   providerRecordId?: unknown,
+  provider: RoutedProvider = "openai",
 ): void {
   if (!_buffer || !_pricing) return;
 
@@ -218,6 +307,12 @@ function recordUsageEvent(
 
   if (typeof providerRecordId === "string" && providerRecordId.length > 0) {
     details.provider_record_id = providerRecordId;
+  }
+  if (provider !== "openai") {
+    details.attribution_dimensions = [{ key: "gateway", value: { type: "string", value: provider } }];
+  }
+  if (provider === "azure_openai") {
+    details.azure_deployment = model.replace(/^azure\//, "");
   }
 
   if (rawUsage !== undefined && rawUsage !== null) {
@@ -242,6 +337,25 @@ function recordUsageEvent(
       costConfidence = result.costConfidence;
       pricingSource = result.pricingSource;
       pricingVersion = result.pricingVersion;
+      const exact = provider === "openrouter"
+        ? nonNegativeDecimal((rawUsage as any)?.cost)
+        : provider === "perplexity"
+          ? nonNegativeDecimal((rawUsage as any)?.cost?.total_cost)
+          : undefined;
+      if (exact !== undefined) {
+        costUsd = exact;
+        costConfidence = "exact";
+        pricingSource = "provider_response";
+        pricingVersion = undefined;
+        details.provider_reported_cost_usd = exact.toString();
+      }
+      if (provider === "openrouter") {
+        const upstream = nonNegativeDecimal(
+          (rawUsage as any)?.cost_details?.upstream_inference_cost ??
+          (rawUsage as any)?.cost_details?.upstream_cost,
+        );
+        if (upstream !== undefined) details.provider_upstream_cost_usd = upstream.toString();
+      }
     } catch (error) {
       if (!(error instanceof OpenAIUsageError)) throw error;
       details.openai_usage_error = error.message;
@@ -257,7 +371,7 @@ function recordUsageEvent(
     costConfidence,
     pricingSource,
     pricingVersion,
-    provider: "openai",
+    provider,
     model,
     inputTokens,
     outputTokens,
@@ -266,6 +380,8 @@ function recordUsageEvent(
     isRetry: false,
     details,
   });
+  applyEventCapability(event);
+  applyEventIdempotency(event);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, inputTokens, outputTokens);
@@ -284,8 +400,10 @@ function wrapStream(
   startTime: number,
   autoCreated: boolean = false,
   responsesApi: boolean = false,
+  provider: RoutedProvider = "openai",
+  requestedModel: string = "unknown",
 ): AsyncIterable<any> {
-  let model = "unknown";
+  let model = routedModel(provider, undefined, requestedModel);
   let usage: unknown;
   let providerRecordId: unknown;
   let finalized = false;
@@ -306,6 +424,12 @@ function wrapStream(
           try {
             result = await iter.next();
           } catch (err) {
+            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+              taskType: `${provider}.${responsesApi ? "responses" : "chat"}`,
+              provider, service: responsesApi ? "responses" : "chat",
+              operation: `${provider}.${responsesApi ? "responses" : "chat"}.create`,
+              component: "llm", model, eventType: "llm_call",
+            }, err, startTime);
             finalizeTask("failed");
             throw err;
           }
@@ -314,7 +438,7 @@ function wrapStream(
             finalized = true;
             try {
               const latencyMs = Math.round(performance.now() - startTime);
-              recordUsageEvent(task, model, usage, latencyMs, providerRecordId);
+              recordUsageEvent(task, routedModel(provider, model, requestedModel), usage, latencyMs, providerRecordId, provider);
             } catch {
               // dexcost errors must never crash user code
             }
@@ -351,7 +475,9 @@ function wrapStream(
 registerInstrument("openai", instrumentOpenai, uninstrumentOpenai, (ref: any) => {
   // Accept the OpenAI class, the module namespace, or Completions directly.
   const mod = ref?.default ?? ref;
-  _setCompletionsClass(mod?.Chat?.Completions ?? mod);
+  _providedModule = mod;
+  const completions = mod?.Chat?.Completions;
+  if (completions) _setCompletionsClass(completions);
   const responses = mod?.Responses ?? ref?.Responses;
   if (responses) _setResponsesClass(responses);
 });

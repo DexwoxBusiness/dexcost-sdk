@@ -1,0 +1,1991 @@
+{
+  "exports": [
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ALL_SUPPORTED_INSTRUMENTS"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_COMPONENTS"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_UNIT_BY_METRIC"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_USAGE_METRICS"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_USAGE_UNITS"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_V2_CONTRACT_VERSION"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "ATTRIBUTION_V3_CONTRACT_VERSION"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "end",
+          "signature": "(self, status: 'str' = 'success') -> 'None'"
+        }
+      ],
+      "module": "dexcost.tracker",
+      "name": "AttachedTask",
+      "signature": "(task: 'Task', storage: 'StorageBackend', tracker: 'CostTracker') -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionAttemptIdentityV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionBillingDimension"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "AttributionBillingDimensionValue"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionCapabilityIdentityV3"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionCapabilityInvocationV3",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionCapabilityKindV3",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionCapabilitySourceV3",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionComponent",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionConfidence",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionCostEvidenceSource",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionCostEvidenceV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionCostEvidenceV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionEventV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionEventV3"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionLifecycleState",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionLifecycleV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionLifecycleV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionObservationV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionOperationErrorV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionOperationIdentityV3"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionOperationStatusV3",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionProviderIdentityV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionProviderIdentityV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionResourceV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionResourceV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionTaskIngestV1"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionUsageLineV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionUsageLineV3"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionUsageMetric",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "attribute",
+          "name": "capitalize",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "casefold",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "center",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "encode",
+          "signature": "(self, /, encoding='utf-8', errors='strict')"
+        },
+        {
+          "kind": "attribute",
+          "name": "expandtabs",
+          "signature": "(self, /, tabsize=8)"
+        },
+        {
+          "kind": "attribute",
+          "name": "format",
+          "signature": "(self, /, *args, **kwargs)"
+        },
+        {
+          "kind": "attribute",
+          "name": "format_map",
+          "signature": "(self, mapping, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isalnum",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isalpha",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isascii",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isdecimal",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isdigit",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isidentifier",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "islower",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isnumeric",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isprintable",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isspace",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "istitle",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isupper",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "join",
+          "signature": "(self, iterable, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "ljust",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "lower",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "lstrip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "static_method",
+          "name": "maketrans"
+        },
+        {
+          "kind": "attribute",
+          "name": "partition",
+          "signature": "(self, sep, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "removeprefix",
+          "signature": "(self, prefix, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "removesuffix",
+          "signature": "(self, suffix, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "replace",
+          "signature": "(self, old, new, /, count=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rjust",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rpartition",
+          "signature": "(self, sep, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rsplit",
+          "signature": "(self, /, sep=None, maxsplit=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rstrip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "split",
+          "signature": "(self, /, sep=None, maxsplit=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "splitlines",
+          "signature": "(self, /, keepends=False)"
+        },
+        {
+          "kind": "attribute",
+          "name": "strip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "swapcase",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "title",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "translate",
+          "signature": "(self, table, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "upper",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "zfill",
+          "signature": "(self, width, /)"
+        }
+      ],
+      "module": "builtins",
+      "name": "AttributionUsageMetricV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.types",
+      "name": "AttributionUsagePeriodV2"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_types",
+      "name": "AttributionUsagePeriodV3"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "AttributionUsageUnit",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "attribute",
+          "name": "capitalize",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "casefold",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "center",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "encode",
+          "signature": "(self, /, encoding='utf-8', errors='strict')"
+        },
+        {
+          "kind": "attribute",
+          "name": "expandtabs",
+          "signature": "(self, /, tabsize=8)"
+        },
+        {
+          "kind": "attribute",
+          "name": "format",
+          "signature": "(self, /, *args, **kwargs)"
+        },
+        {
+          "kind": "attribute",
+          "name": "format_map",
+          "signature": "(self, mapping, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isalnum",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isalpha",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isascii",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isdecimal",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isdigit",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isidentifier",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "islower",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isnumeric",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isprintable",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isspace",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "istitle",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "isupper",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "join",
+          "signature": "(self, iterable, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "ljust",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "lower",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "lstrip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "static_method",
+          "name": "maketrans"
+        },
+        {
+          "kind": "attribute",
+          "name": "partition",
+          "signature": "(self, sep, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "removeprefix",
+          "signature": "(self, prefix, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "removesuffix",
+          "signature": "(self, suffix, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "replace",
+          "signature": "(self, old, new, /, count=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rjust",
+          "signature": "(self, width, fillchar=' ', /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rpartition",
+          "signature": "(self, sep, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rsplit",
+          "signature": "(self, /, sep=None, maxsplit=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "rstrip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "split",
+          "signature": "(self, /, sep=None, maxsplit=-1)"
+        },
+        {
+          "kind": "attribute",
+          "name": "splitlines",
+          "signature": "(self, /, keepends=False)"
+        },
+        {
+          "kind": "attribute",
+          "name": "strip",
+          "signature": "(self, chars=None, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "swapcase",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "title",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "translate",
+          "signature": "(self, table, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "upper",
+          "signature": "(self, /)"
+        },
+        {
+          "kind": "attribute",
+          "name": "zfill",
+          "signature": "(self, width, /)"
+        }
+      ],
+      "module": "builtins",
+      "name": "AttributionUsageUnitV3"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.validate",
+      "name": "AttributionV2ValidationIssue",
+      "signature": "(path: 'str', message: 'str') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.validate",
+      "name": "AttributionV2ValidationResult",
+      "signature": "(success: 'bool', issues: 'tuple[AttributionV2ValidationIssue, ...]') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_validate",
+      "name": "AttributionV3ValidationIssue",
+      "signature": "(path: 'str', message: 'str') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.attribution.v3_validate",
+      "name": "AttributionV3ValidationResult",
+      "signature": "(success: 'bool', issues: 'tuple[AttributionV3ValidationIssue, ...]') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, value: 'dict[str, Any]') -> 'CapabilityIdentity'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, str]'"
+        }
+      ],
+      "module": "dexcost.models.capability",
+      "name": "CapabilityIdentity",
+      "signature": "(name: 'str', kind: 'CapabilityKind', namespace: 'str | None' = None, version: 'str | None' = None, source: 'CapabilitySource | None' = None, source_id: 'str | None' = None, invocation: 'CapabilityInvocation | None' = None) -> None"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "CapabilityInvocation",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "CapabilityKind",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "CapabilitySource",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.catalog_runtime",
+      "name": "CatalogRuntimeStatus",
+      "signature": "(release_id: 'str | None', release_sequence: 'int | None', source: 'str', stale: 'bool', last_refresh_status: 'str | None', last_error: 'str | None', overlay_active: 'bool' = False, overlay_override_count: 'int' = 0, overlay_last_refresh_status: 'str | None' = None, overlay_last_error: 'str | None' = None) -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.models.enums",
+      "name": "CostConfidence",
+      "signature": "(*values)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.pricing",
+      "name": "CostResult",
+      "signature": "(cost_usd: 'Decimal', cost_confidence: 'str', pricing_source: 'str', pricing_version: 'str') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "attach_task",
+          "signature": "(self, task_id: 'uuid.UUID | str', *, task_type: 'str' = 'attached', root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None) -> 'AttachedTask'"
+        },
+        {
+          "kind": "method",
+          "name": "explain_pricing",
+          "signature": "(self, event_or_id: 'Event | uuid.UUID | str') -> 'PricingExplanation'"
+        },
+        {
+          "kind": "method",
+          "name": "export_rates",
+          "signature": "(self, path: 'str | Path') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "get_cost",
+          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0) -> 'CostResult'"
+        },
+        {
+          "kind": "method",
+          "name": "get_infrastructure_rate",
+          "signature": "(self, kind: 'str', key: 'str') -> 'Decimal | None'"
+        },
+        {
+          "kind": "method",
+          "name": "get_outcome_history",
+          "signature": "(self, outcome_id: 'uuid.UUID | str') -> 'list[OutcomeRevision]'"
+        },
+        {
+          "kind": "method",
+          "name": "get_rate",
+          "signature": "(self, service: 'str') -> 'Decimal | None'"
+        },
+        {
+          "kind": "method",
+          "name": "get_revenue_history",
+          "signature": "(self, revenue_id: 'uuid.UUID | str') -> 'list[RevenueRevision]'"
+        },
+        {
+          "kind": "method",
+          "name": "instrument",
+          "signature": "(self, name: 'str') -> 'None'"
+        },
+        {
+          "kind": "property",
+          "name": "instrumented",
+          "signature": "(self) -> 'frozenset[str]'"
+        },
+        {
+          "kind": "method",
+          "name": "load_rates",
+          "signature": "(self, path: 'str | Path') -> 'None'"
+        },
+        {
+          "kind": "property",
+          "name": "pricing",
+          "signature": "(self) -> 'PricingEngine'"
+        },
+        {
+          "kind": "property",
+          "name": "rate_registry",
+          "signature": "(self) -> 'RateRegistry'"
+        },
+        {
+          "kind": "method",
+          "name": "record_outcome",
+          "signature": "(self, name: 'str', *, task_id: 'uuid.UUID | str', state: 'OutcomeState' = 'achieved', value: 'OutcomeInput | OutcomeValue | None' = None, outcome_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "record_revenue",
+          "signature": "(self, amount: 'RevenueInput | None' = None, *, task_id: 'uuid.UUID | str', currency: 'str' = 'USD', state: 'RevenueState' = 'recognized', source: 'RevenueSourceType | RevenueSource' = 'sdk', source_record_id: 'str | None' = None, outcome_id: 'uuid.UUID | str | None' = None, revenue_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'RevenueRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "register_infrastructure_rate",
+          "signature": "(self, kind: 'str', key: 'str', *, per: 'str', cost_usd: 'Decimal | str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "register_rate",
+          "signature": "(self, service: 'str', *, per: 'str' = 'unit', cost_usd: 'Decimal | str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "set_custom_pricing",
+          "signature": "(self, model: 'str', input_per_1k: 'Decimal | str | float', output_per_1k: 'Decimal | str | float') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "start_task",
+          "signature": "(self, task_type: 'str' = '', customer_id: 'str | None' = None, project_id: 'str | None' = None, metadata: 'dict[str, Any] | None' = None, experiment_id: 'str | None' = None, variant: 'str | None' = None, task_id: 'uuid.UUID | str | None' = None, root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None, agent_id: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None, track_gpu: 'bool' = False, *, user_id: 'str | None' = None, product_id: 'str | None' = None) -> 'TrackedTask'"
+        },
+        {
+          "kind": "property",
+          "name": "storage",
+          "signature": "(self) -> 'StorageBackend'"
+        },
+        {
+          "kind": "method",
+          "name": "task",
+          "signature": "(self, task_type: 'str' = '', customer_id: 'str | None' = None, project_id: 'str | None' = None, metadata: 'dict[str, Any] | None' = None, experiment_id: 'str | None' = None, variant: 'str | None' = None, task_id: 'uuid.UUID | str | None' = None, root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None, agent_id: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None, track_gpu: 'bool' = False, *, user_id: 'str | None' = None, product_id: 'str | None' = None) -> '_TaskContextManager'"
+        },
+        {
+          "kind": "method",
+          "name": "track_task",
+          "signature": "(self, task_type: 'str' = '', customer_id: 'str | None' = None, project_id: 'str | None' = None, metadata: 'dict[str, Any] | None' = None, experiment_id: 'str | None' = None, variant: 'str | None' = None, root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None, agent_id: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None, track_gpu: 'bool' = False, *, user_id: 'str | None' = None, product_id: 'str | None' = None) -> 'Callable[[F], F]'"
+        },
+        {
+          "kind": "method",
+          "name": "track_tool",
+          "signature": "(self, tool_id: 'str', *, operation: 'str' = 'execute', usage: 'ToolUsage | None' = None, cost_usd: 'Decimal | str | int' = Decimal('0'), provider: 'str | None' = None, dimensions: 'Mapping[str, ToolDimensionInput] | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Callable[[F], F]'"
+        },
+        {
+          "kind": "method",
+          "name": "uninstrument",
+          "signature": "(self, name: 'str') -> 'None'"
+        }
+      ],
+      "module": "dexcost.tracker",
+      "name": "CostTracker",
+      "signature": "(storage: 'StorageBackend | None' = None, *, pricing: 'PricingEngine | None' = None, pricing_data_path: 'str | Path | None' = None, auto_update_pricing: 'bool' = False, auto_instrument: 'Sequence[str] | None' = None, retry_window_seconds: 'int' = 30, retry_likelihood_threshold: 'float' = 0.8, enable_retry_heuristics: 'bool' = False, retry_heuristic_window: 'float | None' = None, retry_heuristic_threshold: 'float | None' = None, compute_billing_overrides: 'dict[str, str] | None' = None, k8s_node_aware: 'bool' = False) -> 'None'"
+    },
+    {
+      "kind": "type_alias",
+      "module": "collections.abc",
+      "name": "DeliveryErrorCallback",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.delivery",
+      "name": "DeliveryErrorEvent",
+      "signature": "(occurred_at: 'datetime', operation: 'DeliveryErrorOperation', error_type: 'str', message: 'str', retryable: 'bool', consecutive_failures: 'int') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "property",
+          "name": "healthy",
+          "signature": "(self) -> 'bool'"
+        },
+        {
+          "kind": "property",
+          "name": "pending_records",
+          "signature": "(self) -> 'int'"
+        },
+        {
+          "kind": "property",
+          "name": "quarantined_records",
+          "signature": "(self) -> 'int'"
+        }
+      ],
+      "module": "dexcost.delivery",
+      "name": "DeliveryStatus",
+      "signature": "(enabled: 'bool', worker_state: 'DeliveryWorkerState', pending_events: 'int', quarantined_events: 'int', pending_tasks: 'int', pending_outcomes: 'int', quarantined_outcomes: 'int', pending_revenues: 'int', quarantined_revenues: 'int', pending_provider_jobs: 'int', quarantined_provider_jobs: 'int', oldest_pending_at: 'datetime | None', last_attempt_at: 'datetime | None', last_success_at: 'datetime | None', last_error_at: 'datetime | None', last_error_type: 'str | None', last_error_message: 'str | None', consecutive_failures: 'int', successful_batches: 'int', failed_batches: 'int', delivered_records: 'int', backoff_seconds: 'float') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "property",
+          "name": "endpoint",
+          "signature": "(self) -> 'str'"
+        },
+        {
+          "kind": "property",
+          "name": "is_dev",
+          "signature": "(self) -> 'bool'"
+        },
+        {
+          "kind": "property",
+          "name": "is_sandbox",
+          "signature": "(self) -> 'bool'"
+        },
+        {
+          "kind": "property",
+          "name": "key_type",
+          "signature": "(self) -> 'str | None'"
+        },
+        {
+          "kind": "property",
+          "name": "storage_mode",
+          "signature": "(self) -> 'str'"
+        }
+      ],
+      "module": "dexcost.config",
+      "name": "DexcostConfig",
+      "signature": "(api_key: 'str | None' = None, storage: 'str | None' = None, endpoint_override: 'str | None' = None, batch_size: 'int' = 100, flush_interval_seconds: 'float' = 5.0, buffer_path: 'str | None' = None, redact_fields: 'list[str]' = <factory>, hash_customer_id: 'bool' = False, environment: 'str | None' = None, track_network: 'bool' = True, network_event_threshold_bytes: 'int' = 102400, network_event_on_error: 'bool' = True, network_event_latency_ms: 'int' = 0) -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.context",
+      "name": "DexcostContext",
+      "signature": "(customer_id: 'str | None' = None, project_id: 'str | None' = None, user_id: 'str | None' = None, product_id: 'str | None' = None, metadata: 'dict[str, Any]' = <factory>, agent: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None) -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, Any]') -> 'Event'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, Any]'"
+        }
+      ],
+      "module": "dexcost.models.event",
+      "name": "Event",
+      "signature": "(event_id: 'uuid.UUID' = <factory>, task_id: 'uuid.UUID' = <factory>, event_type: 'str' = 'llm_call', occurred_at: 'datetime' = <factory>, cost_usd: 'Decimal' = Decimal('0'), cost_confidence: 'str' = 'exact', pricing_source: 'str | None' = None, pricing_version: 'str | None' = None, service_name: 'str | None' = None, provider: 'str | None' = None, model: 'str | None' = None, input_tokens: 'int | None' = None, output_tokens: 'int | None' = None, cached_tokens: 'int | None' = None, latency_ms: 'int | None' = None, is_retry: 'bool' = False, retry_reason: 'str | None' = None, retry_of: 'uuid.UUID | None' = None, details: 'dict[str, Any]' = <factory>, schema_version: 'str' = '1') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.models.enums",
+      "name": "EventType",
+      "signature": "(*values)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.rates",
+      "name": "InfrastructureRateEntry",
+      "signature": "(kind: 'str', key: 'str', per: 'str', cost_usd: 'Decimal') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.config",
+      "name": "InvalidAPIKeyError"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "OutcomeInput"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, object]') -> 'OutcomeRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, object]'"
+        }
+      ],
+      "module": "dexcost.models.outcome",
+      "name": "OutcomeRevision",
+      "signature": "(task_id: 'uuid.UUID', name: 'str', state: 'OutcomeState' = 'achieved', outcome_id: 'uuid.UUID' = <factory>, revision: 'int' = 1, effective_at: 'datetime' = <factory>, observed_at: 'datetime' = <factory>, value: 'OutcomeValue | None' = None, schema_version: 'str' = '1') -> None"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "OutcomeState",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, object]') -> 'OutcomeValue'"
+        },
+        {
+          "kind": "class_method",
+          "name": "from_input",
+          "signature": "(cls, value: 'OutcomeInput | OutcomeValue') -> 'OutcomeValue'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, str | bool]'"
+        }
+      ],
+      "module": "dexcost.models.outcome",
+      "name": "OutcomeValue",
+      "signature": "(type: 'OutcomeValueType', value: 'str | bool') -> None"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "OutcomeValueType",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "close",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "get_cost",
+          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0, cache_creation_tokens: 'int' = 0) -> 'CostResult'"
+        },
+        {
+          "kind": "method",
+          "name": "get_metered_cost",
+          "signature": "(self, model: 'str', usage: 'Mapping[str, Decimal | int | str]', *, model_candidates: 'Sequence[str]' = ()) -> 'MeteredCostResult'"
+        },
+        {
+          "kind": "property",
+          "name": "model_count",
+          "signature": "(self) -> 'int'"
+        },
+        {
+          "kind": "property",
+          "name": "pricing_version",
+          "signature": "(self) -> 'str'"
+        },
+        {
+          "kind": "method",
+          "name": "refresh_from_server",
+          "signature": "(self, endpoint: 'str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "replace_catalog",
+          "signature": "(self, catalog_data: 'dict[str, dict[str, Any]]', catalog_version: 'str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "set_api_key",
+          "signature": "(self, api_key: 'str | None') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "set_custom_pricing",
+          "signature": "(self, model: 'str', input_per_1k: 'Decimal | str | float', output_per_1k: 'Decimal | str | float') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "start_background_refresh",
+          "signature": "(self, endpoint: 'str', interval_seconds: 'float' = 86400) -> 'None'"
+        }
+      ],
+      "module": "dexcost.pricing",
+      "name": "PricingEngine",
+      "signature": "(data_path: 'str | Path | None' = None, *, auto_update: 'bool' = False, api_key: 'str | None' = None, catalog_data: 'dict[str, dict[str, Any]] | None' = None, catalog_version: 'str | None' = None) -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, Any]'"
+        }
+      ],
+      "module": "dexcost.models.pricing_explanation",
+      "name": "PricingExplanation",
+      "signature": "(event_id: 'str', task_id: 'str', event_type: 'str', component: 'str', status: 'PricingExplanationStatus', authority: \"Literal['sdk_evidence']\", amount_usd: 'Decimal', confidence: 'str', pricing_source: 'str | None', pricing_version: 'str | None', selected_rule: 'str | None', inputs: 'tuple[tuple[str, str], ...]', provenance: 'PricingProvenance | None') -> None"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "PricingExplanationStatus",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, value: 'dict[str, Any]') -> 'PricingProvenance'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, Any]'"
+        }
+      ],
+      "module": "dexcost.models.pricing_explanation",
+      "name": "PricingProvenance",
+      "signature": "(catalog_source: 'str', stale: 'bool', release_id: 'str | None' = None, release_sequence: 'int | None' = None, artifact_kind: 'str | None' = None, artifact_sha256: 'str | None' = None, artifact_schema_version: 'str | None' = None, observer_rules_sha256: 'str | None' = None, safety_policy_version: 'str | None' = None, workspace_overlay: 'bool' = False) -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.models.enums",
+      "name": "PricingSource",
+      "signature": "(*values)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.rates",
+      "name": "RateEntry",
+      "signature": "(service: 'str', per: 'str', cost_usd: 'Decimal') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "export",
+          "signature": "(self, path: 'str | Path') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "get",
+          "signature": "(self, service: 'str') -> 'RateEntry | None'"
+        },
+        {
+          "kind": "method",
+          "name": "get_infrastructure",
+          "signature": "(self, kind: 'str', key: 'str') -> 'InfrastructureRateEntry | None'"
+        },
+        {
+          "kind": "property",
+          "name": "infrastructure_rates",
+          "signature": "(self) -> 'dict[tuple[str, str], InfrastructureRateEntry]'"
+        },
+        {
+          "kind": "method",
+          "name": "load",
+          "signature": "(self, path: 'str | Path') -> 'None'"
+        },
+        {
+          "kind": "property",
+          "name": "pricing_version",
+          "signature": "(self) -> 'str'"
+        },
+        {
+          "kind": "property",
+          "name": "rates",
+          "signature": "(self) -> 'dict[str, RateEntry]'"
+        },
+        {
+          "kind": "method",
+          "name": "register",
+          "signature": "(self, service: 'str', per: 'str', cost_usd: 'Decimal | str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "register_infrastructure",
+          "signature": "(self, kind: 'str', key: 'str', per: 'str', cost_usd: 'Decimal | str') -> 'None'"
+        }
+      ],
+      "module": "dexcost.rates",
+      "name": "RateRegistry",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, object]') -> 'RevenueAmount'"
+        },
+        {
+          "kind": "class_method",
+          "name": "from_input",
+          "signature": "(cls, value: 'RevenueInput', currency: 'str') -> 'RevenueAmount'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, str]'"
+        }
+      ],
+      "module": "dexcost.models.revenue",
+      "name": "RevenueAmount",
+      "signature": "(value: 'Decimal', currency: 'str') -> None"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "RevenueInput"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, object]') -> 'RevenueRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, object]'"
+        }
+      ],
+      "module": "dexcost.models.revenue",
+      "name": "RevenueRevision",
+      "signature": "(task_id: 'uuid.UUID', state: 'RevenueState', source: 'RevenueSource' = <factory>, amount: 'RevenueAmount | None' = None, outcome_id: 'uuid.UUID | None' = None, revenue_id: 'uuid.UUID' = <factory>, revision: 'int' = 1, effective_at: 'datetime' = <factory>, observed_at: 'datetime' = <factory>, schema_version: 'str' = '1') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, str]'"
+        }
+      ],
+      "module": "dexcost.models.revenue",
+      "name": "RevenueSource",
+      "signature": "(type: 'RevenueSourceType' = 'sdk', record_id: 'str | None' = None) -> None"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "RevenueSourceType",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "RevenueState",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.schema",
+      "name": "SchemaNotFoundError"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "property",
+          "name": "catalog_version",
+          "signature": "(self) -> 'str'"
+        },
+        {
+          "kind": "property",
+          "name": "entries",
+          "signature": "(self) -> 'dict[str, ServiceEntry]'"
+        },
+        {
+          "kind": "method",
+          "name": "extract_cost",
+          "signature": "(self, entry: 'ServiceEntry', response_headers: 'dict[str, str]', response_body: 'dict[str, Any] | None') -> 'CostExtractionResult | None'"
+        },
+        {
+          "kind": "method",
+          "name": "inherit_overrides",
+          "signature": "(self, other: 'ServiceCatalog') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "lookup",
+          "signature": "(self, url: 'str') -> 'ServiceEntry | None'"
+        },
+        {
+          "kind": "method",
+          "name": "refresh_from_url",
+          "signature": "(self, url: 'str', api_key: 'str | None' = None) -> 'bool'"
+        },
+        {
+          "kind": "method",
+          "name": "register_override",
+          "signature": "(self, service_key: 'str', cost_per_unit: 'Decimal', per: 'str' = 'request') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "set_workspace_overrides",
+          "signature": "(self, overrides: 'dict[str, tuple[Decimal, str]]') -> 'None'"
+        }
+      ],
+      "module": "dexcost.service_catalog",
+      "name": "ServiceCatalog",
+      "signature": "(data_path: 'Path | None' = None, *, data: 'dict[str, Any] | None' = None, catalog_version: 'str | None' = None) -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "clear",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "finalize_idle_sessions",
+          "signature": "(self, idle_seconds: 'float' = 30.0, storage: 'StorageBackend | None' = None) -> 'list[Task]'"
+        },
+        {
+          "kind": "method",
+          "name": "get_or_create_session",
+          "signature": "(self, call_type: 'str', storage: 'StorageBackend | None' = None) -> 'Task'"
+        }
+      ],
+      "module": "dexcost.session",
+      "name": "SessionManager",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "flush",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "resume_after_auth",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "start",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "status",
+          "signature": "(self, storage: 'StorageBackend | None' = None) -> 'DeliveryStatus'"
+        },
+        {
+          "kind": "method",
+          "name": "stop",
+          "signature": "(self) -> 'None'"
+        }
+      ],
+      "module": "dexcost.sync",
+      "name": "SyncWorker",
+      "signature": "(config: 'DexcostConfig', storage: 'StorageBackend', db_path: 'str | Path | None' = None) -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_dict",
+          "signature": "(cls, data: 'dict[str, Any]') -> 'Task'"
+        },
+        {
+          "kind": "method",
+          "name": "to_dict",
+          "signature": "(self) -> 'dict[str, Any]'"
+        }
+      ],
+      "module": "dexcost.models.task",
+      "name": "Task",
+      "signature": "(task_id: 'uuid.UUID' = <factory>, task_type: 'str' = '', status: 'str' = 'pending', started_at: 'datetime' = <factory>, ended_at: 'datetime | None' = None, metadata: 'dict[str, Any]' = <factory>, customer_id: 'str | None' = None, project_id: 'str | None' = None, parent_task_id: 'uuid.UUID | None' = None, experiment_id: 'str | None' = None, variant: 'str | None' = None, llm_cost_usd: 'Decimal' = Decimal('0'), external_cost_usd: 'Decimal' = Decimal('0'), compute_cost_usd: 'Decimal' = Decimal('0'), network_cost_usd: 'Decimal' = Decimal('0'), gpu_cost_usd: 'Decimal' = Decimal('0'), total_cost_usd: 'Decimal' = Decimal('0'), total_input_tokens: 'int' = 0, total_output_tokens: 'int' = 0, total_cached_tokens: 'int' = 0, retry_count: 'int' = 0, retry_cost_usd: 'Decimal' = Decimal('0'), failure_count: 'int' = 0, network_bytes_in: 'int' = 0, network_bytes_out: 'int' = 0, network_call_count: 'int' = 0, network_by_host: 'dict[str, Any]' = <factory>, schema_version: 'str' = '1', *, root_task_id: 'uuid.UUID | None' = None, agent_id: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None, user_id: 'str | None' = None, product_id: 'str | None' = None) -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.models.enums",
+      "name": "TaskStatus",
+      "signature": "(*values)"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "ToolDimensionInput"
+    },
+    {
+      "kind": "type_alias",
+      "module": "typing",
+      "name": "ToolOperationStatus",
+      "signature": "(*args, **kwargs)"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "ToolQuantityInput"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "class_method",
+          "name": "from_input",
+          "signature": "(cls, quantity: 'ToolQuantityInput' = 1, *, metric: 'str' = 'call_count', unit: 'str' = 'Calls') -> 'ToolUsage'"
+        }
+      ],
+      "module": "dexcost.models.tool",
+      "name": "ToolUsage",
+      "signature": "(metric: 'str' = 'call_count', quantity: 'Decimal' = Decimal('1'), unit: 'str' = 'Calls') -> None"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.clients",
+      "name": "TrackedAnthropic",
+      "signature": "(client: 'Any' = None, *, tracker: 'Any' = None, pricing: 'PricingEngine | None' = None, **kwargs: 'Any') -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.clients",
+      "name": "TrackedOpenAI",
+      "signature": "(client: 'Any' = None, *, tracker: 'Any' = None, pricing: 'PricingEngine | None' = None, **kwargs: 'Any') -> 'None'"
+    },
+    {
+      "kind": "class",
+      "members": [
+        {
+          "kind": "method",
+          "name": "end",
+          "signature": "(self, status: 'str' = 'success') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "explain_pricing",
+          "signature": "(self, event_or_id: 'Event | uuid.UUID | str') -> 'PricingExplanation'"
+        },
+        {
+          "kind": "method",
+          "name": "get_trace_links",
+          "signature": "(self) -> 'list[dict[str, str]]'"
+        },
+        {
+          "kind": "method",
+          "name": "link_trace",
+          "signature": "(self, provider: 'str', trace_id: 'str') -> 'None'"
+        },
+        {
+          "kind": "method",
+          "name": "mark_not_retry",
+          "signature": "(self, event_id: 'uuid.UUID | None' = None) -> 'Event | None'"
+        },
+        {
+          "kind": "method",
+          "name": "mark_retry",
+          "signature": "(self, reason: 'str', *, cost_usd: 'Decimal | str' = Decimal('0'), retry_of: 'uuid.UUID | None' = None) -> 'Event'"
+        },
+        {
+          "kind": "method",
+          "name": "record_cost",
+          "signature": "(self, service: 'str', cost_usd: 'Decimal | str', *, event_type: 'str' = 'external_cost', cost_confidence: 'str' = 'exact', pricing_source: 'str' = 'manual', pricing_version: 'str | None' = None, details: 'dict[str, Any] | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+        },
+        {
+          "kind": "method",
+          "name": "record_llm_call",
+          "signature": "(self, provider: 'str', model: 'str', input_tokens: 'int', output_tokens: 'int', cost_usd: 'Decimal | str | None' = None, *, cost_confidence: 'str | None' = None, pricing_source: 'str | None' = None, cached_tokens: 'int' = 0, latency_ms: 'int | None' = None, details: 'dict[str, Any] | None' = None, error_type: 'str | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+        },
+        {
+          "kind": "method",
+          "name": "record_outcome",
+          "signature": "(self, name: 'str', *, state: 'OutcomeState' = 'achieved', value: 'OutcomeInput | OutcomeValue | None' = None, outcome_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "record_revenue",
+          "signature": "(self, amount: 'RevenueInput | None' = None, *, currency: 'str' = 'USD', state: 'RevenueState' = 'recognized', source: 'RevenueSourceType | RevenueSource' = 'sdk', source_record_id: 'str | None' = None, outcome_id: 'uuid.UUID | str | None' = None, revenue_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'RevenueRevision'"
+        },
+        {
+          "kind": "method",
+          "name": "record_tool_call",
+          "signature": "(self, tool_id: 'str', *, operation: 'str' = 'execute', status: 'ToolOperationStatus' = 'succeeded', duration_ms: 'int' = 0, usage: 'ToolUsage | None' = None, cost_usd: 'Decimal | str | int' = Decimal('0'), provider: 'str | None' = None, provider_record_id: 'str | None' = None, error_type: 'str | None' = None, error_code: 'str | int | None' = None, dimensions: 'Mapping[str, ToolDimensionInput] | None' = None, operation_id: 'uuid.UUID | str | None' = None, attempt_id: 'uuid.UUID | str | None' = None, attempt_number: 'int' = 1, retry_of: 'uuid.UUID | str | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+        },
+        {
+          "kind": "method",
+          "name": "record_usage",
+          "signature": "(self, service: 'str', units: 'int | float' = 1, *, details: 'dict[str, Any] | None' = None) -> 'Event'"
+        },
+        {
+          "kind": "property",
+          "name": "task",
+          "signature": "(self) -> 'Task'"
+        },
+        {
+          "kind": "property",
+          "name": "task_id",
+          "signature": "(self) -> 'uuid.UUID'"
+        },
+        {
+          "kind": "method",
+          "name": "track_tool",
+          "signature": "(self, tool_id: 'str', *, operation: 'str' = 'execute', usage: 'ToolUsage | None' = None, cost_usd: 'Decimal | str | int' = Decimal('0'), provider: 'str | None' = None, dimensions: 'Mapping[str, ToolDimensionInput] | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Callable[[F], F]'"
+        }
+      ],
+      "module": "dexcost.tracker",
+      "name": "TrackedTask",
+      "signature": "(task: 'Task', storage: 'StorageBackend', tracker: 'CostTracker', *, ctx_token: 'contextvars.Token[Task | None] | None' = None) -> 'None'"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "WebhookHeader"
+    },
+    {
+      "kind": "constant",
+      "module": "types",
+      "name": "WebhookSecret"
+    },
+    {
+      "kind": "class",
+      "members": [],
+      "module": "dexcost.webhooks",
+      "name": "WebhookVerificationError"
+    },
+    {
+      "kind": "constant",
+      "module": "builtins",
+      "name": "__version__"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.validate",
+      "name": "assert_attribution_event_v2",
+      "signature": "(value: 'object') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.v3_validate",
+      "name": "assert_attribution_observation_v3",
+      "signature": "(value: 'object') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.webhooks",
+      "name": "assert_webhook_signature",
+      "signature": "(payload: 'bytes | bytearray | memoryview', signature_header: 'WebhookHeader', *, timestamp_header: 'str | None', secrets: 'WebhookSecret | Sequence[WebhookSecret]', tolerance_seconds: 'float' = 300, now: 'float | None' = None, allow_legacy: 'bool' = False) -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "async_task_context",
+      "signature": "(task: 'Task') -> 'AsyncGenerator[Task, None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "attach_task",
+      "signature": "(task_id: 'uuid.UUID | str', *, task_type: 'str' = 'attached', root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None) -> 'AttachedTask'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.capabilities",
+      "name": "capability_context",
+      "signature": "(capability: 'CapabilityIdentity') -> 'Generator[CapabilityIdentity, None, None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "catalog_status",
+      "signature": "() -> 'CatalogRuntimeStatus'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "clear_context",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "close",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "delivery_status",
+      "signature": "() -> 'DeliveryStatus'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.redaction",
+      "name": "enforce_metadata_limit",
+      "signature": "(details: 'dict[str, Any]') -> 'dict[str, Any]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "explain_pricing",
+      "signature": "(event_or_id: 'Event | uuid.UUID | str') -> 'PricingExplanation'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "export_catalog_bundle",
+      "signature": "(path: 'str | os.PathLike[str] | None' = None, *, source: 'str' = 'active') -> 'bytes'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "flush",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.capabilities",
+      "name": "get_capability",
+      "signature": "() -> 'CapabilityIdentity | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "get_context",
+      "signature": "() -> 'DexcostContext | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "get_current_task",
+      "signature": "() -> 'Task | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.idempotency",
+      "name": "get_idempotency_key",
+      "signature": "() -> 'str | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "get_outcome_history",
+      "signature": "(outcome_id: 'uuid.UUID | str') -> 'list[OutcomeRevision]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "get_revenue_history",
+      "signature": "(revenue_id: 'uuid.UUID | str') -> 'list[RevenueRevision]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.redaction",
+      "name": "hash_value",
+      "signature": "(value: 'str') -> 'str'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.idempotency",
+      "name": "idempotency_key",
+      "signature": "(key: 'str') -> 'Generator[None, None, None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "import_catalog_bundle",
+      "signature": "(bundle: 'bytes | bytearray | memoryview | str | os.PathLike[str]') -> 'CatalogRuntimeStatus'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "init",
+      "signature": "(api_key: 'str | None' = None, storage: 'str | None' = None, endpoint: 'str | None' = None, buffer_path: 'str | None' = None, batch_size: 'int' = 100, flush_interval: 'float' = 5.0, auto_instrument: 'list[str] | None' = None, redact_fields: 'list[str] | None' = None, hash_customer_id: 'bool' = False, track_http: 'bool' = True, service_catalog_url: 'str | None' = None, environment: 'str | None' = None, enable_retry_heuristics: 'bool' = False, retry_heuristic_window: 'float | None' = None, retry_heuristic_threshold: 'float | None' = None, track_network: 'bool' = True, network_event_threshold_bytes: 'int' = 102400, network_event_on_error: 'bool' = True, network_event_latency_ms: 'int' = 0, compute_billing_overrides: 'dict[str, str] | None' = None, k8s_node_aware: 'bool' = False, rates_path: 'str | os.PathLike[str] | None' = None, catalog_refresh_interval: 'float' = 86400, catalog_refresh_jitter: 'float' = 0.1, catalog_trusted_keys: 'Mapping[str, str | bytes] | None' = None, catalog_require_signature: 'bool | None' = None) -> 'DexcostConfig'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.anthropic",
+      "name": "instrument_anthropic",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.bedrock",
+      "name": "instrument_bedrock",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.cohere",
+      "name": "instrument_cohere",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.fal",
+      "name": "instrument_fal",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.gemini",
+      "name": "instrument_gemini",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.litellm",
+      "name": "instrument_litellm",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.mcp",
+      "name": "instrument_mcp",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.ollama",
+      "name": "instrument_ollama",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.openai",
+      "name": "instrument_openai",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.openrouter",
+      "name": "instrument_openrouter",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.perplexity",
+      "name": "instrument_perplexity",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.delivery",
+      "name": "on_delivery_error",
+      "signature": "(callback: 'DeliveryErrorCallback') -> 'DeliveryErrorCallback'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "record_cost",
+      "signature": "(service: 'str', cost_usd: 'Decimal | str', *, event_type: 'str' = 'external_cost', cost_confidence: 'str' = 'exact', pricing_source: 'str' = 'manual', pricing_version: 'str | None' = None, details: 'dict[str, Any] | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "record_outcome",
+      "signature": "(name: 'str', *, state: 'OutcomeState' = 'achieved', value: 'OutcomeInput | OutcomeValue | None' = None, outcome_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, task_id: 'uuid.UUID | str | None' = None, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "record_revenue",
+      "signature": "(amount: 'RevenueInput | None' = None, *, currency: 'str' = 'USD', state: 'RevenueState' = 'recognized', source: 'RevenueSourceType | RevenueSource' = 'sdk', source_record_id: 'str | None' = None, revenue_id: 'uuid.UUID | str | None' = None, revision: 'int' = 1, task_id: 'uuid.UUID | str | None' = None, outcome_id: 'uuid.UUID | str | None' = None, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'RevenueRevision'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.redaction",
+      "name": "redact_dict",
+      "signature": "(data: 'dict[str, Any]', fields: 'list[str]') -> 'dict[str, Any]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.delivery",
+      "name": "remove_delivery_error_callback",
+      "signature": "(callback: 'DeliveryErrorCallback') -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "report_tool_call",
+      "signature": "(tool_id: 'str', *, operation: 'str' = 'execute', status: 'ToolOperationStatus' = 'succeeded', duration_ms: 'int' = 0, usage: 'ToolUsage | None' = None, cost_usd: 'Decimal | str | int' = Decimal('0'), provider: 'str | None' = None, provider_record_id: 'str | None' = None, error_type: 'str | None' = None, error_code: 'str | int | None' = None, dimensions: 'Mapping[str, ToolDimensionInput] | None' = None, operation_id: 'uuid.UUID | str | None' = None, attempt_id: 'uuid.UUID | str | None' = None, attempt_number: 'int' = 1, retry_of: 'uuid.UUID | str | None' = None, task_id: 'uuid.UUID | str | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.capabilities",
+      "name": "set_capability",
+      "signature": "(capability: 'CapabilityIdentity | None') -> 'contextvars.Token[CapabilityIdentity | None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "set_context",
+      "signature": "(customer_id: 'str | None' = None, project_id: 'str | None' = None, metadata: 'dict[str, Any] | None' = None, agent: 'str | None' = None, agent_version: 'str | None' = None, workflow_id: 'str | None' = None, workflow_session_id: 'str | None' = None, *, user_id: 'str | None' = None, product_id: 'str | None' = None) -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "set_current_task",
+      "signature": "(task: 'Task | None') -> 'contextvars.Token[Task | None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.idempotency",
+      "name": "set_idempotency_key",
+      "signature": "(key: 'str | None') -> 'contextvars.Token[str | None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "task",
+      "signature": "(task_type: 'str' = '', metadata: 'dict[str, Any] | None' = None, *, experiment_id: 'str | None' = None, variant: 'str | None' = None, task_id: 'uuid.UUID | str | None' = None, root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None, track_gpu: 'bool' = False) -> 'Generator[TrackedTask, None, None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.context",
+      "name": "task_context",
+      "signature": "(task: 'Task') -> 'Generator[Task, None, None]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.convert",
+      "name": "to_attribution_event_v2",
+      "signature": "(event: 'Event') -> 'AttributionEventV2 | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.v3_convert",
+      "name": "to_attribution_event_v3",
+      "signature": "(event: 'Event', *, environment: 'str | None' = None) -> 'AttributionEventV3 | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.v3_convert",
+      "name": "to_attribution_observation_v3",
+      "signature": "(event: 'Event', *, environment: 'str | None' = None) -> 'AttributionEventV3 | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.convert",
+      "name": "to_attribution_task_ingest_v1",
+      "signature": "(task: 'Task') -> 'AttributionTaskIngestV1'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.convert",
+      "name": "to_business_identity_revision_v1",
+      "signature": "(task: 'Task') -> 'AttributionBusinessIdentityRevisionV1 | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.integrations.crewai",
+      "name": "track_crewai",
+      "signature": "(execution: 'Any', tracker: 'CostTracker | None' = None, *, task_type: 'str | None' = None, capability: 'CapabilityIdentity | None' = None, capture_llm_events: 'bool' = False, capture_tool_events: 'bool' = True, additional_methods: 'Sequence[str]' = ()) -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.integrations.griptape",
+      "name": "track_griptape",
+      "signature": "(structure: 'Any', tracker: 'CostTracker | None' = None, *, task_type: 'str | None' = None, capability: 'CapabilityIdentity | None' = None, capture_llm_events: 'bool' = False, capture_tool_events: 'bool' = True, additional_methods: 'Sequence[str]' = ()) -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "track_tool",
+      "signature": "(tool_id: 'str', *, operation: 'str' = 'execute', usage: 'ToolUsage | None' = None, cost_usd: 'Decimal | str | int' = Decimal('0'), provider: 'str | None' = None, dimensions: 'Mapping[str, ToolDimensionInput] | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.anthropic",
+      "name": "uninstrument_anthropic",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.bedrock",
+      "name": "uninstrument_bedrock",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.cohere",
+      "name": "uninstrument_cohere",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.fal",
+      "name": "uninstrument_fal",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.gemini",
+      "name": "uninstrument_gemini",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.litellm",
+      "name": "uninstrument_litellm",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.mcp",
+      "name": "uninstrument_mcp",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.ollama",
+      "name": "uninstrument_ollama",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.openai",
+      "name": "uninstrument_openai",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.openrouter",
+      "name": "uninstrument_openrouter",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.perplexity",
+      "name": "uninstrument_perplexity",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.schema",
+      "name": "validate",
+      "signature": "(payload: 'dict[str, Any]') -> 'list[str]'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.config",
+      "name": "validate_api_key",
+      "signature": "(key: 'str | None') -> 'str | None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.validate",
+      "name": "validate_attribution_event_v2",
+      "signature": "(value: 'object') -> 'AttributionV2ValidationResult'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.attribution.v3_validate",
+      "name": "validate_attribution_observation_v3",
+      "signature": "(value: 'object') -> 'AttributionV3ValidationResult'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.webhooks",
+      "name": "verify_webhook_signature",
+      "signature": "(payload: 'bytes | bytearray | memoryview', signature_header: 'WebhookHeader', *, timestamp_header: 'str | None', secrets: 'WebhookSecret | Sequence[WebhookSecret]', tolerance_seconds: 'float' = 300, now: 'float | None' = None, allow_legacy: 'bool' = False) -> 'bool'"
+    }
+  ],
+  "freeze_version": "python-vnext-v1",
+  "package": "dexcost",
+  "package_version": "0.18.0",
+  "python_requires": ">=3.10"
+}

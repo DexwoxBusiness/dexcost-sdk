@@ -48,6 +48,7 @@ import { wasLlmRecentlyCaptured, registerLlmCapture } from "../core/llm-dedup.js
 import { debugLog } from "../core/debug.js";
 import type { CostTracker } from "../core/tracker.js";
 import { getTracker } from "../core/tracker.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -240,6 +241,7 @@ export class DexcostSpanProcessor {
         isRetry: false,
         details: { source: "otel_bridge", span_name: String(span?.name ?? "") },
       });
+      stampAmbientAttribution(event);
       tracker.buffer.addEvent(event);
       registerLlmCapture(task.taskId, inTok, outTok);
 

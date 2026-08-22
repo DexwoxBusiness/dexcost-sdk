@@ -18,18 +18,33 @@ import re
 import threading
 import uuid
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from dexcost.heuristics import RetryHeuristicEngine
 
-from dexcost.context import async_task_context, get_current_task, set_current_task, task_context
+from dexcost.auto_task import create_auto_task, finalize_auto_task
+from dexcost.capabilities import (
+    apply_event_capability,
+    default_tool_capability,
+    get_capability,
+)
+from dexcost.context import (
+    _reset_current_task,
+    async_task_context,
+    get_current_task,
+    set_current_task,
+    task_context,
+)
 from dexcost.dev_console import is_dev_mode, log_event, log_task_complete
+from dexcost.idempotency import apply_event_idempotency
+from dexcost.models._serde import canonical_decimal
+from dexcost.models.capability import CapabilityIdentity
 from dexcost.models.event import Event
 from dexcost.models.outcome import (
     OutcomeInput,
@@ -37,10 +52,22 @@ from dexcost.models.outcome import (
     OutcomeState,
     OutcomeValue,
 )
+from dexcost.models.pricing_explanation import PricingExplanation
+from dexcost.models.revenue import (
+    RevenueAmount,
+    RevenueInput,
+    RevenueRevision,
+    RevenueSource,
+    RevenueSourceType,
+    RevenueState,
+)
 from dexcost.models.task import Task
+from dexcost.models.tool import ToolUsage
 from dexcost.pricing import CostResult, PricingEngine
+from dexcost.pricing_explain import explain_stored_pricing
 from dexcost.rates import RateRegistry
 from dexcost.storage.protocol import StorageBackend
+from dexcost.tool_tracking import decorate_tool
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -55,6 +82,10 @@ ALL_SUPPORTED_INSTRUMENTS: list[str] = [
     "bedrock",
     "cohere",
     "mcp",
+    "ollama",
+    "openrouter",
+    "perplexity",
+    "fal",
 ]
 
 # Transient error types that trigger retry auto-detection (US-017).
@@ -71,6 +102,36 @@ _ERROR_LIKELIHOODS: dict[str, float] = {
     "connection_error": 0.8,
 }
 _BUSINESS_CANONICAL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_NON_CANONICAL_NAME = re.compile(r"[^a-z0-9._-]+")
+
+ToolOperationStatus = Literal["succeeded", "failed", "cancelled", "unknown"]
+ToolDimensionInput = str | bool | int | Decimal
+
+
+def _tool_task_type(tool_id: str) -> str:
+    normalized = _NON_CANONICAL_NAME.sub("_", tool_id.strip().lower()).strip("._-")
+    if not normalized or not normalized[0].isalnum():
+        normalized = "unknown"
+    return f"tool.{normalized[:122]}"
+
+
+def _tool_dimensions(
+    dimensions: Mapping[str, ToolDimensionInput] | None,
+) -> list[dict[str, object]]:
+    if not dimensions:
+        return []
+    if len(dimensions) > 24:
+        raise ValueError("tool dimensions support at most 24 entries")
+    encoded: list[dict[str, object]] = []
+    for key, raw_value in dimensions.items():
+        if _BUSINESS_CANONICAL_NAME.fullmatch(key) is None:
+            raise ValueError(f"tool dimension {key!r} must be a canonical identifier")
+        value = OutcomeValue.from_input(raw_value)
+        if value.type == "string" and len(cast(str, value.value)) > 256:
+            raise ValueError(f"tool dimension {key!r} string exceeds 256 characters")
+        encoded.append({"key": key, "value": value.to_dict()})
+    encoded.sort(key=lambda item: cast(str, item["key"]))
+    return encoded
 
 
 def _coerce_task_uuid(name: str, value: uuid.UUID | str | None) -> uuid.UUID | None:
@@ -274,7 +335,7 @@ class TrackedTask:
             has_stored_operation_id = (
                 isinstance(stored_operation_id, str) and bool(stored_operation_id)
             )
-            if has_stored_operation_id:
+            if isinstance(stored_operation_id, str) and stored_operation_id:
                 operation_id = stored_operation_id
             if (
                 isinstance(stored_attempt_number, int)
@@ -322,6 +383,8 @@ class TrackedTask:
         pricing_source: str = "manual",
         pricing_version: str | None = None,
         details: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        capability: CapabilityIdentity | None = None,
     ) -> Event:
         """Record a non-LLM cost event for the current task.
 
@@ -357,6 +420,8 @@ class TrackedTask:
             service_name=service,
             details=details or {},
         )
+        apply_event_capability(event, capability)
+        apply_event_idempotency(event, idempotency_key)
         self._storage.insert_event(event)
         if is_dev_mode():
             log_event(event, self._task.task_type)
@@ -408,6 +473,180 @@ class TrackedTask:
         )
         return event
 
+    def explain_pricing(
+        self,
+        event_or_id: Event | uuid.UUID | str,
+    ) -> PricingExplanation:
+        """Explain a locally recorded pricing decision without network access."""
+        explanation = explain_stored_pricing(self._storage, event_or_id)
+        if explanation.task_id != str(self._task.task_id):
+            raise ValueError("event does not belong to this task")
+        return explanation
+
+    def record_tool_call(
+        self,
+        tool_id: str,
+        *,
+        operation: str = "execute",
+        status: ToolOperationStatus = "succeeded",
+        duration_ms: int = 0,
+        usage: ToolUsage | None = None,
+        cost_usd: Decimal | str | int = Decimal("0"),
+        provider: str | None = None,
+        provider_record_id: str | None = None,
+        error_type: str | None = None,
+        error_code: str | int | None = None,
+        dimensions: Mapping[str, ToolDimensionInput] | None = None,
+        operation_id: uuid.UUID | str | None = None,
+        attempt_id: uuid.UUID | str | None = None,
+        attempt_number: int = 1,
+        retry_of: uuid.UUID | str | None = None,
+        idempotency_key: str | None = None,
+        capability: CapabilityIdentity | None = None,
+    ) -> Event:
+        """Record one exact, privacy-safe tool/function invocation.
+
+        Tool inputs and outputs are never captured. Callers may attach only
+        bounded typed billing dimensions and opaque provider correlation IDs.
+        """
+        if (
+            not isinstance(tool_id, str)
+            or tool_id != tool_id.strip()
+            or not 1 <= len(tool_id) <= 256
+        ):
+            raise ValueError("tool_id must contain 1 to 256 characters")
+        operation_name = f"tool.{operation}"
+        if _BUSINESS_CANONICAL_NAME.fullmatch(operation_name) is None:
+            raise ValueError("tool operation must be a canonical lowercase identifier")
+        if status not in {"succeeded", "failed", "cancelled", "unknown"}:
+            raise ValueError(f"unsupported tool status {status!r}")
+        if isinstance(duration_ms, bool) or not 0 <= duration_ms <= 86_400_000:
+            raise ValueError("duration_ms must be between 0 and 86400000")
+        if isinstance(cost_usd, (bool, float)):
+            raise TypeError("tool cost must be a Decimal, integer, or decimal string")
+        try:
+            exact_cost = cost_usd if isinstance(cost_usd, Decimal) else Decimal(str(cost_usd))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("tool cost is not a plain decimal") from exc
+        if not exact_cost.is_finite() or exact_cost < 0:
+            raise ValueError("tool cost must be finite and non-negative")
+        if error_type is not None and status == "succeeded":
+            raise ValueError("a succeeded tool call cannot carry an error")
+        if provider_record_id is not None and not 1 <= len(provider_record_id) <= 256:
+            raise ValueError("provider_record_id must contain 1 to 256 characters")
+        if isinstance(attempt_number, bool) or not 1 <= attempt_number <= 2_147_483_647:
+            raise ValueError("attempt_number must be between 1 and 2147483647")
+
+        resolved_attempt_id = _coerce_task_uuid("attempt_id", attempt_id) or uuid.uuid4()
+        resolved_operation_id = (
+            _coerce_task_uuid("operation_id", operation_id) or resolved_attempt_id
+        )
+        resolved_retry_of = _coerce_task_uuid("retry_of", retry_of)
+        if attempt_number == 1 and resolved_retry_of is not None:
+            raise ValueError("the first tool attempt cannot retry another attempt")
+        if attempt_number > 1 and resolved_retry_of is None:
+            raise ValueError("later tool attempts require retry_of")
+
+        meter = usage or ToolUsage()
+        details: dict[str, Any] = {
+            "attribution_operation_id": str(resolved_operation_id),
+            "attribution_attempt_id": str(resolved_attempt_id),
+            "attribution_attempt_number": attempt_number,
+            "attribution_operation_name": operation_name,
+            "attribution_operation_status": status,
+            "attribution_resource_type": "tool",
+            "attribution_resource_id": tool_id,
+            "attribution_usage_metric": meter.metric,
+            "attribution_usage_quantity": canonical_decimal(meter.quantity),
+            "attribution_usage_unit": meter.unit,
+            "attribution_usage_duration_seconds": canonical_decimal(
+                Decimal(duration_ms) / Decimal(1000)
+            ),
+            "attribution_dimensions": _tool_dimensions(dimensions),
+        }
+        if provider_record_id is not None:
+            details["provider_record_id"] = provider_record_id
+        if error_type is not None:
+            details["attribution_error_type"] = error_type
+        if error_code is not None:
+            details["attribution_error_code"] = error_code
+
+        event = Event(
+            event_id=resolved_attempt_id,
+            task_id=self._task.task_id,
+            event_type="external_cost",
+            cost_usd=exact_cost,
+            cost_confidence="exact",
+            pricing_source="manual",
+            provider=provider or "tool",
+            service_name=tool_id,
+            latency_ms=duration_ms,
+            is_retry=resolved_retry_of is not None,
+            retry_reason=error_type,
+            retry_of=resolved_retry_of,
+            details=details,
+        )
+        resolved_capability = capability or get_capability() or default_tool_capability(tool_id)
+        apply_event_capability(event, resolved_capability)
+        apply_event_idempotency(event, idempotency_key)
+        self._storage.insert_event(event)
+        if is_dev_mode():
+            log_event(event, self._task.task_type)
+        return event
+
+    def track_tool(
+        self,
+        tool_id: str,
+        *,
+        operation: str = "execute",
+        usage: ToolUsage | None = None,
+        cost_usd: Decimal | str | int = Decimal("0"),
+        provider: str | None = None,
+        dimensions: Mapping[str, ToolDimensionInput] | None = None,
+        capability: CapabilityIdentity | None = None,
+    ) -> Callable[[F], F]:
+        """Decorate a tool and bind its whole lifecycle to this task."""
+
+        def decorator(function: F) -> F:
+            def begin() -> object:
+                token = (
+                    None
+                    if get_current_task() is self._task
+                    else set_current_task(self._task)
+                )
+                return token, capability or get_capability()
+
+            def finish(
+                raw_state: object,
+                status: str,
+                duration_ms: int,
+                error: BaseException | None,
+            ) -> None:
+                token, invocation_capability = cast(
+                    "tuple[contextvars.Token[Task | None] | None, CapabilityIdentity | None]",
+                    raw_state,
+                )
+                try:
+                    self.record_tool_call(
+                        tool_id,
+                        operation=operation,
+                        status=cast(ToolOperationStatus, status),
+                        duration_ms=duration_ms,
+                        usage=usage,
+                        cost_usd=cost_usd,
+                        provider=provider,
+                        capability=invocation_capability,
+                        error_type=(type(error).__name__ if error is not None else None),
+                        dimensions=dimensions,
+                    )
+                finally:
+                    if token is not None:
+                        _reset_current_task(token)
+
+            return decorate_tool(function, begin=begin, finish=finish)
+
+        return decorator
+
     def record_outcome(
         self,
         name: str,
@@ -431,6 +670,35 @@ class TrackedTask:
             state=state,
             value=value,
             outcome_id=outcome_id,
+            revision=revision,
+            effective_at=effective_at,
+            observed_at=observed_at,
+        )
+
+    def record_revenue(
+        self,
+        amount: RevenueInput | None = None,
+        *,
+        currency: str = "USD",
+        state: RevenueState = "recognized",
+        source: RevenueSourceType | RevenueSource = "sdk",
+        source_record_id: str | None = None,
+        outcome_id: uuid.UUID | str | None = None,
+        revenue_id: uuid.UUID | str | None = None,
+        revision: int = 1,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> RevenueRevision:
+        """Append explicit revenue linked to this task."""
+        return self._tracker.record_revenue(
+            amount,
+            task_id=self._task.task_id,
+            currency=currency,
+            state=state,
+            source=source,
+            source_record_id=source_record_id,
+            outcome_id=outcome_id,
+            revenue_id=revenue_id,
             revision=revision,
             effective_at=effective_at,
             observed_at=observed_at,
@@ -542,6 +810,8 @@ class TrackedTask:
         latency_ms: int | None = None,
         details: dict[str, Any] | None = None,
         error_type: str | None = None,
+        idempotency_key: str | None = None,
+        capability: CapabilityIdentity | None = None,
     ) -> Event:
         """Record an LLM call event for the current task.
 
@@ -631,6 +901,8 @@ class TrackedTask:
                 event.retry_of = prior.event_id
 
         self._stamp_retry_lineage(event)
+        apply_event_capability(event, capability)
+        apply_event_idempotency(event, idempotency_key)
         self._storage.insert_event(event)
         if is_dev_mode():
             log_event(event, self._task.task_type)
@@ -719,6 +991,61 @@ class TrackedTask:
                 ResourceWarning,
                 stacklevel=2,
             )
+
+
+class AttachedTask(TrackedTask):
+    """A non-owning handle to a canonical task created in another scope/process.
+
+    Entering the handle propagates only the existing task identity. It never
+    inserts, ends, or rewrites the task, so remote workers cannot compete with
+    the process that owns the canonical lifecycle and business identity.
+    """
+
+    def __init__(self, task: Task, storage: StorageBackend, tracker: CostTracker) -> None:
+        super().__init__(task, storage, tracker)
+        self._ended = True  # A non-owning handle has no lifecycle to end.
+        self._attachment_lock = threading.Lock()
+        self._attachment_token: contextvars.Token[Task | None] | None = None
+
+    def __enter__(self) -> AttachedTask:
+        with self._attachment_lock:
+            if self._attachment_token is not None:
+                raise RuntimeError("this AttachedTask is already active")
+            self._attachment_token = set_current_task(self._task)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        with self._attachment_lock:
+            token = self._attachment_token
+            if token is None:
+                raise RuntimeError("this AttachedTask is not active")
+            self._attachment_token = None
+        _reset_current_task(token)
+
+    async def __aenter__(self) -> AttachedTask:
+        return self.__enter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.__exit__(exc_type, exc_value, traceback)
+
+    def end(self, status: str = "success") -> None:
+        """Reject lifecycle ownership changes from an attachment."""
+        del status
+        raise RuntimeError("an AttachedTask cannot end or rewrite its canonical task")
+
+    def __del__(self) -> None:
+        """A non-owning handle never requires ``end()``."""
 
 
 # ---------------------------------------------------------------------------
@@ -992,8 +1319,7 @@ class CostTracker:
             tracker.instrument("openai")
 
         Args:
-            name: SDK name — one of ``"openai"``, ``"anthropic"``, ``"litellm"``,
-                ``"gemini"``, ``"bedrock"``, ``"cohere"``.
+            name: A value from :data:`ALL_SUPPORTED_INSTRUMENTS`.
 
         Raises:
             ValueError: If *name* is not a supported SDK.
@@ -1039,6 +1365,22 @@ class CostTracker:
             from dexcost.instruments.mcp import instrument_mcp
 
             instrument_mcp(self)
+        elif name == "ollama":
+            from dexcost.instruments.ollama import instrument_ollama
+
+            instrument_ollama(self)
+        elif name == "openrouter":
+            from dexcost.instruments.openrouter import instrument_openrouter
+
+            instrument_openrouter(self)
+        elif name == "perplexity":
+            from dexcost.instruments.perplexity import instrument_perplexity
+
+            instrument_perplexity(self)
+        elif name == "fal":
+            from dexcost.instruments.fal import instrument_fal
+
+            instrument_fal(self)
 
         self._instrumented.add(name)
 
@@ -1048,8 +1390,7 @@ class CostTracker:
         Safe to call even if the SDK is not currently instrumented (no-op).
 
         Args:
-            name: SDK name — one of ``"openai"``, ``"anthropic"``, ``"litellm"``,
-                ``"gemini"``, ``"bedrock"``, ``"cohere"``.
+            name: A value from :data:`ALL_SUPPORTED_INSTRUMENTS`.
 
         Raises:
             ValueError: If *name* is not a supported SDK.
@@ -1090,6 +1431,22 @@ class CostTracker:
             from dexcost.instruments.mcp import uninstrument_mcp
 
             uninstrument_mcp()
+        elif name == "ollama":
+            from dexcost.instruments.ollama import uninstrument_ollama
+
+            uninstrument_ollama()
+        elif name == "openrouter":
+            from dexcost.instruments.openrouter import uninstrument_openrouter
+
+            uninstrument_openrouter()
+        elif name == "perplexity":
+            from dexcost.instruments.perplexity import uninstrument_perplexity
+
+            uninstrument_perplexity()
+        elif name == "fal":
+            from dexcost.instruments.fal import uninstrument_fal
+
+            uninstrument_fal()
 
         self._instrumented.discard(name)
 
@@ -1180,6 +1537,120 @@ class CostTracker:
         entry = self._rate_registry.get_infrastructure(kind, key)
         return entry.cost_usd if entry is not None else None
 
+    def attach_task(
+        self,
+        task_id: uuid.UUID | str,
+        *,
+        task_type: str = "attached",
+        root_task_id: uuid.UUID | str | None = None,
+        parent_task_id: uuid.UUID | str | None = None,
+    ) -> AttachedTask:
+        """Return a non-owning cross-process handle to an existing task ID."""
+        resolved_task_id = _coerce_task_uuid("task_id", task_id)
+        if resolved_task_id is None:  # pragma: no cover - non-optional input
+            raise ValueError("task_id must be a valid UUID")
+        resolved_root = _coerce_task_uuid("root_task_id", root_task_id)
+        resolved_parent = _coerce_task_uuid("parent_task_id", parent_task_id)
+        existing = self._storage.get_task(str(resolved_task_id))
+        if existing is not None:
+            for name, supplied, actual in (
+                ("root_task_id", resolved_root, existing.root_task_id),
+                ("parent_task_id", resolved_parent, existing.parent_task_id),
+            ):
+                if supplied is not None and supplied != actual:
+                    raise ValueError(
+                        f"attached {name} does not match the locally stored task"
+                    )
+            task_model = existing
+        else:
+            if not isinstance(task_type, str) or not task_type.strip():
+                raise ValueError("task_type must be a non-empty string")
+            task_model = Task(
+                task_id=resolved_task_id,
+                task_type=task_type,
+                root_task_id=resolved_root,
+                parent_task_id=resolved_parent,
+            )
+        return AttachedTask(task_model, self._storage, self)
+
+    def explain_pricing(
+        self,
+        event_or_id: Event | uuid.UUID | str,
+    ) -> PricingExplanation:
+        """Explain any locally retained event using its recorded evidence."""
+        return explain_stored_pricing(self._storage, event_or_id)
+
+    def track_tool(
+        self,
+        tool_id: str,
+        *,
+        operation: str = "execute",
+        usage: ToolUsage | None = None,
+        cost_usd: Decimal | str | int = Decimal("0"),
+        provider: str | None = None,
+        dimensions: Mapping[str, ToolDimensionInput] | None = None,
+        capability: CapabilityIdentity | None = None,
+    ) -> Callable[[F], F]:
+        """Decorate any sync/async/generator tool with durable metering.
+
+        If no task is active, one automatic task spans the entire invocation,
+        including generator consumption. Nested LLM calls therefore inherit
+        the same canonical task instead of producing a parallel job identity.
+        """
+
+        def decorator(function: F) -> F:
+            def begin() -> object:
+                task = get_current_task()
+                is_auto = task is None
+                token: contextvars.Token[Task | None] | None = None
+                if task is None:
+                    task = create_auto_task(_tool_task_type(tool_id))
+                    token = set_current_task(task)
+                return task, token, is_auto, capability or get_capability()
+
+            def finish(
+                raw_state: object,
+                status: str,
+                duration_ms: int,
+                error: BaseException | None,
+            ) -> None:
+                task, token, is_auto, invocation_capability = cast(
+                    tuple[
+                        Task,
+                        contextvars.Token[Task | None] | None,
+                        bool,
+                        CapabilityIdentity | None,
+                    ],
+                    raw_state,
+                )
+                try:
+                    event = TrackedTask(task, self._storage, self).record_tool_call(
+                        tool_id,
+                        operation=operation,
+                        status=cast(ToolOperationStatus, status),
+                        duration_ms=duration_ms,
+                        usage=usage,
+                        cost_usd=cost_usd,
+                        provider=provider,
+                        capability=invocation_capability,
+                        error_type=(type(error).__name__ if error is not None else None),
+                        dimensions=dimensions,
+                    )
+                    if is_auto:
+                        finalize_auto_task(
+                            task,
+                            event,
+                            status="success" if status == "succeeded" else "failed",
+                        )
+                        self._storage.insert_task(task)
+                finally:
+                    if token is not None:
+                        _reset_current_task(token)
+
+            return decorate_tool(function, begin=begin, finish=finish)
+
+        return decorator
+
     def record_outcome(
         self,
         name: str,
@@ -1215,6 +1686,68 @@ class CostTracker:
         )
         self._storage.insert_outcome(outcome)
         return outcome
+
+    def get_outcome_history(
+        self, outcome_id: uuid.UUID | str
+    ) -> list[OutcomeRevision]:
+        """Return every locally retained revision for one outcome."""
+        resolved = _coerce_task_uuid("outcome_id", outcome_id)
+        if resolved is None:  # pragma: no cover - non-optional public input
+            raise ValueError("outcome_id must be a valid UUID")
+        return self._storage.query_outcome_history(str(resolved))
+
+    def record_revenue(
+        self,
+        amount: RevenueInput | None = None,
+        *,
+        task_id: uuid.UUID | str,
+        currency: str = "USD",
+        state: RevenueState = "recognized",
+        source: RevenueSourceType | RevenueSource = "sdk",
+        source_record_id: str | None = None,
+        outcome_id: uuid.UUID | str | None = None,
+        revenue_id: uuid.UUID | str | None = None,
+        revision: int = 1,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> RevenueRevision:
+        """Append explicit, durable revenue without inferring it from outcomes."""
+        now = datetime.now(timezone.utc)
+        resolved_task_id = _coerce_task_uuid("task_id", task_id)
+        if resolved_task_id is None:  # Defensive for dynamically typed callers.
+            raise ValueError("task_id must be a valid UUID")
+        if isinstance(source, RevenueSource):
+            if source_record_id is not None:
+                raise ValueError(
+                    "source_record_id cannot be combined with a RevenueSource object"
+                )
+            resolved_source = source
+        else:
+            resolved_source = RevenueSource(type=source, record_id=source_record_id)
+        revenue = RevenueRevision(
+            task_id=resolved_task_id,
+            state=state,
+            source=resolved_source,
+            amount=(
+                RevenueAmount.from_input(amount, currency) if amount is not None else None
+            ),
+            outcome_id=_coerce_task_uuid("outcome_id", outcome_id),
+            revenue_id=_coerce_task_uuid("revenue_id", revenue_id) or uuid.uuid4(),
+            revision=revision,
+            effective_at=effective_at or now,
+            observed_at=observed_at or now,
+        )
+        self._storage.insert_revenue(revenue)
+        return revenue
+
+    def get_revenue_history(
+        self, revenue_id: uuid.UUID | str
+    ) -> list[RevenueRevision]:
+        """Return every locally retained revision for one revenue record."""
+        resolved = _coerce_task_uuid("revenue_id", revenue_id)
+        if resolved is None:  # pragma: no cover - non-optional public input
+            raise ValueError("revenue_id must be a valid UUID")
+        return self._storage.query_revenue_history(str(resolved))
 
     def load_rates(self, path: str | Path) -> None:
         """Load rates from a YAML config file.
@@ -1529,6 +2062,33 @@ class CostTracker:
             if event.event_type != "network":
                 task.total_cost_usd += event.cost_usd
 
+        # Asynchronous provider work is an immutable revision stream rather
+        # than a one-shot Event row.  Roll up only each stream's latest
+        # terminal snapshot so repeated polling and provider corrections
+        # replace prior values instead of accumulating them.
+        query_provider_jobs = getattr(
+            self._storage, "query_current_provider_jobs_for_task", None
+        )
+        provider_jobs = (
+            query_provider_jobs(str(task.task_id))
+            if callable(query_provider_jobs)
+            else []
+        )
+        for job in provider_jobs:
+            if not job.terminal:
+                continue
+            cost = job.cost_amount or Decimal("0")
+            if job.event_type == "llm_call":
+                task.llm_cost_usd += cost
+                task.total_input_tokens += job.task_input_tokens or 0
+                task.total_output_tokens += job.task_output_tokens or 0
+                task.total_cached_tokens += job.task_cached_tokens or 0
+            elif job.event_type == "external_cost":
+                task.external_cost_usd += cost
+            elif job.event_type == "compute_cost":
+                task.compute_cost_usd += cost
+            task.total_cost_usd += cost
+
         # Network capture — finalize the in-process accountant onto the task.
         net = task._network.finalize()
         task.network_bytes_in = net["bytes_in"]
@@ -1574,7 +2134,7 @@ class CostTracker:
             else:
                 rate = self._egress_pricing.resolve_rate(env.provider, env.region)
                 rate_per_gb = rate.rate_per_gb
-                billing_unit = "gb_egress"
+                billing_unit = rate.billing_unit
                 pricing_source = rate.pricing_source
                 cost_confidence = rate.cost_confidence
                 pricing_version = f"egress:{self._egress_pricing.catalog_version}"
@@ -1613,7 +2173,7 @@ class CostTracker:
                 billable = (
                     resp_bytes + req_bytes
                     if billing_unit == "gb_transferred"
-                    else (0 if is_internal is True else (resp_bytes + req_bytes))
+                    else (0 if is_internal is True else req_bytes)
                 )
                 ev_cost = (
                     Decimal(billable) / Decimal("1000000000") * rate_per_gb
@@ -1636,7 +2196,7 @@ class CostTracker:
                 self._storage.update_event(ev)
 
             task.total_cost_usd += task.network_cost_usd
-        except Exception:  # noqa: BLE001 — Tier 5 fail-silent (spec §7.1)
+        except Exception:
             _log.warning(
                 "egress cost computation failed for task %s",
                 task.task_id, exc_info=True,
@@ -1651,7 +2211,7 @@ class CostTracker:
         # engine back-fills cost_usd here via the deferred-cost pattern.
         try:
             self._finalize_compute(task)
-        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+        except Exception:
             _log.warning(
                 "compute cost computation failed for task %s",
                 task.task_id, exc_info=True,
@@ -1664,7 +2224,7 @@ class CostTracker:
         # v2 GpuPricingEngine back-fills gpu_cost.cost_usd here.
         try:
             self._finalize_gpu(task)
-        except Exception:  # noqa: BLE001 — Tier 5 fail-silent
+        except Exception:
             _log.warning(
                 "gpu cost computation failed for task %s",
                 task.task_id, exc_info=True,
@@ -1685,7 +2245,6 @@ class CostTracker:
         skipped by the back-fill walker.
         """
         from dexcost import cloud_detect
-        from dexcost.gpu_pricing import GpuPricingEngine
         from dexcost.gpu_runtime import GpuRuntimeKind
         from dexcost.models.event import Event
 
@@ -1713,7 +2272,7 @@ class CostTracker:
             GpuRuntimeKind.COREWEAVE,
             GpuRuntimeKind.LOCAL_GPU,
         }
-        new_event_ids: set = set()
+        new_event_ids: set[uuid.UUID] = set()
         if (
             accountant is not None
             and accountant.runtime in long_running_gpu
@@ -1822,8 +2381,8 @@ class CostTracker:
                 return
             accountant = GpuAccountant(runtime, cloud_detect.get_cloud_env())
             accountant.snapshot_start()
-            setattr(task, "_gpu", accountant)
-        except Exception as exc:  # noqa: BLE001 - optional instrumentation
+            task._gpu = accountant
+        except Exception as exc:
             _log.debug("local GPU attribution unavailable: %s", exc)
 
     def _finalize_compute(self, task: Task) -> None:
@@ -1834,7 +2393,6 @@ class CostTracker:
         the caller so a pricing bug cannot break task finalize.
         """
         from dexcost import cloud_detect
-        from dexcost.compute_pricing import ComputePricingEngine
         from dexcost.compute_runtime import RuntimeKind
         from dexcost.models.event import Event
 
@@ -1860,7 +2418,7 @@ class CostTracker:
             RuntimeKind.FARGATE, RuntimeKind.EC2, RuntimeKind.GCE,
             RuntimeKind.AZURE_VM, RuntimeKind.K8S_POD,
         }
-        new_event_ids: set = set()
+        new_event_ids: set[uuid.UUID] = set()
         if (
             accountant is not None
             and accountant.runtime in long_running

@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dexcost.context import get_current_task
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
@@ -210,13 +209,13 @@ class TestSyncNonStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.cost_usd >= Decimal("0")
 
-    def test_missing_usage_sets_estimated(
+    def test_missing_usage_sets_unknown(
         self, tracker: CostTracker, storage: SQLiteStorage
     ) -> None:
-        """When response.usage is None, cost_confidence should be 'estimated'."""
+        """When response.usage is absent, cost cannot be inferred safely."""
         import litellm
 
         from dexcost.instruments.litellm import instrument_litellm
@@ -232,7 +231,7 @@ class TestSyncNonStreaming:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         ev = events[0]
-        assert ev.cost_confidence == "estimated"
+        assert ev.cost_confidence == "unknown"
         assert ev.cost_usd == Decimal("0")
         assert ev.input_tokens == 0
         assert ev.output_tokens == 0
@@ -522,11 +521,11 @@ class TestSyncStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 120
         assert ev.output_tokens == 60
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.provider == "openai"
 
     def test_streaming_without_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
-        """When no usage appears in the stream, cost_confidence is 'estimated'."""
+        """When no usage appears in the stream, cost confidence is unknown."""
         import litellm
 
         from dexcost.instruments.litellm import instrument_litellm
@@ -547,7 +546,7 @@ class TestSyncStreaming:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         ev = events[0]
-        assert ev.cost_confidence == "estimated"
+        assert ev.cost_confidence == "unknown"
         assert ev.cost_usd == Decimal("0")
         assert ev.input_tokens == 0
         assert ev.output_tokens == 0
@@ -648,7 +647,7 @@ class TestAsyncNonStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 200
         assert ev.output_tokens == 80
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_missing_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         import litellm
@@ -672,7 +671,7 @@ class TestAsyncNonStreaming:
 
         tasks = storage.query_tasks(task_type="async_no_usage")
         events = storage.query_events(task_id=str(tasks[0].task_id))
-        assert events[0].cost_confidence == "estimated"
+        assert events[0].cost_confidence == "unknown"
 
     def test_async_no_task_creates_auto_task(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -792,7 +791,7 @@ class TestAsyncStreaming:
         assert ev.model == "gpt-4o"
         assert ev.input_tokens == 90
         assert ev.output_tokens == 40
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.provider == "openai"
 
     def test_async_streaming_without_usage(
@@ -821,7 +820,7 @@ class TestAsyncStreaming:
 
         tasks = storage.query_tasks(task_type="async_stream_no_usage")
         events = storage.query_events(task_id=str(tasks[0].task_id))
-        assert events[0].cost_confidence == "estimated"
+        assert events[0].cost_confidence == "unknown"
 
 
 # ---------------------------------------------------------------------------

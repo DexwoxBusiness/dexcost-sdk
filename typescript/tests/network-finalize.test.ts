@@ -148,14 +148,45 @@ describe("Phase D Task 10 — task finalize", () => {
     expect(net.pricingSource).toBe("egress_catalog:aws:us-east-1");
   });
 
-  it("no cloud detected falls to meta default rate (Tier 3)", () => {
+  it("no cloud detected stays usage-only without an explicit local rate", () => {
     pinCloudEnv(null, null);
     const tt = startTask();
     const acct = getAccountant(tt.task.taskId)!;
     acct.record("api.example.com", 0, 1_000_000_000, false);
     tt.end("success");
-    // Universal default $0.09/GB → 1 GB → $0.09.
-    expect(tt.task.networkCostUsd.toNumber()).toBeCloseTo(0.09, 6);
+    expect(tt.task.networkCostUsd.toString()).toBe("0");
+  });
+
+  it("prices total transferred bytes with an explicit local network rate", () => {
+    pinCloudEnv(null, null);
+    tracker.registerInfrastructureRate("network", "local", "gb_transferred", "0.02");
+    const tt = startTask();
+    const event = createCostEvent({
+      eventId: randomUUID(),
+      taskId: tt.task.taskId,
+      eventType: "network",
+      details: {
+        request_bytes: 400_000_000,
+        response_bytes: 600_000_000,
+        is_internal_traffic: false,
+        cost_pending: true,
+      },
+    });
+    tracker.buffer.addEvent(event);
+    getAccountant(tt.task.taskId)!.record(
+      "api.example.com", 600_000_000, 400_000_000, false,
+    );
+
+    tt.end("success");
+
+    expect(tt.task.networkCostUsd.toString()).toBe("0.02");
+    expect(tt.task.totalCostUsd.toString()).toBe("0.02");
+    const stored = tracker.buffer.queryEvents(tt.task.taskId)
+      .find((candidate) => candidate.eventType === "network")!;
+    expect(stored.costUsd.toString()).toBe("0.02");
+    expect(stored.pricingSource).toBe("rate_registry");
+    expect(stored.costConfidence).toBe("computed");
+    expect(stored.pricingVersion).toBe(tracker.rateRegistry.pricingVersion);
   });
 
   it("zero bytes yields zero network_cost_usd", () => {

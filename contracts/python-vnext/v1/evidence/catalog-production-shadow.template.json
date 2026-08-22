@@ -1,0 +1,94 @@
+{
+  "schema_version": "1",
+  "evidence_id": null,
+  "status": "not_run",
+  "recorded_at": null,
+  "environment": {
+    "classification": "production_shadow",
+    "control_plane_deployment_sha": null,
+    "postgres_migration": "083_catalog_releases.sql",
+    "python_sdk_version": null,
+    "typescript_sdk_version": null
+  },
+  "trust": {
+    "algorithm": "ed25519",
+    "key_ids": [],
+    "public_key_sha256": {},
+    "private_key_present_in_repository_or_evidence": false,
+    "python_requires_signature": null,
+    "typescript_requires_signature": null,
+    "dual_signature_rotation_verified": null
+  },
+  "release_lifecycle": {
+    "canary_release_id": null,
+    "promoted_stable_release_id": null,
+    "changed_stable_release_id": null,
+    "rollback_release_id": null,
+    "sequences_are_strictly_increasing": null,
+    "artifact_hashes_match_across_server_python_typescript": null,
+    "releases": [
+      {
+        "stage": "canary",
+        "release_id": null,
+        "release_sequence": null,
+        "server_artifact_sha256": null,
+        "python_artifact_sha256": null,
+        "typescript_artifact_sha256": null
+      },
+      {
+        "stage": "promoted_stable",
+        "release_id": null,
+        "release_sequence": null,
+        "server_artifact_sha256": null,
+        "python_artifact_sha256": null,
+        "typescript_artifact_sha256": null
+      },
+      {
+        "stage": "changed_stable",
+        "release_id": null,
+        "release_sequence": null,
+        "server_artifact_sha256": null,
+        "python_artifact_sha256": null,
+        "typescript_artifact_sha256": null
+      },
+      {
+        "stage": "rollback",
+        "release_id": null,
+        "release_sequence": null,
+        "server_artifact_sha256": null,
+        "python_artifact_sha256": null,
+        "typescript_artifact_sha256": null
+      }
+    ]
+  },
+  "gates": {
+    "clean_first_run": { "status": "not_run", "evidence_refs": [] },
+    "offline_restart": { "status": "not_run", "evidence_refs": [] },
+    "active_lkg": { "status": "not_run", "evidence_refs": [] },
+    "previous_fallback_after_active_corruption": { "status": "not_run", "evidence_refs": [] },
+    "expired_release_rejection": { "status": "not_run", "evidence_refs": [] },
+    "tampered_bundle_rejection": { "status": "not_run", "evidence_refs": [] },
+    "conditional_304": { "status": "not_run", "evidence_refs": [] },
+    "usage_capture_during_catalog_unavailability": { "status": "not_run", "evidence_refs": [] },
+    "later_unpriced_usage_reconciliation": { "status": "not_run", "evidence_refs": [] },
+    "queue_acknowledgement": { "status": "not_run", "evidence_refs": [] },
+    "queue_retry": { "status": "not_run", "evidence_refs": [] },
+    "dlq_health": { "status": "not_run", "evidence_refs": [] }
+  },
+  "counters": {
+    "usage_events_attempted": null,
+    "usage_events_persisted": null,
+    "usage_events_reconciled": null,
+    "usage_events_lost": null,
+    "queue_messages_attempted": null,
+    "queue_messages_acknowledged": null,
+    "queue_messages_retried": null,
+    "queue_messages_dead_lettered": null
+  },
+  "approvals": {
+    "security": null,
+    "control_plane": null,
+    "python_sdk": null,
+    "typescript_sdk": null
+  }
+}

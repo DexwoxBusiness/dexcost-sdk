@@ -43,7 +43,7 @@ export interface FastifyPluginOptions {
   customerIdFrom?: string;
   /** Dot-path into the request for a project ID. */
   projectIdFrom?: string;
-  /** Derive the task type from the request. Defaults to `"METHOD /url"`. */
+  /** Derive a canonical task type from the request. Defaults to `"http.request"`. */
   taskType?: (request: unknown) => string;
   /** Return true to skip tracking (health checks, static assets). */
   skip?: (request: unknown) => boolean;
@@ -85,13 +85,14 @@ export function dexcostFastifyPlugin(
           const method = typeof request?.method === "string" ? request.method : "UNKNOWN";
           const url = scrubUrl(typeof request?.url === "string" ? request.url : "/");
           const tracked = tracker.startTask({
-            taskType: opts.taskType?.(request) ?? `${method} ${url}`,
+            taskType: opts.taskType?.(request) ?? "http.request",
             customerId: opts.customerIdFrom
               ? getNestedValue(request, opts.customerIdFrom)
               : undefined,
             projectId: opts.projectIdFrom
               ? getNestedValue(request, opts.projectIdFrom)
               : undefined,
+            metadata: { httpMethod: method, httpRoute: url },
           });
           request.dexcostTask = tracked;
           // Continue the lifecycle INSIDE the task's async scope.

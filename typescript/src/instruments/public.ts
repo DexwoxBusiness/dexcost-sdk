@@ -1,0 +1,28 @@
+import { globalInstrument, globalUninstrument } from "../core/tracker.js";
+
+export const instrumentOpenAI = (): Promise<void> => globalInstrument("openai");
+export const uninstrumentOpenAI = (): void => globalUninstrument("openai");
+export const instrumentAnthropic = (): Promise<void> => globalInstrument("anthropic");
+export const uninstrumentAnthropic = (): void => globalUninstrument("anthropic");
+export const instrumentVercelAI = (): Promise<void> => globalInstrument("vercel-ai");
+export const uninstrumentVercelAI = (): void => globalUninstrument("vercel-ai");
+export const instrumentGemini = (): Promise<void> => globalInstrument("gemini");
+export const uninstrumentGemini = (): void => globalUninstrument("gemini");
+export const instrumentGoogleGenAI = (): Promise<void> => globalInstrument("google-genai");
+export const uninstrumentGoogleGenAI = (): void => globalUninstrument("google-genai");
+export const instrumentBedrock = (): Promise<void> => globalInstrument("bedrock");
+export const uninstrumentBedrock = (): void => globalUninstrument("bedrock");
+export const instrumentCohere = (): Promise<void> => globalInstrument("cohere");
+export const uninstrumentCohere = (): void => globalUninstrument("cohere");
+export const instrumentMcp = (): Promise<void> => globalInstrument("mcp");
+export const uninstrumentMcp = (): void => globalUninstrument("mcp");
+export const instrumentLiteLLM = (): Promise<void> => globalInstrument("litellm");
+export const uninstrumentLiteLLM = (): void => globalUninstrument("litellm");
+export const instrumentOllama = (): Promise<void> => globalInstrument("ollama");
+export const uninstrumentOllama = (): void => globalUninstrument("ollama");
+export const instrumentOpenRouter = (): Promise<void> => globalInstrument("openrouter");
+export const uninstrumentOpenRouter = (): void => globalUninstrument("openrouter");
+export const instrumentPerplexity = (): Promise<void> => globalInstrument("perplexity");
+export const uninstrumentPerplexity = (): void => globalUninstrument("perplexity");
+export const instrumentFal = (): Promise<void> => globalInstrument("fal");
+export const uninstrumentFal = (): void => globalUninstrument("fal");

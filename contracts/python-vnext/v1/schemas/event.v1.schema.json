@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/event.v1.json",
+  "title": "DexCost local event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id", "task_id", "event_type", "occurred_at", "cost_usd",
+    "cost_confidence", "pricing_source", "pricing_version", "service_name",
+    "provider", "model", "input_tokens", "output_tokens", "cached_tokens",
+    "latency_ms", "is_retry", "retry_reason", "retry_of", "details", "schema_version"
+  ],
+  "properties": {
+    "event_id": { "$ref": "#/$defs/uuid" },
+    "task_id": { "$ref": "#/$defs/uuid" },
+    "event_type": {
+      "enum": ["llm_call", "external_cost", "compute_cost", "retry_marker", "network", "gpu_cost", "gpu_utilization_signal"]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "cost_usd": { "$ref": "#/$defs/decimal" },
+    "cost_confidence": { "enum": ["exact", "computed", "estimated", "unknown"] },
+    "pricing_source": { "$ref": "#/$defs/nullableString" },
+    "pricing_version": { "$ref": "#/$defs/nullableString" },
+    "service_name": { "$ref": "#/$defs/nullableString" },
+    "provider": { "$ref": "#/$defs/nullableString" },
+    "model": { "$ref": "#/$defs/nullableString" },
+    "input_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "output_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "cached_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "latency_ms": { "$ref": "#/$defs/nullableCounter" },
+    "is_retry": { "type": "boolean" },
+    "retry_reason": { "$ref": "#/$defs/nullableString" },
+    "retry_of": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "details": { "type": "object" },
+    "schema_version": { "const": "1" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "decimal": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+    "nullableString": { "type": ["string", "null"] },
+    "nullableCounter": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}

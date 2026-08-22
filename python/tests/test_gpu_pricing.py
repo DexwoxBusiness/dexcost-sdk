@@ -113,6 +113,29 @@ def test_aws_p5_share(engine):
     assert cost.cost_confidence == "computed"
 
 
+def test_instance_hour_overlay_prices_measured_instance_share():
+    from dexcost.gpu_pricing import GpuPricingEngine
+
+    engine = GpuPricingEngine(
+        rate_overrides={
+            ("h100-80gb-sxm5", "instance_hour"): Decimal("80")
+        }
+    )
+    details = _base_details(
+        "per_instance_hour",
+        gpu_count=8,
+        gpu_seconds_used=3600,
+        duration_ms=3_600_000,
+    )
+    cost = engine.resolve_gpu_cost(
+        details,
+        CloudEnv("aws", "us-east-1", "env", instance_type="p5.48xlarge"),
+        window_s=Decimal("3600"),
+    )
+    assert cost.cost_usd == Decimal("10")
+    assert cost.pricing_source.endswith(":instance_hour")
+
+
 def test_gcp_a3_highgpu_share(engine):
     details = _base_details(
         "per_instance_hour", gpu_count=8, duration_ms=60_000,
@@ -274,7 +297,9 @@ def test_multi_container_pod_partial_label(engine):
 
 def test_warn_once_per_failure_mode(tmp_path, caplog):
     import logging
+
     from dexcost.gpu_pricing import GpuPricingEngine, _reset_warning_state
+
     _reset_warning_state()
     bogus = tmp_path / "missing.json"
     with caplog.at_level(logging.WARNING):

@@ -62,6 +62,9 @@ jobs:
           --ignore=tests/test_openai_usage_conformance.py
           --ignore=tests/test_service_usage_observer_conformance.py
           -v
+      - name: Verify frozen Python reference contract
+        working-directory: python
+        run: python scripts/freeze_contract.py --check
 
   go:
     name: go tests
@@ -106,9 +109,12 @@ jobs:
         run: >-
           npx vitest run
           --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance}.test.ts'
-      - name: Build + runtime smoke (node control)
+      - name: Build + runtime and catalog-probe smoke (node control)
         working-directory: typescript
-        run: npm run build && node scripts/runtime-smoke.mjs
+        run: npm run build && node scripts/runtime-smoke.mjs && npm run test:catalog-probe
+      - name: Verify frozen TypeScript parity contract and package types
+        working-directory: typescript
+        run: node scripts/freeze-contract.mjs && npm run test:types
 
   # Enforces the "works on Bun and Deno" claim against the BUILT package —
   # not just documentation. The smoke script exercises init, explicit

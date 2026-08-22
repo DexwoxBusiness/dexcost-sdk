@@ -132,6 +132,58 @@ def test_cloud_run_instance_override_is_computed(engine):
     assert cost.pricing_source.endswith("instance_override")
 
 
+def test_cloud_run_workspace_components_keep_overlay_provenance():
+    from dexcost.compute_pricing import ComputePricingEngine
+
+    engine = ComputePricingEngine(
+        rate_overrides={
+            ("cloud_run_request", "request"): Decimal("0.10"),
+        }
+    )
+    cost = engine.resolve_compute_cost(
+        {
+            "billing_model": "cloud_run_request",
+            "duration_ms": 0,
+            "memory_bytes_limit": 0,
+            "vcpu_count": 0,
+            "vcpu_seconds_used": 0,
+            "invocation_count": 2,
+            "region": "us-central1",
+            "architecture": "x86_64",
+        },
+        _env(provider="gcp", region="us-central1"),
+        {},
+    )
+    assert cost.cost_usd == Decimal("0.20")
+    assert cost.pricing_source == "workspace_overlay:compute:cloud_run_request:request"
+    assert cost.cost_confidence == "computed"
+
+
+def test_iaas_vcpu_hour_override_prices_measured_vcpu_share():
+    from dexcost.compute_pricing import ComputePricingEngine
+
+    engine = ComputePricingEngine(
+        rate_overrides={("ec2", "vcpu_hour"): Decimal("0.36")}
+    )
+    cost = engine.resolve_compute_cost(
+        {
+            "billing_model": "ec2",
+            "duration_ms": 10_000,
+            "memory_bytes_limit": 0,
+            "vcpu_count": 8,
+            "vcpu_seconds_used": 10,
+            "invocation_count": 0,
+            "region": "us-east-1",
+            "architecture": "x86_64",
+        },
+        _env(instance_type="m5.2xlarge"),
+        {},
+        window_s=Decimal("10"),
+    )
+    assert cost.cost_usd == Decimal("0.001")
+    assert cost.pricing_source == "workspace_overlay:compute:ec2:vcpu_hour"
+
+
 # ─── Azure Functions ─────────────────────────────────────────────────────────
 
 def test_azure_functions_canonical(engine):
@@ -294,7 +346,8 @@ def test_warn_once_per_failure_mode(tmp_path, caplog):
     import logging
 
     from dexcost.compute_pricing import (
-        ComputePricingEngine, _reset_warning_state,
+        ComputePricingEngine,
+        _reset_warning_state,
     )
 
     _reset_warning_state()

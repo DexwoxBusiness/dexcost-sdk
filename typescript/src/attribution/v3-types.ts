@@ -6,7 +6,7 @@ import type {
   AttributionResourceV2,
 } from "./types.js";
 
-export const ATTRIBUTION_V3_CONTRACT_VERSION = "3.0.0";
+export const ATTRIBUTION_V3_CONTRACT_VERSION = "3.2.0";
 
 export type AttributionBillingDimensionValue =
   | { type: "string"; value: string }
@@ -42,7 +42,10 @@ export interface AttributionProviderIdentityV3 {
   region?: string;
 }
 
-export type AttributionResourceV3 = AttributionResourceV2;
+export interface AttributionResourceV3 {
+  type: AttributionResourceV2["type"] | "tool";
+  id: string;
+}
 
 export interface AttributionTraceIdentityV3 {
   trace_id: string;
@@ -62,12 +65,36 @@ export type AttributionOperationStatusV3 =
   | "cancelled"
   | "unknown";
 
+export interface AttributionOperationErrorV3 {
+  type: string;
+  code?: string;
+}
+
 export interface AttributionOperationIdentityV3 {
   id: string;
   name: string;
   status: AttributionOperationStatusV3;
   attempt: AttributionAttemptIdentityV3;
   trace?: AttributionTraceIdentityV3;
+  latency_ms?: number;
+  error?: AttributionOperationErrorV3;
+}
+
+export type AttributionCapabilityKindV3 =
+  | "tool" | "skill" | "workflow" | "extension" | "other";
+export type AttributionCapabilitySourceV3 =
+  | "built_in" | "project" | "user" | "plugin" | "marketplace" | "remote" | "other";
+export type AttributionCapabilityInvocationV3 =
+  | "explicit" | "automatic" | "nested" | "scheduled" | "remote" | "other";
+
+export interface AttributionCapabilityIdentityV3 {
+  name: string;
+  kind: AttributionCapabilityKindV3;
+  namespace?: string;
+  version?: string;
+  source?: AttributionCapabilitySourceV3;
+  source_id?: string;
+  invocation?: AttributionCapabilityInvocationV3;
 }
 
 export interface AttributionCostEvidenceV3 {
@@ -95,9 +122,11 @@ export interface AttributionObservationV3 {
   task_id: string;
   occurred_at: string;
   observed_at: string;
+  environment?: string;
   component: AttributionComponent;
   provider: AttributionProviderIdentityV3;
   resource?: AttributionResourceV3;
+  capability?: AttributionCapabilityIdentityV3;
   operation: AttributionOperationIdentityV3;
   lifecycle: AttributionLifecycleV3;
   usage_snapshot: "full";

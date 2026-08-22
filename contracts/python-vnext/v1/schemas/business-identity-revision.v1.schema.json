@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/business-identity-revision.v1.json",
+  "title": "DexCost business identity revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "revision", "effective_at", "observed_at", "identity_snapshot", "task", "assignment"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "task_id": { "$ref": "#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "effective_at": { "$ref": "#/$defs/timestamp" },
+    "observed_at": { "$ref": "#/$defs/timestamp" },
+    "identity_snapshot": { "const": "full" },
+    "task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_type", "root_task_id"],
+      "properties": {
+        "task_type": { "$ref": "#/$defs/canonical" },
+        "root_task_id": { "$ref": "#/$defs/uuid" },
+        "parent_task_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "workflow": {
+      "type": "object", "additionalProperties": false, "required": ["id"],
+      "properties": { "id": { "$ref": "#/$defs/opaque256" }, "session_id": { "$ref": "#/$defs/opaque256" } }
+    },
+    "agent": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version"],
+      "properties": { "id": { "$ref": "#/$defs/opaque256" }, "version": { "$ref": "#/$defs/opaque256" } }
+    },
+    "assignment": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "customer_id": { "$ref": "#/$defs/opaque256" },
+        "project_id": { "$ref": "#/$defs/opaque256" },
+        "user_id": { "$ref": "#/$defs/opaque512" },
+        "product_id": { "$ref": "#/$defs/opaque512" },
+        "experiment_id": { "$ref": "#/$defs/opaque256" },
+        "variant": { "$ref": "#/$defs/opaque256" }
+      },
+      "dependentRequired": { "variant": ["experiment_id"] }
+    }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "canonical": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "opaque256": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$" },
+    "opaque512": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^\\S(?:.*\\S)?$" }
+  }
+}

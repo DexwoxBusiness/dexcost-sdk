@@ -136,6 +136,14 @@ export interface Task {
   customerId?: string;
   projectId?: string;
   parentTaskId?: string;
+  /** Canonical root identity for revisioned business attribution. */
+  rootTaskId?: string;
+  agentId?: string;
+  agentVersion?: string;
+  workflowId?: string;
+  workflowSessionId?: string;
+  userId?: string;
+  productId?: string;
   experimentId?: string;
   variant?: string;
   // Aggregated costs (exact decimals — never float64)
@@ -321,6 +329,13 @@ export function taskToDict(task: Task): Record<string, unknown> {
     customer_id: task.customerId ?? null,
     project_id: task.projectId ?? null,
     parent_task_id: task.parentTaskId ?? null,
+    ...(task.rootTaskId === undefined ? {} : { root_task_id: task.rootTaskId }),
+    ...(task.agentId === undefined ? {} : { agent_id: task.agentId }),
+    ...(task.agentVersion === undefined ? {} : { agent_version: task.agentVersion }),
+    ...(task.workflowId === undefined ? {} : { workflow_id: task.workflowId }),
+    ...(task.workflowSessionId === undefined ? {} : { workflow_session_id: task.workflowSessionId }),
+    ...(task.userId === undefined ? {} : { user_id: task.userId }),
+    ...(task.productId === undefined ? {} : { product_id: task.productId }),
     experiment_id: task.experimentId ?? null,
     variant: task.variant ?? null,
     llm_cost_usd: canonicalDecimal(task.llmCostUsd),
@@ -440,6 +455,13 @@ export function taskFromDict(data: Record<string, unknown>): Task {
     customerId: _optString(data["customer_id"]),
     projectId: _optString(data["project_id"]),
     parentTaskId: _optString(data["parent_task_id"]),
+    rootTaskId: _optString(data["root_task_id"]),
+    agentId: _optString(data["agent_id"]),
+    agentVersion: _optString(data["agent_version"]),
+    workflowId: _optString(data["workflow_id"]),
+    workflowSessionId: _optString(data["workflow_session_id"]),
+    userId: _optString(data["user_id"]),
+    productId: _optString(data["product_id"]),
     experimentId: _optString(data["experiment_id"]),
     variant: _optString(data["variant"]),
     llmCostUsd: _toDecimal(data["llm_cost_usd"]),

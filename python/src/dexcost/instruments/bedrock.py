@@ -25,13 +25,19 @@ import json
 import logging
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from decimal import Decimal
 from typing import Any
 
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.context import (
+    _current_task,
+    get_current_task,
+    set_current_task,
+    suppress_network_event,
+)
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
@@ -232,10 +238,8 @@ def _make_api_call_wrapper(
         return response
     except Exception:
         if auto and auto_task_obj is not None:
-            try:
+            with suppress(Exception):
                 _log.debug("dexcost: auto-task call failed", exc_info=True)
-            except Exception:
-                pass
         raise
     finally:
         if auto and auto_token is not None:

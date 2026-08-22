@@ -1,0 +1,12 @@
+{
+  "case_id": "ingest.partial_ack.global_index",
+  "input_order": ["events[0]", "events[1]", "tasks[0]", "business_identities[0]", "outcomes[0]", "revenue_revisions[0]"],
+  "response_status": 202,
+  "response": {
+    "receipt_id": "66666666-6666-4666-8666-666666666666",
+    "queued": 5,
+    "rejected": 1,
+    "errors": [{ "index": 1, "reason": "operation.status: invalid enum value" }]
+  },
+  "sdk_action": "acknowledge nothing from a partially rejected leaf; split or retry so only fully accepted leaves are marked synced"
+}

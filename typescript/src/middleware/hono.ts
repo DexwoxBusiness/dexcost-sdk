@@ -42,7 +42,7 @@ export interface HonoMiddlewareOptions {
   customerId?: (c: any) => string | undefined;
   /** Extract a project ID from the context. */
   projectId?: (c: any) => string | undefined;
-  /** Derive the task type. Defaults to `"METHOD /path"`. */
+  /** Derive a canonical task type. Defaults to `"http.request"`. */
   taskType?: (c: any) => string;
   /** Return true to skip tracking (health checks, static assets). */
   skip?: (c: any) => boolean;
@@ -82,9 +82,10 @@ export function createHonoMiddleware(
       const method = typeof c?.req?.method === "string" ? c.req.method : "UNKNOWN";
       const path = scrubUrl(typeof c?.req?.path === "string" ? c.req.path : "/");
       tracked = tracker.startTask({
-        taskType: options.taskType?.(c) ?? `${method} ${path}`,
+        taskType: options.taskType?.(c) ?? "http.request",
         customerId: options.customerId?.(c),
         projectId: options.projectId?.(c),
+        metadata: { httpMethod: method, httpRoute: path },
       });
       if (typeof c?.set === "function") {
         c.set("dexcostTask", tracked);

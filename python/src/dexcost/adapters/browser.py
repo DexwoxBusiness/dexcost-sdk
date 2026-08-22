@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from decimal import Decimal
 from typing import Any
 
@@ -149,10 +149,8 @@ def _record_browser_event(
     cost_usd = elapsed_minutes * rate_per_minute
 
     page_url: str = ""
-    try:
+    with suppress(Exception):
         page_url = scrub_url(str(getattr(page, "url", "")))
-    except Exception:
-        pass
 
     event = Event(
         task_id=task.task_id,

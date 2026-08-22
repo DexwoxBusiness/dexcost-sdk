@@ -1,0 +1,1583 @@
+{
+  "schema_version": "1",
+  "implementations": [
+    "dexcost_python",
+    "dexcost_typescript",
+    "control_plane",
+    "revenium_python",
+    "revenium_node"
+  ],
+  "status_definitions": {
+    "implemented": "The audited implementation satisfies the row as written.",
+    "intentionally_excluded": "The row is outside that implementation's evaluated boundary or deliberately rejected; rationale is mandatory.",
+    "required": "A DexCost release blocker. The freeze is invalid while any cell remains required."
+  },
+  "rows": [
+    {
+      "id": "sdk.lifecycle",
+      "capability": "Initialization, configuration, shutdown, reset, and fork/process-safe lifecycle",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/src/dexcost/__init__.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/src/core/tracker.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/app.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:README initialization"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:README initialization"
+          ]
+        }
+      }
+    },
+    {
+      "id": "security.endpoint",
+      "capability": "Explicit endpoint selection, API-key validation, and telemetry-origin safety",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/src/dexcost/config.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/src/core/config.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/app.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:configuration"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:configuration"
+          ]
+        }
+      }
+    },
+    {
+      "id": "task.hierarchy",
+      "capability": "Canonical task, root-task, parent-task, nested context, and cross-process attachment",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_task_attachment.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/attribution-contexts.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/business-attribution.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:JobContext"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:JobContext"
+          ]
+        }
+      }
+    },
+    {
+      "id": "identity.business",
+      "capability": "Customer, project, user, product, agent/version, workflow/session, experiment, variant, and environment identity",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_v3_context_environment.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/attribution-contexts.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/business-attribution.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:usage metadata"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:UsageMetadata"
+          ]
+        }
+      }
+    },
+    {
+      "id": "business.outcomes",
+      "capability": "Outcome definition validation, independent lifecycle, immutable amendments, attachment, and ordered history",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_outcomes.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/attribution-contexts.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/business-attribution.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:JobContext outcome/history"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:job outcome/history"
+          ]
+        }
+      }
+    },
+    {
+      "id": "business.revenue",
+      "capability": "Explicit exact-decimal revenue, immutable revisions, outcome linkage, attachment, and ordered history",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_revenue.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/attribution-contexts.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/business-attribution.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK couples an optional binary-float outcome value to a job result; it has no separate exact-decimal immutable revenue ledger."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK couples an optional binary-float outcome value to a job result; it has no separate exact-decimal immutable revenue ledger."
+        }
+      }
+    },
+    {
+      "id": "measurement.exact_cost",
+      "capability": "Provider-reported exact cost plus provisional SDK catalog cost with confidence and provenance",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_pricing_explain.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/pricing-explain.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:completion metering"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:provider metering"
+          ]
+        }
+      }
+    },
+    {
+      "id": "measurement.lifecycle",
+      "capability": "Success, failure, cancellation, retry, early stream close, abandoned stream, and at-most-once terminal recording",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_openai_stream_lifecycle.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/provider-metering-contract.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:stream lifecycle"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:streaming"
+          ]
+        }
+      }
+    },
+    {
+      "id": "measurement.request_correlation",
+      "capability": "Opaque provider request IDs and attempt/retry correlation without payload capture",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_openai_current_http_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/openai-current-surface.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:transaction identity"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:provider response IDs"
+          ]
+        }
+      }
+    },
+    {
+      "id": "tool.general",
+      "capability": "Provider-neutral sync/async general tool tracking with exact quantities, failure status, and task attribution",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_tool_tracking.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/tool-tracking.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:tool metering"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:tool metering"
+          ]
+        }
+      }
+    },
+    {
+      "id": "capability.identity",
+      "capability": "Cross-provider tool/skill/workflow/extension identity with source, namespace, version, and invocation",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_capability_attribution.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/tool-tracking.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:skill fields"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "idempotency.caller",
+      "capability": "Caller-controlled scoped idempotency with digest-only persistence and deterministic conflict semantics",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_idempotency.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/tool-tracking.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:idempotency_key"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:Idempotency-Key"
+          ]
+        }
+      }
+    },
+    {
+      "id": "provider.delayed_jobs",
+      "capability": "Durable revisioned submitted/running/terminal delayed provider work with reconciliation and no double count",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_provider_jobs.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/provider-metering-contract.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "service.http",
+      "capability": "HTTP/service observation from declarative rules with exact quantities and self-traffic suppression",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_service_usage_observer_conformance.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/service-usage-observer-conformance.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/catalog-releases/observer-rules.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "infrastructure.compute",
+      "capability": "Serverless, container, VM, and runtime compute measurement and pricing",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_compute_cross_runtime_matrix.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/compute-cross-runtime-matrix.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/pricing-data.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "infrastructure.gpu",
+      "capability": "GPU measurement, utilization evidence, cloud and user-owned pricing without invented rates",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_gpu_cross_billing_model_matrix.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/gpu-cross-billing-matrix.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/gpu-catalog.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "infrastructure.egress",
+      "capability": "Network ingress/egress quantities, cloud pricing, and dual-invoice separation",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_network_cost_dual_invoice.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/http-network.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/network-gpu-attribution.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "pricing.rate_overrides",
+      "capability": "Exact user-owned service, compute, GPU, and egress rate overrides",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_rates.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/rates.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/catalog-releases/overlay.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "catalog.server_authority",
+      "capability": "Publish, validate, canary, activate, promote, withdraw, rollback, and immutable history for all seven catalog artifacts",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside this implementation's role; the complementary repository owns the capability."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside this implementation's role; the complementary repository owns the capability."
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/catalog-releases.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "catalog.sdk_lkg",
+      "capability": "Non-blocking refresh, ETag/304, integrity and compatibility validation, atomic activation, durable LKG/previous fallback, and offline operation",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_catalog_releases.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/catalog-releases.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/catalog-fetchers.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "pricing.explain",
+      "capability": "Local pricing explanation with rule, inputs, confidence, release/artifact/rule/safety provenance, and staleness",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_pricing_explain.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/pricing-explain.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "delivery.durable",
+      "capability": "On-disk durable tasks, events, outcomes, revenue, provider jobs, and catalog state across restart",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_sqlite_storage.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/buffer.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "delivery.protocol",
+      "capability": "Batch sizing/splitting, partial acknowledgements, retry/backoff, quarantine, purge, and auth-stop recovery",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_batch_splitting.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/batch-splitting.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/router.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "delivery.health",
+      "capability": "Pending/quarantined depth, oldest item, worker state, last success/error, callbacks, and credential reset",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_delivery_health.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/delivery-health.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/router.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:get_buffer_stats"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:getBufferStats"
+          ]
+        }
+      }
+    },
+    {
+      "id": "privacy.default",
+      "capability": "No prompt, response, media, vector, URL, tool payload, or error-message capture by default",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_framework_runtime.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/provider-metering-contract.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:REVENIUM_CAPTURE_PROMPTS false"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:REVENIUM_CAPTURE_PROMPTS false"
+          ]
+        }
+      }
+    },
+    {
+      "id": "privacy.redaction",
+      "capability": "Recursive redaction, customer/project hashing, metadata limits, and promotion after privacy processing",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_redaction.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/task-redaction.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/scrub-details.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:sensitive logging redaction"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "contract.validation",
+      "capability": "Runtime schema validation plus shared positive/negative attribution conformance",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_attribution_v3_conformance.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/attribution-v3-conformance.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/attribution-observation-contract.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "webhook.verification",
+      "capability": "HMAC verification with rotation, multiple headers/signatures, timestamp tolerance, and constant-time comparison",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_webhooks.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/webhooks.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/tests/attribution-webhooks.test.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:webhooks.verify_signature"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:webhook verification"
+          ]
+        }
+      }
+    },
+    {
+      "id": "developer.cli_scanner",
+      "capability": "CLI diagnostics/rates and source scanner aligned with instrument and provider support",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_cli.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/cli-commands.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "framework.crewai",
+      "capability": "Current CrewAI execution, async/streams/tools/failures/context isolation without duplicate provider cost",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_crewai_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Python-framework-specific integration; the Node SDK uses native Node framework and middleware surfaces."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:CrewAI integration"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "framework.griptape",
+      "capability": "Current Griptape run/stream/events/tools/failure integration without replacing provider drivers",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_griptape_integration.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Python-framework-specific integration; the Node SDK uses native Node framework and middleware surfaces."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:Griptape integration"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "framework.langchain",
+      "capability": "LangChain/LangGraph trace integration with provider usage authority",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_langchain_integration.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/langchain.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:LangChain callback"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "provider.openrouter",
+      "capability": "First-class OpenRouter chat/responses/embeddings/images/STT/TTS/rerank/streams/video jobs/cost reconciliation plus compatible-host routing",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_openrouter_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/openrouter-current.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited provider table has no first-class OpenRouter adapter; fal's openrouter/router endpoint is a fal route, not broad OpenRouter SDK attribution."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited provider table has no first-class OpenRouter adapter; fal's openrouter/router endpoint is a fal route, not broad OpenRouter SDK attribution."
+        }
+      }
+    },
+    {
+      "id": "provider.perplexity",
+      "capability": "Native and OpenAI-compatible Perplexity Agent, Sonar, Search, embeddings, streams, and background reconciliation",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_perplexity_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/perplexity-current.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:Perplexity providers"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:Perplexity"
+          ]
+        }
+      }
+    },
+    {
+      "id": "provider.fal",
+      "capability": "fal run/subscribe/stream/queue submit/status/result/cancel with media meters and durable job identity",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_fal_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/src/instruments/fal.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:fal.ai"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:fal.ai"
+          ]
+        }
+      }
+    },
+    {
+      "id": "provider.ollama",
+      "capability": "Ollama module/client/async chat/generate/embeddings/web operations and native duration/token meters",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_ollama_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/src/instruments/ollama.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:Ollama"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "provider.openai_realtime",
+      "capability": "OpenAI Realtime WebSocket terminal usage, VAD, duplicates, close cancellation, transport error, and multimodal/cache splits",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_openai_realtime.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/openai-realtime.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "provider.google_current",
+      "capability": "Current google-genai/Vertex sync, async, streams, embeddings, images, interactions, video, batch, and tuning lifecycles",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/tests/test_google_genai_current_compat.py"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/google-genai-current.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/ingestion/attribution-observation.ts"
+          ]
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:Google"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:Google GenAI and Vertex"
+          ]
+        }
+      }
+    },
+    {
+      "id": "packaging.dual_node",
+      "capability": "Published ESM and synchronous CommonJS roots/subpaths with declarations and clean-install smoke tests",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Node packaging is not applicable to Python wheels."
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/tests/package-exports.test.ts"
+          ]
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:dual output"
+          ]
+        }
+      }
+    },
+    {
+      "id": "budget.unsigned_openai_blocker",
+      "capability": "Unsigned remotely polled OpenAI-only pre-call budget blocking",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deliberately rejected by budget.no_unsigned_remote_enforcement; a later signed cross-provider contract is required."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deliberately rejected by budget.no_unsigned_remote_enforcement; a later signed cross-provider contract is required."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deliberately rejected by budget.no_unsigned_remote_enforcement; a later signed cross-provider contract is required."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:circuit breaker"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:enforcement engine"
+          ]
+        }
+      }
+    },
+    {
+      "id": "budget.signed_cross_provider",
+      "capability": "Signed cross-provider pre-call budget policy with stale/failure semantics and break-glass behavior",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deferred as an intentional later contract after catalog signing; it is not part of vNext freeze."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deferred as an intentional later contract after catalog signing; it is not part of vNext freeze."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Deferred as an intentional later contract after catalog signing; it is not part of vNext freeze."
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK exposes an unsigned OpenAI-only blocker, not this signed cross-provider contract."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK exposes an unsigned OpenAI-only blocker, not this signed cross-provider contract."
+        }
+      }
+    },
+    {
+      "id": "capture.opt_in_prompts",
+      "capability": "Opt-in transport of prompt and response content",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "DexCost intentionally keeps customer content outside its telemetry contract; quantities and opaque identities are sufficient."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "DexCost intentionally keeps customer content outside its telemetry contract; quantities and opaque identities are sufficient."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:REVENIUM_CAPTURE_PROMPTS"
+          ]
+        },
+        "revenium_node": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-node:REVENIUM_CAPTURE_PROMPTS"
+          ]
+        }
+      }
+    },
+    {
+      "id": "capture.selective_decorator",
+      "capability": "Decorator/env mode that suppresses all provider metering outside explicitly selected call scopes",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "DexCost scopes attribution with tasks/capabilities and explicit instrument selection; a suppress-everything decorator is excluded because it silently creates economic blind spots."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "DexCost scopes attribution with tasks/capabilities and explicit instrument selection; a suppress-everything decorator is excluded because it silently creates economic blind spots."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "SDK/runtime-only capability; the control plane accepts normalized contracts or provides the complementary server role."
+        },
+        "revenium_python": {
+          "status": "implemented",
+          "evidence": [
+            "audit:revenium-python:REVENIUM_SELECTIVE_METERING"
+          ]
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Outside the audited SDK surface or does not meet the stronger DexCost row as written."
+        }
+      }
+    },
+    {
+      "id": "catalog.signed_offline_bundle",
+      "capability": "Domain-separated Ed25519 catalog verification with packaged or injected rotated trust, fail-closed configuration, and an exact-byte bounded air-gap export/import bundle",
+      "cells": {
+        "dexcost_python": {
+          "status": "implemented",
+          "evidence": [
+            "python/src/dexcost/catalog_releases.py",
+            "python/src/dexcost/config.py",
+            "python/tests/test_catalog_releases.py",
+            "python/tests/test_config.py",
+            "python/scripts/catalog_release_probe.py",
+            "contracts/python-vnext/v1/catalog-production-trust.json",
+            "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+          ]
+        },
+        "dexcost_typescript": {
+          "status": "implemented",
+          "evidence": [
+            "typescript/src/pricing/catalog-releases.ts",
+            "typescript/src/core/config.ts",
+            "typescript/tests/catalog-releases.test.ts",
+            "typescript/tests/catalog-trust-config.test.ts",
+            "typescript/scripts/catalog-release-probe.mjs",
+            "contracts/python-vnext/v1/catalog-production-trust.json",
+            "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+          ]
+        },
+        "control_plane": {
+          "status": "implemented",
+          "evidence": [
+            "control-plane/server/src/catalog-releases/signing-keys.ts",
+            "control-plane/server/src/catalog-releases/export-trust.ts",
+            "control-plane/server/src/catalog-releases/bundle.ts",
+            "control-plane/server/src/catalog-releases/artifact-validation.ts",
+            "control-plane/server/src/catalog-releases/source-import.ts",
+            "control-plane/docs/catalog-production-readiness.md",
+            "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+          ]
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK does not provide DexCost's signed seven-family release and exact-byte offline bundle contract."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "The audited SDK does not provide DexCost's signed seven-family release and exact-byte offline bundle contract."
+        }
+      }
+    },
+    {
+      "id": "catalog.bundle_slimming",
+      "capability": "Reduced SDK bootstrap catalog after production proof of first-run, offline, LKG/previous, corruption/expiry, air-gap import, rollback, and usage retention",
+      "cells": {
+        "dexcost_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Intentionally gated until the production evidence register is complete; the full bootstrap remains."
+        },
+        "dexcost_typescript": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Intentionally gated until the production evidence register is complete; the full bootstrap remains."
+        },
+        "control_plane": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Intentionally gated until the production evidence register is complete; the full bootstrap remains."
+        },
+        "revenium_python": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Intentionally gated until the production evidence register is complete; the full bootstrap remains."
+        },
+        "revenium_node": {
+          "status": "intentionally_excluded",
+          "evidence": [],
+          "rationale": "Intentionally gated until the production evidence register is complete; the full bootstrap remains."
+        }
+      }
+    }
+  ]
+}

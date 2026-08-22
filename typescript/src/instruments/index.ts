@@ -12,7 +12,10 @@ import type { EventBuffer } from "../transport/buffer.js";
 import { debugLog } from "../core/debug.js";
 
 /** All provider instruments the SDK ships with. */
-export const ALL_SUPPORTED_INSTRUMENTS = ["openai", "anthropic", "vercel-ai", "gemini", "bedrock", "cohere", "mcp"] as const;
+export const ALL_SUPPORTED_INSTRUMENTS = [
+  "openai", "anthropic", "vercel-ai", "gemini", "google-genai", "bedrock", "cohere", "mcp",
+  "litellm", "ollama", "openrouter", "perplexity", "fal",
+] as const;
 
 /** Union type of supported instrument names. */
 export type InstrumentName = (typeof ALL_SUPPORTED_INSTRUMENTS)[number];
@@ -43,7 +46,11 @@ export function registerInstrument(
 }
 
 /** User-facing aliases for instrument names ("ai" is the npm package name). */
-const INSTRUMENT_ALIASES: Record<string, string> = { ai: "vercel-ai" };
+const INSTRUMENT_ALIASES: Record<string, string> = {
+  ai: "vercel-ai", fal_ai: "fal", "@fal-ai/client": "fal",
+  "@google/genai": "google-genai", google_genai: "google-genai",
+  "@openrouter/sdk": "openrouter", "@perplexity-ai/perplexity_ai": "perplexity",
+};
 
 /**
  * Hand an instrument an explicit module/class reference — the escape hatch

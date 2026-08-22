@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 from dexcost.models.event import Event
 from dexcost.models.outcome import OutcomeRevision
+from dexcost.models.provider_job import ProviderJobRevision
+from dexcost.models.revenue import RevenueRevision
 from dexcost.models.task import Task
 
 
@@ -64,7 +66,7 @@ class StorageBackend(Protocol):
     def query_events(self, **filters: Any) -> list[Event]:
         """Return events matching the given filters.
 
-        Supported filters: task_id, event_type, customer_id, after, before.
+        Supported filters: event_id, task_id, event_type, customer_id, after, before.
         """
         ...
 
@@ -106,12 +108,80 @@ class StorageBackend(Protocol):
         """Return pending outcome revisions, oldest first."""
         ...
 
+    def query_outcome_history(self, outcome_id: str) -> list[OutcomeRevision]:
+        """Return every revision for one outcome, oldest first."""
+        ...
+
     def mark_outcomes_synced(self, revisions: list[tuple[str, int]]) -> None:
         """Transition outcome revisions from pending to synced."""
         ...
 
     def mark_outcomes_quarantined(self, revisions: list[tuple[str, int]]) -> None:
         """Retain undeliverable outcome revisions outside the pending queue."""
+        ...
+
+    # ── Revenue revision CRUD ────────────────────────────────────────
+
+    def insert_revenue(self, revenue: RevenueRevision) -> None:
+        """Append one validated revenue revision."""
+        ...
+
+    def query_revenues_for_sync(self, limit: int = 1000) -> list[RevenueRevision]:
+        """Return pending revenue revisions, oldest first."""
+        ...
+
+    def query_revenue_history(self, revenue_id: str) -> list[RevenueRevision]:
+        """Return every revision for one revenue record, oldest first."""
+        ...
+
+    def mark_revenues_synced(self, revisions: list[tuple[str, int]]) -> None:
+        """Transition revenue revisions from pending to synced."""
+        ...
+
+    def mark_revenues_quarantined(self, revisions: list[tuple[str, int]]) -> None:
+        """Retain undeliverable revenue revisions outside the pending queue."""
+        ...
+
+    # ── Asynchronous provider-job revision CRUD ─────────────────────
+
+    def insert_provider_job_revision(self, job: ProviderJobRevision) -> None:
+        """Append one immutable provider-job observation revision."""
+        ...
+
+    def query_provider_job_history(self, event_id: str) -> list[ProviderJobRevision]:
+        """Return every revision for one provider job, oldest first."""
+        ...
+
+    def get_provider_job(
+        self, provider: str, service: str, provider_record_id: str
+    ) -> ProviderJobRevision | None:
+        """Return the latest local snapshot for a provider-owned job identity."""
+        ...
+
+    def query_provider_jobs_for_sync(
+        self, limit: int = 1000
+    ) -> list[ProviderJobRevision]:
+        """Return pending provider-job revisions, oldest first."""
+        ...
+
+    def query_current_provider_jobs_for_task(
+        self, task_id: str
+    ) -> list[ProviderJobRevision]:
+        """Return the latest revision of every provider job attached to a task."""
+        ...
+
+    def mark_provider_jobs_synced(self, revisions: list[tuple[str, int]]) -> None:
+        """Transition provider-job revisions from pending to synced."""
+        ...
+
+    def mark_provider_jobs_quarantined(
+        self, revisions: list[tuple[str, int]]
+    ) -> None:
+        """Retain undeliverable provider-job revisions outside the pending queue."""
+        ...
+
+    def delivery_counts(self) -> dict[str, Any]:
+        """Return durable pending/quarantine depths for delivery observability."""
         ...
 
     def purge_synced(self, retention_hours: int = 48) -> int:

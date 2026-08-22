@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/catalog-bundle.v1.json",
+  "title": "DexCost offline catalog release bundle v1",
+  "$comment": "The exact manifest and artifact byte streams are unpadded base64url. Importers must apply normal signature, expiry, downgrade, hash, size, schema, semantic, and atomic-activation checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_base64url", "artifacts_base64url"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "manifest_base64url": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "maxLength": 349526
+    },
+    "artifacts_base64url": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observer_rules", "llm_prices", "service_prices", "compute_prices",
+        "gpu_prices", "egress_prices", "server_pricing_reference"
+      ],
+      "properties": {
+        "observer_rules": { "$ref": "#/$defs/artifactBytes" },
+        "llm_prices": { "$ref": "#/$defs/artifactBytes" },
+        "service_prices": { "$ref": "#/$defs/artifactBytes" },
+        "compute_prices": { "$ref": "#/$defs/artifactBytes" },
+        "gpu_prices": { "$ref": "#/$defs/artifactBytes" },
+        "egress_prices": { "$ref": "#/$defs/artifactBytes" },
+        "server_pricing_reference": { "$ref": "#/$defs/artifactBytes" }
+      }
+    }
+  },
+  "$defs": {
+    "artifactBytes": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "maxLength": 6990507
+    }
+  }
+}

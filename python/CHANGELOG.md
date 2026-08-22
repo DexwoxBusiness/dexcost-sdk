@@ -2,6 +2,61 @@
 
 All notable changes to dexcost will be documented in this file.
 
+## Unreleased
+
+### Features
+
+- Add current CrewAI Crew/Agent/LiteAgent/Flow execution wrappers with complete
+  sync, async, streaming, failure, native-tool, and capability attribution.
+- Add Griptape Structure lifecycle and context-local event integration without
+  replacing provider drivers.
+- Add top-level and instance-tracker APIs, optional framework extras, privacy-safe
+  native tool capture, and explicit custom-provider LLM fallback policy.
+- Expand OpenAI instrumentation to the complete direct inference surface:
+  structured Chat parse, legacy Completions, embeddings, image
+  generation/edit/variation, and audio transcription/translation/speech across
+  sync, async, streaming, failure, cancellation, and auto-task lifecycles.
+- Add reusable multimodal catalog pricing and attribution-v3 multi-meter
+  observations so text, image, audio, character, pixel, and video quantities are
+  priced without fabricating generic text tokens.
+- Expand Google Gen AI instrumentation across current `Models` and
+  `AsyncModels` content generation/streaming, embeddings, image generation,
+  upscale, edit, recontext, and segmentation APIs. Add modality/cache/reasoning/
+  tool-input meters, foreground Interactions sync/async/SSE, strict
+  early-close/failure handling, per-provider optional extras, and real HTTP
+  compatibility gates against both installed 1.x and current 2.17.0 packages.
+- Add current official Ollama module, `Client`, and `AsyncClient`
+  instrumentation for chat/generate streams, embeddings, web search, and web
+  fetch. Preserve native return types and errors, distinguish local and hosted
+  execution, record terminal nanosecond/token meters, cancel early-closed
+  streams, and retain no prompt, output, image, embedding, or web content.
+- Add first-class official OpenRouter SDK attribution for chat, Responses,
+  embeddings, image generation, STT, TTS, rerank, video jobs, and generation
+  reconciliation. Provider-reported USD cost is authoritative, routed-provider
+  identity and BYOK/service-tier dimensions are retained when available, and
+  reconciliation updates the original operation instead of double counting it.
+- Add current native Perplexity attribution for Agent Responses and background
+  reconciliation, Sonar chat, Search, embeddings, contextualized embeddings,
+  sync/async streams, exact provider cost, capability/idempotency, native
+  failures, and quantities-only privacy. Detect the documented OpenAI-compatible
+  route without misclassifying normal OpenAI traffic.
+- Add current fal.ai module/client/request-handle attribution across sync and
+  async run, subscribe, stream, submit, status, result/get, and cancel. Queue
+  jobs use durable revisioned reconciliation; cancellation acknowledgement is
+  not treated as terminal while provider work may still complete.
+- Detect both current Azure OpenAI host forms in the OpenAI client, retain the
+  requested deployment as a safe dimension, and use canonical Azure model
+  identity.
+- Complete LiteLLM routed-provider identity for the Revenium Python/Node union,
+  including Azure, Google/Vertex, Bedrock, Cohere, Hugging Face, Together,
+  Ollama, Mistral, Groq, OpenRouter, Perplexity, and fal.ai. Preserve exact
+  gateway-reported cost plus cache, reasoning, and tool-call quantities.
+- Add the server-authoritative catalog release path: immutable
+  content-addressed manifests, atomic validation/activation, durable
+  last-known-good cache, offline operation, and explicit downgrade, corruption,
+  expiry, and unsafe-observer rejection. Full bundles remain only as migration
+  bootstraps until Python/TypeScript joint gates pass.
+
 ## [0.18.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.17.0...python/v0.18.0) (2026-08-20)
 
 

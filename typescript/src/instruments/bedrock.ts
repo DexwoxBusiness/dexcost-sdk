@@ -19,6 +19,8 @@ import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
+import { recordProviderFailure } from "./provider-metering.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -112,6 +114,11 @@ export async function instrumentBedrock(
       }
       return response;
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "bedrock.invoke_model", provider: "bedrock", service: "bedrock_runtime",
+        operation: "bedrock.invoke_model", component: "llm",
+        model: command?.input?.modelId ?? "unknown", eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -247,6 +254,7 @@ function recordEvent(response: any, modelId: string, task: Task, latencyMs: numb
     latencyMs,
     isRetry: false,
   });
+  stampAmbientAttribution(event);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);

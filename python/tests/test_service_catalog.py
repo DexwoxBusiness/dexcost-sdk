@@ -360,6 +360,34 @@ class TestOverrides:
         version_after = catalog.catalog_version
         assert version_before != version_after
 
+    def test_workspace_unit_rate_and_local_request_precedence(
+        self,
+        catalog: ServiceCatalog,
+    ) -> None:
+        entry = catalog.lookup("https://api.tavily.com/search")
+        assert entry is not None
+        catalog.set_workspace_overrides(
+            {"tavily_search": (Decimal("0.05"), "credit")}
+        )
+        workspace = catalog.extract_cost(
+            entry,
+            response_headers={},
+            response_body={"usage": {"credits": 3}},
+        )
+        assert workspace is not None
+        assert workspace.amount == Decimal("0.15")
+        assert workspace.pricing_source == "workspace_overlay"
+
+        catalog.register_override("tavily_search", Decimal("0.07"), per="request")
+        local = catalog.extract_cost(
+            entry,
+            response_headers={},
+            response_body={"usage": {"credits": 99}},
+        )
+        assert local is not None
+        assert local.amount == Decimal("0.07")
+        assert local.pricing_source == "user_override"
+
 
 # ---------------------------------------------------------------------------
 # Catalog version tests

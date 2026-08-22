@@ -8,7 +8,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Task } from "./models.js";
 
-const taskStore = new AsyncLocalStorage<Task>();
+const taskStore = new AsyncLocalStorage<Task | undefined>();
 
 /**
  * Return the currently-active Task, or undefined if no task context is set.
@@ -34,7 +34,7 @@ export function runWithTask<T>(task: Task, fn: () => T): T {
  * to all subsequent code in the current async chain without wrapping in
  * a callback.
  */
-export function setCurrentTask(task: Task): void {
+export function setCurrentTask(task?: Task): void {
   taskStore.enterWith(task);
 }
 
@@ -52,11 +52,16 @@ export function setCurrentTask(task: Task): void {
 export interface DexcostContext {
   customerId?: string;
   projectId?: string;
+  userId?: string;
+  productId?: string;
   metadata?: Record<string, unknown>;
   agent?: string;
+  agentVersion?: string;
+  workflowId?: string;
+  workflowSessionId?: string;
 }
 
-const contextStore = new AsyncLocalStorage<DexcostContext>();
+const contextStore = new AsyncLocalStorage<DexcostContext | undefined>();
 
 /**
  * Set the ambient DexcostContext for the current async execution context.
@@ -68,18 +73,27 @@ const contextStore = new AsyncLocalStorage<DexcostContext>();
  * per-request middleware or use `runWithTask()` which isolates its own
  * async context.
  */
-export function setContext(ctx: {
-  customerId?: string;
-  projectId?: string;
-  metadata?: Record<string, unknown>;
-  agent?: string;
-}): void {
-  contextStore.enterWith({
-    customerId: ctx.customerId,
-    projectId: ctx.projectId,
-    metadata: ctx.metadata ?? {},
-    agent: ctx.agent,
-  });
+function validateContext(ctx: DexcostContext): DexcostContext {
+  if ((ctx.agent === undefined) !== (ctx.agentVersion === undefined)) {
+    throw new Error("agent and agentVersion must be supplied together");
+  }
+  if (ctx.workflowSessionId !== undefined && ctx.workflowId === undefined) {
+    throw new Error("workflowSessionId requires workflowId");
+  }
+  for (const [name, value] of Object.entries({
+    customerId: ctx.customerId, projectId: ctx.projectId, userId: ctx.userId,
+    productId: ctx.productId, agent: ctx.agent, agentVersion: ctx.agentVersion,
+    workflowId: ctx.workflowId, workflowSessionId: ctx.workflowSessionId,
+  })) {
+    if (value !== undefined && (value.trim() !== value || value.length < 1 || value.length > 256)) {
+      throw new Error(`${name} must contain 1 to 256 non-whitespace characters`);
+    }
+  }
+  return { ...ctx, metadata: { ...(ctx.metadata ?? {}) } };
+}
+
+export function setContext(ctx: DexcostContext): void {
+  contextStore.enterWith(validateContext(ctx));
 }
 
 /**
@@ -103,31 +117,16 @@ export function getContext(): DexcostContext | undefined {
  * The context object also serves as the session grouping key, so each
  * `runWithContext()` scope gets its own ambient session task.
  */
-export function runWithContext<T>(
-  ctx: {
-    customerId?: string;
-    projectId?: string;
-    metadata?: Record<string, unknown>;
-    agent?: string;
-  },
-  fn: () => T,
-): T {
-  return contextStore.run(
-    {
-      customerId: ctx.customerId,
-      projectId: ctx.projectId,
-      metadata: ctx.metadata ?? {},
-      agent: ctx.agent,
-    },
-    fn,
-  );
+export function runWithContext<T>(ctx: DexcostContext, fn: () => T): T {
+  return contextStore.run(validateContext(ctx), fn);
 }
 
 /**
  * Clear the ambient DexcostContext for the current async execution context.
  */
 export function clearContext(): void {
-  contextStore.enterWith({});
+  contextStore.enterWith(undefined);
+  taskStore.enterWith(undefined);
 }
 
 // ---------------------------------------------------------------------------

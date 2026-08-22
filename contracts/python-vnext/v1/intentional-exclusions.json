@@ -1,0 +1,65 @@
+{
+  "schema_version": "1",
+  "exclusions": [
+    {
+      "id": "outcome.no_technical_failure_inference",
+      "decision": "Technical task failure never automatically records a missed business outcome.",
+      "rationale": "Business results have an independent lifecycle and require explicit evidence."
+    },
+    {
+      "id": "numeric.no_binary_float_contract",
+      "decision": "Money, exact quantities, and decimal outcome values reject binary floating-point input.",
+      "rationale": "Cross-language audit and revision equality require exact base-10 serialization."
+    },
+    {
+      "id": "outcome.no_sync_network_dependency",
+      "decision": "Outcome and revenue recording never requires a synchronous successful network call.",
+      "rationale": "Business attribution is durably appended locally and delivered asynchronously."
+    },
+    {
+      "id": "delivery.no_memory_only_durability",
+      "decision": "An in-memory retry queue is not considered durable delivery.",
+      "rationale": "Process restart and machine failure must not silently erase accepted telemetry."
+    },
+    {
+      "id": "privacy.no_default_prompt_capture",
+      "decision": "Prompts, messages, outputs, media, vectors, URLs, tool arguments, and error messages are not captured by default.",
+      "rationale": "Provider cost and attribution do not require customer content."
+    },
+    {
+      "id": "identity.no_parallel_agentic_job_model",
+      "decision": "Provider or framework job identity does not compete with canonical task/root/parent and business identity.",
+      "rationale": "One hierarchy prevents incompatible rollups; provider jobs are delayed operation revisions linked to tasks."
+    },
+    {
+      "id": "capability.no_provider_specific_skill_contract",
+      "decision": "Revenium's provider-specific skill fields are mapped into one provider-neutral capability identity rather than copied as the public model.",
+      "rationale": "Tools, skills, workflows, plugins, marketplaces, extensions, and remote capabilities need one portable identity."
+    },
+    {
+      "id": "provider.no_deprecated_vertexai_generative_modules",
+      "decision": "The removed legacy Vertex AI generative modules are not instrumented.",
+      "rationale": "Google's supported replacement is google-genai in Vertex mode; reviving removed APIs would create dead compatibility."
+    },
+    {
+      "id": "provider.no_unpublished_browser_session_price",
+      "decision": "Perplexity Browser Sessions are not assigned a billable meter without published provider evidence.",
+      "rationale": "DexCost does not invent duration or request prices."
+    },
+    {
+      "id": "budget.no_unsigned_remote_enforcement",
+      "decision": "The vNext freeze does not copy Revenium's remotely polled OpenAI-only pre-call budget blocker.",
+      "rationale": "Cross-provider budget enforcement requires a signed policy contract, explicit stale/failure behavior, catalog signing, and a safe break-glass path. It is a later contract, not an unverified client-side patch."
+    },
+    {
+      "id": "catalog.no_premature_bundle_removal",
+      "decision": "Full SDK catalogs are not reduced at this freeze gate.",
+      "rationale": "First-run, offline, LKG, previous-release, corrupt/expired cache, air-gap import, rollback, and production-shadow evidence must pass first."
+    },
+    {
+      "id": "framework.no_duplicate_llm_authority",
+      "decision": "CrewAI, Griptape, and LangChain summaries do not duplicate supported provider instrumentation by default.",
+      "rationale": "The provider boundary has stronger usage, cost, request-ID, cache, and error evidence."
+    }
+  ]
+}

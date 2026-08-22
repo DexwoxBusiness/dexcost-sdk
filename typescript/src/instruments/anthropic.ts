@@ -17,6 +17,8 @@ import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
+import { recordProviderFailure } from "./provider-metering.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -103,6 +105,10 @@ export async function instrumentAnthropic(
         );
         return wrapStream(rawStream, task, startTime, autoCreated);
       } catch (err) {
+        if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+          taskType: "anthropic.messages", provider: "anthropic", service: "messages",
+          operation: "anthropic.messages.create", component: "llm", model: body?.model, eventType: "llm_call",
+        }, err, startTime);
         if (autoCreated) {
           finalizeAutoTask(task, "failed", _buffer);
         }
@@ -125,6 +131,10 @@ export async function instrumentAnthropic(
       }
       return response;
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "anthropic.messages", provider: "anthropic", service: "messages",
+        operation: "anthropic.messages.create", component: "llm", model: body?.model, eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -205,6 +215,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
     isRetry: false,
     details,
   });
+  stampAmbientAttribution(event);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
@@ -242,6 +253,10 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
           try {
             result = await iter.next();
           } catch (err) {
+            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+              taskType: "anthropic.messages", provider: "anthropic", service: "messages",
+              operation: "anthropic.messages.create", component: "llm", model, eventType: "llm_call",
+            }, err, startTime);
             finalizeTask("failed");
             throw err;
           }
@@ -280,6 +295,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   isRetry: false,
                   details,
                 });
+                stampAmbientAttribution(event);
                 _buffer.addEvent(event);
                 registerLlmCapture(task.taskId, inputTokens, outputTokens);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
@@ -303,6 +319,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
                   latencyMs,
                   isRetry: false,
                 });
+                stampAmbientAttribution(event);
                 _buffer.addEvent(event);
                 registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);

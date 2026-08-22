@@ -15,6 +15,7 @@ export {
   getRecordedEvents,
   clearRecordedEvents,
   getServiceCatalog,
+  setServiceCatalog,
   resetServiceCatalog,
   getSessionManager,
 } from "./http.js";

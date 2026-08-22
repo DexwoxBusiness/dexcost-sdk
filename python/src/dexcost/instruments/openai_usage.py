@@ -80,16 +80,25 @@ def normalize_openai_usage(usage: object) -> OpenAIUsage:
     if output_details is None:
         output_details = _field(usage, "output_tokens_details")
 
-    cached = _optional_counter(
+    cached_value = (
         _field(input_details, "cached_tokens")
         if input_details is not None
         else _field(usage, "cached_tokens")
     )
-    cache_write = _optional_counter(
+    if cached_value is None and input_details is not None:
+        # Perplexity's native Agent API uses this more explicit spelling.
+        cached_value = _field(input_details, "cache_read_input_tokens")
+    cache_write_value = (
         _field(input_details, "cache_write_tokens") if input_details is not None else None
     )
+    if cache_write_value is None and input_details is not None:
+        cache_write_value = _field(input_details, "cache_creation_input_tokens")
+    cached = _optional_counter(cached_value)
+    cache_write = _optional_counter(cache_write_value)
     reasoning = _optional_counter(
-        _field(output_details, "reasoning_tokens") if output_details is not None else None
+        _field(output_details, "reasoning_tokens")
+        if output_details is not None
+        else _field(usage, "reasoning_tokens")
     )
 
     if cached + cache_write > total_input:

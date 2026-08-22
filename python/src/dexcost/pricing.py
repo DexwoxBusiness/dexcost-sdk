@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import threading
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib import resources
@@ -48,6 +49,135 @@ class CostResult:
     cost_confidence: str
     pricing_source: str
     pricing_version: str
+
+
+@dataclass(frozen=True)
+class MeteredCostLine:
+    """One exact catalog-rate multiplication used for multimodal pricing."""
+
+    dimension: str
+    quantity: Decimal
+    rate_field: str
+    rate_usd: Decimal
+    cost_usd: Decimal
+
+
+@dataclass(frozen=True)
+class MeteredCostResult:
+    """A catalog-backed cost for arbitrary provider-reported usage meters.
+
+    ``unpriced_dimensions`` is deliberately explicit.  A partially priced
+    operation retains the known line costs but receives ``unknown`` confidence
+    so callers never mistake a lower bound for a complete charge.
+    """
+
+    cost_usd: Decimal
+    cost_confidence: str
+    pricing_source: str
+    pricing_version: str
+    resolved_model: str | None
+    lines: tuple[MeteredCostLine, ...]
+    unpriced_dimensions: tuple[str, ...]
+
+
+# Canonical provider meters mapped to fields in the authoritative model-price
+# catalog.  Alternatives are ordered: the first field present on a model wins.
+# The third tuple item is a divisor for catalog rates expressed per N units.
+_METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
+    "input_tokens": (("input_cost_per_token", Decimal(1)),),
+    "output_tokens": (("output_cost_per_token", Decimal(1)),),
+    "cache_read_input_tokens": (("cache_read_input_token_cost", Decimal(1)),),
+    "cache_write_input_tokens": (("cache_creation_input_token_cost", Decimal(1)),),
+    "reasoning_output_tokens": (
+        ("output_cost_per_reasoning_token", Decimal(1)),
+        ("output_cost_per_token", Decimal(1)),
+    ),
+    "input_image_tokens": (
+        ("input_cost_per_image_token", Decimal(1)),
+        ("input_cost_per_token", Decimal(1)),
+    ),
+    "cache_read_input_image_tokens": (
+        ("cache_read_input_image_token_cost", Decimal(1)),
+        ("cache_read_input_token_cost", Decimal(1)),
+    ),
+    "output_image_tokens": (("output_cost_per_image_token", Decimal(1)),),
+    "input_audio_tokens": (("input_cost_per_audio_token", Decimal(1)),),
+    "cache_read_input_audio_tokens": (
+        ("cache_read_input_audio_token_cost", Decimal(1)),
+    ),
+    "cache_write_input_audio_tokens": (
+        ("cache_creation_input_audio_token_cost", Decimal(1)),
+    ),
+    "output_audio_tokens": (("output_cost_per_audio_token", Decimal(1)),),
+    "input_video_tokens": (
+        ("input_cost_per_video_token", Decimal(1)),
+        ("input_cost_per_token", Decimal(1)),
+    ),
+    "cache_read_input_video_tokens": (
+        ("cache_read_input_video_token_cost", Decimal(1)),
+        ("cache_read_input_token_cost", Decimal(1)),
+    ),
+    "output_video_tokens": (
+        ("output_cost_per_video_token", Decimal(1)),
+        ("output_cost_per_token", Decimal(1)),
+    ),
+    "tool_input_tokens": (("input_cost_per_token", Decimal(1)),),
+    "tool_input_image_tokens": (
+        ("input_cost_per_image_token", Decimal(1)),
+        ("input_cost_per_token", Decimal(1)),
+    ),
+    "tool_input_audio_tokens": (("input_cost_per_audio_token", Decimal(1)),),
+    "tool_input_video_tokens": (
+        ("input_cost_per_video_token", Decimal(1)),
+        ("input_cost_per_token", Decimal(1)),
+    ),
+    "characters": (("input_cost_per_character", Decimal(1)),),
+    "output_characters": (("output_cost_per_character", Decimal(1)),),
+    "input_audio_seconds": (
+        ("input_cost_per_audio_per_second", Decimal(1)),
+        ("input_cost_per_second", Decimal(1)),
+    ),
+    "output_audio_seconds": (("output_cost_per_second", Decimal(1)),),
+    "input_video_seconds": (("input_cost_per_video_per_second", Decimal(1)),),
+    "output_video_seconds": (
+        ("output_cost_per_video_per_second", Decimal(1)),
+        ("output_cost_per_second", Decimal(1)),
+    ),
+    "image_count": (("input_cost_per_image", Decimal(1)),),
+    "output_image_count": (("output_cost_per_image", Decimal(1)),),
+    "input_pixels": (("input_cost_per_pixel", Decimal(1)),),
+    "output_pixels": (("output_cost_per_pixel", Decimal(1)),),
+    "request_count": (("input_cost_per_request", Decimal(1)),),
+    "query_count": (("input_cost_per_query", Decimal(1)),),
+    "web_search_calls": (
+        ("web_search_cost_per_call", Decimal(1)),
+        ("input_cost_per_query", Decimal(1)),
+    ),
+    "session_count": (("code_interpreter_cost_per_session", Decimal(1)),),
+    "file_search_calls": (("file_search_cost_per_1k_calls", Decimal(1000)),),
+    # Provider batch APIs publish separate discounted token rates. Never fall
+    # back to synchronous rates: a missing batch field is unknown pricing, not
+    # evidence that the ordinary rate applies.
+    "batch_input_tokens": (("input_cost_per_token_batches", Decimal(1)),),
+    "batch_output_tokens": (("output_cost_per_token_batches", Decimal(1)),),
+    "batch_reasoning_output_tokens": (
+        ("output_cost_per_token_batches", Decimal(1)),
+    ),
+}
+
+
+def _metered_quantity(name: str, value: object) -> Decimal:
+    if isinstance(value, (bool, float)):
+        raise TypeError(
+            f"metered usage {name!r} must be an integer, Decimal, or decimal string"
+        )
+    try:
+        quantity = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (decimal.InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"metered usage {name!r} is not a plain decimal") from exc
+    if not quantity.is_finite() or quantity < 0:
+        raise ValueError(f"metered usage {name!r} must be finite and non-negative")
+    return quantity
 
 
 @dataclass
@@ -88,13 +218,19 @@ class PricingEngine:
         *,
         auto_update: bool = False,
         api_key: str | None = None,
+        catalog_data: dict[str, dict[str, Any]] | None = None,
+        catalog_version: str | None = None,
     ) -> None:
         self._custom_pricing: dict[str, CustomPricing] = {}
         self._lock = threading.Lock()
         self._api_key: str | None = api_key
 
         # Load bundled pricing data
-        if data_path is not None:
+        if data_path is not None and catalog_data is not None:
+            raise ValueError("data_path and catalog_data are mutually exclusive")
+        if catalog_data is not None:
+            raw = json.dumps(catalog_data, sort_keys=True, separators=(",", ":"))
+        elif data_path is not None:
             raw = Path(data_path).read_text(encoding="utf-8")
         else:
             raw = _read_bundled_data()
@@ -106,7 +242,7 @@ class PricingEngine:
             self._model_map = {}
         # Remove the spec entry — not a real model
         self._model_map.pop("sample_spec", None)
-        self._pricing_version = _compute_hash(raw)
+        self._pricing_version = catalog_version or _compute_hash(raw)
 
         # Background updater
         self._update_timer: threading.Timer | None = None
@@ -246,6 +382,112 @@ class PricingEngine:
             pricing_version=pricing_version,
         )
 
+    def get_metered_cost(
+        self,
+        model: str,
+        usage: Mapping[str, Decimal | int | str],
+        *,
+        model_candidates: Sequence[str] = (),
+    ) -> MeteredCostResult:
+        """Price exact multimodal usage with the active model catalog.
+
+        This is the non-chat companion to :meth:`get_cost`.  It handles the
+        native quantities returned by embedding, image, audio, video, realtime,
+        and provider-tool APIs without translating them into fictional text
+        tokens.  Prompt/output values are never accepted here; only quantities
+        and catalog identifiers participate in pricing.
+
+        ``model_candidates`` supports documented pricing variants such as the
+        high-resolution Sora SKU.  Candidates are tried in order before the
+        provider-reported base model.
+        """
+        if not isinstance(model, str) or not model:
+            raise ValueError("model must be a non-empty string")
+        if not isinstance(usage, Mapping):
+            raise TypeError("usage must be a mapping")
+
+        quantities: dict[str, Decimal] = {}
+        for dimension, raw_quantity in usage.items():
+            if not isinstance(dimension, str) or not dimension:
+                raise ValueError("metered usage dimensions must be non-empty strings")
+            quantities[dimension] = _metered_quantity(dimension, raw_quantity)
+
+        ordered_candidates: list[str] = []
+        for candidate in (*model_candidates, model):
+            if not isinstance(candidate, str) or not candidate:
+                raise ValueError("model candidates must be non-empty strings")
+            if candidate not in ordered_candidates:
+                ordered_candidates.append(candidate)
+
+        with self._lock:
+            resolved_model: str | None = None
+            model_info: dict[str, Any] | None = None
+            for candidate in ordered_candidates:
+                resolved = self._resolve_model_entry(candidate)
+                if resolved is not None:
+                    resolved_model, model_info = resolved
+                    break
+            pricing_version = self._pricing_version
+
+        positive = {name: value for name, value in quantities.items() if value > 0}
+        if model_info is None or not positive:
+            return MeteredCostResult(
+                cost_usd=Decimal(0),
+                cost_confidence="unknown",
+                pricing_source="unknown" if model_info is None else "litellm",
+                pricing_version=pricing_version,
+                resolved_model=resolved_model,
+                lines=(),
+                unpriced_dimensions=tuple(sorted(positive)),
+            )
+
+        lines: list[MeteredCostLine] = []
+        unpriced: list[str] = []
+        for dimension, quantity in sorted(positive.items()):
+            alternatives = _METERED_RATE_FIELDS.get(dimension)
+            selected: tuple[str, Decimal] | None = None
+            if alternatives is not None:
+                selected = next(
+                    (
+                        (rate_field, divisor)
+                        for rate_field, divisor in alternatives
+                        if rate_field in model_info
+                    ),
+                    None,
+                )
+            if selected is None:
+                unpriced.append(dimension)
+                continue
+            rate_field, divisor = selected
+            try:
+                rate = Decimal(str(model_info[rate_field]))
+            except (decimal.InvalidOperation, TypeError, ValueError):
+                unpriced.append(dimension)
+                continue
+            if not rate.is_finite() or rate < 0:
+                unpriced.append(dimension)
+                continue
+            line_cost = quantity * rate / divisor
+            lines.append(
+                MeteredCostLine(
+                    dimension=dimension,
+                    quantity=quantity,
+                    rate_field=rate_field,
+                    rate_usd=rate,
+                    cost_usd=line_cost,
+                )
+            )
+
+        return MeteredCostResult(
+            cost_usd=sum((line.cost_usd for line in lines), Decimal(0)),
+            cost_confidence="unknown" if unpriced else "computed",
+            pricing_source="litellm",
+            pricing_version=pricing_version,
+            resolved_model=resolved_model,
+            lines=tuple(lines),
+            unpriced_dimensions=tuple(sorted(unpriced)),
+        )
+
     def set_custom_pricing(
         self,
         model: str,
@@ -276,6 +518,20 @@ class PricingEngine:
         with self._lock:
             self._api_key = api_key
 
+    def replace_catalog(
+        self,
+        catalog_data: dict[str, dict[str, Any]],
+        catalog_version: str,
+    ) -> None:
+        """Atomically replace validated server data while retaining user overrides."""
+        new_map = dict(catalog_data)
+        new_map.pop("sample_spec", None)
+        if not new_map:
+            raise ValueError("pricing catalog must contain at least one model")
+        with self._lock:
+            self._model_map = new_map
+            self._pricing_version = catalog_version
+
     @property
     def pricing_version(self) -> str:
         """Hash of the currently loaded pricing data."""
@@ -303,18 +559,18 @@ class PricingEngine:
     # Model resolution
     # ------------------------------------------------------------------
 
-    def _resolve_model(self, model: str) -> dict[str, Any] | None:
-        """Look up *model* in the pricing data, trying alias resolution."""
+    def _resolve_model_entry(self, model: str) -> tuple[str, dict[str, Any]] | None:
+        """Look up *model* and return the exact catalog key plus its entry."""
         # Exact match
         if model in self._model_map:
-            return self._model_map[model]
+            return model, self._model_map[model]
 
         # Try common prefix patterns used by providers
         # e.g. "openai/gpt-4o" → "gpt-4o"
         if "/" in model:
             short = model.rsplit("/", 1)[-1]
             if short in self._model_map:
-                return self._model_map[short]
+                return short, self._model_map[short]
 
         # Try matching without date suffix: "gpt-4o-2024-08-06" → "gpt-4o"
         # Walk from longest to shortest prefix split on "-"
@@ -322,9 +578,14 @@ class PricingEngine:
         for i in range(len(parts) - 1, 0, -1):
             candidate = "-".join(parts[:i])
             if candidate in self._model_map:
-                return self._model_map[candidate]
+                return candidate, self._model_map[candidate]
 
         return None
+
+    def _resolve_model(self, model: str) -> dict[str, Any] | None:
+        """Look up *model* in the pricing data, trying alias resolution."""
+        resolved = self._resolve_model_entry(model)
+        return None if resolved is None else resolved[1]
 
     # ------------------------------------------------------------------
     # Background pricing update

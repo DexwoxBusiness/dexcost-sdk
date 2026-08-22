@@ -19,8 +19,9 @@ import functools
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 from dexcost.cloud_detect import get_cloud_env
 from dexcost.context import get_current_task
@@ -32,11 +33,14 @@ from dexcost.models.event import Event
 _log = logging.getLogger(__name__)
 
 
-def _persist_gpu_events(task, cost_details: dict[str, Any] | None,
-                        signal_events: list[dict[str, Any]] | None) -> None:
+def _persist_gpu_events(
+    task: Any,
+    cost_details: dict[str, Any] | None,
+    signal_events: list[dict[str, Any]] | None,
+) -> None:
     """Insert gpu_cost (cost_pending=true) + gpu_utilization_signal events."""
     try:
-        from dexcost import _global_tracker  # type: ignore[attr-defined]
+        from dexcost import _global_tracker
     except ImportError:
         return
     if _global_tracker is None or task is None:
@@ -61,15 +65,15 @@ def _persist_gpu_events(task, cost_details: dict[str, Any] | None,
                     details=sig_details,
                 )
                 _global_tracker.storage.insert_event(ev)
-    except Exception:  # noqa: BLE001 — fail-silent per convention §9
+    except Exception:
         _log.warning("gpu_wrap failed to persist events", exc_info=True)
 
 
 def _time_and_capture(
     accountant: GpuAccountant,
     fn: Callable[..., Any],
-    args: tuple,
-    kwargs: dict,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
 ) -> Any:
     """Run ``fn`` while sampling NVML; persist dual events on exit.
 
@@ -90,7 +94,7 @@ def _time_and_capture(
             task = get_current_task()
             if task is not None:
                 _persist_gpu_events(task, cost_details, sigs)
-        except Exception:  # noqa: BLE001 — fail-silent
+        except Exception:
             _log.warning("gpu_wrap event-build failed", exc_info=True)
 
 
@@ -104,7 +108,7 @@ def wrap_modal_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     the wrap is a transparent pass-through (capture spec §6 case 2).
     """
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)
@@ -119,7 +123,7 @@ def wrap_modal_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def wrap_runpod_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)
@@ -134,7 +138,7 @@ def wrap_runpod_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def wrap_replicate_handler(fn: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(fn)
-    def _wrapped(*args, **kwargs):
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
         task = get_current_task()
         if task is None:
             return fn(*args, **kwargs)

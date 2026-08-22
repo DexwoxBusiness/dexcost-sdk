@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import dexcost
+from dexcost.storage.sqlite import SQLiteStorage
 
 
 def _count_sync_threads() -> int:
@@ -51,6 +52,27 @@ def test_close_clears_service_catalog_refresh_credentials() -> None:
     assert dexcost._service_catalog_refresh_api_key is None
 
 
+def test_close_removes_global_provider_instrumentation(tmp_path: Path) -> None:
+    pytest.importorskip("openai")
+    dexcost.init(
+        storage="local",
+        buffer_path=str(tmp_path / "global-instrument.db"),
+        track_http=False,
+        auto_instrument=["openai"],
+    )
+
+    dexcost.close()
+
+    storage = SQLiteStorage(tmp_path / "manual-instrument.db")
+    tracker = dexcost.CostTracker(storage=storage, auto_instrument=[])
+    try:
+        # A leaked global patch would raise "already active" here.
+        dexcost.instrument_openai(tracker)
+    finally:
+        dexcost.uninstrument_openai()
+        storage.close()
+
+
 def test_init_without_http_clears_stale_catalog_refresh_state(tmp_path: Path) -> None:
     dexcost._service_catalog_refresh_url = "https://old-control.example/catalog"
     dexcost._service_catalog_refresh_api_key = "dx_test_old"
@@ -64,6 +86,31 @@ def test_init_without_http_clears_stale_catalog_refresh_state(tmp_path: Path) ->
 
     assert dexcost._service_catalog_refresh_url is None
     assert dexcost._service_catalog_refresh_api_key is None
+
+
+def test_invalid_catalog_trust_fails_before_storage_or_global_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A requested signature policy must never degrade to bundled fallback."""
+    import dexcost.storage.sqlite as sqlite_module
+
+    sqlite_factory = MagicMock()
+    monkeypatch.setattr(sqlite_module, "SQLiteStorage", sqlite_factory)
+    monkeypatch.setenv("DEXCOST_CATALOG_REQUIRE_SIGNATURE", "true")
+    previous_config = dexcost._global_config
+
+    with pytest.raises(ValueError, match="requires at least one trusted public key"):
+        dexcost.init(
+            storage="local",
+            buffer_path=str(tmp_path / "must-not-exist.db"),
+            auto_instrument=[],
+            track_http=False,
+        )
+
+    sqlite_factory.assert_not_called()
+    assert dexcost._global_config is previous_config
+    assert dexcost._global_tracker is None
 
 
 def test_init_uses_configured_buffer_for_capture(tmp_path: Path) -> None:
@@ -90,7 +137,8 @@ def test_init_uses_configured_buffer_for_capture(tmp_path: Path) -> None:
 
 
 def test_singleton_task_forwards_local_gpu_opt_in(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The public dexcost.task() wrapper must expose local GPU capture."""
     dexcost.init(
@@ -129,15 +177,14 @@ def test_double_init_does_not_create_orphan_threads(tmp_path: Path) -> None:
     time.sleep(0.05)
     after = _count_sync_threads()
     assert after == 1, (
-        f"expected exactly 1 sync worker after second init, got {after} "
-        f"(orphaned worker leak)"
+        f"expected exactly 1 sync worker after second init, got {after} (orphaned worker leak)"
     )
 
 
-def test_reinit_after_fork_restarts_pricing_refresh(
+def test_reinit_after_fork_restarts_atomic_catalog_refresh(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A child process must replace the parent's dead pricing thread."""
+    """A child process must replace the parent's dead catalog-release thread."""
     inherited_worker = MagicMock()
     child_worker = MagicMock()
     worker_factory = MagicMock(return_value=child_worker)
@@ -146,6 +193,14 @@ def test_reinit_after_fork_restarts_pricing_refresh(
     child_sync_storage = MagicMock()
     sqlite_factory = MagicMock(side_effect=[child_tracker_storage, child_sync_storage])
     pricing = MagicMock()
+    inherited_catalog_runtime = MagicMock()
+    inherited_catalog_runtime._track_http = False
+    inherited_catalog_runtime._trusted_keys = {
+        "dexcost-test-rfc8032-1": "11qYAYdk9JNu81kOIyRUDn69brTa7WHqmX84xB6sSPA"
+    }
+    inherited_catalog_runtime._require_signature = True
+    child_catalog_runtime = MagicMock()
+    catalog_runtime_factory = MagicMock(return_value=child_catalog_runtime)
     tracker = MagicMock()
     tracker._storage = inherited_storage
     tracker.pricing = pricing
@@ -161,9 +216,11 @@ def test_reinit_after_fork_restarts_pricing_refresh(
 
     monkeypatch.setattr(dexcost, "_sync_worker", inherited_worker)
     monkeypatch.setattr(dexcost, "_pricing_engine", pricing)
+    monkeypatch.setattr(dexcost, "_catalog_runtime", inherited_catalog_runtime)
     monkeypatch.setattr(dexcost, "_global_tracker", tracker)
     monkeypatch.setattr(dexcost, "_global_config", config)
     monkeypatch.setattr(dexcost, "SyncWorker", worker_factory)
+    monkeypatch.setattr(dexcost, "CatalogRuntime", catalog_runtime_factory)
     monkeypatch.setattr(sqlite_module, "SQLiteStorage", sqlite_factory)
     set_browser_storage = MagicMock()
     monkeypatch.setattr(browser_adapter, "set_storage", set_browser_storage)
@@ -182,9 +239,21 @@ def test_reinit_after_fork_restarts_pricing_refresh(
     )
     child_worker.start.assert_called_once_with()
     pricing.set_api_key.assert_called_once_with(config.api_key)
-    pricing.start_background_refresh.assert_called_once_with(config.endpoint)
+    pricing.start_background_refresh.assert_not_called()
+    catalog_runtime_factory.assert_called_once_with(
+        endpoint=config.endpoint,
+        db_path=config.buffer_path,
+        tracker=tracker,
+        track_http=False,
+        api_key=config.api_key,
+        trusted_keys=inherited_catalog_runtime._trusted_keys,
+        require_signature=True,
+    )
+    child_catalog_runtime.load_cached.assert_called_once_with()
+    child_catalog_runtime.start.assert_called_once_with()
     start_catalog_refresh.assert_called_once_with()
     assert dexcost._pricing_engine is pricing
+    assert dexcost._catalog_runtime is child_catalog_runtime
 
 
 def test_fork_does_not_corrupt_sqlite(tmp_path: Path) -> None:

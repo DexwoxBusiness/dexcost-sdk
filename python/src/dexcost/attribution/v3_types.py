@@ -11,7 +11,7 @@ from dexcost.attribution.types import (
     AttributionLifecycleState,
 )
 
-ATTRIBUTION_V3_CONTRACT_VERSION = "3.1.0"
+ATTRIBUTION_V3_CONTRACT_VERSION = "3.2.0"
 
 AttributionUsageMetricV3 = str
 AttributionUsageUnitV3 = str
@@ -81,6 +81,30 @@ class AttributionResourceV3(TypedDict):
 
     type: AttributionResourceTypeV3
     id: str
+
+
+AttributionCapabilityKindV3 = Literal["tool", "skill", "workflow", "extension", "other"]
+AttributionCapabilitySourceV3 = Literal[
+    "built_in", "project", "user", "plugin", "marketplace", "remote", "other"
+]
+AttributionCapabilityInvocationV3 = Literal[
+    "explicit", "automatic", "nested", "scheduled", "remote", "other"
+]
+
+
+class _AttributionCapabilityIdentityV3Required(TypedDict):
+    name: str
+    kind: AttributionCapabilityKindV3
+
+
+class AttributionCapabilityIdentityV3(
+    _AttributionCapabilityIdentityV3Required, total=False
+):
+    namespace: str
+    version: str
+    source: AttributionCapabilitySourceV3
+    source_id: str
+    invocation: AttributionCapabilityInvocationV3
 
 
 class AttributionTraceIdentityV3(TypedDict):
@@ -166,6 +190,7 @@ class _AttributionObservationV3Required(TypedDict):
 class AttributionObservationV3(_AttributionObservationV3Required, total=False):
     environment: str
     resource: AttributionResourceV3
+    capability: AttributionCapabilityIdentityV3
     usage_period: AttributionUsagePeriodV3
     cost_evidence: AttributionCostEvidenceV3
 

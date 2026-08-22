@@ -13,12 +13,39 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const _thisDir = dirname(fileURLToPath(import.meta.url));
-const eventSchema = JSON.parse(
-  readFileSync(join(_thisDir, "dexcost-event.v1.json"), "utf-8"),
-);
-const taskSchema = JSON.parse(
-  readFileSync(join(_thisDir, "dexcost-task.v1.json"), "utf-8"),
-);
+
+export class SchemaNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SchemaNotFoundError";
+  }
+}
+
+function loadBundledSchema(name: string): unknown {
+  const path = join(_thisDir, name);
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (error) {
+    throw new SchemaNotFoundError(
+      `Bundled schema ${JSON.stringify(name)} is missing from the installed @dexcost/sdk package ` +
+      `(searched ${path}). Reinstall a package built with its dist/schema assets. ` +
+      `Cause: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Bundled schema ${path} is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+const eventSchema = loadBundledSchema("dexcost-event.v1.json");
+const taskSchema = loadBundledSchema("dexcost-task.v1.json");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let ajv: any;

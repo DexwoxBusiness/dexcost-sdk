@@ -2,24 +2,24 @@
  * dexcost TypeScript SDK — End-to-End Integration Tests
  *
  * These tests exercise the SDK against a real local control-layer stack.
- * They verify that the SDK correctly ships events through the HTTP pusher
- * to the local Hono server and that both LLM and non-LLM costs are captured.
+ * They verify that the SDK correctly ships canonical observations through the
+ * HTTP pusher, local Cloudflare queue, and control-plane persistence path.
  *
  * Prerequisites:
- *   - Docker Compose stack must be running: infra/docker-compose.yml
- *     (postgres on :5432, server on :3000, dashboard on :3001)
- *   - Set DEXCOST_E2E_LOCAL=1 to enable these tests
+ *   - Follow E2E.md to migrate/seed the disposable databases and start the
+ *     control-plane Worker with its real local queue consumer.
+ *   - Set DEXCOST_E2E_LOCAL=1 and provide that endpoint/API key.
  *
  * Environment variables:
  *   DEXCOST_E2E_LOCAL    Set to "1" to run these tests (skipped by default)
- *   DEXCOST_API_KEY      API key for auth (default: dx_test_local)
- *   DEXCOST_ENDPOINT     Local server URL (default: http://localhost:3000).
+ *   DEXCOST_API_KEY      API key for the seeded workspace (required)
+ *   DEXCOST_ENDPOINT     Control-plane URL (required).
  *                        Read HERE in the test to pick the target; the SDK no
  *                        longer reads it — it is passed via the `endpoint`
  *                        option to the tracker.
  *
  * Run with:
- *   npm --prefix sdks/typescript test -- tests/e2e.test.ts
+ *   npm test -- tests/e2e.test.ts
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -35,8 +35,8 @@ const shouldRun = () => process.env.DEXCOST_E2E_LOCAL === "1";
 
 // The test reads the env to pick the local target, but the SDK no longer reads
 // it — we pass it explicitly via the `endpoint` option on every tracker below.
-const ENDPOINT = process.env.DEXCOST_ENDPOINT ?? "http://localhost:3000";
-const API_KEY = process.env.DEXCOST_API_KEY ?? "dx_test_local";
+const ENDPOINT = process.env.DEXCOST_ENDPOINT ?? "http://127.0.0.1:8787";
+const API_KEY = process.env.DEXCOST_API_KEY ?? "";
 
 // Sprint 3 §4.2 fix: `describe.skipIf` with a falsy condition leaves
 // vitest 1.6+ unable to discover any test suite in the file, which it
@@ -46,18 +46,29 @@ const API_KEY = process.env.DEXCOST_API_KEY ?? "dx_test_local";
 // healthy.
 describe("E2E: TypeScript SDK vs Local Control Layer", () => {
   let tmpDir: string;
+  let openTrackers: Array<{ close(): void }>;
 
   beforeEach(() => {
+    if (shouldRun() && !API_KEY) {
+      throw new Error("DEXCOST_API_KEY is required when DEXCOST_E2E_LOCAL=1");
+    }
     tmpDir = mkdtempSync(join(tmpdir(), "dexcost-e2e-"));
+    openTrackers = [];
   });
 
   afterEach(() => {
+    for (const tracker of openTrackers) tracker.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  function closeAfterTest<T extends { close(): void }>(tracker: T): T {
+    openTrackers.push(tracker);
+    return tracker;
+  }
 
   /**
    * Poll a URL until it returns 200 or the timeout expires.
@@ -118,13 +129,13 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const { CostTracker } = await import("../src/index.js");
 
       const dbPath = join(tmpDir, "e2e.db");
-      const tracker = new CostTracker({
+      const tracker = closeAfterTest(new CostTracker({
         apiKey: API_KEY,
         endpoint: ENDPOINT,
         dbPath,
         // Short flush interval so events are pushed quickly
         flushIntervalMs: 1_000,
-      });
+      }));
 
       // Record both an LLM call and an external cost
       const llmCost = 0.042;
@@ -151,17 +162,21 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const taskId = (await tracker.buffer.getAllTasks())[0]?.taskId;
       expect(taskId).toBeTruthy();
 
-      const taskData = (await pollForTask(taskId!, 10_000)) as Record<string, unknown>;
+      const response = (await pollForTask(taskId!, 10_000)) as {
+        data: Record<string, unknown>;
+      };
+      const taskData = response.data;
 
       // Verify the task has the correct customer and project
       expect(taskData.customer_id).toBe(customerId);
       expect(taskData.project_id).toBe(projectId);
+      expect(taskData.schema_version).toBe("1");
+      expect(Array.isArray(taskData.events)).toBe(true);
 
-      // Verify costs — the worker aggregates from events, so we check the totals
-      const totalCost = parseFloat(String(taskData.total_cost_usd ?? "0"));
-      expect(totalCost).toBeCloseTo(llmCost + externalCost, 4);
-
-      tracker.close();
+      // Money is deliberately not asserted on the operational task row. The
+      // current server persists usage first and produces canonical monetary
+      // decisions separately; unsupported custom rates must remain visibly
+      // unpriced instead of being synthesized as zero cost.
     },
     { timeout: 30_000 },
   );
@@ -173,18 +188,18 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
 
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "e2e-events.db");
-      const tracker = new CostTracker({
+      const tracker = closeAfterTest(new CostTracker({
         apiKey: API_KEY,
         endpoint: ENDPOINT,
         dbPath,
-      });
+      }));
 
       await tracker.track(
         { taskType: "schema_test", customerId },
         async (task) => {
           task.recordLlmCall("anthropic", "claude-3-5-sonnet", 1000, 500, 0.015);
           task.recordCost("search_api", 0.003);
-          task.recordCost("compute", 0.001, undefined, "compute_cost");
+          task.recordCost("compute", 0.001, { duration_ms: 1_000 }, "compute_cost");
         },
       );
 
@@ -213,7 +228,6 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(extEvent.serviceName).toBe("search_api");
       expect(extEvent.costUsd.toNumber()).toBeCloseTo(0.003, 4);
 
-      tracker.close();
     },
     { timeout: 15_000 },
   );
@@ -227,7 +241,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const { eventToDict } = await import("../src/core/models.js");
 
       const dbPath = join(tmpDir, "schema-v1.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
+      const tracker = closeAfterTest(new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath }));
 
       await tracker.track(
         { taskType: "schema_compliance", customerId },
@@ -269,7 +283,6 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(tasks[0].schemaVersion).toBe("1");
       expect(tasks[0].customerId).toBe(customerId);
 
-      tracker.close();
     },
     { timeout: 15_000 },
   );
@@ -279,7 +292,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
     async () => {
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "retry-semantics.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
+      const tracker = closeAfterTest(new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath }));
 
       await tracker.track({ taskType: "retry_test" }, async (task) => {
         // Explicit retry marker
@@ -308,7 +321,6 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const task = await tracker.buffer.getAllTasks();
       expect(task[0].retryCount).toBeGreaterThanOrEqual(1);
 
-      tracker.close();
     },
     { timeout: 15_000 },
   );
@@ -320,11 +332,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const dbPath = join(tmpDir, "graceful.db");
 
       // Dev mode disables cloud push, so no endpoint is contacted here.
-      const tracker = new CostTracker({
+      const tracker = closeAfterTest(new CostTracker({
         apiKey: "dx_test_graceful",
         dbPath,
         environment: "development",
-      });
+      }));
 
       await tracker.track({ taskType: "offline_test" }, async (task) => {
         task.recordLlmCall("openai", "gpt-4o", 100, 50, 0.01);
@@ -337,7 +349,6 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       const events = await tracker.buffer.getAllEvents();
       expect(events.length).toBeGreaterThanOrEqual(1);
 
-      tracker.close();
     },
     { timeout: 15_000 },
   );
@@ -349,7 +360,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
 
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "experiment.db");
-      const tracker = new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath });
+      const tracker = closeAfterTest(new CostTracker({ apiKey: API_KEY, endpoint: ENDPOINT, dbPath }));
 
       await tracker.track(
         {
@@ -370,7 +381,6 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(task.variant).toBe("gpt4o-mini");
       expect(task.customerId).toBe(customerId);
 
-      tracker.close();
     },
     { timeout: 15_000 },
   );

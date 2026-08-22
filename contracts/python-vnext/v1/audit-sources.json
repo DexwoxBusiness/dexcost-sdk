@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "audited_at": "2026-08-22",
+  "sources": [
+    {
+      "name": "dexcost-sdk",
+      "repository": "https://github.com/DexwoxBusiness/dexcost-sdk",
+      "base_commit": "22e6921335cebe4637725dd5e5707d10b546a094",
+      "version": "python 0.18.0 / typescript 0.22.0",
+      "note": "The freeze manifest hashes the reviewed vNext worktree layered on this base commit."
+    },
+    {
+      "name": "dexcost-control-plane",
+      "repository": "https://github.com/DexwoxBusiness/dexcost-control-plane",
+      "base_commit": "adbb9ad9e1739fb8bd69646485b61f1530dd513a",
+      "note": "The catalog release service, attribution 3.2, and business attribution 1.1 worktree is validated by control-plane tests."
+    },
+    {
+      "name": "revenium-python-sdk",
+      "repository": "https://github.com/revenium/revenium-python-sdk",
+      "commit": "8faa15010a598ed9e9deb93314595c41a6f20bc7",
+      "version": "0.6.0"
+    },
+    {
+      "name": "revenium-node-sdk",
+      "repository": "https://github.com/revenium/revenium-node-sdk",
+      "commit": "8988c68057b0241a232a669b120fc493aeb7b0eb",
+      "version": "1.1.10"
+    }
+  ]
+}

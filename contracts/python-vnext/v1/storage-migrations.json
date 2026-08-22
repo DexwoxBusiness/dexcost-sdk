@@ -1,0 +1,1438 @@
+{
+  "engine": "sqlite",
+  "freeze_version": "python-vnext-v1",
+  "migrations": [
+    {
+      "from": 1,
+      "function": "_sqlite_v1_to_v2",
+      "source_sha256": "1fbc7d1342383f06932e0899f332d69eae43f778251b68607a6a5aa68a274cff",
+      "summary": "Add experiment_id and variant columns to tasks table (idempotent).",
+      "to": 2
+    },
+    {
+      "from": 2,
+      "function": "_sqlite_v2_to_v3",
+      "source_sha256": "baaa279dbfca9eca09129eb306f7d4c6b568a3a0942dadb7363664bf04971fdd",
+      "summary": "Add sync_status column to tasks table (idempotent).\n\nWithout this column the SyncWorker had no way to tell which tasks had\nalready been pushed, so it re-POSTed every task on every sync cycle.\nExisting rows default to ``'pending'`` so they are pushed exactly once.",
+      "to": 3
+    },
+    {
+      "from": 3,
+      "function": "_sqlite_v3_to_v4",
+      "source_sha256": "f0ae7f458d030fc21275e44ffa02d9c39a50180b9ceb7b25e1db388c2b2afdc6",
+      "summary": "Add network capture columns to tasks table (idempotent).\n\nFour new columns track egress/ingress byte counts, HTTP call counts,\nand a per-host JSON breakdown.  Existing rows default to zero / empty\nso they are valid without a data backfill.",
+      "to": 4
+    },
+    {
+      "from": 4,
+      "function": "_sqlite_v4_to_v5",
+      "source_sha256": "eacd57f421df1c1219e4cb45b6b56e9f6bfd54a3d6a011ea374878017fa388e2",
+      "summary": "Add network_cost_usd column to tasks table (idempotent).\n\nStores the per-task cloud-egress cost as Decimal-in-TEXT, consistent\nwith the other *_cost_usd columns. Existing rows default to '0' so\nno data backfill is required.",
+      "to": 5
+    },
+    {
+      "from": 5,
+      "function": "_sqlite_v5_to_v6",
+      "source_sha256": "7893e2fcab88ec8186b503346a9e88097db288e9282795d263ca121d09ea2241",
+      "summary": "Add gpu_cost_usd column to tasks table (idempotent).\n\nStores the per-task GPU cost as Decimal-in-TEXT, consistent with the\nother *_cost_usd columns. Existing rows default to '0' so no backfill\nis required. Total cost becomes llm + external + compute + network + gpu.",
+      "to": 6
+    },
+    {
+      "from": 6,
+      "function": "_sqlite_v6_to_v7",
+      "source_sha256": "1d502f230eb3070d8be30d5536b16706206f088adde1c06f75d26c80d9d1a044",
+      "summary": "Add the opt-in canonical root task identity.",
+      "to": 7
+    },
+    {
+      "from": 7,
+      "function": "_sqlite_v7_to_v8",
+      "source_sha256": "f18dfaee8f1cf898e087cb274167cfcc2f22c65562499140b87e7bdd80e7a33c",
+      "summary": "Add the durable revisioned business-outcome queue.",
+      "to": 8
+    },
+    {
+      "from": 8,
+      "function": "_sqlite_v8_to_v9",
+      "source_sha256": "e4090bae2ef5ddf64a60f35e238af2b19b99a07d2af886e520f6abd21ed44eee",
+      "summary": "Persist canonical agent and workflow identity on buffered tasks.",
+      "to": 9
+    },
+    {
+      "from": 9,
+      "function": "_sqlite_v9_to_v10",
+      "source_sha256": "a32a0529e1f76d152c22b45705ed1f2c3ad138f77f4ffbb35f972eee8af01d4e",
+      "summary": "Persist canonical end-user and product assignment on buffered tasks.",
+      "to": 10
+    },
+    {
+      "from": 10,
+      "function": "_sqlite_v10_to_v11",
+      "source_sha256": "4bf035e408d140588fccd2b0e7d7b3babc68b46790a3ce5aee854d44f2884980",
+      "summary": "Add the durable, atomic SDK catalog-release cache.",
+      "to": 11
+    },
+    {
+      "from": 11,
+      "function": "_sqlite_v11_to_v12",
+      "source_sha256": "7726282b4fc2d4c35204992f32c6dacdfc987d9bf33eabb4e5b6501ae16950c0",
+      "summary": "Add authenticated, API-key-isolated workspace catalog overlays.",
+      "to": 12
+    },
+    {
+      "from": 12,
+      "function": "_sqlite_v12_to_v13",
+      "source_sha256": "c32b1c8010efabe0cfa9492b901d591a2103d4e34c3012c2f4ebde4628f90528",
+      "summary": "Add the durable immutable revenue-revision ledger.",
+      "to": 13
+    },
+    {
+      "from": 13,
+      "function": "_sqlite_v13_to_v14",
+      "source_sha256": "d7bca148870f99ba05a8e9e0fea6728afad55685cb81b391160af68d0896a273",
+      "summary": "Add immutable asynchronous-provider-job revision storage.",
+      "to": 14
+    }
+  ],
+  "schema": [
+    {
+      "name": "idx_events_sync",
+      "sql": "CREATE INDEX idx_events_sync ON events(sync_status, timestamp)",
+      "table": "events",
+      "type": "index"
+    },
+    {
+      "name": "idx_events_task",
+      "sql": "CREATE INDEX idx_events_task ON events(task_id)",
+      "table": "events",
+      "type": "index"
+    },
+    {
+      "name": "idx_events_type",
+      "sql": "CREATE INDEX idx_events_type ON events(event_type, timestamp)",
+      "table": "events",
+      "type": "index"
+    },
+    {
+      "name": "idx_outcomes_sync",
+      "sql": "CREATE INDEX idx_outcomes_sync ON outcomes(sync_status, observed_at)",
+      "table": "outcomes",
+      "type": "index"
+    },
+    {
+      "name": "idx_provider_jobs_identity",
+      "sql": "CREATE INDEX idx_provider_jobs_identity ON provider_job_revisions(provider, service, provider_record_id, revision DESC)",
+      "table": "provider_job_revisions",
+      "type": "index"
+    },
+    {
+      "name": "idx_provider_jobs_sync",
+      "sql": "CREATE INDEX idx_provider_jobs_sync ON provider_job_revisions(sync_status, observed_at, event_id, revision)",
+      "table": "provider_job_revisions",
+      "type": "index"
+    },
+    {
+      "name": "idx_provider_jobs_task",
+      "sql": "CREATE INDEX idx_provider_jobs_task ON provider_job_revisions(task_id, event_id, revision DESC)",
+      "table": "provider_job_revisions",
+      "type": "index"
+    },
+    {
+      "name": "idx_revenues_sync",
+      "sql": "CREATE INDEX idx_revenues_sync ON revenues(sync_status, observed_at)",
+      "table": "revenues",
+      "type": "index"
+    },
+    {
+      "name": "idx_revenues_task",
+      "sql": "CREATE INDEX idx_revenues_task ON revenues(task_id, observed_at)",
+      "table": "revenues",
+      "type": "index"
+    },
+    {
+      "name": "idx_sdk_catalog_members_sha",
+      "sql": "CREATE INDEX idx_sdk_catalog_members_sha ON sdk_catalog_release_artifacts(sha256)",
+      "table": "sdk_catalog_release_artifacts",
+      "type": "index"
+    },
+    {
+      "name": "idx_sdk_catalog_releases_channel",
+      "sql": "CREATE INDEX idx_sdk_catalog_releases_channel ON sdk_catalog_releases(channel, release_sequence DESC)",
+      "table": "sdk_catalog_releases",
+      "type": "index"
+    },
+    {
+      "name": "idx_tasks_customer",
+      "sql": "CREATE INDEX idx_tasks_customer ON tasks(customer_id, started_at)",
+      "table": "tasks",
+      "type": "index"
+    },
+    {
+      "name": "idx_tasks_period",
+      "sql": "CREATE INDEX idx_tasks_period ON tasks(started_at)",
+      "table": "tasks",
+      "type": "index"
+    },
+    {
+      "name": "idx_tasks_sync",
+      "sql": "CREATE INDEX idx_tasks_sync ON tasks(sync_status, started_at)",
+      "table": "tasks",
+      "type": "index"
+    },
+    {
+      "name": "idx_tasks_type",
+      "sql": "CREATE INDEX idx_tasks_type ON tasks(task_type, started_at)",
+      "table": "tasks",
+      "type": "index"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "event_id",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "event_type",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "provider",
+          "not_null": false,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "model",
+          "not_null": false,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "input_tokens",
+          "not_null": false,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "output_tokens",
+          "not_null": false,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "cached_tokens",
+          "not_null": false,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "service_name",
+          "not_null": false,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "cost_usd",
+          "not_null": true,
+          "position": 9,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "latency_ms",
+          "not_null": false,
+          "position": 10,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "'exact'",
+          "name": "cost_confidence",
+          "not_null": true,
+          "position": 11,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "pricing_source",
+          "not_null": false,
+          "position": 12,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "pricing_version",
+          "not_null": false,
+          "position": 13,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "0",
+          "name": "is_retry",
+          "not_null": false,
+          "position": 14,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "retry_reason",
+          "not_null": false,
+          "position": 15,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "retry_of",
+          "not_null": false,
+          "position": 16,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "details",
+          "not_null": false,
+          "position": 17,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "timestamp",
+          "not_null": true,
+          "position": 18,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'pending'",
+          "name": "sync_status",
+          "not_null": true,
+          "position": 19,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "events",
+      "sql": "CREATE TABLE events ( event_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, event_type TEXT NOT NULL, provider TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, service_name TEXT, cost_usd TEXT NOT NULL, latency_ms INTEGER, cost_confidence TEXT NOT NULL DEFAULT 'exact', pricing_source TEXT, pricing_version TEXT, is_retry INTEGER DEFAULT 0, retry_reason TEXT, retry_of TEXT, details TEXT, timestamp TEXT NOT NULL, sync_status TEXT NOT NULL DEFAULT 'pending' )",
+      "table": "events",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "outcome_id",
+          "not_null": true,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 2,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "lifecycle_state",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "effective_at",
+          "not_null": true,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "observed_at",
+          "not_null": true,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "value_type",
+          "not_null": false,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "value_json",
+          "not_null": false,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'1'",
+          "name": "schema_version",
+          "not_null": true,
+          "position": 9,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'pending'",
+          "name": "sync_status",
+          "not_null": true,
+          "position": 10,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "outcomes",
+      "sql": "CREATE TABLE outcomes ( outcome_id TEXT NOT NULL, revision INTEGER NOT NULL, task_id TEXT NOT NULL, name TEXT NOT NULL, lifecycle_state TEXT NOT NULL, effective_at TEXT NOT NULL, observed_at TEXT NOT NULL, value_type TEXT, value_json TEXT, schema_version TEXT NOT NULL DEFAULT '1', sync_status TEXT NOT NULL DEFAULT 'pending', PRIMARY KEY (outcome_id, revision) )",
+      "table": "outcomes",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "event_id",
+          "not_null": true,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 2,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "provider",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "service",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "provider_record_id",
+          "not_null": true,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "operation",
+          "not_null": true,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "component",
+          "not_null": true,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "event_type",
+          "not_null": true,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "resource_type",
+          "not_null": true,
+          "position": 9,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "resource_id",
+          "not_null": true,
+          "position": 10,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "lifecycle_status",
+          "not_null": true,
+          "position": 11,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "submitted_at",
+          "not_null": true,
+          "position": 12,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "observed_at",
+          "not_null": true,
+          "position": 13,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "0",
+          "name": "owns_task",
+          "not_null": true,
+          "position": 14,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "'[]'",
+          "name": "billing_dimensions_json",
+          "not_null": true,
+          "position": 15,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'[]'",
+          "name": "usage_json",
+          "not_null": true,
+          "position": 16,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "cost_amount",
+          "not_null": false,
+          "position": 17,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "cost_source",
+          "not_null": false,
+          "position": 18,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "cost_confidence",
+          "not_null": false,
+          "position": 19,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "pricing_version",
+          "not_null": false,
+          "position": 20,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "latency_ms",
+          "not_null": false,
+          "position": 21,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "error_type",
+          "not_null": false,
+          "position": 22,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "not_null": false,
+          "position": 23,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "task_input_tokens",
+          "not_null": false,
+          "position": 24,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "task_output_tokens",
+          "not_null": false,
+          "position": 25,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "task_cached_tokens",
+          "not_null": false,
+          "position": 26,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "capability_json",
+          "not_null": false,
+          "position": 27,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'1'",
+          "name": "schema_version",
+          "not_null": true,
+          "position": 28,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'pending'",
+          "name": "sync_status",
+          "not_null": true,
+          "position": 29,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "provider_job_revisions",
+      "sql": "CREATE TABLE provider_job_revisions ( event_id TEXT NOT NULL, revision INTEGER NOT NULL, task_id TEXT NOT NULL, provider TEXT NOT NULL, service TEXT NOT NULL, provider_record_id TEXT NOT NULL, operation TEXT NOT NULL, component TEXT NOT NULL, event_type TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL, lifecycle_status TEXT NOT NULL, submitted_at TEXT NOT NULL, observed_at TEXT NOT NULL, owns_task INTEGER NOT NULL DEFAULT 0, billing_dimensions_json TEXT NOT NULL DEFAULT '[]', usage_json TEXT NOT NULL DEFAULT '[]', cost_amount TEXT, cost_source TEXT, cost_confidence TEXT, pricing_version TEXT, latency_ms INTEGER, error_type TEXT, error_code TEXT, task_input_tokens INTEGER, task_output_tokens INTEGER, task_cached_tokens INTEGER, capability_json TEXT, schema_version TEXT NOT NULL DEFAULT '1', sync_status TEXT NOT NULL DEFAULT 'pending', PRIMARY KEY (event_id, revision), CHECK (revision > 0), CHECK (lifecycle_status IN ( 'submitted', 'running', 'succeeded', 'failed', 'cancelled', 'unknown' )), CHECK (event_type IN ('llm_call', 'external_cost', 'compute_cost')), CHECK (owns_task IN (0, 1)) )",
+      "table": "provider_job_revisions",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "revenue_id",
+          "not_null": true,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 2,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "task_id",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "outcome_id",
+          "not_null": false,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "lifecycle_state",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "effective_at",
+          "not_null": true,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "observed_at",
+          "not_null": true,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "amount",
+          "not_null": false,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "currency",
+          "not_null": false,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "source_type",
+          "not_null": true,
+          "position": 9,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "source_record_id",
+          "not_null": false,
+          "position": 10,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'1'",
+          "name": "schema_version",
+          "not_null": true,
+          "position": 11,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'pending'",
+          "name": "sync_status",
+          "not_null": true,
+          "position": 12,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "revenues",
+      "sql": "CREATE TABLE revenues ( revenue_id TEXT NOT NULL, revision INTEGER NOT NULL, task_id TEXT NOT NULL, outcome_id TEXT, lifecycle_state TEXT NOT NULL, effective_at TEXT NOT NULL, observed_at TEXT NOT NULL, amount TEXT, currency TEXT, source_type TEXT NOT NULL, source_record_id TEXT, schema_version TEXT NOT NULL DEFAULT '1', sync_status TEXT NOT NULL DEFAULT 'pending', PRIMARY KEY (revenue_id, revision), CHECK (revision > 0), CHECK (lifecycle_state IN ('pending', 'provisional', 'recognized', 'voided')), CHECK (source_type IN ('sdk', 'workspace_api', 'import', 'manual')) )",
+      "table": "revenues",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "version_id",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "version_number",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "datetime('now')",
+          "name": "applied_at",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "migration_name",
+          "not_null": false,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "schema_version",
+      "sql": "CREATE TABLE schema_version ( version_id INTEGER PRIMARY KEY AUTOINCREMENT, version_number INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')), migration_name TEXT )",
+      "table": "schema_version",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "sha256",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "schema_version",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "byte_size",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "payload",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "BLOB"
+        },
+        {
+          "default": null,
+          "name": "validated_at",
+          "not_null": true,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "sdk_catalog_artifacts",
+      "sql": "CREATE TABLE sdk_catalog_artifacts ( sha256 TEXT PRIMARY KEY, kind TEXT NOT NULL, schema_version TEXT NOT NULL, byte_size INTEGER NOT NULL, payload BLOB NOT NULL, validated_at TEXT NOT NULL, CHECK (length(sha256) = 64), CHECK (byte_size >= 2) )",
+      "table": "sdk_catalog_artifacts",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "principal_sha256",
+          "not_null": true,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "base_release_id",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 2,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "base_release_sequence",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "payload",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "BLOB"
+        },
+        {
+          "default": null,
+          "name": "payload_sha256",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "etag",
+          "not_null": false,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "generated_at",
+          "not_null": true,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "stored_at",
+          "not_null": true,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "sdk_catalog_overlays",
+      "sql": "CREATE TABLE sdk_catalog_overlays ( principal_sha256 TEXT NOT NULL, base_release_id TEXT NOT NULL, base_release_sequence INTEGER NOT NULL, payload BLOB NOT NULL, payload_sha256 TEXT NOT NULL, etag TEXT, generated_at TEXT NOT NULL, stored_at TEXT NOT NULL, PRIMARY KEY (principal_sha256, base_release_id), CHECK (length(principal_sha256) = 64), CHECK (length(payload_sha256) = 64), CHECK (base_release_sequence > 0) )",
+      "table": "sdk_catalog_overlays",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "release_sequence",
+          "not_null": true,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 2,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "sha256",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "sdk_catalog_release_artifacts",
+      "sql": "CREATE TABLE sdk_catalog_release_artifacts ( release_sequence INTEGER NOT NULL, kind TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (release_sequence, kind), FOREIGN KEY (release_sequence) REFERENCES sdk_catalog_releases(release_sequence) ON DELETE CASCADE, FOREIGN KEY (sha256) REFERENCES sdk_catalog_artifacts(sha256) ON DELETE RESTRICT )",
+      "table": "sdk_catalog_release_artifacts",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "release_sequence",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "release_id",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "channel",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "manifest_json",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "BLOB"
+        },
+        {
+          "default": null,
+          "name": "manifest_sha256",
+          "not_null": true,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "published_at",
+          "not_null": true,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "not_null": true,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "safety_policy_version",
+          "not_null": true,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "stored_at",
+          "not_null": true,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "sdk_catalog_releases",
+      "sql": "CREATE TABLE sdk_catalog_releases ( release_sequence INTEGER PRIMARY KEY, release_id TEXT NOT NULL UNIQUE, channel TEXT NOT NULL, manifest_json BLOB NOT NULL, manifest_sha256 TEXT NOT NULL, published_at TEXT NOT NULL, expires_at TEXT NOT NULL, safety_policy_version TEXT NOT NULL, stored_at TEXT NOT NULL, CHECK (release_sequence > 0), CHECK (channel IN ('stable', 'canary')), CHECK (length(manifest_sha256) = 64) )",
+      "table": "sdk_catalog_releases",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "channel",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "active_release_sequence",
+          "not_null": false,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "previous_release_sequence",
+          "not_null": false,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "manifest_etag",
+          "not_null": false,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "last_checked_at",
+          "not_null": false,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "last_error",
+          "not_null": false,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "sdk_catalog_state",
+      "sql": "CREATE TABLE sdk_catalog_state ( channel TEXT PRIMARY KEY, active_release_sequence INTEGER, previous_release_sequence INTEGER, manifest_etag TEXT, last_checked_at TEXT, last_error TEXT, CHECK (channel IN ('stable', 'canary')), CHECK ( active_release_sequence IS NULL OR previous_release_sequence IS NULL OR active_release_sequence != previous_release_sequence ), FOREIGN KEY (active_release_sequence) REFERENCES sdk_catalog_releases(release_sequence) ON DELETE RESTRICT, FOREIGN KEY (previous_release_sequence) REFERENCES sdk_catalog_releases(release_sequence) ON DELETE RESTRICT )",
+      "table": "sdk_catalog_state",
+      "type": "table"
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "task_id",
+          "not_null": false,
+          "position": 0,
+          "primary_key_position": 1,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "task_type",
+          "not_null": true,
+          "position": 1,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "not_null": true,
+          "position": 2,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "not_null": true,
+          "position": 3,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "ended_at",
+          "not_null": false,
+          "position": 4,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "metadata",
+          "not_null": false,
+          "position": 5,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "llm_cost_usd",
+          "not_null": false,
+          "position": 6,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "external_cost_usd",
+          "not_null": false,
+          "position": 7,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "compute_cost_usd",
+          "not_null": false,
+          "position": 8,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'0'",
+          "name": "network_cost_usd",
+          "not_null": true,
+          "position": 9,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'0'",
+          "name": "gpu_cost_usd",
+          "not_null": true,
+          "position": 10,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "total_cost_usd",
+          "not_null": false,
+          "position": 11,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "total_input_tokens",
+          "not_null": false,
+          "position": 12,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "total_output_tokens",
+          "not_null": false,
+          "position": 13,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "total_cached_tokens",
+          "not_null": false,
+          "position": 14,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "0",
+          "name": "retry_count",
+          "not_null": false,
+          "position": 15,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "'0'",
+          "name": "retry_cost_usd",
+          "not_null": false,
+          "position": 16,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "0",
+          "name": "failure_count",
+          "not_null": false,
+          "position": 17,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": null,
+          "name": "customer_id",
+          "not_null": false,
+          "position": 18,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "project_id",
+          "not_null": false,
+          "position": 19,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "parent_task_id",
+          "not_null": false,
+          "position": 20,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "root_task_id",
+          "not_null": false,
+          "position": 21,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "agent_id",
+          "not_null": false,
+          "position": 22,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "agent_version",
+          "not_null": false,
+          "position": 23,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "workflow_id",
+          "not_null": false,
+          "position": 24,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "workflow_session_id",
+          "not_null": false,
+          "position": 25,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "not_null": false,
+          "position": 26,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "product_id",
+          "not_null": false,
+          "position": 27,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "experiment_id",
+          "not_null": false,
+          "position": 28,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": null,
+          "name": "variant",
+          "not_null": false,
+          "position": 29,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "'pending'",
+          "name": "sync_status",
+          "not_null": true,
+          "position": 30,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        },
+        {
+          "default": "0",
+          "name": "network_bytes_in",
+          "not_null": true,
+          "position": 31,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "0",
+          "name": "network_bytes_out",
+          "not_null": true,
+          "position": 32,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "0",
+          "name": "network_call_count",
+          "not_null": true,
+          "position": 33,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "'{\"hosts\": []}'",
+          "name": "network_by_host",
+          "not_null": true,
+          "position": 34,
+          "primary_key_position": 0,
+          "type": "TEXT"
+        }
+      ],
+      "name": "tasks",
+      "sql": "CREATE TABLE tasks ( task_id TEXT PRIMARY KEY, task_type TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, metadata TEXT, llm_cost_usd TEXT, external_cost_usd TEXT, compute_cost_usd TEXT, network_cost_usd TEXT NOT NULL DEFAULT '0', gpu_cost_usd TEXT NOT NULL DEFAULT '0', total_cost_usd TEXT, total_input_tokens INTEGER, total_output_tokens INTEGER, total_cached_tokens INTEGER, retry_count INTEGER DEFAULT 0, retry_cost_usd TEXT DEFAULT '0', failure_count INTEGER DEFAULT 0, customer_id TEXT, project_id TEXT, parent_task_id TEXT, root_task_id TEXT, agent_id TEXT, agent_version TEXT, workflow_id TEXT, workflow_session_id TEXT, user_id TEXT, product_id TEXT, experiment_id TEXT, variant TEXT, sync_status TEXT NOT NULL DEFAULT 'pending', network_bytes_in INTEGER NOT NULL DEFAULT 0, network_bytes_out INTEGER NOT NULL DEFAULT 0, network_call_count INTEGER NOT NULL DEFAULT 0, network_by_host TEXT NOT NULL DEFAULT '{\"hosts\": []}' )",
+      "table": "tasks",
+      "type": "table"
+    }
+  ],
+  "target_schema_version": 14
+}

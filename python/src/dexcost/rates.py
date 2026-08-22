@@ -66,6 +66,13 @@ def _positive_decimal(value: Decimal | str, *, path: str) -> Decimal:
     return amount
 
 
+def _decimal_text(value: Decimal) -> str:
+    """Canonical plain decimal text shared with the TypeScript SDK."""
+    if value.is_zero():
+        return "0"
+    return format(value.normalize(), "f")
+
+
 class RateRegistry:
     """Registry of per-service cost rates for non-LLM services.
 
@@ -276,7 +283,7 @@ class RateRegistry:
             service_entry = self._rates[service]
             rates_data[service] = {
                 "per": service_entry.per,
-                "cost_usd": str(service_entry.cost_usd),
+                "cost_usd": _decimal_text(service_entry.cost_usd),
             }
         infrastructure_data: dict[str, dict[str, dict[str, str]]] = {}
         for kind in sorted(_INFRASTRUCTURE_UNITS):
@@ -287,7 +294,7 @@ class RateRegistry:
                 infrastructure_entry = self._infrastructure_rates[(entry_kind, key)]
                 entries[key] = {
                     "per": infrastructure_entry.per,
-                    "cost_usd": str(infrastructure_entry.cost_usd),
+                    "cost_usd": _decimal_text(infrastructure_entry.cost_usd),
                 }
             if entries:
                 infrastructure_data[kind] = entries
@@ -307,14 +314,14 @@ class RateRegistry:
             service_entry = self._rates[service]
             # Preserve the established service-only pricing version.
             parts.append(
-                f"{service}:{service_entry.per}:{service_entry.cost_usd}"
+                f"{service}:{service_entry.per}:{_decimal_text(service_entry.cost_usd)}"
             )
         for kind, key in sorted(self._infrastructure_rates):
             infrastructure_entry = self._infrastructure_rates[(kind, key)]
             parts.append(
                 "infrastructure:"
                 f"{kind}:{key}:{infrastructure_entry.per}:"
-                f"{infrastructure_entry.cost_usd}"
+                f"{_decimal_text(infrastructure_entry.cost_usd)}"
             )
         raw = "|".join(parts)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]

@@ -1,0 +1,27 @@
+{
+  "case_id": "pricing.explanation.catalog_release",
+  "input_event": {
+    "event_id": "77777777-7777-4777-8777-777777777777",
+    "task_id": "22222222-2222-4222-8222-222222222222",
+    "event_type": "llm_call", "provider": "openai", "model": "gpt-5",
+    "input_tokens": 100, "output_tokens": 25, "cached_tokens": 10,
+    "cost_usd": "0.0125", "cost_confidence": "computed",
+    "pricing_source": "sdk_catalog", "pricing_version": "catalog-release:42:aaaaaaaaaaaa"
+  },
+  "expected": {
+    "event_id": "77777777-7777-4777-8777-777777777777",
+    "task_id": "22222222-2222-4222-8222-222222222222",
+    "event_type": "llm_call", "component": "llm", "status": "provisional",
+    "authority": "sdk_evidence", "amount_usd": "0.0125", "confidence": "computed",
+    "pricing_source": "sdk_catalog", "pricing_version": "catalog-release:42:aaaaaaaaaaaa",
+    "selected_rule": "sdk_catalog",
+    "inputs": { "cached_tokens": "10", "input_tokens": "100", "model": "gpt-5", "output_tokens": "25" },
+    "provenance": {
+      "catalog_source": "active", "stale": false, "workspace_overlay": false,
+      "release_id": "catalog-release-test-42", "release_sequence": 42,
+      "artifact_kind": "llm_prices",
+      "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifact_schema_version": "1", "safety_policy_version": "catalog-safety-v1"
+    }
+  }
+}

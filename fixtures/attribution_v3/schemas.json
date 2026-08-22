@@ -280,6 +280,22 @@
         ],
         "additionalProperties": false
       },
+      "AttributionCapabilityIdentity": {
+        "type": "object",
+        "description": "Cross-provider identity for the reusable tool, skill, workflow, or extension that caused the observed work.",
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$", "maxLength": 128 },
+          "kind": { "type": "string", "enum": ["tool", "skill", "workflow", "extension", "other"] },
+          "namespace": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$", "maxLength": 128 },
+          "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "source": { "type": "string", "enum": ["built_in", "project", "user", "plugin", "marketplace", "remote", "other"] },
+          "source_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "invocation": { "type": "string", "enum": ["explicit", "automatic", "nested", "scheduled", "remote", "other"] }
+        },
+        "required": ["name", "kind"],
+        "dependentRequired": { "source_id": ["source"] },
+        "additionalProperties": false
+      },
       "AttributionTraceIdentity": {
         "type": "object",
         "description": "Optional W3C trace correlation identity.",
@@ -558,6 +574,9 @@
           },
           "resource": {
             "$ref": "#/components/schemas/AttributionResource"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/AttributionCapabilityIdentity"
           },
           "operation": {
             "$ref": "#/components/schemas/AttributionOperationIdentity"

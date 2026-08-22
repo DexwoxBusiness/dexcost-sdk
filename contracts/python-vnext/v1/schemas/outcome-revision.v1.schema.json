@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/outcome-revision.v1.json",
+  "title": "DexCost outcome revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "outcome_id", "task_id", "name", "effective_at", "observed_at", "lifecycle"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "outcome_id": { "$ref": "#/$defs/uuid" },
+    "task_id": { "$ref": "#/$defs/uuid" },
+    "name": { "$ref": "#/$defs/canonical" },
+    "effective_at": { "$ref": "#/$defs/timestamp" },
+    "observed_at": { "$ref": "#/$defs/timestamp" },
+    "lifecycle": {
+      "type": "object", "additionalProperties": false, "required": ["state", "revision"],
+      "properties": {
+        "state": { "enum": ["pending", "achieved", "missed", "voided"] },
+        "revision": { "$ref": "#/$defs/revision" }
+      }
+    },
+    "value": { "$ref": "#/$defs/businessValue" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "lifecycle": { "properties": { "state": { "enum": ["pending", "voided"] } } } } },
+      "then": { "not": { "required": ["value"] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "properties": { "state": { "const": "voided" } } } } },
+      "then": { "properties": { "lifecycle": { "properties": { "revision": { "minimum": 2 } } } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "canonical": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "businessValue": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "string" }, "value": { "type": "string", "minLength": 1, "maxLength": 1024 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "boolean" }, "value": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "integer" }, "value": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]{0,25})$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "decimal" }, "value": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]{0,25})(?:\\.[0-9]{1,12})?$" } } }
+      ]
+    }
+  }
+}

@@ -280,11 +280,11 @@ def _component_and_usage(
         cache_counters_are_disjoint = (
             "anthropic" in provider or "bedrock" in provider or provider == "aws"
         )
-        input_tokens = event.input_tokens or 0
+        input_tokens = Decimal(event.input_tokens or 0)
         if not cache_counters_are_disjoint:
-            if Decimal(cached) + cache_write > Decimal(input_tokens):
+            if Decimal(cached) + cache_write > input_tokens:
                 return None
-            input_tokens = Decimal(input_tokens) - Decimal(cached) - cache_write
+            input_tokens = input_tokens - Decimal(cached) - cache_write
         reasoning = _decimal_detail(details, "reasoning_output_tokens", "reasoning_tokens")
         output_tokens = Decimal(event.output_tokens or 0)
         if reasoning is not None:

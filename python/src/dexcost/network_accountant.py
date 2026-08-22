@@ -41,12 +41,12 @@ class NetworkAccountant:
         self._other = [0, 0, 0, 0]
         self._frozen = False
 
-    def __copy__(self) -> "NetworkAccountant":
+    def __copy__(self) -> NetworkAccountant:
         # threading.Lock is not copyable; a copied task must start a fresh,
         # empty accountant — it must not share or inherit frozen state.
         return NetworkAccountant()
 
-    def __deepcopy__(self, memo: dict) -> "NetworkAccountant":
+    def __deepcopy__(self, memo: dict[Any, Any]) -> NetworkAccountant:
         return NetworkAccountant()
 
     def record(

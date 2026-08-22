@@ -5,7 +5,8 @@
  * instance to `req.dexcostTask` so downstream handlers can record costs.
  */
 
-import type { CostTracker } from "../core/tracker.js";
+import type { CostTracker, TrackedTask } from "../core/tracker.js";
+import { runWithTask } from "../core/context.js";
 import { scrubUrl } from "../security/redaction.js";
 import { getNestedValue, resolveMiddlewareTracker } from "./shared.js";
 
@@ -25,7 +26,8 @@ export interface ExpressMiddlewareOptions {
 
   /**
    * Custom function to derive the task type from the request.
-   * Defaults to `"METHOD /path"`.
+   * Defaults to the canonical `"http.request"`; the scrubbed method and route
+   * are retained separately in task metadata.
    */
   taskType?: (req: unknown) => string;
 
@@ -111,7 +113,7 @@ export function createExpressMiddleware(
     // when callers pass absolute URLs through originalUrl.
     const url = scrubUrl(rawUrl);
 
-    const taskType = options.taskType?.(req) ?? `${method} ${url}`;
+    const taskType = options.taskType?.(req) ?? "http.request";
 
     const customerId = options.customerIdFrom
       ? getNestedValue(req, options.customerIdFrom)
@@ -123,34 +125,29 @@ export function createExpressMiddleware(
 
     const onFn = typeof resObj["on"] === "function" ? resObj["on"] as (event: string, cb: () => void) => void : null;
 
-    if (onFn) {
-      void tracker.track(
-        { taskType, customerId, projectId },
-        async (task) => {
-          reqObj["dexcostTask"] = task;
-          next();
-          await new Promise<void>((resolve) => {
-            onFn.call(resObj, "finish", () => {
-              const statusCode = typeof resObj["statusCode"] === "number" ? resObj["statusCode"] : 200;
-              const status = statusCode >= 400 ? "failed" : "success";
-              task.end(status);
-              resolve();
-            });
-          });
-        },
-      );
-    } else {
-      // Can't detect response end — finalize immediately after next()
-      void tracker.track(
-        { taskType, customerId, projectId },
-        async (task) => {
-          reqObj["dexcostTask"] = task;
-          next();
-          const statusCode = typeof resObj["statusCode"] === "number" ? resObj["statusCode"] : 200;
-          const status = statusCode >= 400 ? "failed" : "success";
-          task.end(status);
-        },
-      );
+    let task: TrackedTask;
+    try {
+      task = tracker.startTask({
+        taskType, customerId, projectId,
+        metadata: { httpMethod: method, httpRoute: url },
+      });
+    } catch {
+      next();
+      return;
+    }
+    reqObj["dexcostTask"] = task;
+    const finish = (): void => {
+      if (task.task.status !== "pending") return;
+      const statusCode = typeof resObj["statusCode"] === "number" ? resObj["statusCode"] : 200;
+      task.end(statusCode >= 400 ? "failed" : "success");
+    };
+    if (onFn) onFn.call(resObj, "finish", finish);
+    try {
+      runWithTask(task.task, next);
+      if (!onFn) finish();
+    } catch (error) {
+      if (task.task.status === "pending") task.end("failed");
+      throw error;
     }
   };
 }

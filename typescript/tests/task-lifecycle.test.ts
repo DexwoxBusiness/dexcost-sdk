@@ -39,6 +39,7 @@ import {
   resetServiceCatalog,
   getSessionManager,
 } from "../src/adapters/http.js";
+import { _resetCloudDetectForTests, _setResultForTests } from "../src/cloud-detect.js";
 
 let tmpDir: string;
 let buffer: EventBuffer;
@@ -47,6 +48,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "dexcost-lifecycle-test-"));
   buffer = new EventBuffer(join(tmpDir, "test.db"));
   clearContext();
+  _setResultForTests({ provider: "aws", region: "us-east-1", source: "env" });
 });
 
 afterEach(() => {
@@ -56,6 +58,7 @@ afterEach(() => {
   resetServiceCatalog();
   clearContext();
   vi.unstubAllGlobals();
+  _resetCloudDetectForTests();
   buffer.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });

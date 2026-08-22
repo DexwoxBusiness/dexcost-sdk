@@ -25,7 +25,12 @@ from typing import Any
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.context import (
+    _current_task,
+    get_current_task,
+    set_current_task,
+    suppress_network_event,
+)
 from dexcost.instruments._errors import error_type_of, finalize_failed_auto_task
 from dexcost.models.event import Event
 
@@ -42,6 +47,7 @@ TOOL_ERROR_TYPE = "tool_error"
 _active_tracker: Any | None = None  # CostTracker (lazy to avoid circular import)
 _patched: bool = False
 _originals: dict[str, Any] = {}
+_patched_owner: Any | None = None
 
 # ---------------------------------------------------------------------------
 # MCP tool name -> service catalog key mapping
@@ -389,13 +395,7 @@ def instrument_mcp(tracker: Any) -> None:
         ImportError: If the ``mcp`` package is not installed.
         RuntimeError: If instrumentation is already active.
     """
-    global _active_tracker, _patched
-
-    if _patched:
-        raise RuntimeError(
-            "MCP instrumentation is already active. "
-            "Call uninstrument_mcp() before re-instrumenting."
-        )
+    global _active_tracker, _patched, _patched_owner
 
     try:
         import mcp.client.session as _mod  # noqa: F401
@@ -405,9 +405,21 @@ def instrument_mcp(tracker: Any) -> None:
             "Install it with: pip install mcp"
         ) from exc
 
-    _active_tracker = tracker
-
     from mcp.client.session import ClientSession
+
+    if _patched:
+        if _patched_owner is ClientSession:
+            raise RuntimeError(
+                "MCP instrumentation is already active. "
+                "Call uninstrument_mcp() before re-instrumenting."
+            )
+        _originals.clear()
+        _active_tracker = None
+        _patched = False
+        _patched_owner = None
+
+    _active_tracker = tracker
+    _patched_owner = ClientSession
 
     _originals["call_tool"] = ClientSession.call_tool
 
@@ -425,19 +437,34 @@ def uninstrument_mcp() -> None:
 
     Safe to call even if instrumentation is not active (no-op).
     """
-    global _active_tracker, _patched
+    global _active_tracker, _patched, _patched_owner
 
     if not _patched:
         return
 
-    from mcp.client.session import ClientSession
+    try:
+        from mcp.client.session import ClientSession
+    except ImportError:
+        _originals.clear()
+        _active_tracker = None
+        _patched = False
+        _patched_owner = None
+        return
+
+    if _patched_owner is not ClientSession:
+        _originals.clear()
+        _active_tracker = None
+        _patched = False
+        _patched_owner = None
+        return
 
     if "call_tool" in _originals:
-        ClientSession.call_tool = _originals["call_tool"]
+        ClientSession.call_tool = _originals["call_tool"]  # type: ignore[method-assign]
 
     _originals.clear()
     _active_tracker = None
     _patched = False
+    _patched_owner = None
 
 
 # ---------------------------------------------------------------------------

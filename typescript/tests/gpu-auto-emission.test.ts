@@ -214,6 +214,50 @@ describe("local GPU usage-only opt in", () => {
       (event) => event.eventType === "gpu_cost",
     )).toHaveLength(0);
   });
+
+  test("uses an explicit normalized local GPU hourly rate", () => {
+    _setResultForTests({ provider: null, region: null, source: "none", instanceType: null });
+    const tracker = dexcost.init({
+      dbPath: join(tmpDir, "buf.db"), autoInstrument: [], storage: "local", trackHttp: false,
+    });
+    tracker.registerInfrastructureRate(
+      "gpu", "nvidia-geforce-rtx-5060-ti", "gpu_hour", "0.40",
+    );
+    const accountant = new GpuAccountant(GpuRuntimeKind.LocalGpu, {
+      provider: null, region: null, source: "none", instanceType: null,
+    });
+    (accountant as any).snapshotEndAndBuild = () => ({
+      costDetails: {
+        billing_model: "local_gpu_usage_only",
+        runtime_kind: "local_gpu",
+        cloud_provider: null,
+        gpu_vendor: "nvidia",
+        gpu_sku: "NVIDIA GeForce RTX 5060 Ti",
+        gpu_count: 1,
+        duration_ms: 1_800_000,
+        gpu_seconds_used: 1800,
+        instance_type: null,
+        vgpu_profile: null,
+        mig_profile: null,
+        cost_pending: true,
+      },
+      signalEvents: [],
+    });
+
+    const task = tracker.startTask({ taskType: "local-whisper" });
+    (task.task as any)._gpu = accountant;
+    task.task.startedAt = new Date(Date.now() - 1_800_000);
+    task.end("success");
+
+    const cost = tracker.buffer.queryEvents(task.task.taskId)
+      .find((event) => event.eventType === "gpu_cost")!;
+    expect(cost.costUsd.toString()).toBe("0.2");
+    expect(cost.pricingSource).toBe("rate_registry");
+    expect(cost.costConfidence).toBe("computed");
+    expect(cost.pricingVersion).toBe(tracker.rateRegistry.pricingVersion);
+    expect(task.task.gpuCostUsd.toString()).toBe("0.2");
+    expect(task.task.totalCostUsd.toString()).toBe("0.2");
+  });
 });
 
 describe("Decision #3 carve-out: signal events NEVER aggregated into gpuCostUsd", () => {

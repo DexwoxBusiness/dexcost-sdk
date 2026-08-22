@@ -18,21 +18,42 @@
 
 // Core
 export { CostTracker, TrackedTask } from "./core/tracker.js";
-export type { TrackerOptions } from "./core/tracker.js";
+export type {
+  TrackerOptions, TaskOptions, ToolCallOptions, TrackToolOptions,
+} from "./core/tracker.js";
 
 // Singleton / init pattern
 export {
   init,
   getTracker,
   globalTrack as track,
+  globalStartTask as task,
+  globalAttachTask as attachTask,
+  globalRecordCost as recordCost,
+  globalReportToolCall as reportToolCall,
+  globalTrackTool as trackTool,
+  globalRecordOutcome as recordOutcome,
+  globalGetOutcomeHistory as getOutcomeHistory,
+  globalRecordRevenue as recordRevenue,
+  globalGetRevenueHistory as getRevenueHistory,
+  globalExplainPricing as explainPricing,
   globalFlush as flush,
   flushBeforeFreeze,
   globalClose as close,
   globalCloseAsync as closeAsync,
   setApiKey,
+  globalDeliveryStatus as deliveryStatus,
+  globalCatalogStatus as catalogStatus,
+  globalImportCatalogBundle as importCatalogBundle,
+  globalExportCatalogBundle as exportCatalogBundle,
 } from "./core/tracker.js";
+export { ToolUsage } from "./core/tool.js";
+export type {
+  ToolQuantityInput, ToolCostInput, ToolDimensionInput, ToolOperationStatus,
+} from "./core/tool.js";
 export {
   getCurrentTask,
+  setCurrentTask,
   runWithTask,
   setContext,
   getContext,
@@ -40,6 +61,38 @@ export {
   runWithContext,
 } from "./core/context.js";
 export type { DexcostContext } from "./core/context.js";
+export {
+  validateCapability,
+  capabilityToDict,
+  getCapability,
+  setCapability,
+  runWithCapability,
+  runWithCapability as capabilityContext,
+  defaultToolCapability,
+} from "./core/capabilities.js";
+export type {
+  CapabilityIdentity, CapabilityKind, CapabilitySource, CapabilityInvocation,
+} from "./core/capabilities.js";
+export {
+  getIdempotencyKey, setIdempotencyKey,
+  runWithIdempotencyKey, runWithIdempotencyKey as idempotencyKey,
+  idempotencyHash, equivalentIdempotentEvent,
+} from "./core/idempotency.js";
+export {
+  OutcomeRevision, RevenueRevision, outcomeValue, revenueAmount,
+} from "./core/business.js";
+export type {
+  OutcomeInput, OutcomeState, OutcomeValue, OutcomeValueType,
+  RevenueInput, RevenueState, RevenueSource, RevenueSourceType, RevenueAmount,
+} from "./core/business.js";
+export {
+  ProviderJobRevision, providerJobEventId, providerJobFromDict,
+} from "./core/provider-jobs.js";
+export type {
+  ProviderJobRevisionOptions, ProviderJobStatus, ProviderJobUsageLine,
+  ProviderJobCostSource, ProviderJobCostConfidence,
+} from "./core/provider-jobs.js";
+export { toBusinessIdentityRevision } from "./core/business-identity.js";
 export {
   createTask,
   createCostEvent,
@@ -119,6 +172,11 @@ export type {
   AttributionUsagePeriodV3,
   AttributionObservationV3,
   AttributionEventV3,
+  AttributionCapabilityIdentityV3,
+  AttributionCapabilityKindV3,
+  AttributionCapabilitySourceV3,
+  AttributionCapabilityInvocationV3,
+  AttributionOperationErrorV3,
 } from "./attribution/v3-types.js";
 export {
   validateAttributionObservationV3,
@@ -151,6 +209,26 @@ export { isDevMode } from "./dev-console.js";
 // Transport
 export { EventBuffer } from "./transport/buffer.js";
 export { EventPusher } from "./transport/pusher.js";
+export {
+  DeliveryStatus,
+  localDeliveryStatus,
+  onDeliveryError,
+  removeDeliveryErrorCallback,
+} from "./transport/delivery.js";
+export type {
+  DeliveryWorkerState, DeliveryErrorOperation, DeliveryErrorEvent,
+  DeliveryErrorCallback, DeliveryStatusOptions,
+} from "./transport/delivery.js";
+
+// Webhook verification
+export {
+  WebhookVerificationError,
+  verifyWebhookSignature,
+  assertWebhookSignature,
+} from "./webhooks.js";
+export type {
+  WebhookSecret, WebhookHeader, WebhookVerificationOptions,
+} from "./webhooks.js";
 
 // Security
 export {
@@ -162,11 +240,22 @@ export {
 
 // Pricing
 export { PricingEngine } from "./pricing/engine.js";
-export type { CostResult } from "./pricing/engine.js";
+export type { CostResult, MeteredCostLine, MeteredCostResult } from "./pricing/engine.js";
+export {
+  PricingProvenance,
+  PricingExplanation,
+  registerPricingProvenance,
+  pricingProvenanceForEvent,
+  applyEventPricingProvenance,
+  explainEventPricing,
+} from "./pricing/explain.js";
+export type {
+  PricingExplanationStatus, PricingProvenanceOptions, PricingExplanationOptions,
+} from "./pricing/explain.js";
 
 // Rate Registry
 export { RateRegistry } from "./pricing/rates.js";
-export type { RateEntry } from "./pricing/rates.js";
+export type { RateEntry, InfrastructureRateEntry } from "./pricing/rates.js";
 
 // Retry Heuristics
 export { RetryHeuristicEngine, TRANSIENT_ERRORS, ERROR_LIKELIHOODS } from "./core/heuristics.js";
@@ -175,6 +264,22 @@ export type { HeuristicMatch } from "./core/heuristics.js";
 // Instruments
 export { ALL_SUPPORTED_INSTRUMENTS } from "./instruments/index.js";
 export type { InstrumentName } from "./instruments/index.js";
+export { globalInstrument as instrument, globalUninstrument as uninstrument } from "./core/tracker.js";
+export {
+  instrumentOpenAI, uninstrumentOpenAI,
+  instrumentAnthropic, uninstrumentAnthropic,
+  instrumentVercelAI, uninstrumentVercelAI,
+  instrumentGemini, uninstrumentGemini,
+  instrumentGoogleGenAI, uninstrumentGoogleGenAI,
+  instrumentBedrock, uninstrumentBedrock,
+  instrumentCohere, uninstrumentCohere,
+  instrumentMcp, uninstrumentMcp,
+  instrumentLiteLLM, uninstrumentLiteLLM,
+  instrumentOllama, uninstrumentOllama,
+  instrumentOpenRouter, uninstrumentOpenRouter,
+  instrumentPerplexity, uninstrumentPerplexity,
+  instrumentFal, uninstrumentFal,
+} from "./instruments/public.js";
 
 // Middleware
 export { createExpressMiddleware } from "./middleware/express.js";
@@ -192,6 +297,45 @@ export { SessionManager } from "./core/session.js";
 // Service Catalog
 export { ServiceCatalog } from "./pricing/service-catalog.js";
 export type { ServiceEntry, CostExtractionResult } from "./pricing/service-catalog.js";
+export {
+  CATALOG_KINDS,
+  CATALOG_SDK_CONTRACT_VERSION,
+  CATALOG_SIGNATURE_DOMAIN,
+  CATALOG_BUNDLE_MAX_BYTES,
+  CatalogError,
+  CatalogValidationError,
+  CatalogDowngradeError,
+  CatalogReleaseStore,
+  CatalogReleaseClient,
+  CatalogOverlayClient,
+  parseCatalogManifest,
+  parseCatalogOverlay,
+  validateCatalogArtifact,
+  catalogManifestSigningPayload,
+  verifyCatalogManifestSignature,
+  encodeCatalogBundle,
+  parseCatalogBundle,
+} from "./pricing/catalog-releases.js";
+export type {
+  CatalogKind,
+  CatalogChannel,
+  CatalogArtifactDescriptor,
+  CatalogManifest,
+  CatalogSnapshot,
+  CatalogRefreshResult,
+  WorkspaceRateKind,
+  WorkspaceRateOverride,
+  CatalogWorkspaceOverlay,
+  CatalogOverlayRefreshResult,
+  CatalogTrustPolicy,
+  ParsedCatalogBundle,
+} from "./pricing/catalog-releases.js";
+export { CatalogRuntime } from "./pricing/catalog-runtime.js";
+export type {
+  CatalogRuntimeOptions,
+  CatalogRuntimeStatus,
+  CatalogRuntimeTargets,
+} from "./pricing/catalog-runtime.js";
 
 // Adapters
 export {
@@ -253,7 +397,7 @@ export type {
 export { setDebugMode, isDebugMode } from "./core/debug.js";
 
 // Schema Validation
-export { validate } from "./schema/validate.js";
+export { validate, SchemaNotFoundError } from "./schema/validate.js";
 
 // Client Wrappers
 export { TrackedOpenAI, TrackedAnthropic, wrapOpenAI, wrapAnthropic } from "./clients.js";

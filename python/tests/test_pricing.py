@@ -61,6 +61,23 @@ def minimal_data(tmp_path: Path) -> Path:
             "output_cost_per_token": 0.0000015,
             "litellm_provider": "openai",
         },
+        "gpt-image-test": {
+            "input_cost_per_token": 0.000005,
+            "input_cost_per_image_token": 0.000008,
+            "output_cost_per_image_token": 0.00003,
+            "litellm_provider": "openai",
+            "mode": "image_generation",
+        },
+        "tts-test": {
+            "input_cost_per_character": 0.00001,
+            "litellm_provider": "openai",
+            "mode": "audio_speech",
+        },
+        "video-test-high-res": {
+            "output_cost_per_video_per_second": 0.5,
+            "litellm_provider": "openai",
+            "mode": "video_generation",
+        },
     }
     path = tmp_path / "model_cost_map.json"
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -146,6 +163,64 @@ class TestKnownModels:
         result = engine.get_cost("gpt-4o", input_tokens=0, output_tokens=0)
         assert result.cost_usd == Decimal("0")
         assert result.cost_confidence == "computed"
+
+
+class TestMeteredCosts:
+    def test_prices_disjoint_image_token_modalities(self, engine: PricingEngine) -> None:
+        result = engine.get_metered_cost(
+            "gpt-image-test",
+            {
+                "input_tokens": 100,
+                "input_image_tokens": 20,
+                "output_image_tokens": 400,
+            },
+        )
+        assert result.cost_usd == Decimal("0.01266")
+        assert result.cost_confidence == "computed"
+        assert result.resolved_model == "gpt-image-test"
+        assert [line.dimension for line in result.lines] == [
+            "input_image_tokens",
+            "input_tokens",
+            "output_image_tokens",
+        ]
+        assert result.unpriced_dimensions == ()
+
+    def test_prices_privacy_safe_character_count(self, engine: PricingEngine) -> None:
+        result = engine.get_metered_cost("tts-test", {"characters": "250"})
+        assert result.cost_usd == Decimal("0.00250")
+        assert result.cost_confidence == "computed"
+
+    def test_candidate_selects_resolution_specific_video_sku(
+        self, engine: PricingEngine
+    ) -> None:
+        result = engine.get_metered_cost(
+            "video-test",
+            {"output_video_seconds": 8},
+            model_candidates=("video-test-high-res",),
+        )
+        assert result.cost_usd == Decimal("4.0")
+        assert result.resolved_model == "video-test-high-res"
+
+    def test_partial_pricing_is_never_reported_complete(self, engine: PricingEngine) -> None:
+        result = engine.get_metered_cost(
+            "gpt-image-test",
+            {"input_tokens": 100, "provider_new_meter": 7},
+        )
+        assert result.cost_usd == Decimal("0.000500")
+        assert result.cost_confidence == "unknown"
+        assert result.unpriced_dimensions == ("provider_new_meter",)
+
+    def test_unknown_model_retains_unpriced_dimensions(self, engine: PricingEngine) -> None:
+        result = engine.get_metered_cost("missing", {"characters": 10})
+        assert result.cost_usd == Decimal(0)
+        assert result.cost_confidence == "unknown"
+        assert result.pricing_source == "unknown"
+        assert result.unpriced_dimensions == ("characters",)
+
+    @pytest.mark.parametrize("bad", [True, 1.5, Decimal("NaN"), -1])
+    def test_rejects_unsafe_quantities(self, engine: PricingEngine, bad: object) -> None:
+        with pytest.raises((TypeError, ValueError)):
+            engine.get_metered_cost("tts-test", {"characters": bad})  # type: ignore[dict-item]
 
 
 # ---------------------------------------------------------------------------

@@ -193,6 +193,66 @@ def test_unknown_explicit_meter_remains_visible_and_unpriced() -> None:
     assert "cost_evidence" not in converted
 
 
+def test_multimodal_operation_preserves_each_native_usage_meter() -> None:
+    event = _event(
+        event_type="external_cost",
+        provider="openai",
+        model="gpt-image-2",
+        service_name="image_generation",
+        cost_usd=Decimal("0.0432"),
+        cost_confidence="computed",
+        pricing_source="litellm",
+        pricing_version="catalog:2026-08-21",
+        details={
+            "attribution_component": "external",
+            "attribution_operation_name": "openai.images.generate",
+            "attribution_resource_type": "model",
+            "attribution_resource_id": "gpt-image-2",
+            "attribution_usage_lines": [
+                {"metric": "input_tokens", "quantity": "120", "unit": "Tokens"},
+                {
+                    "metric": "input_image_tokens",
+                    "quantity": "200",
+                    "unit": "Tokens",
+                },
+                {
+                    "metric": "output_image_tokens",
+                    "quantity": "900",
+                    "unit": "Tokens",
+                },
+                {"metric": "image_count", "quantity": "1", "unit": "Images"},
+            ],
+        },
+    )
+    first = to_attribution_observation_v3(event)
+    second = to_attribution_observation_v3(event)
+    assert first == second
+    assert first is not None
+    assert first["operation"]["name"] == "openai.images.generate"
+    assert first["resource"] == {"type": "model", "id": "gpt-image-2"}
+    assert [(line["metric"], line["quantity"], line["unit"]) for line in first["usage"]] == [
+        ("input_tokens", "120", "Tokens"),
+        ("input_image_tokens", "200", "Tokens"),
+        ("output_image_tokens", "900", "Tokens"),
+        ("image_count", "1", "Images"),
+    ]
+    assert len({line["line_id"] for line in first["usage"]}) == 4
+    assert validate_attribution_observation_v3(first).success
+
+
+def test_multimodal_usage_rejects_duplicate_meter_and_unit_pairs() -> None:
+    event = _event(
+        event_type="external_cost",
+        details={
+            "attribution_usage_lines": [
+                {"metric": "image_count", "quantity": "1", "unit": "Images"},
+                {"metric": "image_count", "quantity": "2", "unit": "Images"},
+            ]
+        },
+    )
+    assert to_attribution_observation_v3(event) is None
+
+
 def test_gpu_utilization_is_non_monetary_extensible_usage() -> None:
     converted = to_attribution_observation_v3(
         _event(
@@ -285,3 +345,5 @@ def test_retry_chain_persists_one_operation_root_and_increasing_attempts(
         # error identity onto the wire.
         "error": {"type": "rate_limit"},
     }
+    task.end(status="failed")
+    storage.close()

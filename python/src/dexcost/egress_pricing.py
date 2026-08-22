@@ -49,6 +49,7 @@ class EgressRate:
     """The result of an egress-rate lookup."""
 
     rate_per_gb: Decimal
+    billing_unit: str
     pricing_source: str
     cost_confidence: str  # exact | computed | estimated
 
@@ -61,15 +62,29 @@ class EgressPricingEngine:
             ``data/egress_prices.json``.
     """
 
-    def __init__(self, catalog_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path | None = None,
+        *,
+        catalog_data: dict[str, Any] | None = None,
+        catalog_version: str | None = None,
+        rate_overrides: dict[str, tuple[Decimal, str]] | None = None,
+    ) -> None:
+        if catalog_path is not None and catalog_data is not None:
+            raise ValueError("catalog_path and catalog_data are mutually exclusive")
         self._catalog: dict[str, Any] = {}
         self._catalog_path = catalog_path
+        self._catalog_data = catalog_data
+        self._catalog_version_override = catalog_version
+        self._rate_overrides = rate_overrides or {}
         self._catalog_version: str = "unknown"
         self._load()
 
     def _load(self) -> None:
         try:
-            if self._catalog_path is not None:
+            if self._catalog_data is not None:
+                raw = json.dumps(self._catalog_data, sort_keys=True, separators=(",", ":"))
+            elif self._catalog_path is not None:
                 raw = Path(self._catalog_path).read_text(encoding="utf-8")
             else:
                 raw = (
@@ -102,7 +117,9 @@ class EgressPricingEngine:
             return
 
         meta = self._catalog.get("_meta", {})
-        self._catalog_version = str(meta.get("version", "unknown"))
+        self._catalog_version = self._catalog_version_override or str(
+            meta.get("version", "unknown")
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,6 +133,7 @@ class EgressPricingEngine:
         """Rate for a call classified as internal traffic — always free."""
         return EgressRate(
             rate_per_gb=Decimal("0"),
+            billing_unit="gb_egress",
             pricing_source="egress_catalog:internal",
             cost_confidence="exact",
         )
@@ -132,6 +150,20 @@ class EgressPricingEngine:
             ``Decimal("0.09")``, ``estimated``.
         """
         if provider:
+            keys = [f"{provider}:{region}", provider] if region else [provider]
+            for key in keys:
+                override = self._rate_overrides.get(key)
+                if override is not None:
+                    amount, billing_unit = override
+                    return EgressRate(
+                        rate_per_gb=amount,
+                        billing_unit=billing_unit,
+                        pricing_source=(
+                            f"workspace_overlay:egress:{key}:{billing_unit}"
+                        ),
+                        cost_confidence="computed",
+                    )
+        if provider:
             block = self._catalog.get(provider)
             if isinstance(block, dict):
                 regions = block.get("regions", {})
@@ -146,29 +178,34 @@ class EgressPricingEngine:
                     else:
                         return EgressRate(
                             rate_per_gb=rate,
+                            billing_unit="gb_egress",
                             pricing_source=f"egress_catalog:{provider}:{region}",
                             cost_confidence="computed",
                         )
+                prov_default: Decimal | None
                 try:
                     prov_default = Decimal(str(block.get("default_usd_per_gb", "")))
                 except (InvalidOperation, TypeError):
-                    prov_default = None  # type: ignore[assignment]
+                    prov_default = None
                 if prov_default is not None:
                     return EgressRate(
                         rate_per_gb=prov_default,
+                        billing_unit="gb_egress",
                         pricing_source=f"egress_catalog:{provider}:default",
                         cost_confidence="estimated",
                     )
 
         meta = self._catalog.get("_meta") if self._catalog else None
         if isinstance(meta, dict):
+            meta_rate: Decimal | None
             try:
-                rate = Decimal(str(meta.get("default_rate_usd_per_gb", "")))
+                meta_rate = Decimal(str(meta.get("default_rate_usd_per_gb", "")))
             except (InvalidOperation, TypeError):
-                rate = None  # type: ignore[assignment]
-            if rate is not None:
+                meta_rate = None
+            if meta_rate is not None:
                 return EgressRate(
-                    rate_per_gb=rate,
+                    rate_per_gb=meta_rate,
+                    billing_unit="gb_egress",
                     pricing_source="egress_catalog:default",
                     cost_confidence="estimated",
                 )
@@ -180,6 +217,7 @@ class EgressPricingEngine:
 
         return EgressRate(
             rate_per_gb=_HARDCODED_DEFAULT,
+            billing_unit="gb_egress",
             pricing_source="egress_catalog:default",
             cost_confidence="estimated",
         )

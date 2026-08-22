@@ -14,6 +14,8 @@ import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { applyEventCapability, defaultToolCapability } from "../core/capabilities.js";
+import { applyEventIdempotency } from "../core/idempotency.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -362,7 +364,7 @@ const MCP_TOOL_MAP: Record<string, string> = {
  * injected, the dynamic import will throw and the function will reject.
  */
 export async function instrumentMcp(
-  _pricing: PricingEngine,
+  pricing: PricingEngine,
   buffer: EventBuffer,
 ): Promise<void> {
   if (_patched) return;
@@ -379,6 +381,7 @@ export async function instrumentMcp(
 
   _original = ClientProto.callTool;
   _buffer = buffer;
+  void pricing;
 
   ClientProto.callTool = async function (
     this: any,
@@ -480,6 +483,7 @@ function recordMcpEvent(
     costConfidence,
     pricingSource,
     serviceName: `mcp:${toolName}`,
+    provider: "mcp",
     latencyMs,
     isRetry: false,
     details: {
@@ -487,8 +491,17 @@ function recordMcpEvent(
       mcp_server: mcpServer,
       latency_ms: latencyMs,
       is_error: isError,
+      attribution_component: "external",
+      attribution_operation_name: "mcp.call_tool",
+      attribution_operation_status: isError ? "failed" : "succeeded",
+      attribution_error_type: isError ? "mcp_error" : undefined,
+      attribution_resource_type: "tool",
+      attribution_resource_id: toolName,
+      attribution_usage_lines: [{ metric: "call_count", quantity: "1", unit: "Calls" }],
     },
   });
+  applyEventCapability(event, defaultToolCapability(toolName));
+  applyEventIdempotency(event);
 
   _buffer.addEvent(event);
 

@@ -1,0 +1,31 @@
+{
+  "case_id": "provider_job.openrouter_video",
+  "revisions": [
+    {
+      "schema_version": "1", "event_id": "edf683b5-f05d-5187-94fd-a967e2bb0b34", "revision": 1,
+      "task_id": "22222222-2222-4222-8222-222222222222", "provider": "openrouter", "service": "video",
+      "provider_record_id": "job-42", "operation": "videos.create", "component": "video_generation",
+      "event_type": "external_cost", "resource_type": "model", "resource_id": "openai/sora-2",
+      "status": "submitted", "submitted_at": "2026-08-11T10:00:00Z", "observed_at": "2026-08-11T10:00:00Z",
+      "owns_task": false, "billing_dimensions": [{ "key": "resolution", "value": "1080p" }], "usage": [],
+      "cost_amount": null, "cost_source": null, "cost_confidence": null, "pricing_version": null,
+      "latency_ms": null, "error_type": null, "error_code": null,
+      "task_input_tokens": null, "task_output_tokens": null, "task_cached_tokens": null,
+      "capability": { "name": "marketing.video", "kind": "skill", "source": "project", "source_id": "video-v2", "invocation": "automatic" }
+    },
+    {
+      "schema_version": "1", "event_id": "edf683b5-f05d-5187-94fd-a967e2bb0b34", "revision": 2,
+      "task_id": "22222222-2222-4222-8222-222222222222", "provider": "openrouter", "service": "video",
+      "provider_record_id": "job-42", "operation": "videos.create", "component": "video_generation",
+      "event_type": "external_cost", "resource_type": "model", "resource_id": "openai/sora-2",
+      "status": "succeeded", "submitted_at": "2026-08-11T10:00:00Z", "observed_at": "2026-08-11T10:02:10Z",
+      "owns_task": false, "billing_dimensions": [{ "key": "resolution", "value": "1080p" }],
+      "usage": [{ "metric": "video_seconds", "quantity": "12.5", "unit": "Seconds" }],
+      "cost_amount": "1.25", "cost_source": "provider_reported", "cost_confidence": "exact", "pricing_version": null,
+      "latency_ms": 130000, "error_type": null, "error_code": null,
+      "task_input_tokens": null, "task_output_tokens": null, "task_cached_tokens": null,
+      "capability": { "name": "marketing.video", "kind": "skill", "source": "project", "source_id": "video-v2", "invocation": "automatic" }
+    }
+  ],
+  "idempotency": "Repeating either full snapshot is a no-op; the same event_id/revision with different canonical content conflicts."
+}

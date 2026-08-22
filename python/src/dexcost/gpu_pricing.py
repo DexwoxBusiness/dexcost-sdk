@@ -62,6 +62,8 @@ def _warn_once(mode: str, message: str) -> None:
 _HOUR_S = Decimal("3600")
 _MS_PER_S = Decimal("1000")
 
+GpuRateResolution = tuple[Decimal, str, str]
+
 # Tier-4 hardcoded constants — must mirror _meta defaults in gpu_prices.json.
 _HARDCODED = {
     "per_instance_hour":     {"hourly_usd":     Decimal("55.04")},
@@ -146,9 +148,21 @@ class GpuPricingEngine:
             ``data/gpu_prices.json`` catalog.
     """
 
-    def __init__(self, catalog_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path | None = None,
+        *,
+        catalog_data: dict[str, Any] | None = None,
+        catalog_version: str | None = None,
+        rate_overrides: dict[tuple[str, str], Decimal] | None = None,
+    ) -> None:
+        if catalog_path is not None and catalog_data is not None:
+            raise ValueError("catalog_path and catalog_data are mutually exclusive")
         self._catalog: dict[str, Any] = {}
         self._catalog_path = catalog_path
+        self._catalog_data = catalog_data
+        self._catalog_version_override = catalog_version
+        self._rate_overrides = rate_overrides or {}
         self._catalog_version: str = "unknown"
         self._load()
 
@@ -158,7 +172,9 @@ class GpuPricingEngine:
 
     def _load(self) -> None:
         try:
-            if self._catalog_path is not None:
+            if self._catalog_data is not None:
+                raw = json.dumps(self._catalog_data, sort_keys=True, separators=(",", ":"))
+            elif self._catalog_path is not None:
                 raw = Path(self._catalog_path).read_text(encoding="utf-8")
             else:
                 raw = (
@@ -192,7 +208,9 @@ class GpuPricingEngine:
             return
 
         meta = self._catalog.get("_meta", {})
-        self._catalog_version = str(meta.get("version", "unknown"))
+        self._catalog_version = self._catalog_version_override or str(
+            meta.get("version", "unknown")
+        )
 
     @property
     def catalog_version(self) -> str:
@@ -217,8 +235,10 @@ class GpuPricingEngine:
         """
         billing_model = (details or {}).get("billing_model") or "unknown"
         try:
-            cost = self._dispatch(billing_model, details, cloud_env, window_s)
-        except Exception as exc:  # noqa: BLE001 — Tier 5 fail-silent
+            cost = self._workspace_override(billing_model, details)
+            if cost is None:
+                cost = self._dispatch(billing_model, details, cloud_env, window_s)
+        except Exception as exc:
             _warn_once(
                 f"gpu_pricing_failure:{billing_model}",
                 f"gpu pricing failed for billing_model={billing_model}: "
@@ -241,6 +261,42 @@ class GpuPricingEngine:
                 ),
             )
         return cost
+
+    def _workspace_override(
+        self,
+        billing_model: str,
+        details: dict[str, Any],
+    ) -> GpuCost | None:
+        unit_by_model = {
+            "per_gpu_second_active": "gpu_second",
+            "per_instance_hour": "instance_hour",
+            "per_gpu_hour_reserved": "gpu_hour",
+            "per_vgpu_hour": "vgpu_hour",
+        }
+        unit = unit_by_model.get(billing_model)
+        key = details.get("gpu_sku")
+        if unit is None or not isinstance(key, str) or not key:
+            return None
+        amount = self._rate_overrides.get((key, unit))
+        if amount is None:
+            return None
+        gpu_seconds = Decimal(str(details["gpu_seconds_used"]))
+        if unit == "gpu_second":
+            quantity = gpu_seconds
+        elif unit in {"gpu_hour", "vgpu_hour"}:
+            quantity = gpu_seconds / _HOUR_S
+        else:
+            gpu_count = Decimal(str(details["gpu_count"]))
+            quantity = (
+                Decimal("0")
+                if gpu_count <= 0
+                else gpu_seconds / gpu_count / _HOUR_S
+            )
+        return GpuCost(
+            cost_usd=quantity * amount,
+            pricing_source=f"workspace_overlay:gpu:{key}:{unit}",
+            cost_confidence="computed",
+        )
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -279,8 +335,12 @@ class GpuPricingEngine:
 
     # ─── per_gpu_second_active ────────────────────────────────────────────
 
-    def _per_gpu_second(self, details, cloud_env) -> GpuCost:
-        """gpu_seconds_used × rate_per_gpu_second_usd. Highest-precision regime."""
+    def _per_gpu_second(
+        self,
+        details: dict[str, Any],
+        cloud_env: CloudEnv,
+    ) -> GpuCost:
+        """gpu_seconds_used x rate_per_gpu_second_usd. Highest-precision regime."""
         provider = cloud_env.provider
         gpu_sku = details.get("gpu_sku")
         rate, source, confidence = self._resolve_per_gpu_second_rate(
@@ -290,7 +350,12 @@ class GpuPricingEngine:
         cost = gpu_seconds * rate
         return GpuCost(cost, source, confidence)
 
-    def _resolve_per_gpu_second_rate(self, provider, gpu_sku, details):
+    def _resolve_per_gpu_second_rate(
+        self,
+        provider: str | None,
+        gpu_sku: str | None,
+        details: dict[str, Any],
+    ) -> GpuRateResolution:
         """Walk per_gpu_second_active providers; handle RunPod's on_demand nesting."""
         if provider and gpu_sku:
             block = self._catalog.get(provider, {}).get("per_gpu_second_active")
@@ -327,8 +392,13 @@ class GpuPricingEngine:
 
     # ─── per_instance_hour ────────────────────────────────────────────────
 
-    def _per_instance_hour(self, details, cloud_env, window_s) -> GpuCost:
-        """share_factor × window_hours × instance_hourly_usd."""
+    def _per_instance_hour(
+        self,
+        details: dict[str, Any],
+        cloud_env: CloudEnv,
+        window_s: Decimal | None,
+    ) -> GpuCost:
+        """share_factor x window_hours x instance_hourly_usd."""
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         provider = cloud_env.provider
@@ -346,14 +416,20 @@ class GpuPricingEngine:
         cost = task_instance_hours * hourly_rate
         return GpuCost(cost, source, confidence)
 
-    def _resolve_per_instance_rate(self, provider, region, instance_type, details):
+    def _resolve_per_instance_rate(
+        self,
+        provider: str | None,
+        region: str | None,
+        instance_type: str | None,
+        details: dict[str, Any],
+    ) -> GpuRateResolution:
         # Provider-block keys: aws.ec2_gpu, gcp.gce_gpu_bundled, azure.vm_gpu
         block_keys = {
             "aws":   "ec2_gpu",
             "gcp":   "gce_gpu_bundled",
             "azure": "vm_gpu",
         }
-        block_key = block_keys.get(provider)
+        block_key = block_keys.get(provider) if provider is not None else None
         if provider and block_key and instance_type and region:
             block = self._catalog.get(provider, {}).get(block_key, {})
             regions = block.get("regions", {})
@@ -373,8 +449,13 @@ class GpuPricingEngine:
 
     # ─── per_gpu_hour_reserved ────────────────────────────────────────────
 
-    def _per_gpu_hour(self, details, cloud_env, window_s) -> GpuCost:
-        """share_factor × window_hours × gpu_count × gpu_hourly_usd."""
+    def _per_gpu_hour(
+        self,
+        details: dict[str, Any],
+        cloud_env: CloudEnv,
+        window_s: Decimal | None,
+    ) -> GpuCost:
+        """share_factor x window_hours x gpu_count x gpu_hourly_usd."""
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         provider = cloud_env.provider
@@ -391,7 +472,12 @@ class GpuPricingEngine:
         cost = task_gpu_hours * gpu_hour_usd
         return GpuCost(cost, source, confidence)
 
-    def _resolve_per_gpu_hour_rate(self, provider, gpu_sku, details):
+    def _resolve_per_gpu_hour_rate(
+        self,
+        provider: str | None,
+        gpu_sku: str | None,
+        details: dict[str, Any],
+    ) -> GpuRateResolution:
         if provider and gpu_sku:
             block = self._catalog.get(provider, {}).get("per_gpu_hour_reserved")
             if isinstance(block, dict):
@@ -411,7 +497,11 @@ class GpuPricingEngine:
             block = self._catalog["gcp"].get("gce_gpu_attached", {})
             region = details.get("region")
             if region:
-                accelerators = block.get("regions", {}).get(region, {}).get("accelerator_types", {})
+                accelerators = (
+                    block.get("regions", {})
+                    .get(region, {})
+                    .get("accelerator_types", {})
+                )
                 for acc_key, entry in accelerators.items():
                     if entry.get("gpu_sku") == gpu_sku:
                         try:
@@ -428,8 +518,13 @@ class GpuPricingEngine:
 
     # ─── per_vgpu_hour (Azure NVadsA10 v5 fractional — Decision #10) ─────
 
-    def _per_vgpu_hour(self, details, cloud_env, window_s) -> GpuCost:
-        """share_factor × window_hours × vgpu_hourly_usd. vCount=1; frac in rate."""
+    def _per_vgpu_hour(
+        self,
+        details: dict[str, Any],
+        cloud_env: CloudEnv,
+        window_s: Decimal | None,
+    ) -> GpuCost:
+        """share_factor x window_hours x vgpu_hourly_usd. vCount=1; frac in rate."""
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         provider = cloud_env.provider
@@ -446,10 +541,21 @@ class GpuPricingEngine:
         cost = task_vgpu_hours * vgpu_hour_usd
         return GpuCost(cost, source, confidence)
 
-    def _resolve_per_vgpu_rate(self, provider, region, instance_type, details):
+    def _resolve_per_vgpu_rate(
+        self,
+        provider: str | None,
+        region: str | None,
+        instance_type: str | None,
+        details: dict[str, Any],
+    ) -> GpuRateResolution:
         if provider == "azure" and instance_type and region:
             block = self._catalog["azure"].get("vm_vgpu", {})
-            entry = block.get("regions", {}).get(region, {}).get("instance_types", {}).get(instance_type)
+            entry = (
+                block.get("regions", {})
+                .get(region, {})
+                .get("instance_types", {})
+                .get(instance_type)
+            )
             if entry:
                 try:
                     return (

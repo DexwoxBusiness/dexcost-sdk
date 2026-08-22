@@ -119,6 +119,10 @@ export interface GpuCost {
 export interface GpuPricingEngineOptions {
   catalogPath?: string;
   catalog?: Record<string, any>;
+  /** Explicit immutable release version for audit provenance. */
+  catalogVersion?: string;
+  /** key is `${gpu_sku}\0${billing_unit}`, value is an exact decimal string. */
+  rateOverrides?: ReadonlyMap<string, string>;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -137,14 +141,15 @@ function toDecimal(v: unknown): Decimal {
 export class GpuPricingEngine {
   private _catalog: Record<string, any> = {};
   private _catalogVersion = "unknown";
+  private _rateOverrides: ReadonlyMap<string, string>;
 
   constructor(opts?: GpuPricingEngineOptions) {
+    this._rateOverrides = opts?.rateOverrides ?? new Map();
     if (opts?.catalog !== undefined) {
       this._catalog = opts.catalog;
       const meta = (this._catalog as any)._meta;
-      if (meta && typeof meta === "object") {
-        this._catalogVersion = String(meta.version ?? "unknown");
-      }
+      this._catalogVersion = opts.catalogVersion
+        ?? (meta && typeof meta === "object" ? String(meta.version ?? "unknown") : "unknown");
       return;
     }
     this._load(opts?.catalogPath);
@@ -225,7 +230,8 @@ export class GpuPricingEngine {
     const billingModel = (details && details.billing_model) || "unknown";
     let cost: GpuCost;
     try {
-      cost = this._dispatch(billingModel, details, cloudEnv, windowS);
+      cost = this._workspaceOverride(billingModel, details)
+        ?? this._dispatch(billingModel, details, cloudEnv, windowS);
     } catch (exc) {
       _warnOnce(
         `gpu_pricing_failure:${billingModel}`,
@@ -249,6 +255,34 @@ export class GpuPricingEngine {
       };
     }
     return cost;
+  }
+
+  private _workspaceOverride(billingModel: string, details: Record<string, any>): GpuCost | null {
+    const unitByModel: Record<string, string> = {
+      per_gpu_second_active: "gpu_second",
+      per_instance_hour: "instance_hour",
+      per_gpu_hour_reserved: "gpu_hour",
+      per_vgpu_hour: "vgpu_hour",
+    };
+    const unit = unitByModel[billingModel];
+    const key = details?.gpu_sku;
+    if (!unit || typeof key !== "string" || key.length === 0) return null;
+    const rawRate = this._rateOverrides.get(`${key}\0${unit}`);
+    if (rawRate === undefined) return null;
+    const rate = new Decimal(rawRate);
+    const gpuSeconds = new Decimal(String(details.gpu_seconds_used));
+    let quantity: Decimal;
+    if (unit === "gpu_second") quantity = gpuSeconds;
+    else if (unit === "gpu_hour" || unit === "vgpu_hour") quantity = gpuSeconds.div(HOUR_S);
+    else {
+      const gpuCount = new Decimal(String(details.gpu_count));
+      quantity = gpuCount.lte(0) ? new Decimal(0) : gpuSeconds.div(gpuCount).div(HOUR_S);
+    }
+    return {
+      costUsd: quantity.mul(rate),
+      pricingSource: `workspace_overlay:gpu:${key}:${unit}`,
+      costConfidence: "computed",
+    };
   }
 
   // ------------------------------------------------------------------
