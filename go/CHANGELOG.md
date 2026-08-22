@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.12.0...go/v0.13.0) (2026-08-22)
+
+
+### Features
+
+* **sdk:** complete Python-first attribution, catalog runtime, and TypeScript parity ([#160](https://github.com/DexwoxBusiness/dexcost-sdk/issues/160)) ([914a6a6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/914a6a61c11c51c9403e6402a17f322356f6a4eb))
+
 ## [0.12.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/go/v0.11.0...go/v0.12.0) (2026-08-14)
 
 
