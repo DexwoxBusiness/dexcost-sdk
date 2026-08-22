@@ -16,6 +16,25 @@ With all LLM provider SDKs:
 pip install dexcost[all]
 ```
 
+Or install only the provider integration you use:
+
+```bash
+pip install "dexcost[openai]"
+pip install "dexcost[anthropic]"
+pip install "dexcost[litellm]"
+pip install "dexcost[gemini]"
+pip install "dexcost[bedrock]"
+pip install "dexcost[cohere]"
+pip install "dexcost[mcp]"
+pip install "dexcost[ollama]"
+pip install "dexcost[openrouter]"
+pip install "dexcost[perplexity]"
+pip install "dexcost[fal]"
+```
+
+The Gemini extra currently supports `google-genai` 1.x and 2.x and is bounded
+to `<3.0.0`, matching Google's announced next-major breaking-change boundary.
+
 ## Quick Start
 
 ### Global API (recommended)
@@ -55,6 +74,59 @@ with tracker.task(task_type="summarise_doc", customer_id="acme") as t:
     t.record_llm_call("openai", "gpt-4o", input_tokens=800, output_tokens=150)
     t.record_cost(service="pdf_parser", cost_usd="0.002")
 ```
+
+## CrewAI and Griptape
+
+Install only the framework integration you use:
+
+```bash
+pip install "dexcost[crewai]"
+pip install "dexcost[griptape]"
+```
+
+The wrappers preserve the original framework object and public method
+signatures. They create one canonical DexCost task when no task is active, or
+reuse the caller's active task. Sync, async, streaming, failure, cancellation,
+early-close, and framework-native tool events share that same lifecycle.
+
+```python
+import dexcost
+
+dexcost.init(api_key="dx_live_...")
+
+# Existing CrewAI Crew, Agent, LiteAgent, and Flow objects are supported.
+tracked_crew = dexcost.track_crewai(crew)
+crew_output = tracked_crew.kickoff(inputs={"topic": "unit economics"})
+
+# Existing Griptape Structure objects are supported without replacing drivers.
+tracked_agent = dexcost.track_griptape(agent)
+tracked_agent.run("Build the report")
+```
+
+For an instance tracker, pass it as the second argument:
+
+```python
+from dexcost.integrations import track_crewai, track_griptape
+
+tracked_crew = track_crewai(crew, tracker)
+tracked_structure = track_griptape(structure, tracker)
+```
+
+Provider instrumentation is the authoritative LLM-cost path and prevents
+double counting. Framework event fallback is opt-in for custom providers that
+DexCost cannot instrument:
+
+```python
+tracked_crew = dexcost.track_crewai(crew, capture_llm_events=True)
+```
+
+Do not enable that fallback for the same calls already captured by OpenAI,
+Anthropic, LiteLLM, Gemini, Bedrock, or another provider instrument. Native
+tool capture stores only bounded tool identity, opaque framework IDs, status,
+cache/attempt dimensions, and exact duration when the framework exposes it.
+Prompts, tool arguments, chain-of-thought, outputs, and error messages are not
+stored. See [FRAMEWORK-COMPATIBILITY.md](FRAMEWORK-COMPATIBILITY.md) for the
+current execution surface and compatibility evidence.
 
 ## Business outcomes
 
@@ -172,20 +244,33 @@ observation locally instead of shipping it.
 
 ## Auto-Instrumentation
 
-dexcost auto-instruments **6 LLM providers** and **5 HTTP libraries**.
+dexcost auto-instruments **10 AI provider SDKs**, the MCP tool client, and **5 HTTP libraries**.
 
 ### LLM Providers
 
 | Provider | Package | Auto-Patched Method |
 |----------|---------|-------------------|
-| OpenAI | `openai` | Chat Completions and Responses `create` (sync + async, including streams) |
+| OpenAI / Azure / compatible gateways | `openai` | Chat/legacy Completions, structured `parse`, Responses, embeddings, image generation/edit/variation, audio transcription/translation/speech, Azure host/deployment routing, and OpenRouter/Perplexity-compatible routing (sync + async, including native streams) |
 | Anthropic | `anthropic` | `messages.create` (sync + async) |
 | LiteLLM | `litellm` | `completion` / `acompletion` |
-| Google Gemini | `google-genai` | `models.generate_content` |
+| Google Gemini / Enterprise | `google-genai` | `Models` and `AsyncModels`: content generation/streaming, embeddings, image generation/upscale/edit/recontext/segmentation; foreground Interactions sync/async/SSE |
 | AWS Bedrock | `boto3` (botocore) | `invoke_model` |
 | Cohere | `cohere` | `chat` / `chat_stream` (sync + async) |
+| Ollama | `ollama` | Module singleton, `Client`, and `AsyncClient` chat/generate streams, current and legacy embeddings, web search, and web fetch |
+| OpenRouter | `openrouter` | Chat, Responses, embeddings, images, STT, TTS, rerank, video jobs, and generation-cost reconciliation (sync + async and native streams) |
+| Perplexity | `perplexityai` | Agent Responses and background jobs, Sonar chat, Search, embeddings/contextualized embeddings, and native streams (sync + async) |
+| fal.ai | `fal-client` | Module/client run, subscribe, stream, and durable queue submit/status/result/cancel (sync + async) |
 
-Every LLM call inside a tracked task is captured automatically — cost, tokens, latency, model, provider. No manual `record_llm_call` needed.
+Every supported AI call inside a tracked task is captured automatically.
+LiteLLM also preserves canonical routed-provider identity for OpenAI,
+Anthropic, Google/Vertex, Azure/Azure AI, Bedrock, Cohere, Hugging Face,
+Together, Ollama, Mistral, Groq, OpenRouter, Perplexity, and fal.ai. OpenAI and
+Google multimodal paths preserve native text/image/audio/video/cache,
+reasoning, tool-input, character, and media-count quantities, calculate against
+the active catalog, and retain only quantities and opaque provider IDs. Prompts,
+media, transcripts, tool payloads, and generated output are not stored. Google
+stream success is recorded only on natural completion; early close is cancelled
+and stream exceptions are failed.
 
 ### HTTP Libraries (Non-LLM Cost Capture)
 
@@ -197,7 +282,40 @@ Every LLM call inside a tracked task is captured automatically — cost, tokens,
 | `botocore` (boto3) | `URLLib3Session.send` |
 | `urllib3` | `HTTPConnectionPool.urlopen` |
 
-HTTP calls to domains in the [163-service catalog](src/dexcost/data/service_prices.json) (Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, etc.) are automatically captured as `external_cost` events with cost extracted from the response.
+HTTP calls matching the active service catalog (Pinecone, Twilio, SendGrid,
+Stripe, Firecrawl, Exa, etc.) are automatically captured as `external_cost`
+events with cost extracted from the response. Catalog releases are distributed
+by the control plane as immutable, content-addressed artifacts and evaluated
+locally. The SDK validates and caches a last-known-good release for offline use;
+the bundled catalog remains an emergency bootstrap until Python and TypeScript
+joint migration gates allow it to be reduced safely.
+
+For signed authority, configure rotated Ed25519 public keys and require a
+signature. Keys are raw 32-byte public keys encoded as unpadded base64url.
+Supplying keys requires signatures by default; setting the boolean explicitly
+is shown for clarity:
+
+```python
+dexcost.init(
+    api_key="dx_live_...",
+    catalog_trusted_keys={"dexcost-prod-2026-01": "<public-key-base64url>"},
+    catalog_require_signature=True,
+)
+```
+
+Air-gapped hosts use the same validation and activation path:
+
+```python
+dexcost.init(
+    storage="local",
+    catalog_trusted_keys={"dexcost-prod-2026-01": "<public-key-base64url>"},
+    catalog_require_signature=True,
+)
+dexcost.import_catalog_bundle("dexcost-catalog-release.dcr.json")
+```
+
+Import never bypasses signature, expiry, downgrade, size, hash, schema, or
+semantic checks. The previous release remains available if import fails.
 
 ### Controlling Instrumentation
 
@@ -219,10 +337,14 @@ dexcost.init(track_http=False)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | `str` | `DEXCOST_API_KEY` env | API key for cloud push |
-| `auto_instrument` | `list[str]` | All 6 providers | Which LLM SDKs to patch |
+| `auto_instrument` | `list[str]` | All supported instruments | Which provider/tool SDKs to patch |
 | `track_http` | `bool` | `True` | Patch HTTP libraries for non-LLM cost capture |
 | `batch_size` | `int` | `100` | Events per sync batch |
 | `flush_interval` | `float` | `5.0` | Seconds between sync pushes |
+| `catalog_trusted_keys` | `Mapping[str, str \| bytes]` | env or packaged production trust | Rotated Ed25519 public keys by manifest key ID |
+| `catalog_require_signature` | `bool \| None` | `True` with keys; otherwise `False` | Reject unsigned network releases and durable cache entries |
+| `catalog_refresh_interval` | `float` | 24 hours | Background release refresh interval in seconds |
+| `catalog_refresh_jitter` | `float` | `0.1` | Random refresh spread from 0 through 0.5 |
 | `redact_fields` | `list[str]` | `None` | Field names to redact from event details |
 | `hash_customer_id` | `bool` | `False` | SHA-256 hash customer_id before storage |
 | `environment` | `str` | `None` | Deployment environment (`"production"`, `"staging"`, …), emitted as `observation.environment`. `"development"` also enables dev console mode |
@@ -236,6 +358,12 @@ dexcost.init(track_http=False)
 |----------|-------------|
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
 | `DEXCOST_ENV` | Deployment environment emitted on every observation. Set to `development` for dev console output |
+| `DEXCOST_CATALOG_TRUSTED_KEYS` | Strict JSON object mapping 1–8 key IDs to unpadded base64url Ed25519 public keys; ignored when `catalog_trusted_keys` is passed |
+| `DEXCOST_CATALOG_REQUIRE_SIGNATURE` | Strict `true` or `false`; used only when `catalog_require_signature` is omitted. Defaults to `true` whenever trusted keys exist |
+
+Catalog trust resolves from an explicit option, then the environment, then the
+public trust document shipped in the package. Private signing keys are never
+part of an SDK or SDK environment.
 
 > **Note:** `DEXCOST_ENDPOINT` is **no longer read**. The Control Layer URL is
 > configured only via `init(endpoint="https://...")` (default

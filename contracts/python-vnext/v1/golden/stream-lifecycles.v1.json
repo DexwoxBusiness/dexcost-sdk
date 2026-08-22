@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "cases": [
+    { "id": "natural_terminal", "terminal_signal": "provider end marker or terminal event", "operation_status": "succeeded", "usage": "latest provider-observed full snapshot", "records": 1 },
+    { "id": "early_sync_close_no_usage", "terminal_signal": "close before terminal usage", "operation_status": "cancelled", "usage": [], "cost_confidence": "unknown", "records": 1 },
+    { "id": "early_async_close_partial_usage", "terminal_signal": "async close after provider usage", "operation_status": "cancelled", "usage": "provider-observed partial snapshot only", "records": 1 },
+    { "id": "consumer_break", "terminal_signal": "iterator abandoned", "operation_status": "cancelled", "usage": "provider-observed partial snapshot only", "records": 1 },
+    { "id": "provider_stream_error", "terminal_signal": "provider iterator raises", "operation_status": "failed", "usage": "provider-observed partial snapshot only", "error": "canonical type/code only", "records": 1 },
+    { "id": "transport_error_before_stream", "terminal_signal": "request raises", "operation_status": "failed", "usage": [], "error": "canonical type/code only", "records": 1 },
+    { "id": "duplicate_terminal", "terminal_signal": "two terminal notifications", "operation_status": "succeeded", "usage": "first complete provider snapshot", "records": 1 },
+    { "id": "garbage_collection", "terminal_signal": "unconsumed stream finalized", "operation_status": "cancelled", "usage": "provider-observed partial snapshot only", "records": 1 }
+  ],
+  "privacy": "No prompt, message, output, tool payload, URL, media, vector, or error message is retained."
+}

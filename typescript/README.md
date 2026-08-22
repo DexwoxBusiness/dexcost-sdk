@@ -1,6 +1,8 @@
 # @dexcost/sdk
 
-**Agent Unit Economics SDK for Node.js** — track LLM costs, non-LLM service fees, and retry waste attributed to customers, projects, and workflows.
+**Agent Unit Economics SDK for Node.js** — track provider usage, exact costs,
+retries, outcomes, and revenue attributed to customers, users, products,
+projects, agents, workflows, experiments, and capabilities.
 
 ## Install
 
@@ -103,7 +105,7 @@ and its child, because they would measure the same hardware interval twice.
 
 ## Auto-Instrumentation
 
-dexcost auto-instruments **6 LLM providers** and the **global fetch API**.
+dexcost ships **13 provider instruments** plus the **global fetch API**.
 
 ### LLM Providers
 
@@ -115,8 +117,18 @@ dexcost auto-instruments **6 LLM providers** and the **global fetch API**.
 | Google Gemini | `@google/generative-ai` | `generateContent` |
 | AWS Bedrock | `@aws-sdk/client-bedrock-runtime` | `invokeModel` |
 | Cohere | `cohere-ai` | `chat` / `generate` |
+| Google Gen AI | `@google/genai` | generate, stream, live/realtime surfaces |
+| MCP | `@modelcontextprotocol/sdk` | tool calls with capability identity |
+| LiteLLM | `litellm`-compatible Node surfaces | completion and streaming usage |
+| Ollama | `ollama` | chat/generate and streaming |
+| OpenRouter | `@openrouter/sdk` and OpenAI-compatible HTTP | provider cost, upstream cost, tokens, generation ID |
+| Perplexity | `@perplexity-ai/perplexity_ai` and HTTP | chat/search usage and request IDs |
+| fal | `@fal-ai/client` | queue/subscribe/run lifecycle and provider jobs |
 
-LLM provider packages are **peer dependencies** — install only the ones you use. dexcost detects them at runtime and patches automatically.
+Provider packages are **peer dependencies** — install only the ones you use.
+dexcost detects them at runtime and patches automatically. See the
+[provider compatibility matrix](PROVIDER-COMPATIBILITY.md) for lifecycle,
+streaming, identity, cost, and privacy boundaries.
 
 > **Vercel AI SDK v5+:** the `ai` package ships ESM-only builds since v5, which
 > **cannot be monkey-patched** (you will see a one-line warning at init). Calls
@@ -202,7 +214,9 @@ import Anthropic from '@anthropic-ai/sdk';
 init({ instrumentModules: { openai: OpenAI, anthropic: Anthropic } });
 ```
 
-Keys: `openai`, `anthropic`, `ai`, `gemini`, `bedrock`, `cohere`, `mcp`.
+Keys: `openai`, `anthropic`, `ai`/`vercel-ai`, `gemini`, `google-genai`,
+`bedrock`, `cohere`, `mcp`, `litellm`, `ollama`, `openrouter`, `perplexity`,
+and `fal`.
 Providing a module implies instrumenting it, and its activation failures
 are surfaced loudly.
 
@@ -216,7 +230,33 @@ const anthropic = wrapAnthropic(new Anthropic()); // messages surface
 
 ### HTTP (Non-LLM Cost Capture)
 
-dexcost patches `globalThis.fetch` to capture HTTP calls to domains in the [163-service catalog](src/data/service_prices.json) — Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, and more. Costs are extracted from response headers/body and recorded as `external_cost` events.
+dexcost patches `globalThis.fetch` to capture catalogued HTTP services such as
+Pinecone, Twilio, SendGrid, Stripe, Firecrawl, Exa, and more. In cloud mode,
+all seven pricing/observer catalog families refresh as one signed, sequenced
+release from the control plane and fall back to a durable last-known-good
+release. The bundled catalogs remain a full bootstrap/offline fallback until
+production release telemetry proves that slimming is safe.
+
+Require signed authority with rotated raw Ed25519 public keys encoded as
+unpadded base64url. Supplying keys requires signatures by default; setting the
+boolean explicitly is shown for clarity:
+
+```typescript
+import { init, importCatalogBundle } from '@dexcost/sdk';
+import { readFileSync } from 'node:fs';
+
+init({
+  apiKey: 'dx_live_...',
+  catalogTrustedKeys: { 'dexcost-prod-2026-01': '<public-key-base64url>' },
+  catalogRequireSignature: true,
+});
+
+// On an air-gapped host, initialize with storage: 'local' and then:
+importCatalogBundle(readFileSync('dexcost-catalog-release.dcr.json'));
+```
+
+Network and offline activation share the same signature, expiry, downgrade,
+size, hash, schema, semantic, and atomic-activation checks.
 
 ### Controlling Instrumentation
 
@@ -236,15 +276,24 @@ init({ autoInstrument: [] });
 |--------|------|---------|-------------|
 | `apiKey` | `string` | `DEXCOST_API_KEY` env | API key for cloud push |
 | `endpoint` | `string` | `https://api.dexcost.io` | Control Layer URL. Set explicitly in code (e.g. `http://localhost:3000` for local). Must start with `http://` or `https://`. **Never read from the environment** — see note below. |
-| `autoInstrument` | `string[]` | All 6 providers | Which LLM SDKs to patch |
+| `autoInstrument` | `string[]` | All 13 instruments | Which provider SDKs to patch |
 | `batchSize` | `number` | `100` | Events per sync batch |
-| `flushIntervalMs` | `number` | `30000` | Milliseconds between sync pushes |
+| `flushIntervalMs` | `number` | `5000` | Milliseconds between sync pushes |
 | `redactFields` | `string[]` | `undefined` | Field names to redact from event details |
 | `hashCustomerId` | `boolean` | `false` | SHA-256 hash customer_id before storage |
 | `environment` | `string` | `undefined` | Set to `"development"` for dev console mode |
 | `dbPath` | `string` | `~/.dexcost/buffer.db` | Path to local SQLite buffer |
 | `enableRetryHeuristics` | `boolean` | `false` | Auto-detect retries via pattern matching |
 | `debug` | `boolean` | `false` | Log every capture decision to stderr (see Debugging capture) |
+| `ratesPath` | `string` | `undefined` | Explicit versioned `rates.yaml` containing service and user-owned infrastructure rates |
+| `catalogReleases` | `boolean` | `true` | Enable atomic control-plane catalog releases |
+| `catalogReleaseStorePath` | `string` | beside `dbPath` | Durable active/previous last-known-good release store |
+| `catalogChannel` | `"stable" \| "canary"` | `"stable"` | Catalog release channel |
+| `catalogRefreshIntervalMs` | `number` | 24 hours | Background catalog refresh interval |
+| `catalogRefreshJitterRatio` | `number` | `0.1` | Random refresh spread from 0 through 0.5 |
+| `catalogTimeoutMs` | `number` | `10000` | Manifest/artifact request timeout; maximum 60000 ms |
+| `catalogTrustedKeys` | `Record<string, string>` | env or packaged production trust | Rotated raw Ed25519 public keys by manifest key ID |
+| `catalogRequireSignature` | `boolean` | `true` with keys; otherwise `false` | Reject unsigned network releases and durable cache entries |
 
 ### Environment Variables
 
@@ -253,6 +302,12 @@ init({ autoInstrument: [] });
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
 | `DEXCOST_ENV` | Set to `development` for dev console output |
 | `DEXCOST_DEBUG` | Set to `1` to log every capture decision to stderr |
+| `DEXCOST_CATALOG_TRUSTED_KEYS` | Strict JSON object mapping 1–8 key IDs to unpadded base64url Ed25519 public keys; ignored when `catalogTrustedKeys` is passed |
+| `DEXCOST_CATALOG_REQUIRE_SIGNATURE` | Strict `true` or `false`; used only when `catalogRequireSignature` is omitted. Defaults to `true` whenever trusted keys exist |
+
+Catalog trust resolves from an explicit option, then the environment, then the
+public trust document shipped in the package. Private signing keys are never
+part of an SDK or SDK environment.
 
 > **Note:** `DEXCOST_ENDPOINT` is no longer read. The endpoint is sourced
 > **only** from the explicit `endpoint` option in code (defaulting to
@@ -293,6 +348,10 @@ await track({ taskType: '...' }, async (task) => {
   // Record usage (cost computed from registered rates)
   task.recordUsage('s3_storage', 1024);
 
+  // Record a durable, revisioned business outcome and exact revenue.
+  task.recordOutcome('ticket_resolved', { state: 'achieved', value: true });
+  task.recordRevenue('12.50', { currency: 'USD', state: 'recognized' });
+
   // Mark a retry
   task.markRetry('rate_limit', 0.005);
 
@@ -303,6 +362,48 @@ await track({ taskType: '...' }, async (task) => {
   task.end('success');
 });
 ```
+
+### Exact custom and user-owned infrastructure rates
+
+Use decimal strings for money. Version 2 adds explicit GPU/network rates;
+DexCost never invents a local-hardware price.
+
+```yaml
+version: 2
+rates:
+  maps.googleapis.com:
+    per: request
+    cost_usd: "0.005"
+infrastructure:
+  gpu:
+    nvidia-geforce-rtx-5060-ti:
+      per: gpu_hour
+      cost_usd: "0.40"
+  network:
+    local:
+      per: gb_transferred
+      cost_usd: "0.02"
+```
+
+```typescript
+const tracker = init({ ratesPath: './rates.yaml' });
+tracker.registerInfrastructureRate('network', 'local', 'gb_transferred', '0.02');
+tracker.exportRates('./rates.snapshot.yaml');
+```
+
+Loading is atomic, keys are normalized for exact matching, exports are
+deterministic, and the same snapshot produces the same `pricingVersion` in
+Python and TypeScript.
+
+### Outcomes, revenue, tools, and asynchronous provider jobs
+
+Outcomes and revenue are immutable revision streams stored locally before
+delivery; corrections replace a stream's current revision rather than double
+counting it. Revenue uses exact decimal strings and remains separate from a
+generic outcome value. Tool calls carry operation/attempt/idempotency and
+capability identity. Long-running provider work (for example queued media
+generation) is represented by `ProviderJobRevision` lifecycle snapshots and
+only the latest terminal revision rolls into task cost.
 
 ### Customer Attribution
 

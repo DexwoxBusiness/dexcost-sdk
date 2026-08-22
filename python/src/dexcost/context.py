@@ -8,13 +8,11 @@ ID threading.
 from __future__ import annotations
 
 import contextvars
-import functools
-import threading
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from dexcost.models.task import Task
 
@@ -102,8 +100,9 @@ def get_context() -> DexcostContext | None:
 
 
 def clear_context() -> None:
-    """Remove the current attribution context."""
+    """Remove attribution and any leaked active task for this caller."""
     _current_context.set(None)
+    _current_task.set(None)
 
 
 _current_task: contextvars.ContextVar[Task | None] = contextvars.ContextVar(
@@ -119,6 +118,11 @@ def get_current_task() -> Task | None:
 def set_current_task(task: Task | None) -> contextvars.Token[Task | None]:
     """Set the active task and return a token for later restoration."""
     return _current_task.set(task)
+
+
+def _reset_current_task(token: contextvars.Token[Task | None]) -> None:
+    """Restore a task context token owned by an internal lifecycle wrapper."""
+    _current_task.reset(token)
 
 
 # ---------------------------------------------------------------------------

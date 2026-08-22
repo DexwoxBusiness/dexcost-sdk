@@ -83,7 +83,7 @@ class GpuAccountant:
         self._initial_pids: set[int] = set()
         # Decision #8: per-device-per-PID lastSeenTimeStamp persisted across calls.
         self._initial_timestamps: dict[int, dict[int, int]] = {}
-        self._device_handles: list = []
+        self._device_handles: list[Any] = []
         self._device_product_names: list[str | None] = []
         self._device_mig_modes: list[bool] = []
         # NVML commonly exposes only the most recent process-utilization
@@ -243,6 +243,7 @@ class GpuAccountant:
         # End-snapshot cgroup walk + Decision #1 fallback label.
         scope = self._scope or cgroup_walker.classify_scope()
         end_pids_list = cgroup_walker.enumerate_pids(scope)
+        fallback_label: str | None
         if end_pids_list is None:
             # cgroup walk denied at end → degrade
             fallback_label = "self_pid_only"
@@ -267,6 +268,7 @@ class GpuAccountant:
         canonical_product_name = next(
             (n for n in self._device_product_names if n), None,
         )
+        gpu_sku: str | None
         if self.runtime == GpuRuntimeKind.LOCAL_GPU and canonical_product_name:
             # A normalized NVML product name is the authoritative identity for
             # owned hardware. Coarse cloud aliases collapse distinct devices
@@ -290,7 +292,7 @@ class GpuAccountant:
         degenerate_window = duration_ms <= 0
 
         any_pid_touched = False
-        for i, handle in enumerate(self._device_handles):
+        for i, _handle in enumerate(self._device_handles):
             # B2 (Sprint 2 Theme C / §3.1.1) — snapshot baseline timestamps
             # BEFORE the end call mutates _initial_timestamps in place.
             # Each PID's first integration-dt is `first_sample.time_stamp -
@@ -306,7 +308,7 @@ class GpuAccountant:
             # Filter to cgroup-PID set (Decision #1 boundary). After B2 the
             # NVML wrapper returns dict[pid, list[UtilSample]] — multiple
             # samples per PID covering the task window.
-            relevant_samples_by_pid: dict[int, list] = {
+            relevant_samples_by_pid: dict[int, list[nvml_reader.UtilSample]] = {
                 pid: samples_list
                 for pid, samples_list in end_samples.items()
                 if pid in cgroup_pid_union and samples_list
@@ -315,12 +317,12 @@ class GpuAccountant:
             if relevant_samples_by_pid:
                 any_pid_touched = True
                 # B2 (Sprint 2 Theme C / §3.1.1) — integrate SM utilization.
-                # The CORRECT formula is sm_seconds = Σ (sm_util[i]/100) ×
+                # The CORRECT formula is sm_seconds = Σ (sm_util[i]/100) x
                 # dt[i], where dt[i] is the wall interval covered by each
                 # sample (`sample.time_stamp - prev_ts`, with prev_ts =
                 # baseline for the first sample of a PID, or the previous
                 # sample's ts thereafter). Pre-fix the accountant used
-                # `max_ts - base_ts` directly, which is wall time × 100%
+                # `max_ts - base_ts` directly, which is wall time x 100%
                 # utilization — silently inflating cost on underutilized
                 # GPUs.
                 gpu_seconds_for_device = 0.0
@@ -484,8 +486,12 @@ class GpuAccountant:
         return details
 
     def _build_zero_cost_event(
-        self, duration_ms, gpu_sku, mig_profile, fallback_label,
-    ):
+        self,
+        duration_ms: int,
+        gpu_sku: str | None,
+        mig_profile: str | None,
+        fallback_label: str | None,
+    ) -> dict[str, Any]:
         return self._build_cost_event(
             duration_ms=duration_ms,
             gpu_sku=gpu_sku,

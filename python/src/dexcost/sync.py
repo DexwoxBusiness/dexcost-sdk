@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from email.message import Message
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -25,6 +26,17 @@ from dexcost.attribution.convert import (
     to_business_identity_revision_v1,
 )
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
+from dexcost.delivery import (
+    DeliveryErrorEvent,
+    DeliveryErrorOperation,
+    DeliveryStatus,
+    DeliveryWorkerState,
+    _count,
+    _emit_delivery_error,
+    _oldest,
+    _queue_counts,
+    _utcnow,
+)
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.session import get_session_manager
 
@@ -113,6 +125,20 @@ class SyncWorker:
 
         self._thread: threading.Thread | None = None
 
+        # Delivery observability is process-local; queue depths below are
+        # always read from the durable storage snapshot on demand.
+        self._health_lock = threading.Lock()
+        self._worker_state: DeliveryWorkerState = "stopped"
+        self._last_attempt_at: datetime | None = None
+        self._last_success_at: datetime | None = None
+        self._last_error_at: datetime | None = None
+        self._last_error_type: str | None = None
+        self._last_error_message: str | None = None
+        self._consecutive_failures = 0
+        self._successful_batches = 0
+        self._failed_batches = 0
+        self._delivered_records = 0
+
     # ── Public API ────────────────────────────────────────────────────
 
     def start(self) -> None:
@@ -120,6 +146,7 @@ class SyncWorker:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
+        self._set_worker_state("idle")
         self._thread = threading.Thread(target=self._run, daemon=True, name="dexcost-sync")
         self._thread.start()
         _log.debug("SyncWorker started")
@@ -131,6 +158,7 @@ class SyncWorker:
         if self._thread is not None:
             self._thread.join(timeout=10.0)
             self._thread = None
+        self._set_worker_state("stopped")
         _log.debug("SyncWorker stopped")
 
     def flush(self) -> None:
@@ -147,6 +175,97 @@ class SyncWorker:
             self._finalize_sessions_requested = True
         self._wake_event.set()
         self._flush_done.wait(timeout=30.0)
+
+    def resume_after_auth(self) -> None:
+        """Clear an authentication stop and reset delivery backoff."""
+        self._stop_event.clear()
+        self._backoff = _INITIAL_BACKOFF
+        with self._health_lock:
+            self._consecutive_failures = 0
+            self._worker_state = "idle"
+
+    def status(self, storage: StorageBackend | None = None) -> DeliveryStatus:
+        """Return worker health joined with current durable queue depths."""
+        counts = _queue_counts(storage if storage is not None else self._storage)
+        with self._health_lock:
+            return DeliveryStatus(
+                enabled=True,
+                worker_state=self._worker_state,
+                pending_events=_count(counts, "pending_events"),
+                quarantined_events=_count(counts, "quarantined_events"),
+                pending_tasks=_count(counts, "pending_tasks"),
+                pending_outcomes=_count(counts, "pending_outcomes"),
+                quarantined_outcomes=_count(counts, "quarantined_outcomes"),
+                pending_revenues=_count(counts, "pending_revenues"),
+                quarantined_revenues=_count(counts, "quarantined_revenues"),
+                pending_provider_jobs=_count(counts, "pending_provider_jobs"),
+                quarantined_provider_jobs=_count(
+                    counts, "quarantined_provider_jobs"
+                ),
+                oldest_pending_at=_oldest(counts),
+                last_attempt_at=self._last_attempt_at,
+                last_success_at=self._last_success_at,
+                last_error_at=self._last_error_at,
+                last_error_type=self._last_error_type,
+                last_error_message=self._last_error_message,
+                consecutive_failures=self._consecutive_failures,
+                successful_batches=self._successful_batches,
+                failed_batches=self._failed_batches,
+                delivered_records=self._delivered_records,
+                backoff_seconds=(
+                    self._backoff if self._worker_state == "backoff" else 0
+                ),
+            )
+
+    def _set_worker_state(self, state: DeliveryWorkerState) -> None:
+        with self._health_lock:
+            self._worker_state = state
+
+    def _record_attempt(self) -> None:
+        with self._health_lock:
+            self._last_attempt_at = _utcnow()
+            self._worker_state = "syncing"
+
+    def _record_success(self, delivered_records: int) -> None:
+        with self._health_lock:
+            self._last_success_at = _utcnow()
+            self._consecutive_failures = 0
+            self._successful_batches += 1
+            self._delivered_records += delivered_records
+            self._worker_state = "idle"
+
+    def _record_error(
+        self,
+        exc: BaseException,
+        *,
+        operation: DeliveryErrorOperation,
+        retryable: bool,
+        state: DeliveryWorkerState,
+    ) -> None:
+        message = str(exc)
+        api_key = self._config.api_key
+        if api_key:
+            message = message.replace(api_key, "[REDACTED]")
+        message = message[:1024]
+        occurred_at = _utcnow()
+        with self._health_lock:
+            self._last_error_at = occurred_at
+            self._last_error_type = type(exc).__name__
+            self._last_error_message = message
+            self._consecutive_failures += 1
+            self._failed_batches += 1
+            self._worker_state = state
+            consecutive_failures = self._consecutive_failures
+        _emit_delivery_error(
+            DeliveryErrorEvent(
+                occurred_at=occurred_at,
+                operation=operation,
+                error_type=type(exc).__name__,
+                message=message,
+                retryable=retryable,
+                consecutive_failures=consecutive_failures,
+            )
+        )
 
     # ── Internal ──────────────────────────────────────────────────────
 
@@ -166,51 +285,72 @@ class SyncWorker:
     def _run(self) -> None:
         """Main loop for the background thread."""
         storage = self._open_thread_storage()
-        while not self._stop_event.is_set():
-            wait_seconds = self._config.flush_interval_seconds
-            try:
-                sent = self._sync_batch(storage=storage)
-                if sent:
-                    # Reset backoff on success; immediately try again
-                    self._backoff = _INITIAL_BACKOFF
-                    continue
-                # Nothing to send — mark flush done if requested
-                with self._flush_lock:
-                    # A flush request can arrive while a batch is already in
-                    # progress. Do another immediate cycle so its forced
-                    # session finalization is not acknowledged prematurely.
-                    if self._finalize_sessions_requested:
+        owns_storage = storage is not self._storage
+        try:
+            while not self._stop_event.is_set():
+                wait_seconds = self._config.flush_interval_seconds
+                try:
+                    sent = self._sync_batch(storage=storage)
+                    if sent:
+                        # Reset backoff on success; immediately try again
+                        self._backoff = _INITIAL_BACKOFF
                         continue
-                    if self._flush_requested:
-                        self._flush_requested = False
-                        self._flush_done.set()
-            except _AttributionConversionError as exc:
-                # A conversion failure is local data state, not a transport
-                # outage. Quarantined rows leave the normal pending scan; if
-                # storage could not persist quarantine, suppress log floods.
-                self._warn_conversion_failure(exc)
-                self._backoff = _INITIAL_BACKOFF
-                with self._flush_lock:
-                    if self._flush_requested:
-                        self._flush_requested = False
-                        self._flush_done.set()
-            except Exception:
-                _log.exception("SyncWorker error during batch push")
-                # Signal flush done even on error so caller doesn't hang
-                with self._flush_lock:
-                    if self._flush_requested:
-                        self._flush_requested = False
-                        self._flush_done.set()
-                # Back off
-                self._backoff = min(self._backoff * 2, _MAX_BACKOFF)
-                wait_seconds = self._backoff
+                    if self._worker_state != "auth_failed":
+                        self._set_worker_state("idle")
+                    # Nothing to send — mark flush done if requested
+                    with self._flush_lock:
+                        # A flush request can arrive while a batch is already in
+                        # progress. Do another immediate cycle so its forced
+                        # session finalization is not acknowledged prematurely.
+                        if self._finalize_sessions_requested:
+                            continue
+                        if self._flush_requested:
+                            self._flush_requested = False
+                            self._flush_done.set()
+                except _AttributionConversionError as exc:
+                    # A conversion failure is local data state, not a transport
+                    # outage. Quarantined rows leave the normal pending scan; if
+                    # storage could not persist quarantine, suppress log floods.
+                    self._warn_conversion_failure(exc)
+                    self._backoff = _INITIAL_BACKOFF
+                    self._record_error(
+                        exc,
+                        operation="conversion",
+                        retryable=False,
+                        state="idle",
+                    )
+                    with self._flush_lock:
+                        if self._flush_requested:
+                            self._flush_requested = False
+                            self._flush_done.set()
+                except Exception as exc:
+                    _log.exception("SyncWorker error during batch push")
+                    # Signal flush done even on error so caller doesn't hang
+                    with self._flush_lock:
+                        if self._flush_requested:
+                            self._flush_requested = False
+                            self._flush_done.set()
+                    # Back off
+                    self._backoff = min(self._backoff * 2, _MAX_BACKOFF)
+                    wait_seconds = self._backoff
+                    self._record_error(
+                        exc,
+                        operation="transport",
+                        retryable=True,
+                        state="backoff",
+                    )
 
-            if self._stop_event.is_set():
-                break
-            # Idle workers wait for the flush interval. Failed workers use the
-            # exponential backoff computed above.
-            self._wake_event.wait(timeout=wait_seconds)
-            self._wake_event.clear()
+                if self._stop_event.is_set():
+                    break
+                # Idle workers wait for the flush interval. Failed workers use the
+                # exponential backoff computed above.
+                self._wake_event.wait(timeout=wait_seconds)
+                self._wake_event.clear()
+        finally:
+            if owns_storage:
+                storage.close()
+            if self._worker_state != "auth_failed":
+                self._set_worker_state("stopped")
 
     def _sync_batch(self, storage: StorageBackend | None = None) -> bool:
         """Attempt to push one batch of events.
@@ -309,17 +449,41 @@ class SyncWorker:
         query_outcomes = getattr(st, "query_outcomes_for_sync", None)
         outcomes = query_outcomes(limit=batch_size) if callable(query_outcomes) else []
         outcome_dicts = [outcome.to_dict() for outcome in outcomes]
+        query_revenues = getattr(st, "query_revenues_for_sync", None)
+        revenues = query_revenues(limit=batch_size) if callable(query_revenues) else []
+        revenue_dicts = [revenue.to_dict() for revenue in revenues]
 
-        if not event_dicts and not task_dicts and not outcome_dicts:
+        # Provider jobs already are strict attribution-v3 revision streams.
+        # Keep this capability-based for existing custom storage backends.
+        query_provider_jobs = getattr(st, "query_provider_jobs_for_sync", None)
+        provider_jobs = (
+            query_provider_jobs(limit=max(1, batch_size - len(event_dicts)))
+            if callable(query_provider_jobs) and len(event_dicts) < batch_size
+            else []
+        )
+        provider_job_dicts = [
+            cast(
+                dict[str, Any],
+                job.to_attribution_observation(
+                    environment=self._config.environment
+                ),
+            )
+            for job in provider_jobs
+        ]
+        event_dicts.extend(provider_job_dicts)
+
+        if not event_dicts and not task_dicts and not outcome_dicts and not revenue_dicts:
             self._raise_conversion_failure(failed_event_ids)
             return False
 
+        self._record_attempt()
         posted = self._post_with_split(
             event_dicts,
             task_dicts,
             business_identities,
             storage=st,
             outcomes=outcome_dicts,
+            revenue_revisions=revenue_dicts,
         )
         if not posted:
             if self._stop_event.is_set():
@@ -333,6 +497,12 @@ class SyncWorker:
         # safety net for any future path that returns success without a leaf.
         event_ids = [event["event_id"] for event in event_dicts]
         st.mark_synced(event_ids)
+        provider_job_revisions = [
+            (str(job.event_id), job.revision) for job in provider_jobs
+        ]
+        mark_provider_jobs = getattr(st, "mark_provider_jobs_synced", None)
+        if provider_job_revisions and callable(mark_provider_jobs):
+            mark_provider_jobs(provider_job_revisions)
         task_ids = [task["task_id"] for task in task_dicts]
         if task_ids:
             st.mark_tasks_synced(task_ids)
@@ -345,13 +515,34 @@ class SyncWorker:
         ]
         if outcome_revisions:
             st.mark_outcomes_synced(outcome_revisions)
+        revenue_ids = [
+            (
+                str(revenue["revenue_id"]),
+                int(cast(dict[str, Any], revenue["lifecycle"])["revision"]),
+            )
+            for revenue in revenue_dicts
+        ]
+        mark_revenues = getattr(st, "mark_revenues_synced", None)
+        if revenue_ids and callable(mark_revenues):
+            mark_revenues(revenue_ids)
 
         _log.info(
-            "Synced %d events, %d tasks, and %d outcomes to %s",
-            len(event_ids),
+            "Synced %d events (%d provider-job revisions), %d tasks, %d outcomes, "
+            "and %d revenue revisions to %s",
+            len(event_ids) - len(provider_job_revisions),
+            len(provider_job_revisions),
             len(task_dicts),
             len(outcome_revisions),
+            len(revenue_ids),
             self._config.endpoint,
+        )
+
+        self._record_success(
+            len(event_dicts)
+            + len(task_dicts)
+            + len(business_identities)
+            + len(outcome_dicts)
+            + len(revenue_dicts)
         )
 
         self._raise_conversion_failure(failed_event_ids)
@@ -512,6 +703,7 @@ class SyncWorker:
         depth: int = 0,
         storage: StorageBackend | None = None,
         outcomes: list[dict[str, Any]] | None = None,
+        revenue_revisions: list[dict[str, Any]] | None = None,
     ) -> bool:
         """POST records, splitting every durable stream below the queue limit.
 
@@ -521,11 +713,13 @@ class SyncWorker:
         """
         identities = business_identities or []
         outcome_revisions = outcomes or []
+        revenues = revenue_revisions or []
         payload: dict[str, Any] = {
             "events": events,
             "tasks": tasks,
             "business_identities": identities,
             "outcomes": outcome_revisions,
+            "revenue_revisions": revenues,
         }
         body = json.dumps(payload).encode("utf-8")
 
@@ -541,12 +735,39 @@ class SyncWorker:
                     )
                     for outcome in outcome_revisions
                 ]
+                revenue_ids = [
+                    (
+                        str(revenue["revenue_id"]),
+                        int(cast(dict[str, Any], revenue["lifecycle"])["revision"]),
+                    )
+                    for revenue in revenues
+                ]
                 if event_ids:
                     storage.mark_synced(event_ids)
+                    mark_provider_jobs = getattr(
+                        storage, "mark_provider_jobs_synced", None
+                    )
+                    if callable(mark_provider_jobs):
+                        provider_job_ids = [
+                            (
+                                str(event["event_id"]),
+                                int(cast(dict[str, Any], lifecycle)["revision"]),
+                            )
+                            for event in events
+                            if isinstance(
+                                lifecycle := event.get("lifecycle"), dict
+                            )
+                            and isinstance(lifecycle.get("revision"), int)
+                        ]
+                        if provider_job_ids:
+                            mark_provider_jobs(provider_job_ids)
                 if task_ids:
                     storage.mark_tasks_synced(task_ids)
                 if outcome_ids:
                     storage.mark_outcomes_synced(outcome_ids)
+                mark_revenues = getattr(storage, "mark_revenues_synced", None)
+                if revenue_ids and callable(mark_revenues):
+                    mark_revenues(revenue_ids)
             return posted
 
         if len(events) > 1:
@@ -563,10 +784,13 @@ class SyncWorker:
                 depth + 1,
                 storage,
                 outcome_revisions,
+                revenues,
             )
             if not first_posted:
                 return False
-            return self._post_with_split(events[mid:], [], [], depth + 1, storage, [])
+            return self._post_with_split(
+                events[mid:], [], [], depth + 1, storage, [], []
+            )
 
         if len(tasks) > 1:
             mid = len(tasks) // 2
@@ -587,7 +811,7 @@ class SyncWorker:
                 len(tasks),
             )
             first_posted = self._post_with_split(
-                [], tasks[:mid], first_identities, depth + 1, storage, []
+                [], tasks[:mid], first_identities, depth + 1, storage, [], []
             )
             if not first_posted:
                 return False
@@ -598,6 +822,7 @@ class SyncWorker:
                 depth + 1,
                 storage,
                 outcome_revisions,
+                revenues,
             )
 
         if len(outcome_revisions) > 1:
@@ -614,41 +839,77 @@ class SyncWorker:
                 depth + 1,
                 storage,
                 outcome_revisions[:mid],
+                [],
             )
             if not first_posted:
                 return False
             return self._post_with_split(
-                [], [], [], depth + 1, storage, outcome_revisions[mid:]
+                [],
+                [],
+                [],
+                depth + 1,
+                storage,
+                outcome_revisions[mid:],
+                revenues,
             )
 
-        if len(events) == 1 and len(tasks) == 1:
+        if len(revenues) > 1:
+            mid = len(revenues) // 2
+            _log.info(
+                "Batch too large (%d bytes, %d revenue revisions), splitting revenue",
+                len(body),
+                len(revenues),
+            )
+            first_posted = self._post_with_split(
+                events,
+                tasks,
+                identities,
+                depth + 1,
+                storage,
+                outcome_revisions,
+                revenues[:mid],
+            )
+            if not first_posted:
+                return False
+            return self._post_with_split(
+                [], [], [], depth + 1, storage, [], revenues[mid:]
+            )
+
+        durable_count = len(events) + len(tasks) + len(outcome_revisions) + len(revenues)
+        if durable_count > 1 and tasks:
             task_posted = self._post_with_split(
-                [], tasks, identities, depth + 1, storage, []
+                [], tasks, identities, depth + 1, storage, [], []
             )
             if not task_posted:
                 return False
             return self._post_with_split(
-                events, [], [], depth + 1, storage, outcome_revisions
+                events,
+                [],
+                [],
+                depth + 1,
+                storage,
+                outcome_revisions,
+                revenues,
             )
 
-        if len(events) == 1 and len(outcome_revisions) == 1:
-            event_posted = self._post_with_split(
-                events, [], [], depth + 1, storage, []
+        if durable_count > 1 and outcome_revisions:
+            outcome_posted = self._post_with_split(
+                [], [], [], depth + 1, storage, outcome_revisions, []
             )
-            if not event_posted:
+            if not outcome_posted:
                 return False
             return self._post_with_split(
-                [], [], [], depth + 1, storage, outcome_revisions
+                events, [], [], depth + 1, storage, [], revenues
             )
 
-        if len(tasks) == 1 and len(outcome_revisions) == 1:
-            task_posted = self._post_with_split(
-                [], tasks, identities, depth + 1, storage, []
+        if durable_count > 1 and revenues:
+            revenue_posted = self._post_with_split(
+                [], [], [], depth + 1, storage, [], revenues
             )
-            if not task_posted:
+            if not revenue_posted:
                 return False
             return self._post_with_split(
-                [], [], [], depth + 1, storage, outcome_revisions
+                events, [], [], depth + 1, storage, [], []
             )
 
         if len(events) == 1:
@@ -660,6 +921,22 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_synced([str(events[0]["event_id"])])
+                mark_provider_jobs = getattr(
+                    storage, "mark_provider_jobs_quarantined", None
+                )
+                if callable(mark_provider_jobs):
+                    mark_provider_jobs(
+                        [
+                            (
+                                str(events[0]["event_id"]),
+                                int(
+                                    cast(dict[str, Any], events[0]["lifecycle"])[
+                                        "revision"
+                                    ]
+                                ),
+                            )
+                        ]
+                    )
             return True
 
         if len(tasks) == 1:
@@ -683,6 +960,22 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_outcomes_quarantined([revision])
+            return True
+
+        if len(revenues) == 1:
+            revenue = revenues[0]
+            revision = (
+                str(revenue["revenue_id"]),
+                int(cast(dict[str, Any], revenue["lifecycle"])["revision"]),
+            )
+            _log.warning(
+                "Single revenue revision exceeds payload limit (%d bytes), quarantining",
+                len(body),
+            )
+            if storage is not None:
+                mark_quarantined = getattr(storage, "mark_revenues_quarantined", None)
+                if callable(mark_quarantined):
+                    mark_quarantined([revision])
         return True
 
     def _post_raw(self, body: bytes) -> bool:
@@ -734,6 +1027,12 @@ class SyncWorker:
                 return False
             if exc.code == 401:
                 _log.error("API key rejected (HTTP 401) — disabling sync")
+                self._record_error(
+                    exc,
+                    operation="authentication",
+                    retryable=False,
+                    state="auth_failed",
+                )
                 self._stop_event.set()  # Stop retrying permanently
                 return False
             if exc.code == 403:
@@ -758,6 +1057,7 @@ class SyncWorker:
         tasks: list[dict[str, Any]] | None = None,
         business_identities: list[dict[str, Any]] | None = None,
         outcomes: list[dict[str, Any]] | None = None,
+        revenue_revisions: list[dict[str, Any]] | None = None,
     ) -> bool:
         """POST events and tasks to the cloud ingest endpoint.
 
@@ -768,4 +1068,5 @@ class SyncWorker:
             tasks or [],
             business_identities or [],
             outcomes=outcomes or [],
+            revenue_revisions=revenue_revisions or [],
         )

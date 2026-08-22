@@ -153,6 +153,26 @@ def _reset_instrument_state() -> None:
         uninstrument_mcp()
     except ImportError:
         pass
+    try:
+        from dexcost.instruments.ollama import uninstrument_ollama
+        uninstrument_ollama()
+    except ImportError:
+        pass
+    try:
+        from dexcost.instruments.openrouter import uninstrument_openrouter
+        uninstrument_openrouter()
+    except ImportError:
+        pass
+    try:
+        from dexcost.instruments.perplexity import uninstrument_perplexity
+        uninstrument_perplexity()
+    except ImportError:
+        pass
+    try:
+        from dexcost.instruments.fal import uninstrument_fal
+        uninstrument_fal()
+    except ImportError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +191,12 @@ def storage(tmp_path: Any) -> Generator[SQLiteStorage, None, None]:
 @pytest.fixture(autouse=True)
 def _install_all_fakes() -> Generator[None, None, None]:
     """Install all fake SDKs before each test and clean up after."""
+    prefixes = ("openai", "anthropic", "litellm")
+    installed_modules = {
+        key: module
+        for key, module in sys.modules.items()
+        if any(key == prefix or key.startswith(f"{prefix}.") for prefix in prefixes)
+    }
     _install_fake_openai()
     _install_fake_anthropic()
     _install_fake_litellm()
@@ -179,6 +205,10 @@ def _install_all_fakes() -> Generator[None, None, None]:
     _uninstall_fake_openai()
     _uninstall_fake_anthropic()
     _uninstall_fake_litellm()
+    for key in list(sys.modules):
+        if any(key == prefix or key.startswith(f"{prefix}.") for prefix in prefixes):
+            sys.modules.pop(key, None)
+    sys.modules.update(installed_modules)
 
 
 # ---------------------------------------------------------------------------
@@ -270,19 +300,27 @@ class TestDefaultPatchesAll:
         for name in ALL_SUPPORTED_INSTRUMENTS:
             try:
                 if name == "openai":
-                    import openai as _  # noqa: F401
+                    import openai as _
                 elif name == "anthropic":
-                    import anthropic as _  # noqa: F401
+                    import anthropic as _
                 elif name == "litellm":
-                    import litellm as _  # noqa: F401
+                    import litellm as _
                 elif name == "gemini":
-                    import google.genai as _  # noqa: F401
+                    import google.genai as _
                 elif name == "bedrock":
-                    import botocore as _  # noqa: F401
+                    import botocore as _
                 elif name == "cohere":
-                    import cohere as _  # noqa: F401
+                    import cohere as _
                 elif name == "mcp":
-                    import mcp as _  # noqa: F401
+                    import mcp as _
+                elif name == "ollama":
+                    __import__("ollama")
+                elif name == "openrouter":
+                    __import__("openrouter")
+                elif name == "perplexity":
+                    __import__("perplexity")
+                elif name == "fal":
+                    __import__("fal_client")
                 expected.add(name)
             except (KeyboardInterrupt, SystemExit):
                 raise
@@ -607,6 +645,10 @@ class TestPublicAPI:
             "bedrock",
             "cohere",
             "mcp",
+            "ollama",
+            "openrouter",
+            "perplexity",
+            "fal",
         ]
 
     def test_tracker_has_instrument_method(self, storage: SQLiteStorage) -> None:

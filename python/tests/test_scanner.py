@@ -1,10 +1,10 @@
 """Tests for dexcost scan code scanner (US-019)."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from dexcost.scanner import CostPoint, ScanResult, generate_stubs, scan_directory
-
 
 # ── Original tests (preserved) ───────────────────────────────────────
 
@@ -34,6 +34,7 @@ msg = client.messages.create(model="claude-3", max_tokens=100, messages=[])
         result = scan_directory(tmp_path)
         llm = [cp for cp in result.cost_points if cp.category == "llm"]
         assert len(llm) >= 1
+        assert llm[0].auto_instrumented is True
 
     def test_detects_litellm_call(self, tmp_path: Path) -> None:
         code = '''
@@ -316,6 +317,47 @@ response = ollama.chat(model="llama3", messages=[{"role": "user", "content": "hi
         result = scan_directory(tmp_path)
         llm = [cp for cp in result.cost_points if cp.category == "llm"]
         assert len(llm) >= 1
+        assert llm[0].auto_instrumented is True
+
+    def test_openrouter(self, tmp_path: Path) -> None:
+        code = '''
+from openrouter import OpenRouter
+client = OpenRouter(api_key="test")
+response = client.chat.send(model="openai/gpt-5", messages=[])
+'''
+        (tmp_path / "a.py").write_text(code)
+        result = scan_directory(tmp_path)
+        llm = [cp for cp in result.cost_points if cp.category == "llm"]
+        assert len(llm) >= 1
+        assert llm[0].auto_instrumented is True
+
+    def test_perplexity_native_resources(self, tmp_path: Path) -> None:
+        source = '''
+from perplexity import Perplexity
+client = Perplexity()
+client.responses.create(model="openai/gpt-5.4", input="hi")
+client.search.create(query="latest research")
+client.contextualized_embeddings.create(model="pplx-embed-context-v1-0.6b", input=[["hi"]])
+'''
+        path = tmp_path / "perplexity_app.py"
+        path.write_text(source)
+        result = scan_directory(tmp_path)
+        llm = [point for point in result.cost_points if point.category == "llm"]
+        assert len(llm) == 3
+        assert all(point.auto_instrumented for point in llm)
+
+    def test_fal_module_helpers(self, tmp_path: Path) -> None:
+        source = '''
+import fal_client
+fal_client.run("fal-ai/flux/schnell", {"prompt": "hi"})
+fal_client.submit("fal-ai/flux/schnell", {"prompt": "hi"})
+'''
+        path = tmp_path / "fal_app.py"
+        path.write_text(source)
+        result = scan_directory(tmp_path)
+        llm = [point for point in result.cost_points if point.category == "llm"]
+        assert len(llm) == 2
+        assert all(point.auto_instrumented for point in llm)
 
 
 # ── Framework detection tests ─────────────────────────────────────────

@@ -92,8 +92,37 @@ _LLM_PATTERNS: list[tuple[str, str, bool, str]] = [
     ("huggingface_hub", "text_generation", False, "HuggingFace text generation"),
     ("huggingface_hub", "chat_completion", False, "HuggingFace chat completion"),
     # Ollama
-    ("ollama", "chat", False, "Ollama chat"),
-    ("ollama", "generate", False, "Ollama generate"),
+    ("ollama", "chat", True, "Ollama chat"),
+    ("ollama", "generate", True, "Ollama generate"),
+    ("ollama", "embed", True, "Ollama embeddings"),
+    ("ollama", "embeddings", True, "Ollama legacy embeddings"),
+    ("ollama", "web_search", True, "Ollama web search"),
+    ("ollama", "web_fetch", True, "Ollama web fetch"),
+    # OpenRouter official SDK
+    ("openrouter", "chat.send", True, "OpenRouter chat"),
+    ("openrouter", "responses.send", True, "OpenRouter Responses"),
+    ("openrouter", "embeddings.generate", True, "OpenRouter embeddings"),
+    ("openrouter", "images.generate", True, "OpenRouter image generation"),
+    ("openrouter", "stt.create_transcription", True, "OpenRouter speech to text"),
+    ("openrouter", "tts.create_speech", True, "OpenRouter text to speech"),
+    ("openrouter", "rerank.rerank", True, "OpenRouter rerank"),
+    ("openrouter", "video_generation.generate", True, "OpenRouter video generation"),
+    # Perplexity official SDK
+    ("perplexity", "responses.create", True, "Perplexity Agent response"),
+    ("perplexity", "chat.completions.create", True, "Perplexity Sonar chat"),
+    ("perplexity", "search.create", True, "Perplexity Search"),
+    ("perplexity", "embeddings.create", True, "Perplexity embeddings"),
+    (
+        "perplexity",
+        "contextualized_embeddings.create",
+        True,
+        "Perplexity contextualized embeddings",
+    ),
+    # fal-client module helpers and client methods
+    ("fal_client", "run", True, "fal.ai synchronous inference"),
+    ("fal_client", "subscribe", True, "fal.ai queued inference"),
+    ("fal_client", "stream", True, "fal.ai streaming inference"),
+    ("fal_client", "submit", True, "fal.ai durable queue submission"),
 ]
 
 # ── HTTP client patterns ──────────────────────────────────────────────

@@ -136,9 +136,8 @@ def resolve_gpu_runtime() -> GpuRuntimeKind:
     if provider == "coreweave":
         return GpuRuntimeKind.COREWEAVE
 
-    if provider == "aws":
-        if _is_aws_gpu_instance(instance_type):
-            return GpuRuntimeKind.AWS_EC2_GPU
+    if provider == "aws" and _is_aws_gpu_instance(instance_type):
+        return GpuRuntimeKind.AWS_EC2_GPU
 
     if provider == "gcp":
         if _is_gcp_bundled_gpu_instance(instance_type):

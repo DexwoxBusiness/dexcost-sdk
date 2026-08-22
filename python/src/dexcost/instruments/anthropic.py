@@ -23,13 +23,19 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from decimal import Decimal
 from typing import Any
 
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.context import (
+    _current_task,
+    get_current_task,
+    set_current_task,
+    suppress_network_event,
+)
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
@@ -121,9 +127,9 @@ def uninstrument_anthropic() -> None:
     from anthropic.resources.messages import AsyncMessages, Messages
 
     if "sync_create" in _originals:
-        Messages.create = _originals["sync_create"]
+        Messages.create = _originals["sync_create"]  # type: ignore[method-assign]
     if "async_create" in _originals:
-        AsyncMessages.create = _originals["async_create"]
+        AsyncMessages.create = _originals["async_create"]  # type: ignore[method-assign]
 
     _originals.clear()
     _active_tracker = None
@@ -213,10 +219,8 @@ def _sync_create_wrapper(
         return response
     except Exception:
         if auto and auto_task_obj is not None:
-            try:
+            with suppress(Exception):
                 _log.debug("dexcost: auto-task call failed", exc_info=True)
-            except Exception:
-                pass
         raise
     finally:
         if auto and auto_token is not None:

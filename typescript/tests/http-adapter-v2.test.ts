@@ -516,7 +516,7 @@ describe("HTTP adapter v2 — session auto-grouping", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
 
-    setContext({ customerId: "acme", agent: "test_bot" });
+    setContext({ customerId: "acme", agent: "test_bot", agentVersion: "1" });
     trackHttp(buffer);
 
     // No explicit task — session manager should create one

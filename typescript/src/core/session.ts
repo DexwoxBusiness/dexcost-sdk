@@ -65,14 +65,25 @@ export class SessionManager {
   /** Create a session task for the current ambient context and index it. */
   private _createSession(callType: string, buffer: EventBuffer, key: unknown): SessionInfo {
     const ctx = getContext();
-    const taskType = ctx?.agent ?? "agent_session";
+    const taskType = "agent_session";
+    const taskId = randomUUID();
+    const hasBusinessIdentity = ctx !== undefined && [
+      ctx.customerId, ctx.projectId, ctx.userId, ctx.productId, ctx.agent, ctx.workflowId,
+    ].some((value) => value !== undefined);
 
     const task = createTask({
-      taskId: randomUUID(),
+      taskId,
       taskType,
       customerId: ctx?.customerId,
       projectId: ctx?.projectId,
-      metadata: { session: true, initiatedBy: callType },
+      userId: ctx?.userId,
+      productId: ctx?.productId,
+      rootTaskId: hasBusinessIdentity ? taskId : undefined,
+      agentId: ctx?.agent,
+      agentVersion: ctx?.agentVersion,
+      workflowId: ctx?.workflowId,
+      workflowSessionId: ctx?.workflowSessionId,
+      metadata: { ...(ctx?.metadata ?? {}), session: true, initiatedBy: callType },
     });
 
     // Register a NetworkAccountant so the patched fetch attributes the

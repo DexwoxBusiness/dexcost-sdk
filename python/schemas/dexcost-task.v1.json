@@ -59,6 +59,18 @@
       "type": ["string", "null"],
       "description": "Denormalised project identifier for fast queries."
     },
+    "user_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Canonical end-user assignment for revisioned business attribution."
+    },
+    "product_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Canonical product-surface assignment for revisioned business attribution."
+    },
     "parent_task_id": {
       "type": ["string", "null"],
       "format": "uuid",

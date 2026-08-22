@@ -27,6 +27,8 @@ import type {
   AttributionUsageLineV3,
 } from "./v3-types.js";
 import { validateAttributionObservationV3 } from "./v3-validate.js";
+import { capabilityToDict, validateCapability } from "../core/capabilities.js";
+import type { CapabilityIdentity } from "../core/capabilities.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
@@ -218,7 +220,50 @@ function operationFor(event: CostEvent): AttributionOperationIdentityV3 | null {
   if (traceId !== undefined && spanId !== undefined && TRACE_ID.test(traceId) && SPAN_ID.test(spanId)) {
     operation.trace = { trace_id: traceId, span_id: spanId };
   }
+  if (event.latencyMs !== undefined && Number.isInteger(event.latencyMs) &&
+      event.latencyMs >= 0 && event.latencyMs <= 86_400_000) {
+    operation.latency_ms = event.latencyMs;
+  }
+  const rawErrorType = stringDetail(event.details, "attribution_error_type", "error_type");
+  const errorType = rawErrorType
+    ?.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "_").replace(/^[._-]+/, "").slice(0, 128);
+  if (errorType !== undefined && CANONICAL_NAME.test(errorType) && operation.status !== "succeeded") {
+    const code = stringDetail(event.details, "attribution_error_code", "error_code")?.trim().slice(0, 64);
+    operation.error = {
+      type: errorType,
+      ...(code === undefined || code.length === 0 ? {} : { code }),
+    };
+  }
   return operation;
+}
+
+function capabilityFor(event: CostEvent): CapabilityIdentity | undefined {
+  const raw = event.details["attribution_capability"];
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  try {
+    const row = raw as Record<string, unknown>;
+    const allowed = new Set(["name", "kind", "namespace", "version", "source", "source_id", "invocation"]);
+    if (Object.keys(row).some((key) => !allowed.has(key))) return undefined;
+    return validateCapability({
+      name: String(row.name),
+      kind: row.kind as CapabilityIdentity["kind"],
+      namespace: row.namespace as string | undefined,
+      version: row.version as string | undefined,
+      source: row.source as CapabilityIdentity["source"],
+      sourceId: row.source_id as string | undefined,
+      invocation: row.invocation as CapabilityIdentity["invocation"],
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function resourceFor(event: CostEvent): AttributionEventV3["resource"] | undefined {
+  const type = stringDetail(event.details, "attribution_resource_type");
+  const id = stringDetail(event.details, "attribution_resource_id");
+  if (type === "tool" && id !== undefined) return { type, id: id.slice(0, 256) };
+  return attributionResourceFor(event);
 }
 
 function unknownExplicitUsage(event: CostEvent): {
@@ -241,9 +286,43 @@ function unknownExplicitUsage(event: CostEvent): {
   };
 }
 
+function explicitUsageLines(event: CostEvent): {
+  component: AttributionComponent;
+  usage: Array<{ metric: string; quantity: string; unit: string }>;
+  durationSeconds?: number;
+} | null | undefined {
+  const raw = event.details["attribution_usage_lines"];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.length > 64) return null;
+  const usage: Array<{ metric: string; quantity: string; unit: string }> = [];
+  const identities = new Set<string>();
+  for (const item of raw) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) return null;
+    const row = item as Record<string, unknown>;
+    const metric = typeof row["metric"] === "string" ? row["metric"] : "";
+    const unit = typeof row["unit"] === "string" ? row["unit"] : "";
+    const quantity = positiveQuantity(row["quantity"]);
+    if (!CANONICAL_NAME.test(metric) || !UNIT.test(unit) || quantity === undefined) return null;
+    const identity = `${metric}\0${unit}`;
+    if (identities.has(identity)) return null;
+    identities.add(identity);
+    usage.push({ metric, quantity, unit });
+  }
+  return {
+    component: "external",
+    usage,
+    durationSeconds: numberDetail(event.details, "attribution_usage_duration_seconds"),
+  };
+}
+
 /** Convert durable v1 capture into the strict, details-free v3 observation. */
-export function toAttributionObservationV3(event: CostEvent): AttributionEventV3 | null {
-  const explicit = unknownExplicitUsage(event);
+export function toAttributionObservationV3(
+  event: CostEvent,
+  environment?: string,
+): AttributionEventV3 | null {
+  const explicitLines = explicitUsageLines(event);
+  if (explicitLines === null) return null;
+  const explicit = explicitLines ?? unknownExplicitUsage(event);
   const gpuSignal = event.eventType === "gpu_utilization_signal" ? gpuSignalUsage(event) : undefined;
   const legacy = explicit === undefined && gpuSignal === undefined
     ? attributionComponentAndUsage(event)
@@ -298,8 +377,13 @@ export function toAttributionObservationV3(event: CostEvent): AttributionEventV3
     usage_snapshot: "full",
     usage,
   };
-  const resource = attributionResourceFor(event);
+  const resource = resourceFor(event);
   if (resource !== undefined) converted.resource = resource;
+  const capability = capabilityFor(event);
+  if (capability !== undefined) {
+    converted.capability = capabilityToDict(capability) as unknown as NonNullable<AttributionEventV3["capability"]>;
+  }
+  if (environment !== undefined) converted.environment = environment;
   if (event.eventType !== "gpu_utilization_signal") {
     const evidence = attributionEvidenceFor(event);
     if (evidence !== undefined) converted.cost_evidence = evidence;

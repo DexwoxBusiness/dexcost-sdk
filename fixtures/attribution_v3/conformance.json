@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
   "corpus_version": "2026-08-20.1",
-  "observation_contract_version": "3.1.0",
-  "business_contract_version": "1.0.0",
+  "observation_contract_version": "3.2.0",
+  "business_contract_version": "1.1.0",
   "valid_observations": [
     {
       "id": "observation.final_known_meter",
@@ -16,6 +16,7 @@
         "component": "llm",
         "provider": { "name": "anthropic", "service": "messages", "record_id": "msg_123", "region": "us-east" },
         "resource": { "type": "model", "id": "claude-sonnet-4-5" },
+        "capability": { "name": "agent.answer", "kind": "workflow", "namespace": "dexcost.agent", "version": "2026-08-21", "source": "project", "source_id": "answer-workflow", "invocation": "automatic" },
         "operation": {
           "id": "33333333-3333-4333-8333-333333333333",
           "name": "agent.answer",
@@ -172,7 +173,9 @@
     { "id": "observation.invalid.error_on_succeeded", "covers": ["observation.operation_error"], "expected_error_path": "operation.error", "mutate_from": "observation.final_known_meter", "set": { "operation.error": { "type": "timeout" } } },
     { "id": "observation.invalid.environment_charset", "covers": ["observation.environment"], "expected_error_path": "environment", "mutate_from": "observation.final_known_meter", "set": { "environment": "Production" } },
     { "id": "observation.invalid.negative_latency", "covers": ["observation.operation_latency"], "expected_error_path": "operation.latency_ms", "mutate_from": "observation.final_known_meter", "set": { "operation.latency_ms": -1 } },
-    { "id": "observation.invalid.overlarge_latency", "covers": ["observation.operation_latency"], "expected_error_path": "operation.latency_ms", "mutate_from": "observation.final_known_meter", "set": { "operation.latency_ms": 86400001 } }
+    { "id": "observation.invalid.overlarge_latency", "covers": ["observation.operation_latency"], "expected_error_path": "operation.latency_ms", "mutate_from": "observation.final_known_meter", "set": { "operation.latency_ms": 86400001 } },
+    { "id": "observation.invalid.capability_kind", "covers": ["observation.capability_identity"], "expected_error_path": "capability.kind", "mutate_from": "observation.final_known_meter", "set": { "capability.kind": "plugin" } },
+    { "id": "observation.invalid.capability_source_pairing", "covers": ["observation.capability_identity"], "expected_error_path": "capability.source_id", "mutate_from": "observation.final_known_meter", "delete": ["capability.source"] }
   ],
   "revision_sequences": [
     {

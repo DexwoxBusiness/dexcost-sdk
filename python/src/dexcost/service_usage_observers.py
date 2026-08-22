@@ -104,8 +104,17 @@ def _valid_response_predicate(predicate: Any) -> bool:
 
 
 class ServiceUsageObservers:
-    def __init__(self, data_path: Path | None = None) -> None:
-        raw = json.loads((data_path or _DATA_PATH).read_text(encoding="utf-8"))
+    def __init__(
+        self,
+        data_path: Path | None = None,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        if data_path is not None and data is not None:
+            raise ValueError("data_path and data are mutually exclusive")
+        raw = data if data is not None else json.loads(
+            (data_path or _DATA_PATH).read_text(encoding="utf-8")
+        )
         meta = raw.get("_meta") if isinstance(raw, dict) else None
         definitions = raw.get("observers") if isinstance(raw, dict) else None
         if (
@@ -265,6 +274,10 @@ class ServiceUsageObservers:
                     source_url=definition["source_url"],
                 )
             )
+
+    @property
+    def observer_count(self) -> int:
+        return len(self._observers)
 
     def _lookup(self, url: str) -> tuple[Any, list[UsageObserver]] | None:
         parsed = urlparse(url)
@@ -462,3 +475,9 @@ except (OSError, ValueError, json.JSONDecodeError) as exc:
 
 def get_service_usage_observers() -> ServiceUsageObservers | None:
     return _DEFAULT_OBSERVERS
+
+
+def set_service_usage_observers(observers: ServiceUsageObservers | None) -> None:
+    """Atomically replace the process-wide declarative observer set."""
+    global _DEFAULT_OBSERVERS
+    _DEFAULT_OBSERVERS = observers

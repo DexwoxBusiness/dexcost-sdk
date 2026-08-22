@@ -1,0 +1,145 @@
+{
+  "schema_version": "1",
+  "decision": "retain_full_bundles",
+  "reviewed_at": "2026-08-22",
+  "local_evidence_classification": "Local production-equivalent runs establish implementation readiness only. They do not satisfy requirements that explicitly call for production or production-shadow evidence.",
+  "implementation_readiness_evidence": [
+    "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+  ],
+  "production_shadow_evidence_template": "contracts/python-vnext/v1/evidence/catalog-production-shadow.template.json",
+  "blocking_conditions": [
+    "Production Ed25519 private keys have not been provisioned in an approved publication secret manager or remote signer.",
+    "The canonical packaged production trust document contains no production public keys.",
+    "The production publication job has not bound its private signers to DEXCOST_CATALOG_EXPECTED_TRUST.",
+    "The production-shadow lifecycle and zero-usage-loss evidence template has not been completed."
+  ],
+  "requirements": [
+    {
+      "id": "published.stable",
+      "status": "unproven",
+      "required_evidence": "A validated stable release published through the production Catalog Release Service.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "The local authoritative service published, promoted, changed, and rolled back signed stable releases through sequence 4.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+        ]
+      }
+    },
+    {
+      "id": "published.canary",
+      "status": "unproven",
+      "required_evidence": "A canary release observed by real SDK clients before promotion.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "Real Python and TypeScript clients activated the dual-signed local canary before promotion.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+        ]
+      }
+    },
+    {
+      "id": "startup.first_run",
+      "status": "unproven",
+      "required_evidence": "Clean host with no cache measures usage safely and obtains/activates a release in the background.",
+      "local_evidence": {
+        "status": "partial_local",
+        "note": "Clean Python and TypeScript stores activated all seven families, but production cold-start usage retention remains unproven.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+        ]
+      }
+    },
+    {
+      "id": "startup.offline",
+      "status": "unproven",
+      "required_evidence": "Offline restart uses a validated durable active or previous release without losing usage.",
+      "local_evidence": {
+        "status": "partial_local",
+        "note": "Both SDKs imported and used the exact signed air-gap bundle; usage retention during an offline production restart remains unproven.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+        ]
+      }
+    },
+    {
+      "id": "fallback.lkg_previous",
+      "status": "unproven",
+      "required_evidence": "Production-shadow evidence for active LKG and previous-release fallback in Python and TypeScript.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "Both SDKs now deterministically corrupt only the active slot and recover the independently validated previous release. TypeScript separately proves whole-primary-file power-cut recovery through its redundant LKG file. Production-shadow execution is still required.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json",
+          "python/scripts/catalog_release_probe.py",
+          "python/tests/test_catalog_releases.py",
+          "typescript/scripts/catalog-release-probe.mjs",
+          "typescript/tests/catalog-releases.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "fallback.corrupt_expired",
+      "status": "unproven",
+      "required_evidence": "Corrupt and expired caches fail safely in production-shadow runs and never activate partial data.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "Both SDKs reject tampered bundles and signed expired bundles without replacing active LKG; their probes expose both gates for the production-shadow run.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json",
+          "python/scripts/catalog_release_probe.py",
+          "python/tests/test_catalog_releases.py",
+          "typescript/scripts/catalog-release-probe.mjs",
+          "typescript/tests/catalog-releases.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "air_gap.import",
+      "status": "unproven",
+      "required_evidence": "Documented, authenticated or offline-verifiable artifact import path exercised by both SDKs.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "Server, Python, and TypeScript produced byte-identical signed bundles; clean stores in both SDKs verified and imported the server bundle.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json",
+          "python/scripts/catalog_release_probe.py",
+          "typescript/scripts/catalog-release-probe.mjs"
+        ]
+      }
+    },
+    {
+      "id": "rollback.no_sdk_release",
+      "status": "unproven",
+      "required_evidence": "Higher-sequence rollback release restores safe catalogs without publishing an SDK.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "Sequence 4 restored the original LLM artifact after sequence 3 changed it, and both existing SDK caches activated the rollback without an SDK rebuild.",
+        "references": [
+          "contracts/python-vnext/v1/evidence/catalog-joint-local-2026-08-22.json"
+        ]
+      }
+    },
+    {
+      "id": "usage.never_lost",
+      "status": "unproven",
+      "required_evidence": "Usage-only/unpriced operation survives unavailable pricing and reconciles later.",
+      "local_evidence": {
+        "status": "proven_local",
+        "note": "The canonical attribution-v3 control plane commits usage and its durable pricing job before pricing, persists the latest event as unpriced, then requeues and prices it when verified catalog coverage is published. The abandoned no-op ClickHouse cost_pending prototype is not part of the production path. Production-shadow counters must still prove attempted equals persisted, later reconciliation is positive, and loss is zero.",
+        "references": [
+          "control-plane/server/src/attribution/pricing-catalog.ts",
+          "control-plane/server/src/ingestion/processor.ts",
+          "control-plane/server/tests/attribution-observation-ingestion.test.ts",
+          "control-plane/server/tests/catalog-usage-reconciliation-boundary.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "package.canary",
+      "status": "unproven",
+      "required_evidence": "Slim canary wheels/packages pass clean-install, cold-start, offline, and upgrade tests."
+    }
+  ],
+  "rule": "Do not reduce bundled catalogs until every requirement is proven with linked evidence. Unit and local production-equivalent tests establish implementation readiness but are not production evidence."
+}

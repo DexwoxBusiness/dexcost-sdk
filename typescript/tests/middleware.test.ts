@@ -90,16 +90,8 @@ describe("Express middleware", () => {
     const req = mockReq("GET", "/api/data", { orgId: "acme" });
     const res = mockRes();
 
-    let capturedCustomerId: string | undefined;
-    const origTrack = tracker.track.bind(tracker);
-    tracker.track = async (opts: Parameters<typeof tracker.track>[0], fn: Parameters<typeof tracker.track>[1]) => {
-      capturedCustomerId = opts.customerId;
-      return origTrack(opts, fn);
-    };
-
     mw(req, res, () => {});
-
-    expect(capturedCustomerId).toBe("acme");
+    expect((req["dexcostTask"] as { task: { customerId?: string } }).task.customerId).toBe("acme");
 
     res._emit("finish");
     await new Promise((r) => setTimeout(r, 50));
@@ -115,16 +107,8 @@ describe("Express middleware", () => {
     const req = { method: "GET", path: "/api/data", originalUrl: "/api/data", headers: { "x-project-id": "proj-42" } };
     const res = mockRes();
 
-    let capturedProjectId: string | undefined;
-    const origTrack = tracker.track.bind(tracker);
-    tracker.track = async (opts: Parameters<typeof tracker.track>[0], fn: Parameters<typeof tracker.track>[1]) => {
-      capturedProjectId = opts.projectId;
-      return origTrack(opts, fn);
-    };
-
     mw(req, res, () => {});
-
-    expect(capturedProjectId).toBe("proj-42");
+    expect((req["dexcostTask"] as { task: { projectId?: string } }).task.projectId).toBe("proj-42");
 
     res._emit("finish");
     await new Promise((r) => setTimeout(r, 50));
@@ -161,16 +145,9 @@ describe("Express middleware", () => {
     const req = mockReq("POST", "/api/chat");
     const res = mockRes();
 
-    let capturedTaskType: string | undefined;
-    const origTrack = tracker.track.bind(tracker);
-    tracker.track = async (opts: Parameters<typeof tracker.track>[0], fn: Parameters<typeof tracker.track>[1]) => {
-      capturedTaskType = opts.taskType;
-      return origTrack(opts, fn);
-    };
-
     mw(req, res, () => {});
-
-    expect(capturedTaskType).toBe("api:POST:/api/chat");
+    expect((req["dexcostTask"] as { task: { taskType: string } }).task.taskType)
+      .toBe("api:POST:/api/chat");
 
     res._emit("finish");
     await new Promise((r) => setTimeout(r, 50));
@@ -178,22 +155,18 @@ describe("Express middleware", () => {
     tracker.close();
   });
 
-  it("defaults taskType to METHOD /path", async () => {
+  it("defaults to a canonical task type and keeps route details in metadata", async () => {
     const tracker = new CostTracker({ dbPath: join(tmpDir, "test.db") });
     const mw = createExpressMiddleware(tracker);
     const req = mockReq("DELETE", "/api/items/123");
     const res = mockRes();
 
-    let capturedTaskType: string | undefined;
-    const origTrack = tracker.track.bind(tracker);
-    tracker.track = async (opts: Parameters<typeof tracker.track>[0], fn: Parameters<typeof tracker.track>[1]) => {
-      capturedTaskType = opts.taskType;
-      return origTrack(opts, fn);
-    };
-
     mw(req, res, () => {});
-
-    expect(capturedTaskType).toBe("DELETE /api/items/123");
+    const task = (req["dexcostTask"] as {
+      task: { taskType: string; metadata: Record<string, unknown> };
+    }).task;
+    expect(task.taskType).toBe("http.request");
+    expect(task.metadata).toMatchObject({ httpMethod: "DELETE", httpRoute: "/api/items/123" });
 
     res._emit("finish");
     await new Promise((r) => setTimeout(r, 50));

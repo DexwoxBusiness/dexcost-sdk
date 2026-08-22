@@ -18,10 +18,10 @@ from dexcost.adapters.http import (
     clear_recorded_events,
     get_recorded_events,
     register_domain_rate,
+    set_catalog,
     track_http,
     untrack_http,
 )
-from dexcost.adapters.http import set_catalog
 from dexcost.context import clear_context, set_current_task, task_context
 from dexcost.models.task import Task
 from dexcost.session import reset_session_manager
@@ -190,6 +190,23 @@ class TestTrackHttp:
             assert fake_requests.Session.send is not original_send
             untrack_http()
             assert fake_requests.Session.send is original_send
+
+    def test_untrack_restores_exact_owner_after_module_replacement(self) -> None:
+        """Restoration must not mutate a later module with the same import name."""
+        patched_httpx = _make_fake_httpx_module()
+        replacement_httpx = _make_fake_httpx_module()
+        patched_original = patched_httpx.Client.send
+        replacement_original = replacement_httpx.Client.send
+
+        with patch.dict("sys.modules", {"httpx": patched_httpx}):
+            track_http()
+        assert patched_httpx.Client.send is not patched_original
+
+        with patch.dict("sys.modules", {"httpx": replacement_httpx}):
+            untrack_http()
+
+        assert patched_httpx.Client.send is patched_original
+        assert replacement_httpx.Client.send is replacement_original
 
     def test_no_libraries_noop(self) -> None:
         """track_http() returns [] when no HTTP libraries are installed."""

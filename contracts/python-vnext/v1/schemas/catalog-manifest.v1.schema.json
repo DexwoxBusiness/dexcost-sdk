@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/catalog-manifest.v1.json",
+  "title": "DexCost catalog release manifest v1",
+  "$comment": "Ed25519 signs UTF-8 bytes: 'dexcost.catalog-release.v1\\u0000' followed by canonical JSON of the complete manifest with signatures replaced by an empty array. At least one configured trusted key must verify before authoritative or offline activation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "release_id", "release_sequence", "channel", "published_at",
+    "expires_at", "safety_policy_version", "sdk_contract", "server_pricing_reference",
+    "artifacts", "signatures"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "release_id": { "$ref": "#/$defs/releaseId" },
+    "release_sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "channel": { "enum": ["stable", "canary"] },
+    "published_at": { "$ref": "#/$defs/timestamp" },
+    "expires_at": { "$ref": "#/$defs/timestamp" },
+    "safety_policy_version": { "$ref": "#/$defs/version" },
+    "sdk_contract": { "$ref": "#/$defs/sdkContract" },
+    "server_pricing_reference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["catalog_version", "activation_id"],
+      "properties": {
+        "catalog_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "activation_id": { "type": "string", "pattern": "^[1-9][0-9]*$" }
+      }
+    },
+    "artifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["observer_rules", "llm_prices", "service_prices", "compute_prices", "gpu_prices", "egress_prices", "server_pricing_reference"],
+      "properties": {
+        "observer_rules": { "$ref": "#/$defs/observerArtifact" },
+        "llm_prices": { "$ref": "#/$defs/llmArtifact" },
+        "service_prices": { "$ref": "#/$defs/serviceArtifact" },
+        "compute_prices": { "$ref": "#/$defs/computeArtifact" },
+        "gpu_prices": { "$ref": "#/$defs/gpuArtifact" },
+        "egress_prices": { "$ref": "#/$defs/egressArtifact" },
+        "server_pricing_reference": { "$ref": "#/$defs/serverArtifact" }
+      }
+    },
+    "signatures": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["algorithm", "key_id", "signature"],
+        "properties": {
+          "algorithm": { "const": "ed25519" },
+          "key_id": { "$ref": "#/$defs/version" },
+          "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "releaseId": { "type": "string", "pattern": "^catalog-release-[a-z0-9][a-z0-9._:-]{0,127}$" },
+    "version": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "sdkContract": {
+      "type": "object", "additionalProperties": false, "required": ["min", "max"],
+      "properties": { "min": { "type": "integer", "minimum": 1, "maximum": 10000 }, "max": { "type": "integer", "minimum": 1, "maximum": 10000 } }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "sha256", "byte_size", "item_count", "media_type", "path", "sdk_contract"],
+      "properties": {
+        "kind": { "enum": ["observer_rules", "llm_prices", "service_prices", "compute_prices", "gpu_prices", "egress_prices", "server_pricing_reference"] },
+        "schema_version": { "type": "string", "pattern": "^[1-9][0-9]{0,8}$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "byte_size": { "type": "integer", "minimum": 2, "maximum": 5242880 },
+        "item_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "media_type": { "const": "application/json" },
+        "path": { "type": "string", "pattern": "^/v1/catalogs/artifacts/sha256/[0-9a-f]{64}$" },
+        "sdk_contract": { "$ref": "#/$defs/sdkContract" }
+      }
+    },
+    "observerArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "observer_rules" } } }] },
+    "llmArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "llm_prices" } } }] },
+    "serviceArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "service_prices" } } }] },
+    "computeArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "compute_prices" } } }] },
+    "gpuArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "gpu_prices" } } }] },
+    "egressArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "egress_prices" } } }] },
+    "serverArtifact": { "allOf": [{ "$ref": "#/$defs/artifact" }, { "properties": { "kind": { "const": "server_pricing_reference" } } }] }
+  }
+}

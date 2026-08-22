@@ -28,7 +28,7 @@ def enable_dev_mode() -> None:
     _print("\033[36m[dexcost]\033[0m dev mode — cloud sync disabled")
 
 
-def log_event(event: "Event", task_type: str = "") -> None:
+def log_event(event: Event, task_type: str = "") -> None:
     """Print a single event to stderr."""
     if not _dev_mode:
         return
@@ -71,7 +71,7 @@ def log_event(event: "Event", task_type: str = "") -> None:
         )
 
 
-def log_task_complete(task: "Task") -> None:
+def log_task_complete(task: Task) -> None:
     """Print task completion summary to stderr."""
     if not _dev_mode:
         return

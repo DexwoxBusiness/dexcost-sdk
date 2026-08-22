@@ -63,7 +63,9 @@ def _print_status(storage: Any, db_path: Path) -> None:
         click.echo(f"Task count:        {task_count}")
 
         # Last task timestamp
-        row = conn.execute("SELECT started_at FROM tasks ORDER BY started_at DESC LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT started_at FROM tasks ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
         if row:
             click.echo(f"Last task:         {row[0]}")
         else:
@@ -162,16 +164,19 @@ def rates(
             click.echo(f"{'Service':<40} {'Per':<15} {'Cost (USD)':<15}")
             click.echo("-" * 70)
             for service in sorted(all_rates):
-                entry = all_rates[service]
-                click.echo(f"{service:<40} {entry.per:<15} {entry.cost_usd:<15}")
+                rate_entry = all_rates[service]
+                click.echo(
+                    f"{service:<40} {rate_entry.per:<15} {rate_entry.cost_usd:<15}"
+                )
         if infrastructure:
             click.echo()
             click.echo(f"{'Infrastructure':<40} {'Per':<15} {'Cost (USD)':<15}")
             click.echo("-" * 70)
             for kind, key in sorted(infrastructure):
-                entry = infrastructure[(kind, key)]
+                infrastructure_entry = infrastructure[(kind, key)]
                 click.echo(
-                    f"{kind + '.' + key:<40} {entry.per:<15} {entry.cost_usd:<15}"
+                    f"{kind + '.' + key:<40} {infrastructure_entry.per:<15} "
+                    f"{infrastructure_entry.cost_usd:<15}"
                 )
 
     if export_path:

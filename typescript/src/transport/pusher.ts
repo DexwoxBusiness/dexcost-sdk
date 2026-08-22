@@ -13,6 +13,16 @@ import { toAttributionTaskIngestV1 } from "../attribution/convert.js";
 import { toAttributionObservationV3 } from "../attribution/v3-convert.js";
 import { redactDict, hashValue, enforceMetadataLimit } from "../security/redaction.js";
 import { DEFAULT_ENDPOINT } from "../core/endpoint.js";
+import { toBusinessIdentityRevision } from "../core/business-identity.js";
+import { providerJobFromDict } from "../core/provider-jobs.js";
+import {
+  DeliveryStatus,
+  emitDeliveryError,
+  type DeliveryErrorOperation,
+  type DeliveryWorkerState,
+} from "./delivery.js";
+
+interface ProviderJobKey { eventId: string; revision: number }
 
 /** Maximum backoff in milliseconds (5 minutes). */
 const MAX_BACKOFF_MS = 300_000;
@@ -84,8 +94,18 @@ export class EventPusher {
   private _lastPurgeMs = 0;
   private _lastConversionWarnMs = 0;
   private _lastConversionWarnFingerprint = "";
-  /** Set permanently when the API key is rejected (HTTP 401/403). */
+  /** Set permanently when the ingestion API rejects the key with HTTP 401. */
   private _authFailed = false;
+  private _workerState: DeliveryWorkerState = "stopped";
+  private _lastAttemptAt?: Date;
+  private _lastSuccessAt?: Date;
+  private _lastErrorAt?: Date;
+  private _lastErrorType?: string;
+  private _lastErrorMessage?: string;
+  private _consecutiveFailures = 0;
+  private _successfulBatches = 0;
+  private _failedBatches = 0;
+  private _deliveredRecords = 0;
 
   constructor(
     buffer: EventBuffer,
@@ -107,6 +127,8 @@ export class EventPusher {
   setApiKey(newKey: string): void {
     this._options = { ...this._options, apiKey: newKey };
     this._authFailed = false;
+    this._consecutiveFailures = 0;
+    this._workerState = "idle";
     // If the loop was torn down by the prior auth failure, restart it.
     if (!this._interval) {
       this.start();
@@ -120,6 +142,7 @@ export class EventPusher {
     if (this._interval) {
       return; // Already running
     }
+    this._workerState = "idle";
     const intervalMs = this._options.flushIntervalMs ?? 30000;
     this._interval = setInterval(() => {
       void this.push(false);
@@ -158,6 +181,55 @@ export class EventPusher {
       clearInterval(this._purgeInterval);
       this._purgeInterval = null;
     }
+    if (!this._authFailed) this._workerState = "stopped";
+  }
+
+  private _recordAttempt(): void {
+    this._lastAttemptAt = new Date();
+    this._workerState = "syncing";
+  }
+
+  private _recordSuccess(deliveredRecords: number): void {
+    this._lastSuccessAt = new Date();
+    this._consecutiveFailures = 0;
+    this._successfulBatches += 1;
+    this._deliveredRecords += deliveredRecords;
+    this._workerState = "idle";
+  }
+
+  private _recordError(
+    error: unknown,
+    operation: DeliveryErrorOperation,
+    retryable: boolean,
+    state: DeliveryWorkerState,
+  ): void {
+    const occurredAt = new Date();
+    const errorType = error instanceof Error ? error.name : typeof error;
+    let message = error instanceof Error ? error.message : String(error);
+    if (this._options.apiKey) message = message.replaceAll(this._options.apiKey, "[REDACTED]");
+    message = message.slice(0, 1024);
+    this._lastErrorAt = occurredAt;
+    this._lastErrorType = errorType;
+    this._lastErrorMessage = message;
+    this._consecutiveFailures += 1;
+    this._failedBatches += 1;
+    this._workerState = state;
+    emitDeliveryError({
+      occurredAt, operation, errorType, message, retryable,
+      consecutiveFailures: this._consecutiveFailures,
+    });
+  }
+
+  status(): DeliveryStatus {
+    return new DeliveryStatus({
+      ...this._buffer.deliveryCounts(), enabled: true, workerState: this._workerState,
+      lastAttemptAt: this._lastAttemptAt, lastSuccessAt: this._lastSuccessAt,
+      lastErrorAt: this._lastErrorAt, lastErrorType: this._lastErrorType,
+      lastErrorMessage: this._lastErrorMessage, consecutiveFailures: this._consecutiveFailures,
+      successfulBatches: this._successfulBatches, failedBatches: this._failedBatches,
+      deliveredRecords: this._deliveredRecords,
+      backoffSeconds: this._workerState === "backoff" ? this._backoffMs / 1000 : 0,
+    });
   }
 
   /**
@@ -222,22 +294,69 @@ export class EventPusher {
       if (newlyScanned === 0 || pending.length < pageLimit) break;
     }
 
-    if (wireEvents.length === 0 && tasks.length === 0) {
+    const outcomes = this._buffer.getPendingLedger("outcome", batchSize);
+    const revenueRevisions = this._buffer.getPendingLedger("revenue", batchSize);
+    const providerJobRecords = this._buffer.getPendingLedger(
+      "provider_job", Math.max(1, batchSize - wireEvents.length),
+    );
+    const providerJobKeys: ProviderJobKey[] = [];
+    const failedProviderJobKeys: ProviderJobKey[] = [];
+    for (const raw of providerJobRecords) {
+      try {
+        const job = providerJobFromDict(raw);
+        wireEvents.push(job.toAttributionObservation(this._options.environment) as unknown as AttributionEventV3);
+        providerJobKeys.push({ eventId: job.eventId, revision: job.revision });
+      } catch {
+        const eventId = raw["event_id"];
+        const revision = raw["revision"];
+        if (typeof eventId === "string" && Number.isSafeInteger(revision)) {
+          failedProviderJobKeys.push({ eventId, revision: Number(revision) });
+        }
+      }
+    }
+    this._buffer.markLedgerQuarantined(
+      "provider_job", failedProviderJobKeys.map((item) => [item.eventId, item.revision] as const),
+    );
+    const businessIdentities = tasks.flatMap((task) => {
+      if (task.endedAt === undefined) return [];
+      const identity = toBusinessIdentityRevision(task);
+      return identity === undefined ? [] : [this._serializeBusinessIdentity(identity)];
+    });
+
+    if (wireEvents.length === 0 && tasks.length === 0 && outcomes.length === 0 && revenueRevisions.length === 0) {
       this._handleConversionFailures(failedEventIds, surfaceConversionErrors);
       return;
     }
 
     this._pushing = true;
+    this._recordAttempt();
 
     try {
-      const ok = await this.pushWithSplit(wireEvents, tasks);
+      const ok = await this.pushWithSplit(
+        wireEvents, tasks, businessIdentities, outcomes, revenueRevisions, providerJobKeys,
+      );
       if (ok) {
         // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
         // POST; these calls are kept as a defensive idempotent safety
         // net for any future path that returns true without splitting.
         this._buffer.markSynced(wireEvents.map((e) => e.event_id));
         this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
+        this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
+          String(item["outcome_id"]),
+          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+        ] as const));
+        this._buffer.markLedgerSynced("revenue", revenueRevisions.map((item) => [
+          String(item["revenue_id"]),
+          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+        ] as const));
+        this._buffer.markLedgerSynced(
+          "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
+        );
         this._backoffMs = 1000; // Reset backoff on success
+        this._recordSuccess(
+          wireEvents.length + tasks.length + businessIdentities.length +
+          outcomes.length + revenueRevisions.length,
+        );
 
         // Purge old synced events + stale pending events (throttled to
         // once per hour). purgeOldPending is the safety net for events
@@ -254,9 +373,16 @@ export class EventPusher {
         }
       } else {
         this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+        if (!this._authFailed) {
+          this._recordError(
+            new Error("control plane did not accept the complete attribution batch"),
+            "transport", true, "backoff",
+          );
+        }
       }
-    } catch {
+    } catch (error) {
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+      this._recordError(error, "transport", true, "backoff");
     } finally {
       this._pushing = false;
     }
@@ -273,6 +399,7 @@ export class EventPusher {
     const error = new Error(
       `${eventIds.length} event(s) were quarantined because they cannot be represented by attribution v3 (event IDs: ${preview})`,
     );
+    this._recordError(error, "conversion", false, "idle");
     if (surface) throw error;
 
     const now = Date.now();
@@ -296,7 +423,21 @@ export class EventPusher {
     const sanitized = redactFields && redactFields.length > 0
       ? { ...event, details: redactEventDetails(event.details, redactFields) }
       : event;
-    return toAttributionObservationV3(sanitized);
+    return toAttributionObservationV3(sanitized, this._options.environment);
+  }
+
+  private _serializeBusinessIdentity(identity: Record<string, unknown>): Record<string, unknown> {
+    const result = structuredClone(identity);
+    const assignment = result["assignment"] as Record<string, unknown>;
+    for (const field of this._options.redactFields ?? []) delete assignment[field];
+    if (assignment["experiment_id"] === undefined) delete assignment["variant"];
+    if (this._options.hashCustomerId) {
+      for (const key of ["customer_id", "project_id"]) {
+        const value = assignment[key];
+        if (typeof value === "string") assignment[key] = hashValue(value);
+      }
+    }
+    return result;
   }
 
   /**
@@ -347,12 +488,20 @@ export class EventPusher {
   private async pushWithSplit(
     events: AttributionEventV3[],
     tasks: Task[],
+    businessIdentities: Array<Record<string, unknown>> = [],
+    outcomes: Array<Record<string, unknown>> = [],
+    revenueRevisions: Array<Record<string, unknown>> = [],
+    providerJobKeys: ProviderJobKey[] = [],
   ): Promise<boolean> {
     let payload: string;
     try {
       payload = JSON.stringify({
         events,
         tasks: tasks.map((t) => this._serializeTask(t)),
+        business_identities: businessIdentities,
+        outcomes,
+        revenue_revisions: revenueRevisions,
+        cost_pools: [],
       });
     } catch {
       return false; // Unserializable payload — skip this batch
@@ -371,28 +520,69 @@ export class EventPusher {
         if (tasks.length > 0) {
           this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
         }
+        this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
+          String(item["outcome_id"]),
+          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+        ] as const));
+        this._buffer.markLedgerSynced("revenue", revenueRevisions.map((item) => [
+          String(item["revenue_id"]),
+          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+        ] as const));
+        this._buffer.markLedgerSynced(
+          "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
+        );
       }
       return ok;
     }
 
     if (events.length > 1) {
       const mid = Math.floor(events.length / 2);
-      const firstOk = await this.pushWithSplit(events.slice(0, mid), tasks);
+      const firstIds = new Set(events.slice(0, mid).map((event) => event.event_id));
+      const firstJobs = providerJobKeys.filter((job) => firstIds.has(job.eventId));
+      const secondJobs = providerJobKeys.filter((job) => !firstIds.has(job.eventId));
+      const firstOk = await this.pushWithSplit(
+        events.slice(0, mid), tasks, businessIdentities, outcomes, revenueRevisions, firstJobs,
+      );
       if (!firstOk) return false;
-      return this.pushWithSplit(events.slice(mid), []);
+      return this.pushWithSplit(events.slice(mid), [], [], [], [], secondJobs);
     }
 
     if (tasks.length > 1) {
       const mid = Math.floor(tasks.length / 2);
-      const firstOk = await this.pushWithSplit([], tasks.slice(0, mid));
+      const firstTaskIds = new Set(tasks.slice(0, mid).map((task) => task.taskId));
+      const firstIdentities = businessIdentities.filter((item) => firstTaskIds.has(String(item["task_id"])));
+      const secondIdentities = businessIdentities.filter((item) => !firstTaskIds.has(String(item["task_id"])));
+      const firstOk = await this.pushWithSplit(
+        [], tasks.slice(0, mid), firstIdentities, outcomes, revenueRevisions, [],
+      );
       if (!firstOk) return false;
-      return this.pushWithSplit(events, tasks.slice(mid));
+      return this.pushWithSplit(events, tasks.slice(mid), secondIdentities, [], [], providerJobKeys);
+    }
+
+    if (outcomes.length > 1) {
+      const mid = Math.floor(outcomes.length / 2);
+      const firstOk = await this.pushWithSplit(
+        events, tasks, businessIdentities, outcomes.slice(0, mid), revenueRevisions, providerJobKeys,
+      );
+      if (!firstOk) return false;
+      return this.pushWithSplit([], [], [], outcomes.slice(mid), [], []);
+    }
+
+    if (revenueRevisions.length > 1) {
+      const mid = Math.floor(revenueRevisions.length / 2);
+      const firstOk = await this.pushWithSplit(
+        events, tasks, businessIdentities, outcomes, revenueRevisions.slice(0, mid), providerJobKeys,
+      );
+      if (!firstOk) return false;
+      return this.pushWithSplit([], [], [], [], revenueRevisions.slice(mid), []);
     }
 
     if (events.length === 1 && tasks.length === 1) {
-      const taskOk = await this.pushWithSplit([], tasks);
+      const taskOk = await this.pushWithSplit(
+        [], tasks, businessIdentities, outcomes, revenueRevisions, [],
+      );
       if (!taskOk) return false;
-      return this.pushWithSplit(events, []);
+      return this.pushWithSplit(events, [], [], [], [], providerJobKeys);
     }
 
     if (events.length === 1) {
@@ -400,7 +590,11 @@ export class EventPusher {
       console.warn(
         `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), skipping`,
       );
-      this._buffer.markSynced([events[0].event_id]);
+      if (providerJobKeys.length > 0) {
+        this._buffer.markLedgerQuarantined(
+          "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
+        );
+      } else this._buffer.markSynced([events[0].event_id]);
       return true;
     }
 
@@ -409,6 +603,24 @@ export class EventPusher {
         `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), skipping`,
       );
       this._buffer.markTasksSynced([tasks[0].taskId]);
+      return true;
+    }
+
+    if (outcomes.length === 1) {
+      const item = outcomes[0];
+      this._buffer.markLedgerQuarantined("outcome", [[
+        String(item["outcome_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+      ]]);
+      console.warn(`[dexcost] Single outcome exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      return true;
+    }
+    if (revenueRevisions.length === 1) {
+      const item = revenueRevisions[0];
+      this._buffer.markLedgerQuarantined("revenue", [[
+        String(item["revenue_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
+      ]]);
+      console.warn(`[dexcost] Single revenue revision exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      return true;
     }
     return true;
   }
@@ -466,15 +678,21 @@ export class EventPusher {
       return false;
     }
 
-    if (response.status === 401 || response.status === 403) {
-      // API key rejected — stop sync permanently rather than retrying
-      // a rejected key forever (mirrors Python sync.py).
+    if (response.status === 401) {
+      // The ingestion contract uses 401 for invalid/revoked keys.
       console.error(
         `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
       );
       this._authFailed = true;
+      const error = new Error(`API key rejected (HTTP ${response.status})`);
+      error.name = "HTTPError";
+      this._recordError(error, "authentication", false, "auth_failed");
       this.stop();
       return false;
+    }
+
+    if (response.status === 403) {
+      throw new Error("control plane request was forbidden (HTTP 403)");
     }
 
     return false;

@@ -100,12 +100,12 @@ def _install_fake_gemini() -> type:
 def _uninstall_fake_gemini() -> None:
     """Remove our fake google.genai modules from ``sys.modules``.
 
-    Sets each key to ``None`` so that any subsequent ``import google.genai``
-    raises ``ImportError`` immediately.
+    Removes only the fake modules so real-package compatibility tests remain
+    importable regardless of pytest file order.
     """
     for key in list(sys.modules):
         if key == "google" or key.startswith("google.genai"):
-            sys.modules[key] = None  # type: ignore[assignment]
+            sys.modules.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,11 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 @pytest.fixture(autouse=True)
 def _fake_gemini() -> Generator[None, None, None]:
     """Install/uninstall fake google.genai for every test and ensure uninstrument."""
+    original_modules = {
+        key: value
+        for key, value in sys.modules.items()
+        if key == "google" or key.startswith("google.genai")
+    }
     _install_fake_gemini()
     yield
     # Always uninstrument after each test to reset module-level state
@@ -137,6 +142,7 @@ def _fake_gemini() -> Generator[None, None, None]:
 
     uninstrument_gemini()
     _uninstall_fake_gemini()
+    sys.modules.update(original_modules)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +180,7 @@ class TestSyncGenerateContent:
         assert ev.model == "gemini-1.5-pro"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.cost_usd >= Decimal("0")
 
     def test_cached_tokens_extracted(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
@@ -218,10 +224,10 @@ class TestSyncGenerateContent:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         ev = events[0]
-        assert ev.cost_confidence == "estimated"
+        assert ev.cost_confidence == "unknown"
         assert ev.cost_usd == Decimal("0")
-        assert ev.input_tokens == 0
-        assert ev.output_tokens == 0
+        assert ev.input_tokens is None
+        assert ev.output_tokens is None
 
     def test_latency_recorded(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """latency_ms is populated on the event."""
@@ -321,7 +327,7 @@ class TestStreamingGenerateContent:
         assert ev.model == "gemini-1.5-pro"
         assert ev.input_tokens == 120
         assert ev.output_tokens == 60
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_streaming_without_usage_sets_estimated(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -344,9 +350,9 @@ class TestStreamingGenerateContent:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         ev = events[0]
-        assert ev.cost_confidence == "estimated"
-        assert ev.input_tokens == 0
-        assert ev.output_tokens == 0
+        assert ev.cost_confidence == "unknown"
+        assert ev.input_tokens is None
+        assert ev.output_tokens is None
 
 
 # ---------------------------------------------------------------------------
@@ -428,14 +434,19 @@ class TestInstrumentLifecycle:
 
         _uninstall_fake_gemini()
 
-        blocked = {k: None for k in list(sys.modules) if k == "google" or k.startswith("google.genai")}
+        blocked = {
+            key: None
+            for key in list(sys.modules)
+            if key == "google" or key.startswith("google.genai")
+        }
         blocked.setdefault("google", None)
         blocked.setdefault("google.genai", None)
         blocked.setdefault("google.genai.models", None)
 
-        with patch.dict(sys.modules, blocked):
-            with pytest.raises(ImportError, match="google-genai"):
-                instrument_gemini(tracker)
+        with patch.dict(sys.modules, blocked), pytest.raises(
+            ImportError, match="google-genai"
+        ):
+            instrument_gemini(tracker)
 
         # Re-install for cleanup
         _install_fake_gemini()

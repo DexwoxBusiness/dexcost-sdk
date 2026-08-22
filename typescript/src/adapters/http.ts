@@ -891,6 +891,11 @@ export function getServiceCatalog(): ServiceCatalog | null {
   return _catalog;
 }
 
+/** Atomically replace the process-wide service catalog. */
+export function setServiceCatalog(catalog: ServiceCatalog | null): void {
+  _catalog = catalog;
+}
+
 /** Reset the service catalog (for testing). */
 export function resetServiceCatalog(): void {
   _catalog = null;

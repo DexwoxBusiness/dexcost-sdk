@@ -22,6 +22,8 @@ import type { ExtractedUsage } from "./ai-usage.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
+import { recordProviderFailure } from "./provider-metering.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -67,6 +69,11 @@ function extractModel(opts: any): string {
   return "unknown";
 }
 
+function extractProvider(opts: any): string {
+  const raw = typeof opts?.model?.provider === "string" ? opts.model.provider : "";
+  return raw.split(".")[0] || "vercel-ai";
+}
+
 // Usage extraction is shared with the model-level middleware
 // (integrations/ai-sdk.ts) — see instruments/ai-usage.ts.
 
@@ -79,6 +86,7 @@ function recordEvent(
   usage: ExtractedUsage,
   task: Task,
   latencyMs: number,
+  provider: string = "vercel-ai",
 ): void {
   if (!_buffer || !_pricing) return;
 
@@ -108,7 +116,7 @@ function recordEvent(
     costUsd,
     costConfidence,
     pricingSource,
-    provider: "vercel-ai",
+    provider,
     model,
     inputTokens,
     outputTokens,
@@ -116,6 +124,7 @@ function recordEvent(
     latencyMs,
     isRetry: false,
   });
+  stampAmbientAttribution(event);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, inputTokens, outputTokens);
@@ -240,12 +249,16 @@ export async function instrumentVercelAi(
       // `totalUsage`; `usage` covers only the final step.
       const usage = extractUsage(result?.totalUsage ?? result?.usage);
 
-      recordEvent(model, usage, task, latencyMs);
+      recordEvent(model, usage, task, latencyMs, extractProvider(opts));
       if (autoCreated) {
         finalizeAutoTask(task, "success", _buffer);
       }
       return result;
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "vercel_ai.generate_text", provider: extractProvider(opts), service: "ai_sdk",
+        operation: "vercel_ai.generate_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -303,7 +316,7 @@ export async function instrumentVercelAi(
             recorded = true;
             try {
               const latencyMs = Math.round(performance.now() - startTime);
-              recordEvent(extractModel(opts), extractUsage(usage), task, latencyMs);
+              recordEvent(extractModel(opts), extractUsage(usage), task, latencyMs, extractProvider(opts));
             } catch {
               // dexcost errors must never crash user code
             }
@@ -311,10 +324,14 @@ export async function instrumentVercelAi(
               finalizeAutoTask(task, "success", _buffer);
             }
           },
-          () => {
+          (error: unknown) => {
             // Stream errored or was aborted before usage was known.
             if (recorded) return;
             recorded = true;
+            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+              taskType: "vercel_ai.stream_text", provider: extractProvider(opts), service: "ai_sdk",
+              operation: "vercel_ai.stream_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
+            }, error, startTime);
             if (autoCreated) {
               finalizeAutoTask(task, "failed", _buffer);
             }
@@ -337,6 +354,10 @@ export async function instrumentVercelAi(
       }
       return streamResult;
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "vercel_ai.stream_text", provider: extractProvider(opts), service: "ai_sdk",
+        operation: "vercel_ai.stream_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -440,6 +461,10 @@ function wrapStream(
         try {
           result = await iter.next();
         } catch (err) {
+          if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+            taskType: "vercel_ai.stream_text", provider: extractProvider(opts), service: "ai_sdk",
+            operation: "vercel_ai.stream_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
+          }, err, startTime);
           finalizeTask("failed");
           throw err;
         }
@@ -458,7 +483,7 @@ function wrapStream(
           }
 
           const model = extractModel(opts);
-          recordEvent(model, usage, task, latencyMs);
+          recordEvent(model, usage, task, latencyMs, extractProvider(opts));
           if (autoCreated) {
             finalizeAutoTask(task, "success", _buffer);
           }

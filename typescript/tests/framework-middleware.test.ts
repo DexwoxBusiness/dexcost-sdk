@@ -86,7 +86,8 @@ describe("dexcostFastifyPlugin", () => {
     const task = tracker.buffer.getAllTasks().find((t) => t.taskId === taskIdInsideHandler)!;
     expect(task.status).toBe("success");
     expect(task.customerId).toBe("acme");
-    expect(task.taskType).toBe("POST /review?token=REDACTED");
+    expect(task.taskType).toBe("http.request");
+    expect(task.metadata).toMatchObject({ httpMethod: "POST", httpRoute: "/review?token=REDACTED" });
   });
 
   it("marks the task failed on error and on >=400 responses", async () => {
@@ -112,8 +113,8 @@ describe("dexcostFastifyPlugin", () => {
     );
 
     const tasks = tracker.buffer.getAllTasks();
-    expect(tasks.find((t) => t.taskType === "GET /a")!.status).toBe("failed");
-    expect(tasks.find((t) => t.taskType === "GET /b")!.status).toBe("failed");
+    expect(tasks.find((t) => t.metadata.httpRoute === "/a")!.status).toBe("failed");
+    expect(tasks.find((t) => t.metadata.httpRoute === "/b")!.status).toBe("failed");
   });
 
   it("skip predicate bypasses tracking entirely", async () => {
@@ -170,7 +171,8 @@ describe("createHonoMiddleware", () => {
     const task = tracker.buffer.getAllTasks().find((t) => t.taskId === taskIdInsideHandler)!;
     expect(task.status).toBe("success");
     expect(task.customerId).toBe("acme");
-    expect(task.taskType).toBe("POST /review");
+    expect(task.taskType).toBe("http.request");
+    expect(task.metadata).toMatchObject({ httpMethod: "POST", httpRoute: "/review" });
     expect((c.get("dexcostTask") as any).task.taskId).toBe(taskIdInsideHandler);
   });
 

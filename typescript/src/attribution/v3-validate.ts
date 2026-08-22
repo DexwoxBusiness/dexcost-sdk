@@ -212,6 +212,14 @@ function semanticIssues(value: unknown): AttributionV3ValidationIssue[] {
   if (attempt?.id !== undefined && attempt.id === attempt.retry_of) {
     issues.push({ path: "operation.attempt.retry_of", message: "Attempt cannot retry itself" });
   }
+  if (operation?.status === "succeeded" && operation.error !== undefined) {
+    issues.push({ path: "operation.error", message: "A succeeded operation cannot carry an error" });
+  }
+
+  const capability = isRecord(value.capability) ? value.capability : undefined;
+  if (capability?.source_id !== undefined && capability.source === undefined) {
+    issues.push({ path: "capability.source_id", message: "source_id requires source" });
+  }
 
   const lifecycle = isRecord(value.lifecycle) ? value.lifecycle : undefined;
   const state = lifecycle?.state;

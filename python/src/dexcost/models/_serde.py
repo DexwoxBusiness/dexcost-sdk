@@ -44,10 +44,7 @@ def canonical_decimal(value: Decimal) -> str:
 
 def iso_canonical(dt: datetime) -> str:
     """Serialise a datetime to the canonical RFC3339 microsecond-Z form."""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
+    dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
     base = dt.strftime("%Y-%m-%dT%H:%M:%S")
     return f"{base}.{dt.microsecond:06d}Z"
 

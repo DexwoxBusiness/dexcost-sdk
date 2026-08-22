@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 10
+TARGET_SCHEMA_VERSION = 14
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -240,7 +240,8 @@ def _sqlite_v3_to_v4(conn: sqlite3.Connection) -> None:
         )
     if "network_by_host" not in existing:
         conn.execute(
-            """ALTER TABLE tasks ADD COLUMN network_by_host TEXT NOT NULL DEFAULT '{"hosts": []}'"""
+            "ALTER TABLE tasks ADD COLUMN network_by_host TEXT NOT NULL "
+            "DEFAULT '{\"hosts\": []}'"
         )
 
 
@@ -291,7 +292,7 @@ def _sqlite_v6_to_v7(conn: sqlite3.Connection) -> None:
 @register_sqlite_migration(7, 8)
 def _sqlite_v7_to_v8(conn: sqlite3.Connection) -> None:
     """Add the durable revisioned business-outcome queue."""
-    from dexcost.storage.sqlite import _CREATE_OUTCOMES, _CREATE_OUTCOME_INDEXES
+    from dexcost.storage.sqlite import _CREATE_OUTCOME_INDEXES, _CREATE_OUTCOMES
 
     conn.execute(_CREATE_OUTCOMES)
     for index_sql in _CREATE_OUTCOME_INDEXES:
@@ -319,3 +320,53 @@ def _sqlite_v9_to_v10(conn: sqlite3.Connection) -> None:
     for column in ("user_id", "product_id"):
         if column not in existing:
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT")
+
+
+@register_sqlite_migration(10, 11)
+def _sqlite_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """Add the durable, atomic SDK catalog-release cache."""
+    from dexcost.storage.sqlite import (
+        _CREATE_CATALOG_ARTIFACTS,
+        _CREATE_CATALOG_INDEXES,
+        _CREATE_CATALOG_RELEASE_ARTIFACTS,
+        _CREATE_CATALOG_RELEASES,
+        _CREATE_CATALOG_STATE,
+    )
+
+    conn.execute(_CREATE_CATALOG_ARTIFACTS)
+    conn.execute(_CREATE_CATALOG_RELEASES)
+    conn.execute(_CREATE_CATALOG_RELEASE_ARTIFACTS)
+    conn.execute(_CREATE_CATALOG_STATE)
+    for index_sql in _CREATE_CATALOG_INDEXES:
+        conn.execute(index_sql)
+
+
+@register_sqlite_migration(11, 12)
+def _sqlite_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """Add authenticated, API-key-isolated workspace catalog overlays."""
+    from dexcost.storage.sqlite import _CREATE_CATALOG_OVERLAYS
+
+    conn.execute(_CREATE_CATALOG_OVERLAYS)
+
+
+@register_sqlite_migration(12, 13)
+def _sqlite_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """Add the durable immutable revenue-revision ledger."""
+    from dexcost.storage.sqlite import _CREATE_REVENUE_INDEXES, _CREATE_REVENUES
+
+    conn.execute(_CREATE_REVENUES)
+    for index_sql in _CREATE_REVENUE_INDEXES:
+        conn.execute(index_sql)
+
+
+@register_sqlite_migration(13, 14)
+def _sqlite_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """Add immutable asynchronous-provider-job revision storage."""
+    from dexcost.storage.sqlite import (
+        _CREATE_PROVIDER_JOB_INDEXES,
+        _CREATE_PROVIDER_JOB_REVISIONS,
+    )
+
+    conn.execute(_CREATE_PROVIDER_JOB_REVISIONS)
+    for index_sql in _CREATE_PROVIDER_JOB_INDEXES:
+        conn.execute(index_sql)

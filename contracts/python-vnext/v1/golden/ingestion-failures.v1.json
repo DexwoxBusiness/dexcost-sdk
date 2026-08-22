@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "cases": [
+    {
+      "id": "validation.permanent", "http_status": 400,
+      "body": { "queued": 0, "rejected": 1, "errors": [{ "index": 0, "reason": "schema_version: invalid literal" }] },
+      "retryable": false, "sdk_action": "quarantine the isolated invalid revision"
+    },
+    {
+      "id": "authentication.stop", "http_status": 401,
+      "body": { "error": "Invalid API key" },
+      "retryable": false, "sdk_action": "retain pending data, enter auth_failed, resume only after credential reset"
+    },
+    {
+      "id": "edge.forbidden", "http_status": 403,
+      "body": { "error": "Request forbidden" },
+      "retryable": true, "sdk_action": "retain the batch and back off because an edge policy can recover"
+    },
+    {
+      "id": "queue.oversize", "http_status": 413,
+      "body": { "error": "Payload too large. Reduce the batch size.", "limit_kind": "queue_message", "max_bytes": 131072 },
+      "retryable": false, "sdk_action": "split all durable streams; quarantine an indivisible oversized outcome/revenue/provider revision"
+    },
+    {
+      "id": "server.temporary", "http_status": 503,
+      "body": { "error": "Ingestion temporarily unavailable" },
+      "retryable": true, "sdk_action": "retain the batch and use bounded exponential backoff with jitter"
+    },
+    {
+      "id": "network.temporary", "transport_error": "timeout",
+      "retryable": true, "sdk_action": "retain the batch and use bounded exponential backoff with jitter"
+    }
+  ]
+}

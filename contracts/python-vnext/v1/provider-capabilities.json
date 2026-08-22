@@ -1,0 +1,2032 @@
+{
+  "schema_version": "1",
+  "dimensions": [
+    "sync",
+    "async",
+    "stream_completion",
+    "stream_failure",
+    "stream_cancellation",
+    "retries",
+    "tool_calls",
+    "media",
+    "embeddings",
+    "provider_request_ids",
+    "delayed_jobs"
+  ],
+  "providers": [
+    {
+      "id": "openai",
+      "description": "OpenAI Chat, Completions, Responses, media, embeddings, Realtime, and background responses",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_current_http_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "azure_openai",
+      "description": "Azure OpenAI through both current compatible host forms and deployment identity",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openai_compatible_provider_routing.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openai-current-surface.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "anthropic",
+      "description": "Anthropic Messages with cache, tools, sync/async streams, and opaque request identity",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_anthropic_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/anthropic-instrument.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "bedrock",
+      "description": "Amazon Bedrock Runtime invocation and streaming with model/provider normalization",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The official JavaScript client is promise-based; synchronous network calls are not part of its surface."
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The supported boto3 Bedrock Runtime client is synchronous; an async façade is not invented."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_bedrock_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/bedrock-instrument.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "google_genai",
+      "description": "Google Gen AI and Vertex models, streams, embeddings, images, Interactions, video, batch, and tuning",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_google_genai_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/google-genai-current.test.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "cohere",
+      "description": "Cohere Chat and Chat Stream",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_cohere_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/cohere-instrument.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "litellm",
+      "description": "LiteLLM completion/acompletion routing with exact provider cost and cache/reasoning/tool meters",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_litellm_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/litellm.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "mcp",
+      "description": "Model Context Protocol tool invocation as the explicit tool authority",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The verified mcp surface does not expose this sync mode."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The verified mcp surface does not expose this sync mode."
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_mcp_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/mcp-instrument.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This operation has no streaming response lifecycle."
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_mcp_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/mcp-instrument.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_mcp_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/mcp-instrument.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_mcp_instrument.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/mcp-instrument.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "ollama",
+      "description": "Ollama chat/generate, streams, embeddings, web search/fetch, and native duration meters",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_ollama_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/ollama.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The verified provider surface does not expose a stable opaque request ID for this operation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "The verified provider surface does not expose a stable opaque request ID for this operation."
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    },
+    {
+      "id": "openrouter",
+      "description": "OpenRouter native and compatible routing across language, media, rerank, streaming, jobs, and generation cost",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_openrouter_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/openrouter-current.test.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "perplexity",
+      "description": "Perplexity Agent Responses, Sonar, Search, embeddings, streams, and background work",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified media surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_perplexity_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/perplexity-current.test.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fal",
+      "description": "fal.ai run/subscribe/stream plus durable queue submit/status/result/cancel for media and LLM endpoints",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No provider-native tool-call meter is claimed; explicit track_tool/MCP remains authoritative."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No provider-native tool-call meter is claimed; explicit track_tool/MCP remains authoritative."
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "No verified embeddings surface is claimed for this adapter; DexCost does not infer unsupported operations."
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "implemented",
+            "evidence": [
+              "python/tests/test_fal_current_compat.py"
+            ]
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/src/instruments/fal.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "vercel_ai",
+      "description": "Vercel AI SDK middleware and instrumentation for generate/stream operations",
+      "coverage": {
+        "sync": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "async": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "stream_completion": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "stream_failure": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "stream_cancellation": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "retries": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "tool_calls": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "media": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "embeddings": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "provider_request_ids": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "implemented",
+            "evidence": [
+              "typescript/tests/ai-sdk-middleware.test.ts"
+            ]
+          }
+        },
+        "delayed_jobs": {
+          "dexcost_python": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "JavaScript-only framework surface; Python instruments the underlying providers and Python-native frameworks."
+          },
+          "dexcost_typescript": {
+            "status": "intentionally_excluded",
+            "evidence": [],
+            "rationale": "This provider route has no verified delayed-work lifecycle requiring revisioned reconciliation."
+          }
+        }
+      }
+    }
+  ]
+}

@@ -87,6 +87,13 @@ def test_mcp_helpers_specifically_exported() -> None:
     assert callable(dexcost.uninstrument_mcp)
 
 
+def test_framework_execution_helpers_are_top_level_and_exported() -> None:
+    assert "track_crewai" in dexcost.__all__
+    assert "track_griptape" in dexcost.__all__
+    assert callable(dexcost.track_crewai)
+    assert callable(dexcost.track_griptape)
+
+
 def test_dunder_all_is_sorted() -> None:
     """``dexcost.__all__`` is intentionally kept in lexicographic order.
 

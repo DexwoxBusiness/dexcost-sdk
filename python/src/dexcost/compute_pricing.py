@@ -54,6 +54,10 @@ _GIB_BINARY = Decimal(1024 * 1024 * 1024)     # 2^30 bytes — Fargate / Cloud R
 _HOUR_S = Decimal("3600")
 _MS_PER_S = Decimal("1000")
 
+RateBlock = dict[str, Decimal]
+RateResolution = tuple[RateBlock, str, str]
+ScalarRateResolution = tuple[Decimal, str, str]
+
 # ─── Tier-4 hardcoded constants (must mirror _meta defaults) ─────────────────
 
 _HARDCODED = {
@@ -101,9 +105,21 @@ class ComputePricingEngine:
             ``data/compute_prices.json``.
     """
 
-    def __init__(self, catalog_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path | None = None,
+        *,
+        catalog_data: dict[str, Any] | None = None,
+        catalog_version: str | None = None,
+        rate_overrides: dict[tuple[str, str], Decimal] | None = None,
+    ) -> None:
+        if catalog_path is not None and catalog_data is not None:
+            raise ValueError("catalog_path and catalog_data are mutually exclusive")
         self._catalog: dict[str, Any] = {}
         self._catalog_path = catalog_path
+        self._catalog_data = catalog_data
+        self._catalog_version_override = catalog_version
+        self._rate_overrides = rate_overrides or {}
         self._catalog_version: str = "unknown"
         self._load()
 
@@ -113,7 +129,9 @@ class ComputePricingEngine:
 
     def _load(self) -> None:
         try:
-            if self._catalog_path is not None:
+            if self._catalog_data is not None:
+                raw = json.dumps(self._catalog_data, sort_keys=True, separators=(",", ":"))
+            elif self._catalog_path is not None:
                 raw = Path(self._catalog_path).read_text(encoding="utf-8")
             else:
                 raw = (
@@ -149,7 +167,9 @@ class ComputePricingEngine:
             return
 
         meta = self._catalog.get("_meta", {})
-        self._catalog_version = str(meta.get("version", "unknown"))
+        self._catalog_version = self._catalog_version_override or str(
+            meta.get("version", "unknown")
+        )
 
     @property
     def catalog_version(self) -> str:
@@ -176,7 +196,7 @@ class ComputePricingEngine:
         try:
             return self._dispatch(billing_model, details, cloud_env,
                                   overrides, window_s)
-        except Exception as exc:  # noqa: BLE001 — Tier 5 fail-silent
+        except Exception as exc:
             _warn_once(
                 f"compute_failure:{billing_model}",
                 f"compute pricing failed for billing_model={billing_model}: "
@@ -242,6 +262,9 @@ class ComputePricingEngine:
         region = details.get("region")
         architecture = details.get("architecture") or "x86_64"
         rate, source, confidence = self._resolve_lambda_rate(region, architecture)
+        rate, source, confidence = self._apply_component_overrides(
+            "lambda", rate, source, confidence
+        )
         duration_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         memory_gb = Decimal(str(details["memory_bytes_limit"])) / _GB_DECIMAL
         gb_seconds = memory_gb * duration_s
@@ -252,7 +275,11 @@ class ComputePricingEngine:
         )
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_lambda_rate(self, region, architecture):
+    def _resolve_lambda_rate(
+        self,
+        region: str | None,
+        architecture: str,
+    ) -> RateResolution:
         block = self._catalog.get("aws", {}).get("lambda")
         if isinstance(block, dict):
             regions = block.get("regions", {})
@@ -290,12 +317,19 @@ class ComputePricingEngine:
 
     # ─── Fargate ─────────────────────────────────────────────────────────
 
-    def _fargate(self, details, window_s):
+    def _fargate(
+        self,
+        details: dict[str, Any],
+        window_s: Decimal | None,
+    ) -> ComputeCost:
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         region = details.get("region")
         architecture = details.get("architecture") or "x86_64"
         rate, source, confidence = self._resolve_fargate_rate(region, architecture)
+        rate, source, confidence = self._apply_component_overrides(
+            "fargate", rate, source, confidence
+        )
         memory_gib = Decimal(str(details["memory_bytes_limit"])) / _GIB_BINARY
         vcpu_count = Decimal(str(details["vcpu_count"]))
         cost = (
@@ -304,7 +338,11 @@ class ComputePricingEngine:
         )
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_fargate_rate(self, region, architecture):
+    def _resolve_fargate_rate(
+        self,
+        region: str | None,
+        architecture: str,
+    ) -> RateResolution:
         block = self._catalog.get("aws", {}).get("fargate")
         if isinstance(block, dict):
             regions = block.get("regions", {})
@@ -341,17 +379,19 @@ class ComputePricingEngine:
 
     # ─── Cloud Run (request-based, default) ──────────────────────────────
 
-    def _cloud_run_request(self, details):
+    def _cloud_run_request(self, details: dict[str, Any]) -> ComputeCost:
         # Decision #1: Cloud Run defaults to request-based with estimated
         # confidence — the container cannot discover the actual billing mode.
         region = details.get("region")
         rate, source, confidence = self._resolve_cloud_run_rate(region)
-        # Override the source string to make the default-mode origin obvious.
-        if confidence == "computed":
+        rate, source, confidence = self._apply_component_overrides(
+            "cloud_run_request", rate, source, confidence
+        )
+        # The billing mode itself is estimated unless a workspace override
+        # explicitly supplies one or more component rates for this mode.
+        if not source.startswith("workspace_overlay"):
             source = "compute_catalog:cloud_run:request_based_default"
             confidence = "estimated"
-        else:
-            source = "compute_catalog:cloud_run:request_based_default"
         duration_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         memory_gib = Decimal(str(details["memory_bytes_limit"])) / _GIB_BINARY
         vcpu_count = Decimal(str(details["vcpu_count"]))
@@ -363,11 +403,18 @@ class ComputePricingEngine:
         )
         return ComputeCost(cost, source, confidence)
 
-    def _cloud_run_instance_override(self, details, window_s):
+    def _cloud_run_instance_override(
+        self,
+        details: dict[str, Any],
+        window_s: Decimal | None,
+    ) -> ComputeCost:
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         region = details.get("region")
         rate, _source, _confidence = self._resolve_cloud_run_rate(region)
+        rate, source, confidence = self._apply_component_overrides(
+            "cloud_run_instance", rate, _source, _confidence
+        )
         memory_gib = Decimal(str(details["memory_bytes_limit"])) / _GIB_BINARY
         vcpu_count = Decimal(str(details["vcpu_count"]))
         cost = (
@@ -376,11 +423,15 @@ class ComputePricingEngine:
         )
         return ComputeCost(
             cost,
-            "compute_catalog:cloud_run:instance_override",
-            "computed",
+            (
+                source
+                if source.startswith("workspace_overlay")
+                else "compute_catalog:cloud_run:instance_override"
+            ),
+            confidence if source.startswith("workspace_overlay") else "computed",
         )
 
-    def _resolve_cloud_run_rate(self, region):
+    def _resolve_cloud_run_rate(self, region: str | None) -> RateResolution:
         block = self._catalog.get("gcp", {}).get("cloud_run")
         if isinstance(block, dict):
             regions = block.get("regions", {})
@@ -420,9 +471,12 @@ class ComputePricingEngine:
 
     # ─── Cloud Functions Gen2 (Cloud Run pricing under the hood) ─────────
 
-    def _cloud_functions(self, details):
+    def _cloud_functions(self, details: dict[str, Any]) -> ComputeCost:
         region = details.get("region")
         rate, source, confidence = self._resolve_cloud_run_rate(region)
+        rate, source, confidence = self._apply_component_overrides(
+            "cloud_functions", rate, source, confidence
+        )
         # Surface "cloud_functions" in the pricing_source for dashboard
         # break-out even though the math/rate is shared with Cloud Run.
         source = source.replace("cloud_run", "cloud_functions")
@@ -439,9 +493,12 @@ class ComputePricingEngine:
 
     # ─── Azure Functions Consumption ─────────────────────────────────────
 
-    def _azure_functions(self, details):
+    def _azure_functions(self, details: dict[str, Any]) -> ComputeCost:
         region = details.get("region")
         rate, source, confidence = self._resolve_azure_functions_rate(region)
+        rate, source, confidence = self._apply_component_overrides(
+            "azure_functions", rate, source, confidence
+        )
         duration_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         memory_gb = Decimal(str(details["memory_bytes_limit"])) / _GB_DECIMAL
         invocations = Decimal(str(details["invocation_count"]))
@@ -451,7 +508,7 @@ class ComputePricingEngine:
         )
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_azure_functions_rate(self, region):
+    def _resolve_azure_functions_rate(self, region: str | None) -> RateResolution:
         block = self._catalog.get("azure", {}).get("functions_consumption")
         if isinstance(block, dict):
             regions = block.get("regions", {})
@@ -489,8 +546,11 @@ class ComputePricingEngine:
 
     # ─── Vercel Fluid ────────────────────────────────────────────────────
 
-    def _vercel(self, details):
+    def _vercel(self, details: dict[str, Any]) -> ComputeCost:
         rate, source, confidence = self._resolve_vercel_rate()
+        rate, source, confidence = self._apply_component_overrides(
+            "vercel_fluid", rate, source, confidence
+        )
         duration_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         memory_gb = Decimal(str(details["memory_bytes_limit"])) / _GB_DECIMAL
         invocations = Decimal(str(details["invocation_count"]))
@@ -503,7 +563,7 @@ class ComputePricingEngine:
         )
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_vercel_rate(self):
+    def _resolve_vercel_rate(self) -> RateResolution:
         block = self._catalog.get("vercel", {}).get("fluid")
         if isinstance(block, dict):
             default = block.get("default")
@@ -534,7 +594,13 @@ class ComputePricingEngine:
 
     # ─── EC2 / GCE / Azure VM share ──────────────────────────────────────
 
-    def _iaas_share(self, billing_model, details, cloud_env, window_s):
+    def _iaas_share(
+        self,
+        billing_model: str,
+        details: dict[str, Any],
+        cloud_env: CloudEnv,
+        window_s: Decimal | None,
+    ) -> ComputeCost:
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         instance_type = cloud_env.instance_type
@@ -542,6 +608,15 @@ class ComputePricingEngine:
         instance_hourly, source, confidence = self._resolve_iaas_rate(
             billing_model, region, instance_type,
         )
+        override = self._rate_overrides.get((billing_model, "vcpu_hour"))
+        if override is not None:
+            source = f"workspace_overlay:compute:{billing_model}:vcpu_hour"
+            vcpu_seconds = Decimal(str(details["vcpu_seconds_used"]))
+            return ComputeCost(
+                vcpu_seconds / _HOUR_S * override,
+                source,
+                "computed",
+            )
         vcpu_count = Decimal(str(details["vcpu_count"]))
         vcpu_seconds = Decimal(str(details["vcpu_seconds_used"]))
         if vcpu_count <= 0 or window_s <= 0:
@@ -551,7 +626,12 @@ class ComputePricingEngine:
         cost = task_instance_hours * instance_hourly
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_iaas_rate(self, billing_model, region, instance_type):
+    def _resolve_iaas_rate(
+        self,
+        billing_model: str,
+        region: str | None,
+        instance_type: str | None,
+    ) -> ScalarRateResolution:
         provider_key, runtime_key = {
             "ec2": ("aws", "ec2"),
             "gce": ("gcp", "gce"),
@@ -595,17 +675,26 @@ class ComputePricingEngine:
                     f"compute_catalog:hardcoded:{billing_model}",
                     "estimated")
 
-    # ─── K8s pod (default — limits × duration × hourly) ──────────────────
+    # ─── K8s pod (default — limits x duration x hourly) ──────────────────
 
-    def _k8s_pod_limits(self, details, window_s):
+    def _k8s_pod_limits(
+        self,
+        details: dict[str, Any],
+        window_s: Decimal | None,
+    ) -> ComputeCost:
         if window_s is None or window_s <= 0:
             window_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
         rate, source, confidence = self._resolve_k8s_pod_rate()
+        override = self._rate_overrides.get(("k8s_pod", "vcpu_hour"))
+        if override is not None:
+            rate = override
+            source = "workspace_overlay:compute:k8s_pod:vcpu_hour"
+            confidence = "computed"
         vcpu_count = Decimal(str(details["vcpu_count"]))
         cost = vcpu_count * (window_s / _HOUR_S) * rate
         return ComputeCost(cost, source, confidence)
 
-    def _resolve_k8s_pod_rate(self):
+    def _resolve_k8s_pod_rate(self) -> ScalarRateResolution:
         meta = self._catalog.get("_meta", {})
         try:
             return (
@@ -620,5 +709,41 @@ class ComputePricingEngine:
     # ─── Helpers ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _parse_rate_block(block, keys):
+    def _parse_rate_block(
+        block: dict[str, Any],
+        keys: tuple[str, ...],
+    ) -> RateBlock:
         return {k: Decimal(str(block[k])) for k in keys}
+
+    def _apply_component_overrides(
+        self,
+        billing_model: str,
+        rate: dict[str, Decimal],
+        source: str,
+        confidence: str,
+    ) -> tuple[dict[str, Decimal], str, str]:
+        field_by_unit = {
+            "request": "request_usd",
+            "execution": "execution_usd",
+            "gb_second": "gb_second_usd",
+            "gib_second": "gib_second_usd",
+            "vcpu_second": "vcpu_second_usd",
+            "active_cpu_hour": "active_cpu_hour_usd",
+            "memory_gb_hour": "memory_gb_hour_usd",
+            "invocation": "invocation_usd",
+        }
+        updated = dict(rate)
+        applied: list[str] = []
+        for unit, field in field_by_unit.items():
+            override = self._rate_overrides.get((billing_model, unit))
+            if override is not None and field in updated:
+                updated[field] = override
+                applied.append(unit)
+        if not applied:
+            return updated, source, confidence
+        units = "+".join(sorted(applied))
+        return (
+            updated,
+            f"workspace_overlay:compute:{billing_model}:{units}",
+            "computed",
+        )

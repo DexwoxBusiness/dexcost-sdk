@@ -133,7 +133,15 @@ func TestSharedAttributionV3Conformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(packaged, canonical) {
+	var canonicalDocument interface{}
+	var packagedDocument interface{}
+	if err := json.Unmarshal(canonical, &canonicalDocument); err != nil {
+		t.Fatalf("decode authoritative attribution v3 schema: %v", err)
+	}
+	if err := json.Unmarshal(packaged, &packagedDocument); err != nil {
+		t.Fatalf("decode packaged attribution v3 schema: %v", err)
+	}
+	if !reflect.DeepEqual(packagedDocument, canonicalDocument) {
 		t.Fatal("packaged attribution v3 schema differs from the authoritative fixture")
 	}
 	validByID := make(map[string]map[string]interface{}, len(valid))

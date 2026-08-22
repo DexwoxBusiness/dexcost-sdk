@@ -10,6 +10,7 @@ const REQUIRED_COVERAGE = Object.freeze([
   "business.outcome_lifecycle",
   "business.revenue_lifecycle",
   "business.task_hierarchy",
+  "business.user_product_assignment",
   "business.workflow_agent_assignment",
   "cost.no_synthetic_zero",
   "cost.sdk_evidence_diagnostic",
@@ -18,9 +19,14 @@ const REQUIRED_COVERAGE = Object.freeze([
   "lifecycle.pending",
   "lifecycle.provisional",
   "lifecycle.voided",
+  "observation.capability_identity",
+  "observation.environment",
   "observation.known_meter",
   "observation.operation_attempt_trace",
+  "observation.operation_error",
+  "observation.operation_latency",
   "observation.retry_linkage",
+  "observation.tool_resource",
   "observation.typed_dimensions",
   "observation.unknown_meter_visible",
   "privacy.arbitrary_details_not_transported",
@@ -310,11 +316,11 @@ function validateRedactionCase(testCase, issues) {
 
 export function validateAttributionV3Corpus({ manifest, corpus }) {
   const issues = [];
-  if (manifest?.contracts?.observation !== "3.0.0") {
-    issues.push("observation contract version must remain 3.0.0");
+  if (manifest?.contracts?.observation !== "3.2.0") {
+    issues.push("observation contract version must remain 3.2.0");
   }
-  if (manifest?.contracts?.business_attribution !== "1.0.0") {
-    issues.push("business attribution contract version must remain 1.0.0");
+  if (manifest?.contracts?.business_attribution !== "1.1.0") {
+    issues.push("business attribution contract version must remain 1.1.0");
   }
   if (manifest?.corpus_version !== corpus?.corpus_version) {
     issues.push("manifest and corpus versions must match");

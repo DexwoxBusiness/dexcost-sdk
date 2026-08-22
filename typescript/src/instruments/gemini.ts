@@ -20,6 +20,8 @@ import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
+import { recordProviderFailure } from "./provider-metering.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -112,6 +114,11 @@ export async function instrumentGemini(
       }
       return response;
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "gemini.generate_content", provider: "google", service: "gemini",
+        operation: "google.generate_content", component: "llm",
+        model: self.model ?? self._modelParams?.model, eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -148,6 +155,10 @@ export async function instrumentGemini(
       );
       return wrapStream(streamResult, model, task, startTime, autoCreated);
     } catch (err) {
+      if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+        taskType: "gemini.generate_content_stream", provider: "google", service: "gemini",
+        operation: "google.generate_content_stream", component: "llm", model, eventType: "llm_call",
+      }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -218,6 +229,7 @@ function recordEvent(response: any, model: string, task: Task, latencyMs: number
     latencyMs,
     isRetry: false,
   });
+  stampAmbientAttribution(event);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
@@ -266,6 +278,10 @@ function wrapStream(
           try {
             result = await iter.next();
           } catch (err) {
+            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
+              taskType: "gemini.generate_content_stream", provider: "google", service: "gemini",
+              operation: "google.generate_content_stream", component: "llm", model, eventType: "llm_call",
+            }, err, startTime);
             finalizeTask("failed");
             throw err;
           }
@@ -291,6 +307,7 @@ function wrapStream(
                   latencyMs,
                   isRetry: false,
                 });
+                stampAmbientAttribution(event);
                 _buffer.addEvent(event);
                 registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
@@ -314,6 +331,7 @@ function wrapStream(
                   latencyMs,
                   isRetry: false,
                 });
+                stampAmbientAttribution(event);
                 _buffer.addEvent(event);
                 registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
                 _buffer.upsertTask(task);

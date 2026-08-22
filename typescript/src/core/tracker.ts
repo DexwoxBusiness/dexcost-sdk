@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Decimal, toDecimal } from "./models.js";
+import { Decimal, canonicalDecimal, toDecimal } from "./models.js";
 import type {
   Task,
   CostEvent,
@@ -32,6 +32,32 @@ function decAdd(a: Decimal, b: DecimalLike): Decimal {
 }
 import { createTask, createCostEvent } from "./models.js";
 import { getCurrentTask, runWithTask } from "./context.js";
+import { getContext } from "./context.js";
+import { createAutoTask, finalizeAutoTask } from "./auto-task.js";
+import {
+  applyEventCapability,
+  defaultToolCapability,
+  getCapability,
+  type CapabilityIdentity,
+} from "./capabilities.js";
+import { applyEventIdempotency } from "./idempotency.js";
+import {
+  OutcomeRevision,
+  RevenueRevision,
+  outcomeValue,
+  revenueAmount,
+  type OutcomeRevisionOptions,
+  type RevenueInput,
+  type RevenueRevisionOptions,
+} from "./business.js";
+import { ProviderJobRevision, type ProviderJobRevisionOptions } from "./provider-jobs.js";
+import {
+  ToolUsage,
+  type ToolCostInput,
+  type ToolDimensionInput,
+  type ToolOperationStatus,
+} from "./tool.js";
+import { decorateTool } from "./tool-tracking.js";
 import { EventBuffer } from "../transport/buffer.js";
 import {
   NetworkAccountant,
@@ -45,13 +71,16 @@ import { GpuAccountant } from "./gpu-accountant.js";
 import { GpuRuntimeKind, resolveGpuRuntime } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
 import { EventPusher } from "../transport/pusher.js";
+import { localDeliveryStatus, type DeliveryStatus } from "../transport/delivery.js";
 import { PricingEngine } from "../pricing/engine.js";
+import { CatalogRuntime, type CatalogRuntimeStatus } from "../pricing/catalog-runtime.js";
+import { explainEventPricing, type PricingExplanation } from "../pricing/explain.js";
 import { RateRegistry } from "../pricing/rates.js";
 import { RetryHeuristicEngine } from "./heuristics.js";
-import { resolveConfig } from "./config.js";
+import { resolveCatalogTrustPolicy, resolveConfig } from "./config.js";
 import type { ResolvedConfig } from "./config.js";
 import { DEFAULT_ENDPOINT, resolveEndpoint } from "./endpoint.js";
-import { finalizeTaskNetwork } from "./network-finalize.js";
+import { finalizeTaskNetwork, setNetworkRateRegistry } from "./network-finalize.js";
 import { setDebugMode, debugLog } from "./debug.js";
 import { registerLlmCapture } from "./llm-dedup.js";
 import {
@@ -78,15 +107,27 @@ export { DEFAULT_ENDPOINT, resolveEndpoint };
 /** Event types accepted by `recordCost` (non-LLM cost events). */
 const NON_LLM_EVENT_TYPES = new Set<EventType>(["external_cost", "compute_cost"]);
 
+function toolTaskType(toolId: string): string {
+  const normalized = toolId.trim().toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_").replace(/^[._-]+|[._-]+$/g, "");
+  return `tool.${(normalized || "unknown").slice(0, 122)}`;
+}
+
 import { isDevMode, enableDevMode, logEvent, logTaskComplete } from "../dev-console.js";
 // Side-effect imports to register instruments
 import "../instruments/openai.js";
 import "../instruments/anthropic.js";
 import "../instruments/vercel-ai.js";
 import "../instruments/gemini.js";
+import "../instruments/google-genai.js";
 import "../instruments/bedrock.js";
 import "../instruments/cohere.js";
 import "../instruments/mcp.js";
+import "../instruments/litellm.js";
+import "../instruments/ollama.js";
+import "../instruments/openrouter.js";
+import "../instruments/perplexity.js";
+import "../instruments/fal.js";
 
 // ---------------------------------------------------------------------------
 // Singleton / init() factory
@@ -183,18 +224,118 @@ export function setApiKey(newKey: string): boolean {
 }
 
 export async function globalTrack<T>(
-  opts: {
-    taskType: string;
-    customerId?: string;
-    projectId?: string;
-    metadata?: Record<string, unknown>;
-    experimentId?: string;
-    variant?: string;
-    trackGpu?: boolean;
-  },
+  opts: TaskOptions & { taskType: string },
   fn: (task: TrackedTask) => Promise<T>,
 ): Promise<T> {
   return getTracker().track(opts, fn);
+}
+
+export function globalAttachTask(
+  taskId: string,
+  options: { taskType?: string; rootTaskId?: string; parentTaskId?: string } = {},
+): TrackedTask {
+  return getTracker().attachTask(taskId, options);
+}
+
+export function globalReportToolCall(
+  toolId: string,
+  options: ToolCallOptions & { taskId?: string } = {},
+): CostEvent {
+  const tracker = getTracker();
+  const current = getCurrentTask();
+  const taskId = options.taskId ?? current?.taskId;
+  if (taskId === undefined) {
+    throw new Error("No active task — use track(), attachTask(), or provide taskId explicitly");
+  }
+  const { taskId: _ignored, ...callOptions } = options;
+  if (current !== undefined && current.taskId.toLowerCase() === taskId.toLowerCase()) {
+    return new TrackedTask(current, tracker.buffer, tracker, false, false, true)
+      .recordToolCall(toolId, callOptions);
+  }
+  return tracker.attachTask(taskId).recordToolCall(toolId, callOptions);
+}
+
+export function globalStartTask(options: TaskOptions = {}): TrackedTask {
+  return getTracker().startTask(options);
+}
+
+export function globalRecordCost(
+  service: string,
+  costUsd: DecimalLike,
+  options: {
+    eventType?: EventType;
+    costConfidence?: CostConfidence;
+    pricingSource?: PricingSource;
+    pricingVersion?: string;
+    details?: Record<string, unknown>;
+    idempotencyKey?: string;
+    capability?: CapabilityIdentity;
+  } = {},
+): CostEvent {
+  const tracker = getTracker();
+  const current = getCurrentTask();
+  if (current === undefined) throw new Error("No active task — use track() or task() first");
+  return new TrackedTask(current, tracker.buffer, tracker, false, false, true).recordCost(
+    service,
+    costUsd,
+    options.details,
+    options.eventType ?? "external_cost",
+    options.costConfidence ?? "exact",
+    options.pricingSource ?? "manual",
+    options.pricingVersion,
+    { idempotencyKey: options.idempotencyKey, capability: options.capability },
+  );
+}
+
+export function globalRecordOutcome(
+  name: string,
+  options: Omit<OutcomeRevisionOptions, "name" | "taskId"> & { taskId?: string } = {},
+): OutcomeRevision {
+  const taskId = options.taskId ?? getCurrentTask()?.taskId;
+  if (taskId === undefined) throw new Error("No active task — use track(), task(), or provide taskId");
+  return getTracker().recordOutcome(name, { ...options, taskId });
+}
+
+export function globalGetOutcomeHistory(outcomeId: string): Array<Record<string, unknown>> {
+  return getTracker().getOutcomeHistory(outcomeId);
+}
+
+export function globalRecordRevenue(
+  amount?: RevenueInput,
+  options: Omit<RevenueRevisionOptions, "amount" | "taskId"> &
+    { taskId?: string; currency?: string } = { state: "recognized" },
+): RevenueRevision {
+  const taskId = options.taskId ?? getCurrentTask()?.taskId;
+  if (taskId === undefined) throw new Error("No active task — use track(), task(), or provide taskId");
+  return getTracker().recordRevenue(amount, { ...options, taskId });
+}
+
+export function globalGetRevenueHistory(revenueId: string): Array<Record<string, unknown>> {
+  return getTracker().getRevenueHistory(revenueId);
+}
+
+export function globalExplainPricing(eventOrId: CostEvent | string): PricingExplanation {
+  return getTracker().explainPricing(eventOrId);
+}
+
+export async function globalInstrument(name: string): Promise<void> {
+  return getTracker().instrument(canonicalInstrumentName(name));
+}
+
+export function globalUninstrument(name: string): void {
+  getTracker().uninstrument(canonicalInstrumentName(name));
+}
+
+export function globalTrackTool<F extends (this: unknown, ...args: any[]) => any>(
+  toolId: string,
+  options: TrackToolOptions = {},
+): (fn: F) => F {
+  return (fn: F): F => function (this: unknown, ...args: Parameters<F>): ReturnType<F> {
+    let decorated: F;
+    try { decorated = getTracker().trackTool<F>(toolId, options)(fn); }
+    catch { return fn.apply(this, args); }
+    return decorated.apply(this, args);
+  } as F;
 }
 
 export async function globalFlush(): Promise<void> {
@@ -328,6 +469,31 @@ export interface TrackerOptions {
    * to the control-plane catalog endpoint.
    */
   serviceCatalogUrl?: string;
+  /** Enable the atomic seven-artifact catalog release runtime (default true). */
+  catalogReleases?: boolean;
+  /** Durable active/previous LKG store path; defaults beside dbPath or under ~/.dexcost. */
+  catalogReleaseStorePath?: string;
+  /** Stable by default; canary is intended for controlled validation only. */
+  catalogChannel?: "stable" | "canary";
+  /** Background release refresh interval. Defaults to 24 hours. */
+  catalogRefreshIntervalMs?: number;
+  /** Random refresh spread from 0 to 0.5. Defaults to 0.1. */
+  catalogRefreshJitterRatio?: number;
+  /**
+   * Ed25519 catalog public keys by manifest key_id (raw 32-byte base64url).
+   * Falls back to strict JSON in `DEXCOST_CATALOG_TRUSTED_KEYS` when omitted.
+   */
+  catalogTrustedKeys?: Readonly<Record<string, string>>;
+  /**
+   * Reject unsigned catalog releases and unsigned durable cache entries.
+   * Defaults to true when trusted keys exist and false otherwise; the
+   * `DEXCOST_CATALOG_REQUIRE_SIGNATURE` environment value may be true/false.
+   */
+  catalogRequireSignature?: boolean;
+  /** Catalog manifest/artifact request timeout. Defaults to 10000 ms; max 60000. */
+  catalogTimeoutMs?: number;
+  /** Optional explicit path to a versioned rates.yaml file (v1 or v2). */
+  ratesPath?: string;
 
   /**
    * Sprint 3 Theme F / §4.1.3 (P4): network-event emission knobs,
@@ -360,6 +526,69 @@ export interface TrackerOptions {
   k8sNodeAware?: boolean;
 }
 
+export function globalDeliveryStatus(): DeliveryStatus {
+  return _instance?.deliveryStatus() ?? localDeliveryStatus();
+}
+
+export function globalCatalogStatus(): CatalogRuntimeStatus {
+  return _instance?.catalogStatus ?? {
+    source: "bootstrap", stale: false, overlayActive: false, overlayOverrideCount: 0,
+  };
+}
+
+export function globalImportCatalogBundle(bundle: Uint8Array): CatalogRuntimeStatus {
+  if (!_instance) throw new Error("init() must be called before importing a catalog bundle");
+  return _instance.importCatalogBundle(bundle);
+}
+
+export function globalExportCatalogBundle(
+  source: "active" | "previous" = "active",
+): Uint8Array {
+  if (!_instance) throw new Error("init() must be called before exporting a catalog bundle");
+  return _instance.exportCatalogBundle(source);
+}
+
+export interface TaskOptions {
+  taskType?: string;
+  customerId?: string;
+  projectId?: string;
+  userId?: string;
+  productId?: string;
+  metadata?: Record<string, unknown>;
+  experimentId?: string;
+  variant?: string;
+  taskId?: string;
+  rootTaskId?: string;
+  parentTaskId?: string;
+  agentId?: string;
+  agentVersion?: string;
+  workflowId?: string;
+  workflowSessionId?: string;
+  trackGpu?: boolean;
+}
+
+export interface ToolCallOptions {
+  operation?: string;
+  status?: ToolOperationStatus;
+  durationMs?: number;
+  usage?: ToolUsage;
+  costUsd?: ToolCostInput;
+  provider?: string;
+  providerRecordId?: string;
+  errorType?: string;
+  errorCode?: string | number;
+  dimensions?: Record<string, ToolDimensionInput>;
+  operationId?: string;
+  attemptId?: string;
+  attemptNumber?: number;
+  retryOf?: string;
+  idempotencyKey?: string;
+  capability?: CapabilityIdentity;
+}
+
+export type TrackToolOptions = Pick<ToolCallOptions,
+  "operation" | "usage" | "costUsd" | "provider" | "dimensions" | "capability">;
+
 /**
  * A task that is currently being tracked.
  *
@@ -372,16 +601,27 @@ export class TrackedTask {
   private _tracker: CostTracker;
   private _events: CostEvent[] = [];
   private _ended = false;
+  private _ownsTask: boolean;
+  private _persistTaskRollup: boolean;
 
-  constructor(task: Task, buffer: EventBuffer, tracker: CostTracker, trackGpu = false) {
+  constructor(
+    task: Task,
+    buffer: EventBuffer,
+    tracker: CostTracker,
+    trackGpu = false,
+    ownsTask = true,
+    persistTaskRollup = ownsTask,
+  ) {
     this._task = task;
     this._buffer = buffer;
     this._tracker = tracker;
+    this._ownsTask = ownsTask;
+    this._persistTaskRollup = persistTaskRollup;
     // Register a NetworkAccountant for this task so the patched
     // globalThis.fetch (which sees only the task_id via AsyncLocalStorage)
     // can record byte usage via core.getAccountant(taskId).
     // Unregistered in end().
-    registerAccountant(task.taskId, new NetworkAccountant());
+    if (ownsTask) registerAccountant(task.taskId, new NetworkAccountant());
     if (trackGpu) {
       try {
         const cloudEnv = getCloudEnv();
@@ -405,6 +645,15 @@ export class TrackedTask {
   /** All events recorded against this task. */
   get events(): ReadonlyArray<CostEvent> {
     return this._events;
+  }
+
+  private _persistTask(): void {
+    if (this._persistTaskRollup) this._buffer.upsertTask(this._task);
+  }
+
+  private _stampAmbient(event: CostEvent, capability?: CapabilityIdentity, idempotencyKey?: string): void {
+    applyEventCapability(event, capability ?? getCapability());
+    applyEventIdempotency(event, idempotencyKey);
   }
 
   /** Persist retry-root identity so later background conversion never guesses lineage. */
@@ -482,6 +731,8 @@ export class TrackedTask {
       pricingVersion?: string;
       details?: Record<string, unknown>;
       errorType?: string;
+      idempotencyKey?: string;
+      capability?: CapabilityIdentity;
     } = {}
   ): CostEvent {
     let costUsd: Decimal;
@@ -549,10 +800,19 @@ export class TrackedTask {
     }
 
     this._stampRetryLineage(event);
+    this._stampAmbient(event, options.capability, options.idempotencyKey);
 
     // Persist only after the retry fields have been finalised on `event`.
+    const inserted = this._buffer.addEvent(event);
+    if (!inserted) {
+      if (event.isRetry) {
+        this._task.retryCount = Math.max(0, this._task.retryCount - 1);
+        const rolledBack = this._task.retryCostUsd.minus(costUsd);
+        this._task.retryCostUsd = rolledBack.lt(0) ? new Decimal(0) : rolledBack;
+      }
+      return event;
+    }
     this._events.push(event);
-    this._buffer.addEvent(event);
     registerLlmCapture(this._task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
     logEvent(event, this._task.taskType);
 
@@ -570,7 +830,7 @@ export class TrackedTask {
       this._task.totalCachedTokens += cachedTokens;
     }
 
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
 
     return event;
   }
@@ -588,7 +848,8 @@ export class TrackedTask {
     eventType: EventType = "external_cost",
     costConfidence: CostConfidence = "exact",
     pricingSource: PricingSource = "manual",
-    pricingVersion?: string
+    pricingVersion?: string,
+    attribution: { idempotencyKey?: string; capability?: CapabilityIdentity } = {},
   ): CostEvent {
     if (!NON_LLM_EVENT_TYPES.has(eventType)) {
       throw new Error(
@@ -609,9 +870,10 @@ export class TrackedTask {
       isRetry: false,
       details: details ?? {},
     });
+    this._stampAmbient(event, attribution.capability, attribution.idempotencyKey);
 
+    if (!this._buffer.addEvent(event)) return event;
     this._events.push(event);
-    this._buffer.addEvent(event);
     logEvent(event, this._task.taskType);
 
     // Aggregate into task
@@ -622,8 +884,165 @@ export class TrackedTask {
     }
     this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
     return event;
+  }
+
+  /** Record a privacy-safe tool invocation without capturing its inputs or outputs. */
+  recordToolCall(
+    toolId: string,
+    options: ToolCallOptions = {},
+  ): CostEvent {
+    if (toolId.trim() !== toolId || toolId.length < 1 || toolId.length > 256) {
+      throw new Error("toolId must contain 1 to 256 characters");
+    }
+    const operation = options.operation ?? "execute";
+    const operationName = `tool.${operation}`;
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(operationName)) {
+      throw new Error("tool operation must be a canonical lowercase identifier");
+    }
+    const status = options.status ?? "succeeded";
+    if (!["succeeded", "failed", "cancelled", "unknown"].includes(status)) {
+      throw new Error(`unsupported tool status ${String(status)}`);
+    }
+    const durationMs = options.durationMs ?? 0;
+    if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > 86_400_000) {
+      throw new Error("durationMs must be an integer between 0 and 86400000");
+    }
+    const rawCost = options.costUsd ?? 0;
+    if (typeof rawCost === "number" && !Number.isSafeInteger(rawCost)) {
+      throw new TypeError("tool cost must be a Decimal, safe integer, bigint, or decimal string");
+    }
+    let exactCost: Decimal;
+    try { exactCost = rawCost instanceof Decimal ? rawCost : new Decimal(String(rawCost)); }
+    catch { throw new Error("tool cost is not a plain decimal"); }
+    if (!exactCost.isFinite() || exactCost.lt(0)) {
+      throw new Error("tool cost must be finite and non-negative");
+    }
+    if (status === "succeeded" && options.errorType !== undefined) {
+      throw new Error("a succeeded tool call cannot carry an error");
+    }
+    if (options.providerRecordId !== undefined &&
+        (options.providerRecordId.length < 1 || options.providerRecordId.length > 256)) {
+      throw new Error("providerRecordId must contain 1 to 256 characters");
+    }
+    const attemptNumber = options.attemptNumber ?? 1;
+    if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber > 2_147_483_647) {
+      throw new Error("attemptNumber must be between 1 and 2147483647");
+    }
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    for (const [name, value] of [
+      ["attemptId", options.attemptId], ["operationId", options.operationId], ["retryOf", options.retryOf],
+    ] as const) if (value !== undefined && !uuid.test(value)) throw new Error(`${name} must be a valid UUID`);
+    if (attemptNumber === 1 && options.retryOf !== undefined) throw new Error("attempt 1 cannot retry another attempt");
+    if (attemptNumber > 1 && options.retryOf === undefined) throw new Error("later attempts require retryOf");
+    const attemptId = (options.attemptId ?? randomUUID()).toLowerCase();
+    const operationId = (options.operationId ?? attemptId).toLowerCase();
+    const retryOf = options.retryOf?.toLowerCase();
+    if (retryOf === attemptId) throw new Error("a tool attempt cannot retry itself");
+    const meter = options.usage ?? new ToolUsage();
+    if (!(meter instanceof ToolUsage)) throw new TypeError("usage must be a ToolUsage");
+    if (Object.keys(options.dimensions ?? {}).length > 24) {
+      throw new Error("tool dimensions support at most 24 entries");
+    }
+    const dimensions = Object.entries(options.dimensions ?? {}).map(([key, raw]) => {
+      if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(key)) {
+        throw new Error(`tool dimension ${key} must be a canonical identifier`);
+      }
+      const value = outcomeValue(raw);
+      if (value.type === "string" && String(value.value).length > 256) {
+        throw new Error(`tool dimension ${key} string exceeds 256 characters`);
+      }
+      return { key, value };
+    }).sort((left, right) => left.key.localeCompare(right.key));
+    const details: Record<string, unknown> = {
+      attribution_operation_id: operationId,
+      attribution_attempt_id: attemptId,
+      attribution_attempt_number: attemptNumber,
+      attribution_operation_name: operationName,
+      attribution_operation_status: status,
+      attribution_resource_type: "tool",
+      attribution_resource_id: toolId,
+      attribution_usage_metric: meter.metric,
+      attribution_usage_quantity: canonicalDecimal(meter.quantity),
+      attribution_usage_unit: meter.unit,
+      attribution_usage_duration_seconds: canonicalDecimal(new Decimal(durationMs).div(1000)),
+      attribution_dimensions: dimensions,
+    };
+    if (options.providerRecordId !== undefined) details["provider_record_id"] = options.providerRecordId;
+    if (options.errorType !== undefined) details["attribution_error_type"] = options.errorType;
+    if (options.errorCode !== undefined) details["attribution_error_code"] = String(options.errorCode);
+    const event = createCostEvent({
+      eventId: attemptId, taskId: this._task.taskId, eventType: "external_cost",
+      costUsd: exactCost, costConfidence: "exact", pricingSource: "manual",
+      provider: options.provider ?? "tool", serviceName: toolId, latencyMs: durationMs,
+      isRetry: retryOf !== undefined, retryOf,
+      retryReason: options.errorType, details,
+    });
+    this._stampAmbient(
+      event,
+      options.capability ?? getCapability() ?? defaultToolCapability(toolId),
+      options.idempotencyKey,
+    );
+    if (!this._buffer.addEvent(event)) return event;
+    this._events.push(event);
+    this._task.externalCostUsd = decAdd(this._task.externalCostUsd, event.costUsd);
+    this._task.totalCostUsd = decAdd(this._task.totalCostUsd, event.costUsd);
+    if (event.isRetry) {
+      this._task.retryCount += 1;
+      this._task.retryCostUsd = decAdd(this._task.retryCostUsd, event.costUsd);
+    }
+    this._persistTask();
+    return event;
+  }
+
+  /** Decorate a sync, Promise, generator, or async-generator tool on this task. */
+  trackTool<F extends (this: unknown, ...args: any[]) => any>(
+    toolId: string,
+    options: TrackToolOptions = {},
+  ): (fn: F) => F {
+    return (fn: F): F => decorateTool(fn, {
+      begin: () => ({ capability: options.capability ?? getCapability() }),
+      run: (_state, action) => runWithTask(this._task, action),
+      finish: (state, status, durationMs, error) => {
+        this.recordToolCall(toolId, {
+          ...options, status, durationMs, capability: state.capability,
+          errorType: error instanceof Error ? error.name : error === undefined ? undefined : typeof error,
+        });
+      },
+    });
+  }
+
+  /** Run work inside this task identity; useful for non-owning attachments. */
+  run<T>(fn: () => T): T {
+    return runWithTask(this._task, fn);
+  }
+
+  recordOutcome(
+    name: string,
+    options: Omit<ConstructorParameters<typeof OutcomeRevision>[0], "taskId" | "name"> = {},
+  ): OutcomeRevision {
+    return this._tracker.recordOutcome(name, { ...options, taskId: this._task.taskId });
+  }
+
+  recordRevenue(
+    amount?: RevenueInput,
+    options: Omit<ConstructorParameters<typeof RevenueRevision>[0], "taskId" | "amount"> &
+      { currency?: string } = { state: "recognized" },
+  ): RevenueRevision {
+    return this._tracker.recordRevenue(amount, { ...options, taskId: this._task.taskId });
+  }
+
+  recordProviderJob(options: Omit<ProviderJobRevisionOptions, "taskId">): ProviderJobRevision {
+    return this._tracker.recordProviderJob({ ...options, taskId: this._task.taskId });
+  }
+
+  explainPricing(eventOrId: CostEvent | string): PricingExplanation {
+    const explanation = this._tracker.explainPricing(eventOrId);
+    if (explanation.taskId !== this._task.taskId) {
+      throw new Error(`event ${explanation.eventId} does not belong to task ${this._task.taskId}`);
+    }
+    return explanation;
   }
 
   /**
@@ -647,9 +1066,10 @@ export class TrackedTask {
     });
 
     this._stampRetryLineage(event);
+    this._stampAmbient(event);
 
+    if (!this._buffer.addEvent(event)) return event;
     this._events.push(event);
-    this._buffer.addEvent(event);
     logEvent(event, this._task.taskType);
 
     // Aggregate into task
@@ -657,7 +1077,7 @@ export class TrackedTask {
     this._task.retryCostUsd = decAdd(this._task.retryCostUsd, costUsd);
     this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
 
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
     return event;
   }
 
@@ -676,7 +1096,7 @@ export class TrackedTask {
       provider,
       trace_id: traceId,
     });
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
   }
 
   /**
@@ -697,6 +1117,9 @@ export class TrackedTask {
    * End the task, setting its status and ended_at timestamp.
    */
   end(status: "success" | "failed" = "success"): void {
+    if (!this._ownsTask) {
+      throw new Error("Attached task handles do not own task lifecycle and cannot end the task");
+    }
     if (this._ended) {
       throw new Error(`Task ${this._task.taskId} has already been ended.`);
     }
@@ -760,7 +1183,7 @@ export class TrackedTask {
       );
     }
 
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
     logTaskComplete(this._task);
   }
 
@@ -957,17 +1380,44 @@ export class TrackedTask {
       const details = (ev.details || {}) as Record<string, unknown>;
       if (details.cost_pending !== true) continue;
       const oldCost = ev.costUsd;
-      const priced = engine.resolveGpuCost(
-        details as Record<string, any>,
-        cloudEnv,
-        windowS,
-      );
-      ev.costUsd = priced.costUsd;
-      ev.pricingSource = priced.pricingSource as any;
-      ev.costConfidence = priced.costConfidence;
-      ev.pricingVersion = details.billing_model === "local_gpu_usage_only"
-        ? undefined
-        : `gpu:${engine.catalogVersion}`;
+      let customRate = undefined;
+      if (details.billing_model === "local_gpu_usage_only") {
+        for (const key of [details.gpu_sku, details._nvml_product_name_lower]) {
+          if (typeof key !== "string" || !key.trim()) continue;
+          customRate = this._tracker.rateRegistry.getInfrastructure("gpu", key);
+          if (customRate !== undefined) break;
+        }
+      }
+      let gpuSeconds: Decimal | undefined;
+      if (customRate !== undefined) {
+        try {
+          gpuSeconds = new Decimal(String(details.gpu_seconds_used ?? "0"));
+          if (!gpuSeconds.isFinite() || gpuSeconds.lte(0)) customRate = undefined;
+        } catch {
+          customRate = undefined;
+        }
+      }
+      if (customRate !== undefined && gpuSeconds !== undefined) {
+        const ratePerSecond = customRate.per === "gpu_hour"
+          ? customRate.costUsd.dividedBy(3600)
+          : customRate.costUsd;
+        ev.costUsd = gpuSeconds.times(ratePerSecond);
+        ev.pricingSource = "rate_registry";
+        ev.costConfidence = "computed";
+        ev.pricingVersion = this._tracker.rateRegistry.pricingVersion;
+      } else {
+        const priced = engine.resolveGpuCost(
+          details as Record<string, any>,
+          cloudEnv,
+          windowS,
+        );
+        ev.costUsd = priced.costUsd;
+        ev.pricingSource = priced.pricingSource as any;
+        ev.costConfidence = priced.costConfidence;
+        ev.pricingVersion = details.billing_model === "local_gpu_usage_only"
+          ? undefined
+          : `gpu:${engine.catalogVersion}`;
+      }
       const newDetails: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(details)) {
         if (
@@ -981,7 +1431,7 @@ export class TrackedTask {
       ev.details = newDetails;
       this._buffer.updateEvent(ev);
 
-      const delta = priced.costUsd.minus(oldCost);
+      const delta = ev.costUsd.minus(oldCost);
       costDelta = costDelta.plus(delta);
       if (newEventIds.has(ev.eventId)) {
         costDelta = costDelta.plus(oldCost); // always 0; explicit
@@ -1003,7 +1453,7 @@ export class TrackedTask {
     // Delegates to the shared implementation so session tasks and
     // instrument auto-tasks (via finalizeAutoTask) run the exact same
     // drain + egress pricing + cost_pending back-fill path.
-    finalizeTaskNetwork(this._task, this._buffer);
+    finalizeTaskNetwork(this._task, this._buffer, this._tracker.rateRegistry);
   }
 
   /**
@@ -1033,12 +1483,12 @@ export class TrackedTask {
         attribution_usage_per: rateEntry.per,
       },
     });
+    if (!this._buffer.addEvent(event)) return event;
     this._events.push(event);
-    this._buffer.addEvent(event);
     logEvent(event, this._task.taskType);
     this._task.externalCostUsd = decAdd(this._task.externalCostUsd, costUsd);
     this._task.totalCostUsd = decAdd(this._task.totalCostUsd, costUsd);
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
     return event;
   }
 
@@ -1072,7 +1522,7 @@ export class TrackedTask {
     const reversed = this._task.retryCostUsd.minus(target.costUsd);
     this._task.retryCostUsd = reversed.lt(0) ? new Decimal(0) : reversed;
     this._buffer.updateEvent(target);
-    this._buffer.upsertTask(this._task);
+    this._persistTask();
     return target;
   }
 }
@@ -1088,6 +1538,7 @@ export class CostTracker {
   private _pusher: EventPusher | null = null;
   private _options: TrackerOptions;
   private _pricing: PricingEngine;
+  private _catalogRuntime: CatalogRuntime | null = null;
   private _computePricing: ComputePricingEngine;
   private _gpuPricing: GpuPricingEngine;
   private _computeBillingOverrides: Record<string, string>;
@@ -1111,6 +1562,13 @@ export class CostTracker {
       ...options,
     };
 
+    // Validate customer-owned pricing before opening storage or starting a
+    // background worker. Invalid YAML cannot leave a partial tracker alive.
+    this._rateRegistry = new RateRegistry();
+    if (this._options.ratesPath !== undefined) {
+      this._rateRegistry.load(this._options.ratesPath);
+    }
+
     // Resolve API key (explicit arg → DEXCOST_API_KEY env var) and storage
     // mode. Throws InvalidAPIKeyError for a malformed key.
     // Debug mode: explicit option wins; otherwise DEXCOST_DEBUG decides.
@@ -1122,7 +1580,18 @@ export class CostTracker {
     // Use the resolved key everywhere downstream (env-var fallback included).
     this._options.apiKey = this._config.apiKey;
 
+    // Security configuration is resolved before opening storage or starting
+    // workers. Invalid trust settings are startup errors, not a reason to
+    // silently disable catalog signature enforcement.
+    const catalogTrustPolicy = this._options.catalogReleases === false
+      ? undefined
+      : resolveCatalogTrustPolicy(
+        this._options.catalogTrustedKeys,
+        this._options.catalogRequireSignature,
+      );
+
     this._buffer = new EventBuffer(this._options.dbPath);
+    setNetworkRateRegistry(this._buffer, this._rateRegistry);
 
     // Dev mode detection
     const env = options?.environment ?? process.env.DEXCOST_ENV;
@@ -1135,9 +1604,9 @@ export class CostTracker {
     // the pusher (telemetry POST) and the pricing refresher.
     const endpoint = resolveEndpoint(this._options.endpoint);
     const cloudMode = this._config.storageMode === "cloud" && !isDevMode();
-    const serviceCatalogUrl =
-      this._options.serviceCatalogUrl ??
-      (cloudMode ? `${endpoint.replace(/\/+$/, "")}/v1/api/service-catalog/latest` : undefined);
+    // The legacy single service-catalog URL remains an explicit compatibility
+    // escape hatch. Normal cloud operation uses one atomic seven-artifact release.
+    const serviceCatalogUrl = this._options.serviceCatalogUrl;
     let serviceCatalogApiKey: string | undefined;
     if (serviceCatalogUrl && this._config.apiKey) {
       try {
@@ -1185,13 +1654,41 @@ export class CostTracker {
     this._computeBillingOverrides = { ...(options.computeBillingOverrides ?? {}) };
     this._k8sNodeAware = options.k8sNodeAware ?? false;
 
-    // Start background pricing refresh in cloud mode
-    if (cloudMode && this._config.apiKey) {
+    if (this._options.catalogReleases !== false) {
+      try {
+        this._catalogRuntime = new CatalogRuntime({
+          pricing: this._pricing,
+          replaceCompute: (engine) => { this._computePricing = engine; },
+          replaceGpu: (engine) => { this._gpuPricing = engine; },
+          trackHttp: this._options.trackHttp !== false,
+        }, {
+          endpoint,
+          storePath: this._options.catalogReleaseStorePath
+            ?? (this._options.dbPath ? `${this._options.dbPath}.catalog-releases.json` : undefined),
+          apiKey: this._config.apiKey,
+          refreshIntervalMs: this._options.catalogRefreshIntervalMs,
+          refreshJitterRatio: this._options.catalogRefreshJitterRatio,
+          channel: this._options.catalogChannel,
+          trustedKeys: catalogTrustPolicy?.trustedKeys,
+          requireSignature: catalogTrustPolicy?.requireSignature,
+          timeoutMs: this._options.catalogTimeoutMs,
+        });
+        // Durable LKG is applied synchronously before any provider is patched.
+        this._catalogRuntime.loadCached();
+        if (cloudMode) this._catalogRuntime.start();
+      } catch (error) {
+        debugLog("catalog", `catalog release runtime disabled: ${String(error)}`);
+        this._catalogRuntime = null;
+      }
+    }
+
+    // Compatibility fallback for installations that explicitly disable the
+    // atomic release contract.
+    if (cloudMode && this._config.apiKey && this._catalogRuntime === null) {
       this._pricing.setApiKey(this._config.apiKey);
       this._pricing.startBackgroundRefresh(endpoint);
     }
 
-    this._rateRegistry = new RateRegistry();
     this._heuristicEngine = options.enableRetryHeuristics
       ? new RetryHeuristicEngine(options.retryHeuristicWindow, options.retryHeuristicThreshold)
       : null;
@@ -1328,14 +1825,242 @@ export class CostTracker {
     return this._heuristicEngine;
   }
 
+  get catalogStatus(): CatalogRuntimeStatus | null {
+    return this._catalogRuntime?.status() ?? null;
+  }
+
+  importCatalogBundle(bundle: Uint8Array): CatalogRuntimeStatus {
+    if (this._catalogRuntime === null) {
+      throw new Error("catalog releases are disabled for this tracker");
+    }
+    this._catalogRuntime.importBundle(bundle);
+    return this._catalogRuntime.status();
+  }
+
+  exportCatalogBundle(source: "active" | "previous" = "active"): Uint8Array {
+    if (this._catalogRuntime === null) {
+      throw new Error("catalog releases are disabled for this tracker");
+    }
+    return this._catalogRuntime.exportBundle(source);
+  }
+
+  deliveryStatus(): DeliveryStatus {
+    return this._pusher?.status() ?? localDeliveryStatus(this._buffer);
+  }
+
+  private _createTask(options: TaskOptions): Task {
+    const current = getCurrentTask();
+    const context = getContext();
+    const taskId = options.taskId ?? randomUUID();
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    for (const [name, value] of [
+      ["taskId", taskId], ["rootTaskId", options.rootTaskId], ["parentTaskId", options.parentTaskId],
+    ] as const) if (value !== undefined && !uuid.test(value)) throw new Error(`${name} must be a UUID`);
+
+    const inheritsCurrent = options.parentTaskId === undefined && current !== undefined;
+    const parentTaskId = options.parentTaskId ?? current?.taskId;
+    let rootTaskId = options.rootTaskId ?? (inheritsCurrent ? current?.rootTaskId : undefined);
+    const customerId = options.customerId ?? (inheritsCurrent ? current?.customerId : undefined) ?? context?.customerId;
+    const projectId = options.projectId ?? (inheritsCurrent ? current?.projectId : undefined) ?? context?.projectId;
+    const userId = options.userId ?? (inheritsCurrent ? current?.userId : undefined) ?? context?.userId;
+    const productId = options.productId ?? (inheritsCurrent ? current?.productId : undefined) ?? context?.productId;
+    const experimentId = options.experimentId ?? (inheritsCurrent ? current?.experimentId : undefined);
+    const variant = options.variant ?? (inheritsCurrent ? current?.variant : undefined);
+    const agentId = options.agentId ?? (inheritsCurrent ? current?.agentId : undefined) ?? context?.agent;
+    const agentVersion = options.agentVersion ?? (inheritsCurrent ? current?.agentVersion : undefined) ?? context?.agentVersion;
+    const workflowId = options.workflowId ?? (inheritsCurrent ? current?.workflowId : undefined) ?? context?.workflowId;
+    const workflowSessionId = options.workflowSessionId ??
+      (inheritsCurrent ? current?.workflowSessionId : undefined) ?? context?.workflowSessionId;
+    if ((agentId === undefined) !== (agentVersion === undefined)) {
+      throw new Error("agentId and agentVersion must be supplied together");
+    }
+    if (workflowSessionId !== undefined && workflowId === undefined) {
+      throw new Error("workflowSessionId requires workflowId");
+    }
+    const hasBusinessIdentity = [
+      customerId, projectId, userId, productId, experimentId, variant, agentId, workflowId,
+    ].some((value) => value !== undefined);
+    if (rootTaskId === undefined && parentTaskId === undefined && hasBusinessIdentity) rootTaskId = taskId;
+    const taskType = options.taskType ?? "";
+    if (rootTaskId !== undefined) {
+      if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(taskType)) {
+        throw new Error("business-attributed taskType must be canonical lowercase");
+      }
+      if (variant !== undefined && experimentId === undefined) throw new Error("variant requires experimentId");
+      if (parentTaskId === undefined && rootTaskId !== taskId) {
+        throw new Error("a root task must use its own taskId as rootTaskId");
+      }
+      if (parentTaskId === taskId || (parentTaskId !== undefined && rootTaskId === taskId)) {
+        throw new Error("a child task cannot be its own root or parent");
+      }
+      for (const [name, value] of Object.entries({ customerId, projectId, userId, productId,
+        experimentId, variant, agentId, agentVersion, workflowId, workflowSessionId })) {
+        if (value !== undefined && (value.trim() !== value || value.length < 1 || value.length > 256)) {
+          throw new Error(`${name} must contain 1 to 256 characters`);
+        }
+      }
+    }
+    return createTask({
+      taskId, taskType, customerId, projectId, userId, productId,
+      metadata: { ...(context?.metadata ?? {}), ...(options.metadata ?? {}) },
+      parentTaskId, rootTaskId, agentId, agentVersion, workflowId, workflowSessionId,
+      experimentId, variant,
+    });
+  }
+
   /** Register a per-unit rate for a named service. */
-  registerRate(service: string, per: string, costUsd: number): void {
+  registerRate(service: string, per: string, costUsd: DecimalLike): void {
     this._rateRegistry.register(service, per, costUsd);
   }
 
   /** Get the per-unit cost (in USD) for a named service, or undefined if not registered. */
-  getRate(service: string): number | undefined {
+  getRate(service: string): Decimal | undefined {
     return this._rateRegistry.get(service)?.costUsd;
+  }
+
+  /** Register an explicit user-owned GPU or network rate. */
+  registerInfrastructureRate(
+    kind: string,
+    key: string,
+    per: string,
+    costUsd: DecimalLike,
+  ): void {
+    this._rateRegistry.registerInfrastructure(kind, key, per, costUsd);
+  }
+
+  /** Get an exact normalized user-owned infrastructure rate. */
+  getInfrastructureRate(kind: string, key: string): Decimal | undefined {
+    return this._rateRegistry.getInfrastructure(kind, key)?.costUsd;
+  }
+
+  /** Atomically merge rates from a versioned YAML file. */
+  loadRates(path: string): void {
+    this._rateRegistry.load(path);
+  }
+
+  /** Export a deterministic version-2 rates.yaml snapshot. */
+  exportRates(path: string): void {
+    this._rateRegistry.export(path);
+  }
+
+  recordOutcome(
+    name: string,
+    options: Omit<OutcomeRevisionOptions, "name">,
+  ): OutcomeRevision {
+    const revision = new OutcomeRevision({ ...options, name });
+    this._buffer.insertOutcomeRevision(revision);
+    return revision;
+  }
+
+  getOutcomeHistory(outcomeId: string): Array<Record<string, unknown>> {
+    return this._buffer.getOutcomeHistory(outcomeId);
+  }
+
+  recordRevenue(
+    amount: RevenueInput | undefined,
+    options: Omit<RevenueRevisionOptions, "amount"> & { currency?: string },
+  ): RevenueRevision {
+    const revision = new RevenueRevision({
+      ...options,
+      source: options.source ?? { type: "sdk" },
+      amount: amount === undefined ? undefined : revenueAmount(amount, options.currency ?? "USD"),
+    });
+    this._buffer.insertRevenueRevision(revision);
+    return revision;
+  }
+
+  getRevenueHistory(revenueId: string): Array<Record<string, unknown>> {
+    return this._buffer.getRevenueHistory(revenueId);
+  }
+
+  recordProviderJob(options: ProviderJobRevisionOptions): ProviderJobRevision {
+    const revision = new ProviderJobRevision(options);
+    this._buffer.insertProviderJobRevision(revision);
+    return revision;
+  }
+
+  getProviderJob(provider: string, service: string, recordId: string): Record<string, unknown> | undefined {
+    return this._buffer.getProviderJob(provider, service, recordId);
+  }
+
+  getProviderJobHistory(eventId: string): Array<Record<string, unknown>> {
+    return this._buffer.getProviderJobHistory(eventId);
+  }
+
+  explainPricing(eventOrId: CostEvent | string): PricingExplanation {
+    if (typeof eventOrId !== "string") return explainEventPricing(eventOrId);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(eventOrId)) {
+      throw new Error("eventId must be a valid UUID");
+    }
+    const event = this._buffer.getEvent(eventOrId);
+    if (event === undefined) throw new Error(`event ${eventOrId} was not found in local storage`);
+    return explainEventPricing(event);
+  }
+
+  /** Decorate any JavaScript execution shape with content-free tool metering. */
+  trackTool<F extends (this: unknown, ...args: any[]) => any>(
+    toolId: string,
+    options: TrackToolOptions = {},
+  ): (fn: F) => F {
+    type Invocation = { task: Task; auto: boolean; capability?: CapabilityIdentity };
+    return (fn: F): F => decorateTool(fn, {
+      begin: (): Invocation => {
+        const current = getCurrentTask();
+        const auto = current === undefined;
+        const task = current ?? createAutoTask(toolTaskType(toolId));
+        if (auto) this._buffer.upsertTask(task);
+        return { task, auto, capability: options.capability ?? getCapability() };
+      },
+      run: (state, action) => runWithTask(state.task, action),
+      finish: (state, status, durationMs, error) => {
+        try {
+          new TrackedTask(state.task, this._buffer, this, false, false, true).recordToolCall(toolId, {
+            ...options, status, durationMs, capability: state.capability,
+            errorType: error instanceof Error ? error.name : error === undefined ? undefined : typeof error,
+          });
+        } finally {
+          if (state.auto) {
+            finalizeAutoTask(
+              state.task,
+              status === "succeeded" ? "success" : "failed",
+              this._buffer,
+            );
+          }
+        }
+      },
+    });
+  }
+
+  /** Return a non-owning handle for cross-process work associated with an existing task UUID. */
+  attachTask(
+    taskId: string,
+    options: { taskType?: string; rootTaskId?: string; parentTaskId?: string } = {},
+  ): TrackedTask {
+    const existing = this._buffer.getTask(taskId);
+    if (existing !== undefined) {
+      if (options.rootTaskId !== undefined && options.rootTaskId !== existing.rootTaskId) {
+        throw new Error("attached rootTaskId does not match the locally stored task");
+      }
+      if (options.parentTaskId !== undefined && options.parentTaskId !== existing.parentTaskId) {
+        throw new Error("attached parentTaskId does not match the locally stored task");
+      }
+      return new TrackedTask(existing, this._buffer, this, false, false);
+    }
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuid.test(taskId)) throw new Error("taskId must be a valid UUID");
+    if (options.rootTaskId !== undefined && !uuid.test(options.rootTaskId)) {
+      throw new Error("rootTaskId must be a valid UUID");
+    }
+    if (options.parentTaskId !== undefined && !uuid.test(options.parentTaskId)) {
+      throw new Error("parentTaskId must be a valid UUID");
+    }
+    const taskType = options.taskType ?? "attached";
+    if (taskType.trim().length === 0) throw new Error("taskType must be a non-empty string");
+    const task = createTask({
+      taskId: taskId.toLowerCase(), taskType,
+      rootTaskId: options.rootTaskId?.toLowerCase(), parentTaskId: options.parentTaskId?.toLowerCase(),
+    });
+    return new TrackedTask(task, this._buffer, this, false, false);
   }
 
   /**
@@ -1365,28 +2090,8 @@ export class CostTracker {
    * work; owned hardware is emitted as usage-only, never a synthetic price.
    * Mirrors the Python SDK's `CostTracker.start_task`.
    */
-  startTask(
-    opts: {
-      taskType?: string;
-      customerId?: string;
-      projectId?: string;
-      metadata?: Record<string, unknown>;
-      experimentId?: string;
-      variant?: string;
-      trackGpu?: boolean;
-    } = {}
-  ): TrackedTask {
-    const parentTask = getCurrentTask();
-    const task = createTask({
-      taskId: randomUUID(),
-      taskType: opts.taskType ?? "",
-      customerId: opts.customerId,
-      projectId: opts.projectId,
-      metadata: opts.metadata ? { ...opts.metadata } : {},
-      parentTaskId: parentTask?.taskId,
-      experimentId: opts.experimentId,
-      variant: opts.variant,
-    });
+  startTask(opts: TaskOptions = {}): TrackedTask {
+    const task = this._createTask(opts);
     this._buffer.upsertTask(task);
     return new TrackedTask(task, this._buffer, this, opts.trackGpu === true);
   }
@@ -1399,29 +2104,10 @@ export class CostTracker {
    * `trackGpu: true` only on the leaf task that owns local NVIDIA GPU work.
    */
   async track<T>(
-    opts: {
-      taskType: string;
-      customerId?: string;
-      projectId?: string;
-      metadata?: Record<string, unknown>;
-      experimentId?: string;
-      variant?: string;
-      trackGpu?: boolean;
-    },
+    opts: TaskOptions & { taskType: string },
     fn: (task: TrackedTask) => Promise<T>
   ): Promise<T> {
-    const parentTask = getCurrentTask();
-
-    const task = createTask({
-      taskId: randomUUID(),
-      taskType: opts.taskType,
-      customerId: opts.customerId,
-      projectId: opts.projectId,
-      metadata: opts.metadata ? { ...opts.metadata } : {},
-      parentTaskId: parentTask?.taskId,
-      experimentId: opts.experimentId,
-      variant: opts.variant,
-    });
+    const task = this._createTask(opts);
 
     this._buffer.upsertTask(task);
 
@@ -1455,6 +2141,7 @@ export class CostTracker {
   setApiKey(newKey: string): void {
     this._config = { ...this._config, apiKey: newKey };
     this._pricing.setApiKey(newKey);
+    this._catalogRuntime?.setApiKey(newKey);
     if (this._pusher) {
       this._pusher.setApiKey(newKey);
     }
@@ -1484,6 +2171,7 @@ export class CostTracker {
       this._pusher.stop();
     }
     this._pricing.stopBackgroundRefresh();
+    this._catalogRuntime?.stop();
     this._buffer.close();
   }
 
@@ -1546,6 +2234,7 @@ export class CostTracker {
       this._pusher.stop();
     }
     this._pricing.stopBackgroundRefresh();
+    this._catalogRuntime?.stop();
     this._buffer.close();
   }
 }

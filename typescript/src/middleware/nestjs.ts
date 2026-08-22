@@ -54,7 +54,7 @@ export interface NestInterceptorOptions {
   customerIdFrom?: string;
   /** Dot-path into the request for a project ID. */
   projectIdFrom?: string;
-  /** Derive the task type from the request. Defaults to `"METHOD /url"`. */
+  /** Derive a canonical task type from the request. Defaults to `"http.request"`. */
   taskType?: (request: unknown) => string;
   /** Return true to skip tracking (health checks, static assets). */
   skip?: (request: unknown) => boolean;
@@ -148,13 +148,14 @@ export class DexcostInterceptor {
             ? request.url
             : "/";
       tracked = tracker.startTask({
-        taskType: this._options.taskType?.(request) ?? `${method} ${scrubUrl(rawUrl)}`,
+        taskType: this._options.taskType?.(request) ?? "http.request",
         customerId: this._options.customerIdFrom
           ? getNestedValue(request, this._options.customerIdFrom)
           : undefined,
         projectId: this._options.projectIdFrom
           ? getNestedValue(request, this._options.projectIdFrom)
           : undefined,
+        metadata: { httpMethod: method, httpRoute: scrubUrl(rawUrl) },
       });
       request.dexcostTask = tracked;
 

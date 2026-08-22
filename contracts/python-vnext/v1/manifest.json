@@ -1,0 +1,202 @@
+{
+  "artifacts": [
+    {
+      "byte_size": 1618,
+      "path": "README.md",
+      "sha256": "f780bc44be61a4dafa2bfc23a065a4ec8ee91bfdc69dceade5b288ed33681584"
+    },
+    {
+      "byte_size": 1149,
+      "path": "audit-sources.json",
+      "sha256": "5738455e67403e26064de9d780356ff6af05822f3585613d9ba14ea17b6b5550"
+    },
+    {
+      "byte_size": 1693,
+      "path": "canonical-rules.json",
+      "sha256": "3a3a926b58ee2da72d0d5fff21a7be5ba2614f678254a2480bcba4197c5a3967"
+    },
+    {
+      "byte_size": 53379,
+      "path": "capability-matrix.json",
+      "sha256": "0d00260fffe473b85cd62740836b033bb99701abf9db306fef1c623a8198ae54"
+    },
+    {
+      "byte_size": 76,
+      "path": "catalog-production-trust.json",
+      "sha256": "183c1cc960f87682de1fef3e299b85177475a50e12888df9e07177f9105a1908"
+    },
+    {
+      "byte_size": 7365,
+      "path": "catalog-slimming-gate.json",
+      "sha256": "e49f66def116e77b85e55bab899cf22312e40a9878f4ed88fa4bdaef70aa3098"
+    },
+    {
+      "byte_size": 10268,
+      "path": "evidence/catalog-joint-local-2026-08-22.json",
+      "sha256": "154fbf7f7cafafd150b6d829b9f6a851bb8ca9ca72ec8601bccf26866afacc77"
+    },
+    {
+      "byte_size": 3223,
+      "path": "evidence/catalog-production-shadow.template.json",
+      "sha256": "29330670687827d6b2847ffefacba093f3ffad0e32ed5f1f7b2c4d9eb4f699fa"
+    },
+    {
+      "byte_size": 3606,
+      "path": "golden/catalog-release.v1.json",
+      "sha256": "50bb34e0703ff7323b927987d113fbf02c8760a46d59a77c7823765f15cabb84"
+    },
+    {
+      "byte_size": 4683,
+      "path": "golden/ingest-accepted.v1.json",
+      "sha256": "1d7f8b3751fbd4adf446fb2ccd6b0a0eb8c097c6daa6b193ad0edc54107a3c43"
+    },
+    {
+      "byte_size": 529,
+      "path": "golden/ingest-partial-ack.v1.json",
+      "sha256": "7dd9863c0f49aee5e624d7ec8a59bd372fa4397356209b5c39ec916e64d781db"
+    },
+    {
+      "byte_size": 1507,
+      "path": "golden/ingestion-failures.v1.json",
+      "sha256": "307489234ef9e9386490b2afa116599d9828683af69303e4eb2f0713409ddc37"
+    },
+    {
+      "byte_size": 1384,
+      "path": "golden/pricing-explanation.v1.json",
+      "sha256": "3d58d1977882c1d62a0505cf7fb92c9489c19edf9fa3cc99141a07a156bfbf72"
+    },
+    {
+      "byte_size": 2330,
+      "path": "golden/provider-job-lifecycle.v1.json",
+      "sha256": "d13db12b4b445baab01961f334db0473441473449a06d010731b93a9c9a5429e"
+    },
+    {
+      "byte_size": 1662,
+      "path": "golden/stream-lifecycles.v1.json",
+      "sha256": "2c00f7774f6ec777e7d102d2a864e325501cc1684ca909d1dc72ec107e0f8658"
+    },
+    {
+      "byte_size": 3663,
+      "path": "intentional-exclusions.json",
+      "sha256": "1e16dcfd325704ecde2fd1ea5899546041f18cb8754de9a21120c4ea5509cee7"
+    },
+    {
+      "byte_size": 63720,
+      "path": "provider-capabilities.json",
+      "sha256": "d46b6856ad509d2b26e6186c4940922e7377f7b30fecde61e528636ec56fb86e"
+    },
+    {
+      "byte_size": 58949,
+      "path": "public-api.json",
+      "sha256": "9ab864d3492c4fb3bd5507f71bafbc0d283fe30fdd0feafde69b539bd906db1c"
+    },
+    {
+      "byte_size": 2375,
+      "path": "schemas/business-identity-revision.v1.schema.json",
+      "sha256": "5d88512db545e1561d2fab7c0eedd4678bc04398f617b3a9b28f36ec4bba04a9"
+    },
+    {
+      "byte_size": 1589,
+      "path": "schemas/catalog-bundle.v1.schema.json",
+      "sha256": "109166ecffdd5c36a887ea25024e5518c4c7741cc835835ce14c64618a7a784e"
+    },
+    {
+      "byte_size": 4989,
+      "path": "schemas/catalog-manifest.v1.schema.json",
+      "sha256": "9bcd0f012cb3bc253834a182ae0a2017b9e1b624f8114efd92a83a6422942639"
+    },
+    {
+      "byte_size": 5824,
+      "path": "schemas/catalog-observer-rules.v1.schema.json",
+      "sha256": "b3cb54f898adbdde7786fd314a7229ee1a1caa2ea2be7044111d629101dfc2bb"
+    },
+    {
+      "byte_size": 1410,
+      "path": "schemas/catalog-overlay.v1.schema.json",
+      "sha256": "160e42964ad7edd7097070b1553b8ea56908755d72ab4cc4a63cc65dd50b423b"
+    },
+    {
+      "byte_size": 9195,
+      "path": "schemas/catalog-production-shadow.v1.schema.json",
+      "sha256": "4925f5b1cc9a96d05c55ff264860b0e83e39a04e9bf764f6458f089931f83034"
+    },
+    {
+      "byte_size": 2053,
+      "path": "schemas/event.v1.schema.json",
+      "sha256": "5cdf2e36008aac73c72589286949ea32136df103b015998c5a3f210a010d1f5b"
+    },
+    {
+      "byte_size": 1684,
+      "path": "schemas/ingestion-response.v1.schema.json",
+      "sha256": "8cd5b4f3d2ac9d4aa2e2d120cd03affe587c4347e94d5189ba3d7f14c37f8a48"
+    },
+    {
+      "byte_size": 2548,
+      "path": "schemas/outcome-revision.v1.schema.json",
+      "sha256": "739790e6a0e95fe981d4537c837255d3ed6918463c4406171bc5b63a10858218"
+    },
+    {
+      "byte_size": 5010,
+      "path": "schemas/provider-job-revision.v1.schema.json",
+      "sha256": "516ab9423988f6fe4189588cf9404a456e8a9208292a620c206207d3200957d4"
+    },
+    {
+      "byte_size": 2181,
+      "path": "schemas/revenue-revision.v1.schema.json",
+      "sha256": "5e1a9cbd32cc29194f0ce53612001ed51602de21a169adae30a32efe99055a9a"
+    },
+    {
+      "byte_size": 3208,
+      "path": "schemas/task.v1.schema.json",
+      "sha256": "89f1eda7794e0b0ad7f045c8f474e35e29bf415a05b36b0bac00064204cd1291"
+    },
+    {
+      "byte_size": 43213,
+      "path": "storage-migrations.json",
+      "sha256": "91a5d362f6b3a7840c7cd1db442d81a06b4e712f0b63962d0fff0faa51c165ff"
+    },
+    {
+      "byte_size": 37674,
+      "path": "typescript-api-map.json",
+      "sha256": "bc00fd41fb70a6506c4f16bf55123f1983e7e73220af8ee68a29efcc0095bb89"
+    },
+    {
+      "byte_size": 8479,
+      "path": "typescript-public-api.json",
+      "sha256": "b7679ca44b0dba4df2891ef569880db680e83986035472aeb8e3d380c2560316"
+    },
+    {
+      "byte_size": 2460,
+      "path": "wire-schema-inventory.json",
+      "sha256": "e5d76b72123009b066b1370a7cc634989b63e05d958dd1afdde3c563115121fb"
+    }
+  ],
+  "attribution_contract": "3.2.0",
+  "business_attribution_contract": "1.1.0",
+  "catalog_sdk_contract": 1,
+  "classification_states": [
+    "implemented",
+    "intentionally_excluded",
+    "required"
+  ],
+  "freeze_id": "python-vnext-v1",
+  "referenced_artifacts": [
+    {
+      "byte_size": 21795,
+      "path": "fixtures/attribution_v3/conformance.json",
+      "sha256": "a737027bed8f70650b2f6f5d10fe48408fcb97c203d0aa78dc406a6035c65f68"
+    },
+    {
+      "byte_size": 41816,
+      "path": "fixtures/attribution_v3/schemas.json",
+      "sha256": "0fc3007cb307a98d6ddb7df53fd394e91411abc75389652c22e0060dcea8e871"
+    },
+    {
+      "byte_size": 24054,
+      "path": "fixtures/service_usage_observation_conformance.json",
+      "sha256": "a40d4d02c23805b04c2887eda20328d9d4bcb632972f14abde7b54174533de1f"
+    }
+  ],
+  "schema_version": "1",
+  "sequence_owner": "python"
+}

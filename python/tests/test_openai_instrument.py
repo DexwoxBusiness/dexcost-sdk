@@ -177,6 +177,16 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 @pytest.fixture(autouse=True)
 def _fake_openai() -> Generator[None, None, None]:
     """Install/uninstall fake openai for every test and ensure uninstrument."""
+    # Pytest imports every collected test module before running fixtures.  Keep
+    # the exact installed-SDK module objects so suites collected alongside this
+    # legacy fake can continue using the same OpenAI class identities after the
+    # test.  Leaving ``None`` import blockers here splits the process between
+    # stale collected classes and newly imported resource classes.
+    installed_modules = {
+        key: module
+        for key, module in sys.modules.items()
+        if key == "openai" or key.startswith("openai.")
+    }
     _install_fake_openai()
     yield
     # Always uninstrument after each test to reset module-level state
@@ -184,6 +194,10 @@ def _fake_openai() -> Generator[None, None, None]:
 
     uninstrument_openai()
     _uninstall_fake_openai()
+    for key in list(sys.modules):
+        if key == "openai" or key.startswith("openai."):
+            sys.modules.pop(key, None)
+    sys.modules.update(installed_modules)
 
 
 # ---------------------------------------------------------------------------

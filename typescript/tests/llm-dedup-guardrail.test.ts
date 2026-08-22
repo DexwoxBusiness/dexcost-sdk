@@ -47,8 +47,17 @@ const NO_CAPTURE_ALLOWLIST = new Set([
   "core/models.ts",
   "core/heuristics.ts",
   "core/llm-dedup.ts",
+  // These files describe operations/jobs but delegate event persistence to
+  // provider-metering.ts, which owns the single dedup registration point.
+  "core/provider-jobs.ts",
   "dev-console.ts",
   "cli/scanner.ts",
+  "instruments/google-genai.ts",
+  "instruments/litellm.ts",
+  "instruments/ollama.ts",
+  "instruments/openai-modern.ts",
+  "instruments/openai-realtime.ts",
+  "instruments/perplexity.ts",
 ]);
 
 function walk(dir: string): string[] {

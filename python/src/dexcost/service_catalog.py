@@ -71,18 +71,32 @@ class CostExtractionResult:
 class ServiceCatalog:
     """Loads and queries the bundled service price catalog."""
 
-    def __init__(self, data_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        data_path: Path | None = None,
+        *,
+        data: dict[str, Any] | None = None,
+        catalog_version: str | None = None,
+    ) -> None:
+        if data_path is not None and data is not None:
+            raise ValueError("data_path and data are mutually exclusive")
         self._data_path = data_path or _DEFAULT_DATA_PATH
+        self._initial_data = data
+        self._catalog_version_override = catalog_version
         self._entries: dict[str, ServiceEntry] = {}
         self._overrides: dict[str, dict[str, Any]] = {}
+        self._workspace_overrides: dict[str, dict[str, Any]] = {}
         self._raw_data: dict[str, Any] = {}
         self._load()
 
     def _load(self) -> None:
         """Load the JSON catalog from disk."""
         try:
-            with open(self._data_path) as f:
-                data: dict[str, Any] = json.load(f)
+            if self._initial_data is not None:
+                data = self._initial_data
+            else:
+                with open(self._data_path) as f:
+                    data = json.load(f)
             entries = self._parse_catalog_entries(data)
         except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
             _log.warning("Failed to load service catalog from %s: %s", self._data_path, exc)
@@ -151,7 +165,9 @@ class ServiceCatalog:
             ):
                 raise ValueError(f"catalog entry {key} has invalid endpoints")
             extraction = entry_data.get("cost_extraction")
-            extraction_type = extraction.get("type") if isinstance(extraction, dict) else None
+            if not isinstance(extraction, dict):
+                raise ValueError(f"catalog entry {key} has invalid cost extraction")
+            extraction_type = extraction.get("type")
             if extraction_type not in {
                 "response_body",
                 "response_header",
@@ -315,14 +331,13 @@ class ServiceCatalog:
 
         Returns None if cost cannot be extracted.
         """
-        # Check user override first
-        override = self._overrides.get(entry.key)
-        if override:
+        override = self._selected_override(entry)
+        if override is not None and override["per"] == "request":
             return CostExtractionResult(
-                amount=override["cost_per_unit"],
+                amount=Decimal(str(override["cost_per_unit"])),
                 confidence="computed",
                 service_name=entry.display_name,
-                pricing_source="user_override",
+                pricing_source=self._pricing_source(entry),
             )
 
         extraction = entry.cost_extraction
@@ -358,7 +373,7 @@ class ServiceCatalog:
                         amount=amount,
                         confidence="estimated",
                         service_name=entry.display_name,
-                        pricing_source="service_catalog",
+                        pricing_source=self._pricing_source(entry),
                     )
             return None
 
@@ -375,7 +390,7 @@ class ServiceCatalog:
                         amount=amount,
                         confidence="estimated",
                         service_name=entry.display_name,
-                        pricing_source="service_catalog",
+                        pricing_source=self._pricing_source(entry),
                     )
             return None
 
@@ -400,7 +415,7 @@ class ServiceCatalog:
             amount=raw_value,
             confidence=confidence,
             service_name=entry.display_name,
-            pricing_source="service_catalog",
+            pricing_source=self._pricing_source(entry),
         )
 
     def _extract_from_header(
@@ -434,7 +449,7 @@ class ServiceCatalog:
             amount=raw_value,
             confidence="computed",
             service_name=entry.display_name,
-            pricing_source="service_catalog",
+            pricing_source=self._pricing_source(entry),
         )
 
     def _extract_endpoint_match(self, entry: ServiceEntry) -> CostExtractionResult | None:
@@ -446,7 +461,7 @@ class ServiceCatalog:
             amount=cost,
             confidence="exact",
             service_name=entry.display_name,
-            pricing_source="service_catalog",
+            pricing_source=self._pricing_source(entry),
         )
 
     def _extract_fixed(self, entry: ServiceEntry) -> CostExtractionResult | None:
@@ -458,12 +473,24 @@ class ServiceCatalog:
             amount=cost,
             confidence="exact",
             service_name=entry.display_name,
-            pricing_source="service_catalog",
+            pricing_source=self._pricing_source(entry),
         )
 
-    @staticmethod
-    def _get_rate(entry: ServiceEntry) -> Decimal | None:
+    def _selected_override(self, entry: ServiceEntry) -> dict[str, Any] | None:
+        return self._overrides.get(entry.key) or self._workspace_overrides.get(entry.key)
+
+    def _pricing_source(self, entry: ServiceEntry) -> str:
+        if entry.key in self._overrides:
+            return "user_override"
+        if entry.key in self._workspace_overrides:
+            return "workspace_overlay"
+        return "service_catalog"
+
+    def _get_rate(self, entry: ServiceEntry) -> Decimal | None:
         """Get the per-unit rate from the entry's rate fields."""
+        override = self._selected_override(entry)
+        if override is not None:
+            return Decimal(str(override["cost_per_unit"]))
         if not entry.rate_fields:
             return None
         # Look for cost_per_* fields
@@ -472,15 +499,9 @@ class ServiceCatalog:
                 return Decimal(str(v))
         return None
 
-    @staticmethod
-    def _get_fixed_cost(entry: ServiceEntry) -> Decimal | None:
+    def _get_fixed_cost(self, entry: ServiceEntry) -> Decimal | None:
         """Get the fixed cost per request from rate fields."""
-        if not entry.rate_fields:
-            return None
-        for k, v in entry.rate_fields.items():
-            if k.startswith("cost_per_") and k.endswith("_usd"):
-                return Decimal(str(v))
-        return None
+        return self._get_rate(entry)
 
     @staticmethod
     def _resolve_dotted_path(data: dict[str, Any], path: str) -> Any:
@@ -526,6 +547,22 @@ class ServiceCatalog:
             "per": per,
         }
 
+    def inherit_overrides(self, other: ServiceCatalog) -> None:
+        """Copy user-owned rates when a new server release replaces catalog data."""
+        self._overrides = {
+            key: dict(value) for key, value in other._overrides.items()
+        }
+
+    def set_workspace_overrides(
+        self,
+        overrides: dict[str, tuple[Decimal, str]],
+    ) -> None:
+        """Replace authenticated workspace rates beneath explicit local rates."""
+        self._workspace_overrides = {
+            key: {"cost_per_unit": amount, "per": per}
+            for key, (amount, per) in overrides.items()
+        }
+
     def refresh_from_url(self, url: str, api_key: str | None = None) -> bool:
         """Atomically replace the catalog from a conformant remote envelope."""
         try:
@@ -553,8 +590,16 @@ class ServiceCatalog:
              for k, v in self._overrides.items()},
             sort_keys=True,
         )
-        combined = content + override_content
-        return hashlib.sha256(combined.encode()).hexdigest()[:16]
+        workspace_content = json.dumps(
+            {k: {"cost_per_unit": str(v["cost_per_unit"]), "per": v["per"]}
+             for k, v in self._workspace_overrides.items()},
+            sort_keys=True,
+        )
+        combined = content + override_content + workspace_content
+        digest = hashlib.sha256(combined.encode()).hexdigest()[:16]
+        if self._catalog_version_override is not None:
+            return f"{self._catalog_version_override}:{digest}"
+        return digest
 
     @property
     def entries(self) -> dict[str, ServiceEntry]:

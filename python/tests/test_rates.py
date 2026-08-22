@@ -101,6 +101,17 @@ class TestRateRegistry:
         assert len(v) == 12
         int(v, 16)  # Validates it's hex
 
+    def test_pricing_version_uses_cross_sdk_canonical_decimal_text(self) -> None:
+        reg = RateRegistry()
+        reg.register("maps.googleapis.com", per="request", cost_usd="0.005")
+        reg.register_infrastructure(
+            "gpu", "NVIDIA GeForce RTX 5060 Ti", "gpu_hour", "0.40"
+        )
+        reg.register_infrastructure(
+            "network", "local", "gb_transferred", "0.02"
+        )
+        assert reg.pricing_version == "75453ddd27c4"
+
     def test_registers_exact_normalized_infrastructure_rate(self) -> None:
         reg = RateRegistry()
         reg.register_infrastructure(
@@ -474,6 +485,11 @@ class TestRecordUsageWithRates:
             "region": "us-east-1",
             "attribution_usage_quantity": 2,
             "attribution_usage_per": "call",
+            "pricing_provenance": {
+                "catalog_source": "local_or_bootstrap",
+                "stale": False,
+                "workspace_overlay": False,
+            },
         }
         assert event.cost_usd == Decimal("0.02")
 

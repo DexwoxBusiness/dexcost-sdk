@@ -92,6 +92,7 @@ def test_storage_enforces_outcome_revision_stream(tmp_path: Path) -> None:
     )
     storage.insert_outcome(achieved)
     assert [row.revision for row in storage.query_outcomes_for_sync()] == [1, 2]
+    assert storage.query_outcome_history(str(outcome_id)) == [first, achieved]
 
     with pytest.raises(ValueError, match="already exists with different contents"):
         storage.insert_outcome(

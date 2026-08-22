@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dexcost.io/schemas/catalog-production-shadow.v1.schema.json",
+  "title": "DexCost catalog production-shadow evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "status",
+    "recorded_at",
+    "environment",
+    "trust",
+    "release_lifecycle",
+    "gates",
+    "counters",
+    "approvals"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "evidence_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+    "status": { "enum": ["not_run", "passed", "failed"] },
+    "recorded_at": {
+      "anyOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "control_plane_deployment_sha",
+        "postgres_migration",
+        "python_sdk_version",
+        "typescript_sdk_version"
+      ],
+      "properties": {
+        "classification": { "const": "production_shadow" },
+        "control_plane_deployment_sha": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+            { "type": "null" }
+          ]
+        },
+        "postgres_migration": { "const": "083_catalog_releases.sql" },
+        "python_sdk_version": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "typescript_sdk_version": { "$ref": "#/$defs/nullableNonEmptyString" }
+      }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "key_ids",
+        "public_key_sha256",
+        "private_key_present_in_repository_or_evidence",
+        "python_requires_signature",
+        "typescript_requires_signature",
+        "dual_signature_rotation_verified"
+      ],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "key_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
+        },
+        "public_key_sha256": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "private_key_present_in_repository_or_evidence": { "type": "boolean" },
+        "python_requires_signature": { "$ref": "#/$defs/nullableBoolean" },
+        "typescript_requires_signature": { "$ref": "#/$defs/nullableBoolean" },
+        "dual_signature_rotation_verified": { "$ref": "#/$defs/nullableBoolean" }
+      }
+    },
+    "release_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canary_release_id",
+        "promoted_stable_release_id",
+        "changed_stable_release_id",
+        "rollback_release_id",
+        "sequences_are_strictly_increasing",
+        "artifact_hashes_match_across_server_python_typescript",
+        "releases"
+      ],
+      "properties": {
+        "canary_release_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "promoted_stable_release_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "changed_stable_release_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "rollback_release_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "sequences_are_strictly_increasing": { "$ref": "#/$defs/nullableBoolean" },
+        "artifact_hashes_match_across_server_python_typescript": { "$ref": "#/$defs/nullableBoolean" },
+        "releases": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/releaseEvidence" }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean_first_run",
+        "offline_restart",
+        "active_lkg",
+        "previous_fallback_after_active_corruption",
+        "expired_release_rejection",
+        "tampered_bundle_rejection",
+        "conditional_304",
+        "usage_capture_during_catalog_unavailability",
+        "later_unpriced_usage_reconciliation",
+        "queue_acknowledgement",
+        "queue_retry",
+        "dlq_health"
+      ],
+      "properties": {
+        "clean_first_run": { "$ref": "#/$defs/gateResult" },
+        "offline_restart": { "$ref": "#/$defs/gateResult" },
+        "active_lkg": { "$ref": "#/$defs/gateResult" },
+        "previous_fallback_after_active_corruption": { "$ref": "#/$defs/gateResult" },
+        "expired_release_rejection": { "$ref": "#/$defs/gateResult" },
+        "tampered_bundle_rejection": { "$ref": "#/$defs/gateResult" },
+        "conditional_304": { "$ref": "#/$defs/gateResult" },
+        "usage_capture_during_catalog_unavailability": { "$ref": "#/$defs/gateResult" },
+        "later_unpriced_usage_reconciliation": { "$ref": "#/$defs/gateResult" },
+        "queue_acknowledgement": { "$ref": "#/$defs/gateResult" },
+        "queue_retry": { "$ref": "#/$defs/gateResult" },
+        "dlq_health": { "$ref": "#/$defs/gateResult" }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "usage_events_attempted",
+        "usage_events_persisted",
+        "usage_events_reconciled",
+        "usage_events_lost",
+        "queue_messages_attempted",
+        "queue_messages_acknowledged",
+        "queue_messages_retried",
+        "queue_messages_dead_lettered"
+      ],
+      "properties": {
+        "usage_events_attempted": { "$ref": "#/$defs/nullableCounter" },
+        "usage_events_persisted": { "$ref": "#/$defs/nullableCounter" },
+        "usage_events_reconciled": { "$ref": "#/$defs/nullableCounter" },
+        "usage_events_lost": { "$ref": "#/$defs/nullableCounter" },
+        "queue_messages_attempted": { "$ref": "#/$defs/nullableCounter" },
+        "queue_messages_acknowledged": { "$ref": "#/$defs/nullableCounter" },
+        "queue_messages_retried": { "$ref": "#/$defs/nullableCounter" },
+        "queue_messages_dead_lettered": { "$ref": "#/$defs/nullableCounter" }
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["security", "control_plane", "python_sdk", "typescript_sdk"],
+      "properties": {
+        "security": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "control_plane": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "python_sdk": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "typescript_sdk": { "$ref": "#/$defs/nullableNonEmptyString" }
+      }
+    }
+  },
+  "$defs": {
+    "nullableNonEmptyString": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "nullableBoolean": {
+      "type": ["boolean", "null"]
+    },
+    "nullableCounter": {
+      "anyOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "gateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_refs"],
+      "properties": {
+        "status": { "enum": ["not_run", "passed", "failed"] },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "artifactHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observer_rules",
+        "llm_prices",
+        "service_prices",
+        "compute_prices",
+        "gpu_prices",
+        "egress_prices",
+        "server_pricing_reference"
+      ],
+      "properties": {
+        "observer_rules": { "$ref": "#/$defs/sha256" },
+        "llm_prices": { "$ref": "#/$defs/sha256" },
+        "service_prices": { "$ref": "#/$defs/sha256" },
+        "compute_prices": { "$ref": "#/$defs/sha256" },
+        "gpu_prices": { "$ref": "#/$defs/sha256" },
+        "egress_prices": { "$ref": "#/$defs/sha256" },
+        "server_pricing_reference": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "release_id",
+        "release_sequence",
+        "server_artifact_sha256",
+        "python_artifact_sha256",
+        "typescript_artifact_sha256"
+      ],
+      "properties": {
+        "stage": { "enum": ["canary", "promoted_stable", "changed_stable", "rollback"] },
+        "release_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "release_sequence": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "server_artifact_sha256": {
+          "anyOf": [{ "$ref": "#/$defs/artifactHashes" }, { "type": "null" }]
+        },
+        "python_artifact_sha256": {
+          "anyOf": [{ "$ref": "#/$defs/artifactHashes" }, { "type": "null" }]
+        },
+        "typescript_artifact_sha256": {
+          "anyOf": [{ "$ref": "#/$defs/artifactHashes" }, { "type": "null" }]
+        }
+      }
+    }
+  }
+}

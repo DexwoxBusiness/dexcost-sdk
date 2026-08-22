@@ -1,0 +1,258 @@
+{
+  "schema_version": "1",
+  "evidence_id": "catalog-joint-local-2026-08-22",
+  "recorded_at": "2026-08-22",
+  "environment": {
+    "classification": "local_production_equivalent",
+    "production": false,
+    "production_shadow": false,
+    "control_plane_config": "control-plane/server/wrangler.catalog-gate.jsonc",
+    "postgres_version": "16.11",
+    "postgres_migrations_applied": 85,
+    "clickhouse_version": "26.3.8.4",
+    "clickhouse_migration_statements_applied": 112,
+    "catalog_sdk_contract": 1
+  },
+  "scope": {
+    "catalog_families": [
+      "observer_rules",
+      "llm_prices",
+      "service_prices",
+      "compute_prices",
+      "gpu_prices",
+      "egress_prices",
+      "server_pricing_reference"
+    ],
+    "clients": [
+      "dexcost_python",
+      "dexcost_typescript"
+    ],
+    "control_plane": "catalog release publisher, immutable artifact store, manifest/artifact HTTP routes, and local queue consumer"
+  },
+  "signing": {
+    "algorithm": "Ed25519",
+    "signature_domain": "dexcost.catalog-release.v1\u0000",
+    "key_material_class": "RFC 8032 public test vectors only; never production key material",
+    "key_ids": [
+      "dexcost-test-rfc8032-1",
+      "dexcost-test-rfc8032-2"
+    ],
+    "dual_signature_rotation": {
+      "python_trusted_only": "dexcost-test-rfc8032-1",
+      "typescript_trusted_only": "dexcost-test-rfc8032-2",
+      "result": "both clients accepted the same dual-signed canary"
+    },
+    "reverse_trust_promotion": {
+      "python_trusted_only": "dexcost-test-rfc8032-2",
+      "typescript_trusted_only": "dexcost-test-rfc8032-1",
+      "result": "both clients accepted the promoted dual-signed stable release"
+    },
+    "unknown_key_rejection_covered": true,
+    "unsigned_authoritative_publication_rejected": true,
+    "production_signing_key_provisioned": false
+  },
+  "controlled_source_import": {
+    "implementation": "control-plane/server/src/catalog-releases/source-import.ts",
+    "cli": "control-plane/server/src/catalog-releases/import-sources.ts",
+    "semantic_validation_before_commit": true,
+    "four_family_activation_is_atomic": true,
+    "initial_imports": {
+      "llm_prices": {
+        "sha256": "df97545aeed64772d4c1abd2c2a60bc274287b2502fd81a2f552d296d694d61f",
+        "item_count": 2590
+      },
+      "compute_prices": {
+        "sha256": "c3c6ed9a0f5b613e0ed68966c35ee1f246ae5a96968f2a213ae288f420227a36",
+        "item_count": 4
+      },
+      "gpu_prices": {
+        "sha256": "9fdfb67552bc9ccadf7ed75f52e5d40621d9dc02d8ff14ea67af624dcb46c455",
+        "item_count": 8
+      },
+      "egress_prices": {
+        "sha256": "0e34e8eb2a230b2b7dd3d1309b7fe9a9186e06541568f052efa32de2c3a17e44",
+        "item_count": 23
+      }
+    },
+    "changed_llm_import": {
+      "sha256": "24aee6e0b8a23768049e685bb81456343ffeed8ef9eace98cb8d90369b5b2916",
+      "item_count": 2591,
+      "purpose": "prove changed stable activation followed by immutable higher-sequence rollback"
+    }
+  },
+  "release_lifecycle": [
+    {
+      "phase": "canary",
+      "release_id": "catalog-release-35ddd8cf-d393-48a0-85a9-05433dda19b3",
+      "release_sequence": 1,
+      "channel": "canary",
+      "manifest_sha256": "5ffde59d77fb5915b6a67f9e9eb768ba173672785f617d034688d3b23fdc7a3b",
+      "activation_action": "canary",
+      "python_result": "activated seven families",
+      "typescript_result": "activated seven families"
+    },
+    {
+      "phase": "promoted_stable",
+      "release_id": "catalog-release-a16260bb-abe1-42d6-96f0-5010bbc0007c",
+      "release_sequence": 2,
+      "channel": "stable",
+      "manifest_sha256": "1efc211686f59088e2219b570f9cfcc0454f69102e4f8536c831f74c2355a95f",
+      "activation_action": "promote",
+      "python_result": "activated seven families",
+      "typescript_result": "activated seven families"
+    },
+    {
+      "phase": "changed_stable",
+      "release_id": "catalog-release-43b5567b-1188-4d96-adf1-5b2e678057b9",
+      "release_sequence": 3,
+      "channel": "stable",
+      "manifest_sha256": "329d2828653fe77e2a17418bea3bde39cf267621d10a265a742ad95c3de55641",
+      "activation_action": "publish",
+      "llm_sha256": "24aee6e0b8a23768049e685bb81456343ffeed8ef9eace98cb8d90369b5b2916",
+      "python_result": "activated changed LLM artifact",
+      "typescript_result": "activated changed LLM artifact"
+    },
+    {
+      "phase": "higher_sequence_rollback",
+      "release_id": "catalog-release-8713997d-eff6-4cc2-bc9e-1085558c22a0",
+      "release_sequence": 4,
+      "channel": "stable",
+      "manifest_sha256": "73c717a4bdb5dd576d192d613d4043629a9dbf0b34b77443d1de75feba98be16",
+      "activation_action": "rollback",
+      "previous_release_id": "catalog-release-43b5567b-1188-4d96-adf1-5b2e678057b9",
+      "llm_sha256": "df97545aeed64772d4c1abd2c2a60bc274287b2502fd81a2f552d296d694d61f",
+      "python_result": "activated rollback without SDK release",
+      "typescript_result": "activated rollback without SDK release"
+    }
+  ],
+  "rollback_artifacts": {
+    "observer_rules": {
+      "sha256": "fb414ee8537e009e41dabb24dcda1ef52f49cd4632c3daf6c51e3a2766ddabcc",
+      "item_count": 28
+    },
+    "llm_prices": {
+      "sha256": "df97545aeed64772d4c1abd2c2a60bc274287b2502fd81a2f552d296d694d61f",
+      "item_count": 2590
+    },
+    "service_prices": {
+      "sha256": "6fc486776e1a0fd155030bc21160aa652922d7219266aff9a3fe79615b4ef595",
+      "item_count": 73
+    },
+    "compute_prices": {
+      "sha256": "c3c6ed9a0f5b613e0ed68966c35ee1f246ae5a96968f2a213ae288f420227a36",
+      "item_count": 4
+    },
+    "gpu_prices": {
+      "sha256": "9fdfb67552bc9ccadf7ed75f52e5d40621d9dc02d8ff14ea67af624dcb46c455",
+      "item_count": 8
+    },
+    "egress_prices": {
+      "sha256": "0e34e8eb2a230b2b7dd3d1309b7fe9a9186e06541568f052efa32de2c3a17e44",
+      "item_count": 23
+    },
+    "server_pricing_reference": {
+      "sha256": "fdae0a41080dfb3691e2be392485ccb2c29f841bf1d923bc72f637a66c115bdb",
+      "item_count": 68
+    }
+  },
+  "durable_state": {
+    "python": {
+      "active_release_id": "catalog-release-8713997d-eff6-4cc2-bc9e-1085558c22a0",
+      "active_sequence": 4,
+      "previous_release_id": "catalog-release-43b5567b-1188-4d96-adf1-5b2e678057b9",
+      "previous_sequence": 3
+    },
+    "typescript": {
+      "active_release_id": "catalog-release-8713997d-eff6-4cc2-bc9e-1085558c22a0",
+      "active_sequence": 4,
+      "previous_release_id": "catalog-release-43b5567b-1188-4d96-adf1-5b2e678057b9",
+      "previous_sequence": 3
+    }
+  },
+  "offline_bundle": {
+    "release_id": "catalog-release-8713997d-eff6-4cc2-bc9e-1085558c22a0",
+    "byte_size": 1452848,
+    "sha256": "f0f3219f11b3716170f041e7183d71d2ff45f2697e1da3cdf024727ed72dbea1",
+    "server_python_typescript_exports_byte_identical": true,
+    "python_clean_store_import": "imported seven families while trusting only dexcost-test-rfc8032-1",
+    "typescript_clean_store_import": "imported seven families while trusting only dexcost-test-rfc8032-2"
+  },
+  "failure_safety": {
+    "corrupt_gpu_artifact_rejected": true,
+    "python_lkg_preserved": true,
+    "typescript_lkg_preserved": true,
+    "partial_activation_observed": false
+  },
+  "conditional_revalidation": {
+    "release_id": "catalog-release-8713997d-eff6-4cc2-bc9e-1085558c22a0",
+    "python_status": "not_modified",
+    "typescript_status": "not_modified",
+    "http_status": 304
+  },
+  "typescript_operational_gate": {
+    "test_files_passed": 114,
+    "tests_passed": 1216,
+    "tests_skipped": 0,
+    "live_e2e_tests_passed": 6,
+    "queue_batches": [
+      "1/1",
+      "3/3"
+    ],
+    "queue_retry_observed": false,
+    "dead_letter_observed": false,
+    "build": "passed",
+    "typecheck": "passed",
+    "strict_consumer_types": "passed",
+    "esm_clean_install": "passed",
+    "commonjs_clean_install": "passed",
+    "cli_offline_doctor": "passed",
+    "tarball_boundary": "600 entries; source, tests, scripts, and .env excluded"
+  },
+  "post_trust_bootstrap_verification": {
+    "python": {
+      "tests_passed": 1926,
+      "tests_skipped": 8,
+      "result": "passed"
+    },
+    "typescript": {
+      "test_files_passed": 114,
+      "test_files_skipped": 1,
+      "tests_passed": 1223,
+      "tests_skipped": 6,
+      "live_e2e_status": "passed separately in typescript_operational_gate",
+      "built_runtime_smoke_checks_passed": 9,
+      "package_entries": 602,
+      "package_source_test_script_or_env_entries": 0,
+      "esm_production_trust_asset": true,
+      "commonjs_production_trust_asset": true,
+      "result": "passed"
+    },
+    "control_plane": {
+      "catalog_tests_passed": 19,
+      "build": "passed",
+      "private_signer_to_expected_public_trust_binding": "passed"
+    },
+    "production_trust": {
+      "canonical_document": "contracts/python-vnext/v1/catalog-production-trust.json",
+      "packaged_copies_byte_identical": true,
+      "production_keys_present": false,
+      "reason_empty": "Production private keys have not been provisioned; an invented public key would be an unusable trust anchor."
+    }
+  },
+  "reproducible_entrypoints": {
+    "python_probe": "python/scripts/catalog_release_probe.py",
+    "typescript_probe": "typescript/scripts/catalog-release-probe.mjs",
+    "publisher": "control-plane/server/src/catalog-releases/publisher.ts",
+    "source_import": "control-plane/server/src/catalog-releases/source-import.ts",
+    "server_bundle": "control-plane/server/src/catalog-releases/bundle.ts",
+    "joint_worker_config": "control-plane/server/wrangler.catalog-gate.jsonc"
+  },
+  "limitations": [
+    "This is local production-equivalent implementation evidence, not production or production-shadow evidence.",
+    "The signing keys are public RFC 8032 test vectors and do not prove production secret-manager provisioning, rotation ownership, or trust distribution.",
+    "Expired-cache behavior was not exercised by this live gate; only corrupt-bundle rejection and LKG preservation were exercised.",
+    "Usage-only operation followed by later server repricing was not exercised by this catalog lifecycle gate.",
+    "No slim wheel or npm package was built because catalog slimming remains prohibited until every production evidence requirement is linked and proven."
+  ],
+  "decision": "implementation_ready_but_retain_full_sdk_catalogs"
+}

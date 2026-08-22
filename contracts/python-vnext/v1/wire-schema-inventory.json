@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "contracts": [
+    { "id": "local.task.v1", "role": "durable operational task", "repository_path": "contracts/python-vnext/v1/schemas/task.v1.schema.json" },
+    { "id": "local.event.v1", "role": "durable local cost event before v3 promotion", "repository_path": "contracts/python-vnext/v1/schemas/event.v1.schema.json" },
+    { "id": "ingest.observation.v3", "role": "canonical provider observation", "repository_path": "fixtures/attribution_v3/schemas.json", "json_pointer": "/components/schemas/AttributionObservation" },
+    { "id": "business.identity.v1", "role": "full business identity revision", "repository_path": "contracts/python-vnext/v1/schemas/business-identity-revision.v1.schema.json" },
+    { "id": "business.outcome.v1", "role": "immutable outcome revision", "repository_path": "contracts/python-vnext/v1/schemas/outcome-revision.v1.schema.json" },
+    { "id": "business.revenue.v1", "role": "immutable revenue revision", "repository_path": "contracts/python-vnext/v1/schemas/revenue-revision.v1.schema.json" },
+    { "id": "provider.job.v1", "role": "durable delayed-provider full snapshot", "repository_path": "contracts/python-vnext/v1/schemas/provider-job-revision.v1.schema.json" },
+    { "id": "ingest.response.v1", "role": "queued/rejected acknowledgement and failure body", "repository_path": "contracts/python-vnext/v1/schemas/ingestion-response.v1.schema.json" },
+    { "id": "catalog.manifest.v1", "role": "immutable catalog release", "repository_path": "contracts/python-vnext/v1/schemas/catalog-manifest.v1.schema.json" },
+    { "id": "catalog.observer_rules.v1", "role": "non-executable declarative observer DSL", "repository_path": "contracts/python-vnext/v1/schemas/catalog-observer-rules.v1.schema.json" },
+    { "id": "catalog.overlay.v1", "role": "authenticated workspace rates overlay", "repository_path": "contracts/python-vnext/v1/schemas/catalog-overlay.v1.schema.json" },
+    { "id": "catalog.bundle.v1", "role": "signed exact-byte offline release transfer", "repository_path": "contracts/python-vnext/v1/schemas/catalog-bundle.v1.schema.json" },
+    { "id": "attribution.conformance.v3", "role": "shared positive and negative cross-language contract corpus", "repository_path": "fixtures/attribution_v3/conformance.json" },
+    { "id": "service.observation.v1", "role": "shared observer evaluation corpus", "repository_path": "fixtures/service_usage_observation_conformance.json" }
+  ]
+}

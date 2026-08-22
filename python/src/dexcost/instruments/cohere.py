@@ -23,13 +23,19 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from decimal import Decimal
 from typing import Any
 
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.context import _current_task, get_current_task, set_current_task, suppress_network_event
+from dexcost.context import (
+    _current_task,
+    get_current_task,
+    set_current_task,
+    suppress_network_event,
+)
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
@@ -141,13 +147,13 @@ def uninstrument_cohere() -> None:
         import cohere
 
         if "sync_chat" in _originals:
-            cohere.Client.chat = _originals["sync_chat"]
+            cohere.Client.chat = _originals["sync_chat"]  # type: ignore[method-assign]
         if "async_chat" in _originals:
-            cohere.AsyncClient.chat = _originals["async_chat"]
+            cohere.AsyncClient.chat = _originals["async_chat"]  # type: ignore[method-assign]
         if "sync_chat_stream" in _originals:
-            cohere.Client.chat_stream = _originals["sync_chat_stream"]
+            cohere.Client.chat_stream = _originals["sync_chat_stream"]  # type: ignore[method-assign]
         if "async_chat_stream" in _originals:
-            cohere.AsyncClient.chat_stream = _originals["async_chat_stream"]
+            cohere.AsyncClient.chat_stream = _originals["async_chat_stream"]  # type: ignore[method-assign]
     except ImportError:
         pass
 
@@ -223,10 +229,8 @@ def _sync_chat_wrapper(
         return response
     except Exception:
         if auto and auto_task_obj is not None:
-            try:
+            with suppress(Exception):
                 _log.debug("dexcost: auto-task call failed", exc_info=True)
-            except Exception:
-                pass
         raise
     finally:
         if auto and auto_token is not None:

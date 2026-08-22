@@ -73,15 +73,17 @@ describe("SessionManager", () => {
     expect(sm.activeSessionCount).toBe(1);
   });
 
-  it("agent from context used as taskType", () => {
+  it("keeps agent identity separate from the canonical session task type", () => {
     const sm = new SessionManager();
-    setContext({ customerId: "acme", agent: "support_bot" });
+    setContext({ customerId: "acme", agent: "support_bot", agentVersion: "1" });
 
     const task = sm.runInSession("http", buffer, () => {
       return getCurrentTask()!;
     });
 
-    expect(task.taskType).toBe("support_bot");
+    expect(task.taskType).toBe("agent_session");
+    expect(task.agentId).toBe("support_bot");
+    expect(task.agentVersion).toBe("1");
     expect(task.customerId).toBe("acme");
   });
 

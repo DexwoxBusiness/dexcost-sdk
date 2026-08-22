@@ -6,12 +6,22 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from dexcost.context import get_current_task, get_context
+# Re-export set_context/get_context for backward compat with tests
+from dexcost.context import (
+    DexcostContext as DexcostContext,
+)
+from dexcost.context import (
+    clear_context as clear_context,
+)
+from dexcost.context import (
+    get_context,
+    get_current_task,
+)
+from dexcost.context import (
+    set_context as set_context,
+)
 from dexcost.models.event import Event
 from dexcost.models.task import Task
-
-# Re-export set_context/get_context for backward compat with tests
-from dexcost.context import set_context, clear_context, DexcostContext  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Public helpers

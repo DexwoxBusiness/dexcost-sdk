@@ -284,12 +284,21 @@ class TestOpenAISmoke:
     @pytest.fixture(autouse=True)
     def _setup_openai(self) -> Generator[None, None, None]:
         """Install fake openai module and clean up after each test."""
+        installed_modules = {
+            key: module
+            for key, module in sys.modules.items()
+            if key == "openai" or key.startswith("openai.")
+        }
         _install_fake_openai()
         yield
         from dexcost.instruments.openai import uninstrument_openai
 
         uninstrument_openai()
         _uninstall_fake_openai()
+        for key in list(sys.modules):
+            if key == "openai" or key.startswith("openai."):
+                sys.modules.pop(key, None)
+        sys.modules.update(installed_modules)
 
     def test_sync_non_streaming(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """Sync mocked call -> event captured with correct fields."""

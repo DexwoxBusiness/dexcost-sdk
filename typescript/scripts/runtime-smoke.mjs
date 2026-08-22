@@ -24,10 +24,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dist = (p) => join(here, "..", "dist", p);
+// Dynamic import requires a file URL on Windows; a raw C:\\... path is parsed
+// as an unsupported URL scheme. File URLs work consistently on Node/Bun/Deno.
+const dist = (p) => pathToFileURL(join(here, "..", "dist", p)).href;
 
 const runtime =
   typeof globalThis.Bun !== "undefined"
@@ -129,7 +131,9 @@ try {
     get: (k) => vars.get(k),
   };
   await createHonoMiddleware({ tracker })(honoCtx, async () => {});
-  const honoTask = tracker.buffer.getAllTasks().find((t) => t.taskType === "POST /smoke");
+  const honoTask = tracker.buffer.getAllTasks().find((t) =>
+    t.taskType === "http.request" && t.metadata?.httpRoute === "/smoke"
+  );
   assert.ok(honoTask, "hono request task persisted");
   assert.equal(honoTask.status, "success");
   ok("createHonoMiddleware request tracking");
@@ -159,6 +163,15 @@ try {
         .some((t) => t.taskType === "smoke_explicit");
       assert.ok(persisted, "task survived buffer reopen (durable storage)");
       ok("durable buffer round-trip across reopen");
+
+      const pending = reopened.getPendingEvents(1);
+      assert.ok(pending.length > 0, "durable buffer retained a pending event");
+      reopened.markSynced([pending[0].eventId]);
+      assert.ok(
+        !reopened.getPendingEvents().some((event) => event.eventId === pending[0].eventId),
+        "transactional sync update removed the event from the pending queue",
+      );
+      ok("durable buffer transactional sync update");
     } finally {
       reopened.close();
     }

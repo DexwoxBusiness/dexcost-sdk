@@ -17,7 +17,10 @@ import threading
 from typing import Any
 
 from dexcost.cgroup_reader import (
-    read_cpu_max, read_cpu_stat, read_memory_current, read_memory_max,
+    read_cpu_max,
+    read_cpu_stat,
+    read_memory_current,
+    read_memory_max,
     read_memory_peak,
 )
 from dexcost.compute_runtime import RuntimeKind
@@ -41,10 +44,7 @@ def _billing_model_for(runtime: RuntimeKind) -> str:
 
 def _detect_arch() -> str:
     """Detect host architecture for Lambda / Fargate / EC2 rate selection."""
-    if hasattr(os, "uname"):
-        machine = os.uname().machine.lower()
-    else:
-        machine = ""
+    machine = os.uname().machine.lower() if hasattr(os, "uname") else ""
     if "aarch64" in machine or "arm64" in machine:
         return "arm64"
     return "x86_64"

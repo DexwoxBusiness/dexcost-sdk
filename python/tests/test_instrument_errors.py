@@ -114,12 +114,21 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 
 @pytest.fixture(autouse=True)
 def _fake_openai() -> Generator[None, None, None]:
+    installed_modules = {
+        key: module
+        for key, module in sys.modules.items()
+        if key == "openai" or key.startswith("openai.")
+    }
     _install_fake_openai()
     yield
     from dexcost.instruments.openai import uninstrument_openai
 
     uninstrument_openai()
     _uninstall_fake_openai()
+    for key in list(sys.modules):
+        if key == "openai" or key.startswith("openai."):
+            sys.modules.pop(key, None)
+    sys.modules.update(installed_modules)
 
 
 def _raise_on_create(exc: BaseException) -> Any:
@@ -569,13 +578,32 @@ class TestRecordingFailuresAreContained:
 
 class TestAllInstrumentsShareTheFailurePath:
     @pytest.mark.parametrize(
-        "module",
-        ["openai", "anthropic", "bedrock", "cohere", "gemini", "litellm"],
+        ("module", "session_factory"),
+        [
+            ("openai", None),
+            ("anthropic", None),
+            ("bedrock", None),
+            ("cohere", None),
+            ("litellm", None),
+            ("gemini", "_session"),
+            ("ollama", "_new_session"),
+            ("openrouter", "_session"),
+            ("perplexity", "_session"),
+            ("fal", "_operation_session"),
+        ],
     )
-    def test_instrument_records_call_failures(self, module: str) -> None:
+    def test_instrument_records_call_failures(
+        self, module: str, session_factory: str | None
+    ) -> None:
         """Each provider instrument routes raised calls through the shared helper."""
         import importlib
 
         instrument = importlib.import_module(f"dexcost.instruments.{module}")
-        assert hasattr(instrument, "_record_call_failure")
-        assert hasattr(instrument, "record_call_failure")
+        if session_factory is not None:
+            # Current adapters use the shared provider operation session,
+            # whose fail() path preserves the native exception/error identity.
+            assert hasattr(instrument, "ProviderOperationSession")
+            assert hasattr(instrument, session_factory)
+        else:
+            assert hasattr(instrument, "_record_call_failure")
+            assert hasattr(instrument, "record_call_failure")

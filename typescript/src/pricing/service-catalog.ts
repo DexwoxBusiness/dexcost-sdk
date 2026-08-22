@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
-const SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2";
+export const SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -378,11 +378,18 @@ function parseRemoteCatalogEnvelope(payload: unknown): RemoteCatalogEnvelope | n
 export class ServiceCatalog {
   private _entries: Map<string, ServiceEntry> = new Map();
   private _overrides: Map<string, { costPerUnit: number; per: string }> = new Map();
+  private _workspaceOverrides: Map<string, { costPerUnit: number; per: string }> = new Map();
   private _version: string;
 
-  constructor(catalogPath?: string) {
+  constructor(
+    catalogPath?: string,
+    catalogData?: Record<string, unknown>,
+    catalogVersion?: string,
+  ) {
     let raw: CatalogJson;
-    if (catalogPath) {
+    if (catalogData !== undefined) {
+      raw = catalogData as CatalogJson;
+    } else if (catalogPath) {
       try {
         const content = readFileSync(catalogPath, "utf-8");
         raw = JSON.parse(content) as CatalogJson;
@@ -396,7 +403,7 @@ export class ServiceCatalog {
       raw = req("../data/service_prices.json") as CatalogJson;
     }
     this._loadFromJson(raw);
-    this._version = createHash("sha256")
+    this._version = catalogVersion ?? createHash("sha256")
       .update(JSON.stringify(raw))
       .digest("hex")
       .slice(0, 12);
@@ -405,6 +412,10 @@ export class ServiceCatalog {
   /** Deterministic hash of the loaded catalog. */
   get catalogVersion(): string {
     return this._version;
+  }
+
+  get entryCount(): number {
+    return this._entries.size;
   }
 
   /**
@@ -475,22 +486,16 @@ export class ServiceCatalog {
     const extraction = entry.cost_extraction;
     const serviceName = entry.display_name;
 
-    // Check for user override first
-    for (const [key, override] of this._overrides) {
-      const catalogEntry = this._entries.get(key);
-      if (catalogEntry && catalogEntry.display_name === serviceName) {
-        return {
-          costUsd: override.costPerUnit,
-          confidence: "computed",
-          serviceName,
-          pricingSource: "user_override",
-          usageMetric: override.per.includes("page") ? "page_count"
-            : override.per.includes("credit") ? "credit_count"
-              : override.per.includes("character") ? "characters"
-                : "request_count",
-          usageQuantity: 1,
-        };
-      }
+    const override = this._selectedOverride(entry);
+    if (override?.value.per === "request") {
+      return {
+        costUsd: override.value.costPerUnit,
+        confidence: "computed",
+        serviceName,
+        pricingSource: override.source,
+        usageMetric: "request_count",
+        usageQuantity: 1,
+      };
     }
 
     switch (extraction.type) {
@@ -512,7 +517,7 @@ export class ServiceCatalog {
 
         let costUsd: number | null;
         if (extraction.transform) {
-          costUsd = applyTransform(extraction.transform, numValue, entry);
+          costUsd = this._applyTransform(extraction.transform, numValue, entry);
         } else {
           // Multiply raw value by per-unit cost
           costUsd = this._computeCostFromUnits(numValue, entry);
@@ -524,7 +529,7 @@ export class ServiceCatalog {
           costUsd,
           confidence: "exact",
           serviceName,
-          pricingSource: "service_catalog",
+          pricingSource: this._pricingSource(entry),
           ...usageFor(entry, numValue, extraction.transform),
         };
       }
@@ -545,20 +550,20 @@ export class ServiceCatalog {
           costUsd,
           confidence: "exact",
           serviceName,
-          pricingSource: "service_catalog",
+          pricingSource: this._pricingSource(entry),
           ...usageFor(entry, numValue),
         };
       }
 
       case "endpoint_match":
       case "fixed": {
-        const costUsd = getFixedCost(entry);
+        const costUsd = this._fixedCost(entry);
         if (costUsd === null) return null;
         return {
           costUsd,
           confidence: "computed",
           serviceName,
-          pricingSource: "service_catalog",
+          pricingSource: this._pricingSource(entry),
           ...usageFor(entry),
         };
       }
@@ -574,6 +579,24 @@ export class ServiceCatalog {
    */
   registerOverride(serviceKey: string, costPerUnit: number, per: string): void {
     this._overrides.set(serviceKey, { costPerUnit, per });
+  }
+
+  /** Preserve explicit user rates when a server release replaces the base. */
+  inheritOverrides(other: ServiceCatalog | null): void {
+    if (other === null) return;
+    this._overrides = new Map(
+      [...other._overrides].map(([key, value]) => [key, { ...value }]),
+    );
+  }
+
+  /** Install authenticated workspace rates beneath explicit local rates. */
+  setWorkspaceOverrides(overrides: ReadonlyMap<string, { rateUsd: string; per: string }>): void {
+    this._workspaceOverrides = new Map(
+      [...overrides].map(([key, value]) => [
+        key,
+        { costPerUnit: Number(value.rateUsd), per: value.per },
+      ]),
+    );
   }
 
   /**
@@ -616,7 +639,47 @@ export class ServiceCatalog {
     if (entries) this._entries = entries;
   }
 
+  private _entryKey(entry: ServiceEntry): string | undefined {
+    for (const [key, candidate] of this._entries) if (candidate === entry) return key;
+    return undefined;
+  }
+
+  private _selectedOverride(entry: ServiceEntry): {
+    value: { costPerUnit: number; per: string };
+    source: "user_override" | "workspace_overlay";
+  } | undefined {
+    const key = this._entryKey(entry);
+    if (key === undefined) return undefined;
+    const local = this._overrides.get(key);
+    if (local) return { value: local, source: "user_override" };
+    const workspace = this._workspaceOverrides.get(key);
+    return workspace ? { value: workspace, source: "workspace_overlay" } : undefined;
+  }
+
+  private _pricingSource(entry: ServiceEntry): "user_override" | "workspace_overlay" | "service_catalog" {
+    return this._selectedOverride(entry)?.source ?? "service_catalog";
+  }
+
+  private _fixedCost(entry: ServiceEntry): number | null {
+    return this._selectedOverride(entry)?.value.costPerUnit ?? getFixedCost(entry);
+  }
+
+  private _applyTransform(transform: string, rawValue: number, entry: ServiceEntry): number | null {
+    const selected = this._selectedOverride(entry);
+    if (selected) {
+      if (transform === "ms_to_seconds") return rawValue / 1000 * selected.value.costPerUnit;
+      if (transform === "ms_to_minutes") return rawValue / 60_000 * selected.value.costPerUnit;
+    }
+    return applyTransform(transform, rawValue, entry);
+  }
+
   private _computeCostFromUnits(units: number, entry: ServiceEntry): number | null {
+    const selected = this._selectedOverride(entry);
+    if (selected) {
+      return selected.value.per.includes("1k_character")
+        ? units / 1000 * selected.value.costPerUnit
+        : units * selected.value.costPerUnit;
+    }
     if (entry.cost_per_credit_usd !== undefined) {
       const rate = parseFloat(entry.cost_per_credit_usd);
       if (isNaN(rate)) return null;
@@ -643,7 +706,7 @@ export class ServiceCatalog {
       return units * rate;
     }
     // Default: multiply units by fixed cost
-    const fixedCost = getFixedCost(entry);
+    const fixedCost = this._fixedCost(entry);
     if (fixedCost === null) return null;
     return units * fixedCost;
   }
@@ -651,25 +714,26 @@ export class ServiceCatalog {
   private _fallbackResult(entry: ServiceEntry, serviceName: string): CostExtractionResult | null {
     const extraction = entry.cost_extraction;
     if (extraction.fallback_credits !== undefined && entry.cost_per_credit_usd !== undefined) {
-      const rate = parseFloat(entry.cost_per_credit_usd);
+      const rate = this._selectedOverride(entry)?.value.costPerUnit
+        ?? parseFloat(entry.cost_per_credit_usd);
       if (isNaN(rate)) return null;
       return {
         costUsd: extraction.fallback_credits * rate,
         confidence: "estimated",
         serviceName,
-        pricingSource: "service_catalog",
+        pricingSource: this._pricingSource(entry),
         usageMetric: "credit_count",
         usageQuantity: extraction.fallback_credits,
       };
     }
     // Fall back to fixed cost
-    const costUsd = getFixedCost(entry);
+    const costUsd = this._fixedCost(entry);
     if (costUsd === null) return null;
     return {
       costUsd,
       confidence: costUsd > 0 ? "estimated" : "unknown",
       serviceName,
-      pricingSource: "service_catalog",
+      pricingSource: this._pricingSource(entry),
       // The response did not expose its billable quantity. Preserve the
       // completed request without inventing pages/characters/seconds.
       usageMetric: "request_count",

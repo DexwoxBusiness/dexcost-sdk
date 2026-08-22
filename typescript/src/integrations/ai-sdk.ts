@@ -51,6 +51,7 @@ import { debugLog } from "../core/debug.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import type { CostTracker } from "../core/tracker.js";
 import { getTracker } from "../core/tracker.js";
+import { stampAmbientAttribution } from "../core/capabilities.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -184,6 +185,7 @@ function _recordEvent(
     isRetry: false,
     details: { source: `ai_sdk_middleware_${source}` },
   });
+  stampAmbientAttribution(event);
 
   tracker.buffer.addEvent(event);
   registerLlmCapture(task.taskId, inputTokens, outputTokens);

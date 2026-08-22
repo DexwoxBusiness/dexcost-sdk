@@ -1,0 +1,102 @@
+{
+  "case_id": "ingest.accepted.full_vnext",
+  "request": {
+    "events": [
+      {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-08-11T10:00:00.123456Z",
+        "observed_at": "2026-08-11T10:00:01.123456Z",
+        "component": "llm",
+        "provider": { "name": "openrouter", "service": "chat", "record_id": "gen-123" },
+        "resource": { "type": "model", "id": "openai/gpt-5" },
+        "capability": {
+          "name": "support.answer", "kind": "skill", "namespace": "acme.support",
+          "version": "2", "source": "marketplace", "source_id": "answer-pack",
+          "invocation": "automatic"
+        },
+        "operation": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "chat.completions.create", "status": "succeeded",
+          "attempt": { "id": "44444444-4444-4444-8444-444444444444", "number": 1 },
+          "latency_ms": 1250
+        },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": [
+          {
+            "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+            "metric": "input_tokens", "quantity": "100.125", "unit": "Tokens",
+            "dimensions": [{ "key": "routed_provider", "value": { "type": "string", "value": "openai" } }]
+          },
+          {
+            "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+            "metric": "output_tokens", "quantity": "20", "unit": "Tokens",
+            "dimensions": []
+          }
+        ],
+        "cost_evidence": {
+          "amount": "0.0025", "currency": "USD", "source": "provider_reported", "confidence": "exact"
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "task_type": "support.resolve_ticket", "status": "success",
+        "started_at": "2026-08-11T09:59:59Z", "ended_at": "2026-08-11T10:00:02Z",
+        "metadata": {}, "customer_id": "customer-a", "project_id": "support",
+        "user_id": "user-42", "product_id": "support-console", "parent_task_id": null,
+        "root_task_id": "22222222-2222-4222-8222-222222222222",
+        "agent_id": "support-agent", "agent_version": "2026.08.11",
+        "workflow_id": "support-workflow", "workflow_session_id": "ticket-123",
+        "experiment_id": null, "variant": null,
+        "llm_cost_usd": "0.0025", "external_cost_usd": "0", "compute_cost_usd": "0",
+        "network_cost_usd": "0", "gpu_cost_usd": "0", "total_cost_usd": "0.0025",
+        "total_input_tokens": 100, "total_output_tokens": 20, "total_cached_tokens": 0,
+        "retry_count": 0, "retry_cost_usd": "0", "failure_count": 0,
+        "network_bytes_in": 0, "network_bytes_out": 0, "network_call_count": 0,
+        "network_by_host": { "hosts": [] }, "schema_version": "1"
+      }
+    ],
+    "business_identities": [
+      {
+        "schema_version": "1", "task_id": "22222222-2222-4222-8222-222222222222", "revision": 1,
+        "effective_at": "2026-08-11T09:59:59Z", "observed_at": "2026-08-11T10:00:02Z",
+        "identity_snapshot": "full",
+        "task": { "task_type": "support.resolve_ticket", "root_task_id": "22222222-2222-4222-8222-222222222222" },
+        "workflow": { "id": "support-workflow", "session_id": "ticket-123" },
+        "agent": { "id": "support-agent", "version": "2026.08.11" },
+        "assignment": { "customer_id": "customer-a", "project_id": "support", "user_id": "user-42", "product_id": "support-console" }
+      }
+    ],
+    "outcomes": [
+      {
+        "schema_version": "1", "outcome_id": "30000000-0000-4000-8000-000000000001",
+        "task_id": "22222222-2222-4222-8222-222222222222", "name": "ticket.resolved",
+        "effective_at": "2026-08-11T10:00:02Z", "observed_at": "2026-08-11T10:00:03Z",
+        "lifecycle": { "state": "achieved", "revision": 1 },
+        "value": { "type": "boolean", "value": true }
+      }
+    ],
+    "revenue_revisions": [
+      {
+        "schema_version": "1", "revenue_id": "40000000-0000-4000-8000-000000000001",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "outcome_id": "30000000-0000-4000-8000-000000000001",
+        "effective_at": "2026-08-11T10:00:02Z", "observed_at": "2026-08-11T10:00:04Z",
+        "lifecycle": { "state": "recognized", "revision": 1 },
+        "amount": { "value": "12.50", "currency": "EUR" },
+        "source": { "type": "sdk", "record_id": "checkout-42" }
+      }
+    ]
+  },
+  "response_status": 202,
+  "response": {
+    "receipt_id": "55555555-5555-4555-8555-555555555555",
+    "queued": 5,
+    "rejected": 0,
+    "errors": []
+  }
+}

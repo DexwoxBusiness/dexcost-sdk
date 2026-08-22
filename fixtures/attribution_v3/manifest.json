@@ -1,8 +1,8 @@
 {
   "corpus_version": "2026-08-20.1",
   "contracts": {
-    "observation": "3.1.0",
-    "business_attribution": "1.0.0"
+    "observation": "3.2.0",
+    "business_attribution": "1.1.0"
   },
   "contract_authority": {
     "repository": "DexwoxBusiness/dexcost-control-plane",
@@ -26,6 +26,7 @@
     "lifecycle.pending",
     "lifecycle.provisional",
     "lifecycle.voided",
+    "observation.capability_identity",
     "observation.environment",
     "observation.known_meter",
     "observation.operation_attempt_trace",

@@ -20,8 +20,12 @@ import { loadBunSqliteCompat } from "./bun-sqlite.js";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Decimal } from "../core/models.js";
+import { Decimal, eventToDict } from "../core/models.js";
 import type { CostEvent, Task } from "../core/models.js";
+import { equivalentIdempotentEvent } from "../core/idempotency.js";
+import type { OutcomeRevision, RevenueRevision } from "../core/business.js";
+import { providerJobFromDict, type ProviderJobRevision } from "../core/provider-jobs.js";
+import { applyEventPricingProvenance } from "../pricing/explain.js";
 
 // ---------------------------------------------------------------------------
 // Row types — what better-sqlite3 returns from the DB
@@ -70,6 +74,13 @@ interface TaskRow {
   customer_id: string | null;
   project_id: string | null;
   parent_task_id: string | null;
+  root_task_id: string | null;
+  agent_id: string | null;
+  agent_version: string | null;
+  workflow_id: string | null;
+  workflow_session_id: string | null;
+  user_id: string | null;
+  product_id: string | null;
   experiment_id: string | null;
   variant: string | null;
   network_bytes_in: number | null;
@@ -83,6 +94,32 @@ interface TaskRow {
 
 interface CountRow {
   count: number;
+}
+
+interface LedgerRow {
+  kind: "outcome" | "revenue" | "provider_job";
+  entity_id: string;
+  revision: number;
+  task_id: string;
+  provider: string | null;
+  service: string | null;
+  record_id: string | null;
+  payload: string;
+  sync_status: string;
+  captured_at: string;
+}
+
+export interface DeliveryCounts {
+  pendingEvents: number;
+  quarantinedEvents: number;
+  pendingTasks: number;
+  pendingOutcomes: number;
+  quarantinedOutcomes: number;
+  pendingRevenues: number;
+  quarantinedRevenues: number;
+  pendingProviderJobs: number;
+  quarantinedProviderJobs: number;
+  oldestPendingAt?: Date;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +202,13 @@ function rowToTask(row: TaskRow): Task {
     customerId: row.customer_id ?? undefined,
     projectId: row.project_id ?? undefined,
     parentTaskId: row.parent_task_id ?? undefined,
+    rootTaskId: row.root_task_id ?? undefined,
+    agentId: row.agent_id ?? undefined,
+    agentVersion: row.agent_version ?? undefined,
+    workflowId: row.workflow_id ?? undefined,
+    workflowSessionId: row.workflow_session_id ?? undefined,
+    userId: row.user_id ?? undefined,
+    productId: row.product_id ?? undefined,
     experimentId: row.experiment_id ?? undefined,
     variant: row.variant ?? undefined,
     // Network + GPU capture fields. Persisted since the network-columns
@@ -217,6 +261,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     customer_id         TEXT,
     project_id          TEXT,
     parent_task_id      TEXT,
+    root_task_id        TEXT,
+    agent_id            TEXT,
+    agent_version       TEXT,
+    workflow_id         TEXT,
+    workflow_session_id TEXT,
+    user_id             TEXT,
+    product_id          TEXT,
     experiment_id       TEXT,
     variant             TEXT,
     network_bytes_in    INTEGER DEFAULT 0,
@@ -260,6 +311,21 @@ CREATE TABLE IF NOT EXISTS schema_version (
     migration_name  TEXT
 )`;
 
+const CREATE_LEDGER_REVISIONS = `
+CREATE TABLE IF NOT EXISTS ledger_revisions (
+    kind          TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    revision      INTEGER NOT NULL,
+    task_id       TEXT NOT NULL,
+    provider      TEXT,
+    service       TEXT,
+    record_id     TEXT,
+    payload       TEXT NOT NULL,
+    sync_status   TEXT NOT NULL DEFAULT 'pending',
+    captured_at   TEXT NOT NULL,
+    PRIMARY KEY (kind, entity_id, revision)
+)`;
+
 const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_tasks_customer ON tasks(customer_id, started_at)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type, started_at)`,
@@ -268,6 +334,9 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_events_sync ON events(sync_status, timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_sync ON tasks(sync_status, started_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_ledger_pending ON ledger_revisions(sync_status, captured_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_ledger_task ON ledger_revisions(kind, task_id, captured_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_provider_job_lookup ON ledger_revisions(kind, provider, service, record_id, revision)`,
 ];
 
 // ---------------------------------------------------------------------------
@@ -421,6 +490,25 @@ class MemoryBufferStore {
     return Array.from(this._events.values(), (e) => e.event);
   }
 
+  getEvent(eventId: string): CostEvent | undefined {
+    return this._events.get(eventId)?.event;
+  }
+
+  deliveryCounts(): Pick<DeliveryCounts,
+    "pendingEvents" | "quarantinedEvents" | "pendingTasks" | "oldestPendingAt"> {
+    let pendingEvents = 0; let quarantinedEvents = 0; let pendingTasks = 0;
+    const pendingDates: Date[] = [];
+    for (const item of this._events.values()) {
+      if (item.syncStatus === "pending") { pendingEvents++; pendingDates.push(item.capturedAt); }
+      else if (item.syncStatus === "quarantined") quarantinedEvents++;
+    }
+    for (const item of this._tasks.values()) {
+      if (item.syncStatus === "pending") { pendingTasks++; pendingDates.push(item.capturedAt); }
+    }
+    const oldestPendingAt = pendingDates.sort((a, b) => a.getTime() - b.getTime())[0];
+    return { pendingEvents, quarantinedEvents, pendingTasks, oldestPendingAt };
+  }
+
   queryEvents(taskId: string): CostEvent[] {
     const out: CostEvent[] = [];
     for (const entry of this._events.values()) {
@@ -490,6 +578,7 @@ export class EventBuffer {
   // the in-memory fallback store and every method delegates to it.
   private _db: Database.Database | null;
   private _mem: MemoryBufferStore | null = null;
+  private _ledgerMemory = new Map<string, LedgerRow>();
 
   /**
    * Test-only seam. When `true`, the constructor takes the no-binding
@@ -620,6 +709,7 @@ export class EventBuffer {
       this._db.exec(CREATE_TASKS);
       this._db.exec(CREATE_EVENTS);
       this._db.exec(CREATE_SCHEMA_VERSION);
+      this._db.exec(CREATE_LEDGER_REVISIONS);
       // Migrate older databases that pre-date the tasks.sync_status column.
       // CREATE TABLE IF NOT EXISTS won't add columns to an existing table,
       // so add it explicitly; ignore the "duplicate column" error when the
@@ -633,6 +723,13 @@ export class EventBuffer {
       this._migrateAddColumn("tasks", "network_by_host", "TEXT");
       this._migrateAddColumn("tasks", "network_cost_usd", "TEXT DEFAULT '0'");
       this._migrateAddColumn("tasks", "gpu_cost_usd", "TEXT DEFAULT '0'");
+      this._migrateAddColumn("tasks", "root_task_id", "TEXT");
+      this._migrateAddColumn("tasks", "agent_id", "TEXT");
+      this._migrateAddColumn("tasks", "agent_version", "TEXT");
+      this._migrateAddColumn("tasks", "workflow_id", "TEXT");
+      this._migrateAddColumn("tasks", "workflow_session_id", "TEXT");
+      this._migrateAddColumn("tasks", "user_id", "TEXT");
+      this._migrateAddColumn("tasks", "product_id", "TEXT");
       for (const idx of INDEXES) {
         this._db.exec(idx);
       }
@@ -677,9 +774,19 @@ export class EventBuffer {
   /**
    * Add a cost event to the buffer with sync_status = 'pending'.
    */
-  addEvent(event: CostEvent): void {
-    if (this._mem) { this._mem.addEvent(event); return; }
-    if (!this._db) return;
+  addEvent(event: CostEvent): boolean {
+    applyEventPricingProvenance(event);
+    const existing = this.getEvent(event.eventId);
+    if (existing !== undefined) {
+      const exactlyEqual = JSON.stringify(eventToDict(existing)) === JSON.stringify(eventToDict(event));
+      if (!exactlyEqual && !equivalentIdempotentEvent(existing, event)) {
+        throw new Error(`event ${event.eventId} already exists with different economic facts`);
+      }
+      event.occurredAt = existing.occurredAt;
+      return false;
+    }
+    if (this._mem) { this._mem.addEvent(event); return true; }
+    if (!this._db) return false;
     try {
       this._db
         .prepare(
@@ -716,8 +823,10 @@ export class EventBuffer {
           JSON.stringify(event.details),
           event.occurredAt.toISOString()
         );
+      return true;
     } catch {
       // SQLite error (disk full, locked) — skip this event, don't crash
+      return false;
     }
   }
 
@@ -740,7 +849,9 @@ export class EventBuffer {
             llm_cost_usd, external_cost_usd, compute_cost_usd, total_cost_usd,
             total_input_tokens, total_output_tokens, total_cached_tokens,
             retry_count, retry_cost_usd, failure_count,
-            customer_id, project_id, parent_task_id, experiment_id, variant,
+            customer_id, project_id, parent_task_id, root_task_id,
+            agent_id, agent_version, workflow_id, workflow_session_id,
+            user_id, product_id, experiment_id, variant,
             network_bytes_in, network_bytes_out, network_call_count,
             network_by_host, network_cost_usd, gpu_cost_usd,
             sync_status
@@ -749,7 +860,9 @@ export class EventBuffer {
             ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?,
-            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?,
             'pending'
@@ -775,6 +888,13 @@ export class EventBuffer {
           task.customerId ?? null,
           task.projectId ?? null,
           task.parentTaskId ?? null,
+          task.rootTaskId ?? null,
+          task.agentId ?? null,
+          task.agentVersion ?? null,
+          task.workflowId ?? null,
+          task.workflowSessionId ?? null,
+          task.userId ?? null,
+          task.productId ?? null,
           task.experimentId ?? null,
           task.variant ?? null,
           task.networkBytesIn,
@@ -1072,11 +1192,270 @@ export class EventBuffer {
     }
   }
 
+  getEvent(eventId: string): CostEvent | undefined {
+    if (this._mem) return this._mem.getEvent(eventId);
+    if (!this._db) return undefined;
+    const row = this._db.prepare("SELECT * FROM events WHERE event_id = ?").get(eventId) as EventRow | null | undefined;
+    return row == null ? undefined : rowToEvent(row);
+  }
+
+  private _ledgerKey(kind: LedgerRow["kind"], entityId: string, revision: number): string {
+    return `${kind}\0${entityId}\0${revision}`;
+  }
+
+  private _ledgerRows(kind?: LedgerRow["kind"], entityId?: string): LedgerRow[] {
+    if (this._mem || !this._db) {
+      return Array.from(this._ledgerMemory.values())
+        .filter((row) => (kind === undefined || row.kind === kind) &&
+          (entityId === undefined || row.entity_id === entityId))
+        .sort((a, b) => a.revision - b.revision);
+    }
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (kind !== undefined) { clauses.push("kind = ?"); values.push(kind); }
+    if (entityId !== undefined) { clauses.push("entity_id = ?"); values.push(entityId); }
+    const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
+    return this._db.prepare(`SELECT * FROM ledger_revisions${where} ORDER BY revision ASC`)
+      .all(...values) as LedgerRow[];
+  }
+
+  private _insertLedger(row: LedgerRow): boolean {
+    const history = this._ledgerRows(row.kind, row.entity_id);
+    const sameRevision = history.find((item) => item.revision === row.revision);
+    if (sameRevision !== undefined) {
+      if (sameRevision.payload === row.payload) return false;
+      throw new Error(`${row.kind} revision already exists with different content`);
+    }
+    const latest = history.at(-1);
+    const expected = latest === undefined ? 1 : latest.revision + 1;
+    if (row.revision !== expected) {
+      throw new Error(`${row.kind} expected revision ${expected}, got ${row.revision}`);
+    }
+    if (this._mem || !this._db) {
+      this._ledgerMemory.set(this._ledgerKey(row.kind, row.entity_id, row.revision), row);
+      return true;
+    }
+    this._db.prepare(
+      `INSERT INTO ledger_revisions
+       (kind, entity_id, revision, task_id, provider, service, record_id, payload, sync_status, captured_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    ).run(
+      row.kind, row.entity_id, row.revision, row.task_id, row.provider,
+      row.service, row.record_id, row.payload, row.captured_at,
+    );
+    return true;
+  }
+
+  insertOutcomeRevision(revision: OutcomeRevision): void {
+    this._insertLedger({
+      kind: "outcome", entity_id: revision.outcomeId, revision: revision.revision,
+      task_id: revision.taskId, provider: null, service: null, record_id: null,
+      payload: JSON.stringify(revision.toDict()), sync_status: "pending",
+      captured_at: revision.observedAt.toISOString(),
+    });
+  }
+
+  insertRevenueRevision(revision: RevenueRevision): void {
+    this._insertLedger({
+      kind: "revenue", entity_id: revision.revenueId, revision: revision.revision,
+      task_id: revision.taskId, provider: null, service: null, record_id: null,
+      payload: JSON.stringify(revision.toDict()), sync_status: "pending",
+      captured_at: revision.observedAt.toISOString(),
+    });
+  }
+
+  insertProviderJobRevision(revision: ProviderJobRevision): void {
+    const history = this._ledgerRows("provider_job", revision.eventId);
+    const previousRow = history.at(-1);
+    const previous = previousRow === undefined
+      ? undefined
+      : providerJobFromDict(JSON.parse(previousRow.payload) as Record<string, unknown>);
+    if (previous !== undefined) {
+      const immutableEqual = previous.taskId === revision.taskId
+        && previous.provider === revision.provider
+        && previous.service === revision.service
+        && previous.providerRecordId === revision.providerRecordId
+        && previous.operation === revision.operation
+        && previous.component === revision.component
+        && previous.eventType === revision.eventType
+        && previous.resourceType === revision.resourceType
+        && previous.resourceId === revision.resourceId
+        && previous.submittedAt.getTime() === revision.submittedAt.getTime()
+        && previous.ownsTask === revision.ownsTask
+        && JSON.stringify(previous.billingDimensions) === JSON.stringify(revision.billingDimensions)
+        && JSON.stringify(previous.capability) === JSON.stringify(revision.capability);
+      if (!immutableEqual) {
+        throw new Error("a provider job cannot change task, provider, resource, operation, or capability identity across revisions");
+      }
+      if (revision.observedAt.getTime() < previous.observedAt.getTime()) {
+        throw new Error("provider job observedAt cannot move backwards across revisions");
+      }
+      if (previous.terminal && !revision.terminal) {
+        throw new Error("a terminal provider job cannot return to pending");
+      }
+      if (previous.status === "running" && revision.status === "submitted") {
+        throw new Error("a running provider job cannot return to submitted");
+      }
+    }
+    const inserted = this._insertLedger({
+      kind: "provider_job", entity_id: revision.eventId, revision: revision.revision,
+      task_id: revision.taskId, provider: revision.provider, service: revision.service,
+      record_id: revision.providerRecordId, payload: JSON.stringify(revision.toDict()),
+      sync_status: "pending", captured_at: revision.observedAt.toISOString(),
+    });
+    if (!inserted || !revision.terminal) return;
+    const task = this.getTask(revision.taskId);
+    if (task === undefined) return;
+    const previousCost = previous?.terminal ? previous.costAmount ?? new Decimal(0) : new Decimal(0);
+    const nextCost = revision.costAmount ?? new Decimal(0);
+    const costDelta = nextCost.minus(previousCost);
+    if (revision.eventType === "llm_call") {
+      task.llmCostUsd = task.llmCostUsd.plus(costDelta);
+      task.totalInputTokens += (revision.taskInputTokens ?? 0) - (previous?.terminal ? previous.taskInputTokens ?? 0 : 0);
+      task.totalOutputTokens += (revision.taskOutputTokens ?? 0) - (previous?.terminal ? previous.taskOutputTokens ?? 0 : 0);
+      task.totalCachedTokens += (revision.taskCachedTokens ?? 0) - (previous?.terminal ? previous.taskCachedTokens ?? 0 : 0);
+    } else if (revision.eventType === "external_cost") {
+      task.externalCostUsd = task.externalCostUsd.plus(costDelta);
+    } else {
+      task.computeCostUsd = task.computeCostUsd.plus(costDelta);
+    }
+    task.totalCostUsd = task.totalCostUsd.plus(costDelta);
+    if (revision.ownsTask) {
+      task.status = revision.status === "succeeded" ? "success" : "failed";
+      task.endedAt = revision.observedAt;
+      task.failureCount = revision.status === "succeeded" ? 0 : 1;
+    }
+    this.upsertTask(task);
+  }
+
+  getProviderJobHistory(eventId: string): Array<Record<string, unknown>> {
+    return this._ledgerRows("provider_job", eventId)
+      .map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  }
+
+  getOutcomeHistory(outcomeId: string): Array<Record<string, unknown>> {
+    return this._ledgerRows("outcome", outcomeId).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  }
+
+  getRevenueHistory(revenueId: string): Array<Record<string, unknown>> {
+    return this._ledgerRows("revenue", revenueId).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  }
+
+  getProviderJob(
+    provider: string, service: string, recordId: string,
+  ): Record<string, unknown> | undefined {
+    const rows = this._ledgerRows("provider_job")
+      .filter((row) => row.provider === provider && row.service === service && row.record_id === recordId);
+    const latest = rows.at(-1);
+    return latest === undefined ? undefined : JSON.parse(latest.payload) as Record<string, unknown>;
+  }
+
+  getPendingLedger(kind?: LedgerRow["kind"], limit = 100): Array<Record<string, unknown>> {
+    const rows = this._ledgerRows(kind)
+      .filter((row) => row.sync_status === "pending")
+      .sort((a, b) => a.captured_at.localeCompare(b.captured_at))
+      .slice(0, limit);
+    return rows.map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  }
+
+  markLedgerSynced(kind: LedgerRow["kind"], identities: ReadonlyArray<readonly [string, number]>): void {
+    if (identities.length === 0) return;
+    if (this._mem || !this._db) {
+      for (const [entityId, revision] of identities) {
+        const row = this._ledgerMemory.get(this._ledgerKey(kind, entityId, revision));
+        if (row !== undefined) row.sync_status = "synced";
+      }
+      return;
+    }
+    const statement = this._db.prepare(
+      "UPDATE ledger_revisions SET sync_status = 'synced' WHERE kind = ? AND entity_id = ? AND revision = ?",
+    );
+    const transaction = this._db.transaction((items: ReadonlyArray<readonly [string, number]>) => {
+      for (const [entityId, revision] of items) statement.run(kind, entityId, revision);
+    });
+    transaction(identities);
+  }
+
+  markLedgerQuarantined(kind: LedgerRow["kind"], identities: ReadonlyArray<readonly [string, number]>): void {
+    if (identities.length === 0) return;
+    if (this._mem || !this._db) {
+      for (const [entityId, revision] of identities) {
+        const row = this._ledgerMemory.get(this._ledgerKey(kind, entityId, revision));
+        if (row?.sync_status === "pending") row.sync_status = "quarantined";
+      }
+      return;
+    }
+    const statement = this._db.prepare(
+      "UPDATE ledger_revisions SET sync_status = 'quarantined' WHERE kind = ? AND entity_id = ? AND revision = ? AND sync_status = 'pending'",
+    );
+    const transaction = this._db.transaction((items: ReadonlyArray<readonly [string, number]>) => {
+      for (const [entityId, revision] of items) statement.run(kind, entityId, revision);
+    });
+    transaction(identities);
+  }
+
+  deliveryCounts(): DeliveryCounts {
+    const empty = {
+      pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0,
+      pendingOutcomes: 0, quarantinedOutcomes: 0,
+      pendingRevenues: 0, quarantinedRevenues: 0,
+      pendingProviderJobs: 0, quarantinedProviderJobs: 0,
+    };
+    if (this._mem || !this._db) {
+      const base = this._mem?.deliveryCounts() ?? {
+        pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0, oldestPendingAt: undefined,
+      };
+      const counts: DeliveryCounts = { ...empty, ...base };
+      const dates: Date[] = base.oldestPendingAt === undefined ? [] : [base.oldestPendingAt];
+      for (const row of this._ledgerMemory.values()) {
+        const pending = row.sync_status === "pending";
+        const quarantined = row.sync_status === "quarantined";
+        if (row.kind === "outcome") {
+          if (pending) counts.pendingOutcomes++; else if (quarantined) counts.quarantinedOutcomes++;
+        } else if (row.kind === "revenue") {
+          if (pending) counts.pendingRevenues++; else if (quarantined) counts.quarantinedRevenues++;
+        } else {
+          if (pending) counts.pendingProviderJobs++; else if (quarantined) counts.quarantinedProviderJobs++;
+        }
+        if (pending) dates.push(new Date(row.captured_at));
+      }
+      const oldest = dates.filter((item) => Number.isFinite(item.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime())[0];
+      return { ...counts, ...(oldest === undefined ? {} : { oldestPendingAt: oldest }) };
+    }
+    const row = this._db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM events WHERE sync_status='pending') AS pending_events,
+        (SELECT COUNT(*) FROM events WHERE sync_status='quarantined') AS quarantined_events,
+        (SELECT COUNT(*) FROM tasks WHERE sync_status='pending') AS pending_tasks,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='outcome' AND sync_status='pending') AS pending_outcomes,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='outcome' AND sync_status='quarantined') AS quarantined_outcomes,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='revenue' AND sync_status='pending') AS pending_revenues,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='revenue' AND sync_status='quarantined') AS quarantined_revenues,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='provider_job' AND sync_status='pending') AS pending_provider_jobs,
+        (SELECT COUNT(*) FROM ledger_revisions WHERE kind='provider_job' AND sync_status='quarantined') AS quarantined_provider_jobs,
+        (SELECT MIN(value) FROM (
+          SELECT timestamp AS value FROM events WHERE sync_status='pending'
+          UNION ALL SELECT started_at FROM tasks WHERE sync_status='pending'
+          UNION ALL SELECT captured_at FROM ledger_revisions WHERE sync_status='pending'
+        )) AS oldest_pending_at
+    `).get() as Record<string, number | string | null>;
+    const oldest = typeof row.oldest_pending_at === "string" ? new Date(row.oldest_pending_at) : undefined;
+    return {
+      pendingEvents: Number(row.pending_events), quarantinedEvents: Number(row.quarantined_events),
+      pendingTasks: Number(row.pending_tasks), pendingOutcomes: Number(row.pending_outcomes),
+      quarantinedOutcomes: Number(row.quarantined_outcomes), pendingRevenues: Number(row.pending_revenues),
+      quarantinedRevenues: Number(row.quarantined_revenues), pendingProviderJobs: Number(row.pending_provider_jobs),
+      quarantinedProviderJobs: Number(row.quarantined_provider_jobs),
+      ...(oldest !== undefined && Number.isFinite(oldest.getTime()) ? { oldestPendingAt: oldest } : {}),
+    };
+  }
+
   /**
    * Close the underlying database connection.
    */
   close(): void {
-    if (this._mem) { this._mem.close(); this._mem = null; return; }
+    if (this._mem) { this._mem.close(); this._mem = null; this._ledgerMemory.clear(); return; }
     if (!this._db) return;
     this._db.close();
   }

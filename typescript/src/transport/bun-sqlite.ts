@@ -10,6 +10,8 @@
  *
  * - `pragma(directive)` — bun:sqlite has no pragma() method; shimmed via
  *   a prepared `PRAGMA ...` statement.
+ * - missing-row reads — some Bun releases return `null` from `get()` while
+ *   better-sqlite3 returns `undefined`; normalize to the latter.
  * - construction options — bun:sqlite wants `{ create: true }` to create
  *   a missing database file.
  *
@@ -46,9 +48,14 @@ export function loadBunSqliteCompat(): (new (path: string) => any) | null {
       this._db = new BunDatabase(path, { create: true });
     }
 
-    /** Statement API is positionally compatible (run/get/all with ? params). */
+    /** Preserve the better-sqlite3 statement contract used by EventBuffer. */
     prepare(sql: string): any {
-      return this._db.prepare(sql);
+      const statement = this._db.prepare(sql);
+      return {
+        run: (...params: any[]) => statement.run(...params),
+        get: (...params: any[]) => statement.get(...params) ?? undefined,
+        all: (...params: any[]) => statement.all(...params),
+      };
     }
 
     exec(sql: string): void {
@@ -58,6 +65,11 @@ export function loadBunSqliteCompat(): (new (path: string) => any) | null {
     /** better-sqlite3-style pragma("journal_mode=WAL") / pragma("wal_checkpoint(TRUNCATE)"). */
     pragma(directive: string): unknown {
       return this._db.prepare(`PRAGMA ${directive}`).all();
+    }
+
+    /** Both drivers expose the same callback-wrapping transaction contract. */
+    transaction<T extends (...args: any[]) => any>(callback: T): T {
+      return this._db.transaction(callback) as T;
     }
 
     close(): void {

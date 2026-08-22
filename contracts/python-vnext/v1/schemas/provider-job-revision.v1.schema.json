@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dexcost.io/python-vnext/provider-job-revision.v1.json",
+  "title": "DexCost asynchronous provider-job revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "revision", "task_id", "provider", "service",
+    "provider_record_id", "operation", "component", "event_type", "resource_type",
+    "resource_id", "status", "submitted_at", "observed_at", "owns_task",
+    "billing_dimensions", "usage", "cost_amount", "cost_source", "cost_confidence",
+    "pricing_version", "latency_ms", "error_type", "error_code", "task_input_tokens",
+    "task_output_tokens", "task_cached_tokens", "capability"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "event_id": { "$ref": "#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "task_id": { "$ref": "#/$defs/uuid" },
+    "provider": { "$ref": "#/$defs/canonical" },
+    "service": { "$ref": "#/$defs/canonical" },
+    "provider_record_id": { "$ref": "#/$defs/opaque256" },
+    "operation": { "$ref": "#/$defs/canonical" },
+    "component": { "$ref": "#/$defs/canonical" },
+    "event_type": { "enum": ["llm_call", "external_cost", "compute_cost"] },
+    "resource_type": { "enum": ["model", "sku", "instance", "endpoint", "session", "other", "tool"] },
+    "resource_id": { "$ref": "#/$defs/opaque256" },
+    "status": { "enum": ["submitted", "running", "succeeded", "failed", "cancelled", "unknown"] },
+    "submitted_at": { "$ref": "#/$defs/timestamp" },
+    "observed_at": { "$ref": "#/$defs/timestamp" },
+    "owns_task": { "type": "boolean" },
+    "billing_dimensions": {
+      "type": "array", "maxItems": 24,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["key", "value"],
+        "properties": { "key": { "$ref": "#/$defs/canonical" }, "value": { "$ref": "#/$defs/opaque256" } }
+      }
+    },
+    "usage": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["metric", "quantity", "unit"],
+        "properties": {
+          "metric": { "$ref": "#/$defs/canonical" },
+          "quantity": { "type": "string", "pattern": "^(?:[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+          "unit": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._{}/*^+-]{0,63}$" }
+        }
+      }
+    },
+    "cost_amount": { "oneOf": [{ "type": "string", "pattern": "^(?:[1-9][0-9]*)(?:\\.[0-9]+)?$" }, { "type": "null" }] },
+    "cost_source": { "enum": ["provider_reported", "sdk_catalog", "sdk_rate_registry", "manual", null] },
+    "cost_confidence": { "enum": ["exact", "computed", "estimated", "unknown", null] },
+    "pricing_version": { "type": ["string", "null"] },
+    "latency_ms": { "type": ["integer", "null"], "minimum": 0, "maximum": 86400000 },
+    "error_type": { "oneOf": [{ "$ref": "#/$defs/canonical" }, { "type": "null" }] },
+    "error_code": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+    "task_input_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "task_output_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "task_cached_tokens": { "$ref": "#/$defs/nullableCounter" },
+    "capability": { "oneOf": [{ "$ref": "#/$defs/capability" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["submitted", "running"] } } },
+      "then": {
+        "properties": {
+          "usage": { "maxItems": 0 }, "cost_amount": { "type": "null" },
+          "cost_source": { "type": "null" }, "cost_confidence": { "type": "null" },
+          "pricing_version": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "succeeded" } } },
+      "then": { "properties": { "usage": { "minItems": 1 }, "error_type": { "type": "null" }, "error_code": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "canonical": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "opaque256": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "nullableCounter": { "type": ["integer", "null"], "minimum": 0 },
+    "capability": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind"],
+      "properties": {
+        "name": { "$ref": "#/$defs/canonical" },
+        "kind": { "enum": ["tool", "skill", "workflow", "extension", "other"] },
+        "namespace": { "$ref": "#/$defs/canonical" },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source": { "enum": ["built_in", "project", "user", "plugin", "marketplace", "remote", "other"] },
+        "source_id": { "$ref": "#/$defs/opaque256" },
+        "invocation": { "enum": ["explicit", "automatic", "nested", "scheduled", "remote", "other"] }
+      },
+      "dependentRequired": { "source_id": ["source"] }
+    }
+  }
+}

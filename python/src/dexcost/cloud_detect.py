@@ -487,7 +487,11 @@ _FANOUT_PROBES = ("aws", "gcp", "azure")
 def _run_probe(provider_hint: str | None) -> CloudEnv:
     """Run Phase 2 probes; return the first success, or "none"."""
     if provider_hint and provider_hint in _PROBES:
-        env = _PROBES[provider_hint]()
+        try:
+            env = _PROBES[provider_hint]()
+        except Exception:
+            _log.debug("cloud metadata probe failed", exc_info=True)
+            env = None
         return env if env is not None else CloudEnv(provider_hint, None, "imds")
 
     results: list[CloudEnv] = []
@@ -495,7 +499,11 @@ def _run_probe(provider_hint: str | None) -> CloudEnv:
     lock = threading.Lock()
 
     def _runner(fn):  # type: ignore[no-untyped-def]
-        env = fn()
+        try:
+            env = fn()
+        except Exception:
+            _log.debug("cloud metadata probe failed", exc_info=True)
+            return
         if env is not None:
             with lock:
                 if not results:
@@ -562,7 +570,7 @@ def start_background_detection(track_network: bool = True) -> None:
                     instance_type=instance_type,
                 )
                 _set_result(env)
-        except Exception:  # noqa: BLE001 — fail-silent
+        except Exception:
             _log.warning("cloud_detect background probe failed", exc_info=True)
 
     if _thread is not None and _thread.is_alive():
