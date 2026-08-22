@@ -342,7 +342,7 @@
     },
     {
       "python_name": "AttributionUsageMetricV3",
-      "python_kind": "class",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "AttributionUsageMetricV3"
@@ -378,7 +378,7 @@
     },
     {
       "python_name": "AttributionUsageUnitV3",
-      "python_kind": "class",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "AttributionUsageUnitV3"
