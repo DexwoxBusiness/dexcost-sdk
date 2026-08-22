@@ -182,6 +182,14 @@ func validateV3Semantics(event map[string]interface{}, add func(string, string))
 	if attemptIDOK && retryOfOK && attemptID == retryOf {
 		add("operation.attempt.retry_of", "Attempt cannot retry itself")
 	}
+	if operation["status"] == "succeeded" && operation["error"] != nil {
+		add("operation.error", "A succeeded operation cannot carry an error")
+	}
+
+	capability, _ := event["capability"].(map[string]interface{})
+	if capability != nil && capability["source_id"] != nil && capability["source"] == nil {
+		add("capability.source_id", "source_id requires source")
+	}
 
 	lifecycle, _ := event["lifecycle"].(map[string]interface{})
 	state, _ := lifecycle["state"].(string)

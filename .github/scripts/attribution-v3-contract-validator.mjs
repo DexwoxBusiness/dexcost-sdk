@@ -165,6 +165,13 @@ function validateObservationSemantics(event) {
   if (attempt?.id !== undefined && attempt.id === attempt.retry_of) {
     addIssue(issues, "operation.attempt.retry_of", "attempt cannot retry itself");
   }
+  if (event.operation?.status === "succeeded" && event.operation.error !== undefined) {
+    addIssue(issues, "operation.error", "a succeeded operation cannot carry an error");
+  }
+
+  if (event.capability?.source_id !== undefined && event.capability.source === undefined) {
+    addIssue(issues, "capability.source_id", "source_id requires source");
+  }
 
   const lifecycle = event.lifecycle;
   if (lifecycle?.state === "pending") {

@@ -163,6 +163,15 @@ try {
         .some((t) => t.taskType === "smoke_explicit");
       assert.ok(persisted, "task survived buffer reopen (durable storage)");
       ok("durable buffer round-trip across reopen");
+
+      const pending = reopened.getPendingEvents(1);
+      assert.ok(pending.length > 0, "durable buffer retained a pending event");
+      reopened.markSynced([pending[0].eventId]);
+      assert.ok(
+        !reopened.getPendingEvents().some((event) => event.eventId === pending[0].eventId),
+        "transactional sync update removed the event from the pending queue",
+      );
+      ok("durable buffer transactional sync update");
     } finally {
       reopened.close();
     }

@@ -26,6 +26,7 @@
     "lifecycle.pending",
     "lifecycle.provisional",
     "lifecycle.voided",
+    "observation.capability_identity",
     "observation.environment",
     "observation.known_meter",
     "observation.operation_attempt_trace",

@@ -31,6 +31,12 @@ _ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
 _GENERATED = frozenset({"public-api.json", "storage-migrations.json", "manifest.json"})
 
 
+def _canonical_artifact_bytes(relative: str, data: bytes) -> bytes:
+    """Normalize JSON checkout line endings before hashing frozen artifacts."""
+
+    return data.replace(b"\r\n", b"\n") if relative.endswith(".json") else data
+
+
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
 
@@ -196,6 +202,7 @@ def _artifact_entries(overrides: Mapping[str, bytes]) -> list[dict[str, object]]
         data = overrides.get(relative)
         if data is None:
             data = (CONTRACT_ROOT / relative).read_bytes()
+        data = _canonical_artifact_bytes(relative, data)
         entries.append(
             {
                 "path": relative,
@@ -219,7 +226,7 @@ def manifest_snapshot(overrides: Mapping[str, bytes]) -> dict[str, object]:
         for relative in sorted(paths):
             path = (REPOSITORY_ROOT / relative).resolve()
             path.relative_to(REPOSITORY_ROOT.resolve())
-            data = path.read_bytes()
+            data = _canonical_artifact_bytes(relative, path.read_bytes())
             referenced.append(
                 {
                     "path": relative,

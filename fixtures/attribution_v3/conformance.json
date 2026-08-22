@@ -2,7 +2,7 @@
   "schema_version": "1",
   "corpus_version": "2026-08-20.1",
   "observation_contract_version": "3.2.0",
-  "business_contract_version": "1.0.0",
+  "business_contract_version": "1.1.0",
   "valid_observations": [
     {
       "id": "observation.final_known_meter",

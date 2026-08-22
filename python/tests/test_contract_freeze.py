@@ -32,6 +32,10 @@ GOLDEN_ROOT = CONTRACT_ROOT / "golden"
 FORMAT_CHECKER = FormatChecker()
 
 
+def _canonical_artifact_bytes(relative: str, data: bytes) -> bytes:
+    return data.replace(b"\r\n", b"\n") if relative.endswith(".json") else data
+
+
 def _load(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -70,12 +74,16 @@ def test_manifest_hashes_every_artifact_and_shared_reference() -> None:
     }
     assert set(declared) == actual
     for relative, entry in declared.items():
-        payload = (CONTRACT_ROOT / relative).read_bytes()
+        payload = _canonical_artifact_bytes(
+            relative, (CONTRACT_ROOT / relative).read_bytes()
+        )
         assert entry["byte_size"] == len(payload)
         assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
 
     for entry in manifest["referenced_artifacts"]:
-        payload = (REPOSITORY_ROOT / entry["path"]).read_bytes()
+        payload = _canonical_artifact_bytes(
+            entry["path"], (REPOSITORY_ROOT / entry["path"]).read_bytes()
+        )
         assert entry["byte_size"] == len(payload)
         assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
 

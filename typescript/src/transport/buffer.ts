@@ -1195,8 +1195,8 @@ export class EventBuffer {
   getEvent(eventId: string): CostEvent | undefined {
     if (this._mem) return this._mem.getEvent(eventId);
     if (!this._db) return undefined;
-    const row = this._db.prepare("SELECT * FROM events WHERE event_id = ?").get(eventId) as EventRow | undefined;
-    return row === undefined ? undefined : rowToEvent(row);
+    const row = this._db.prepare("SELECT * FROM events WHERE event_id = ?").get(eventId) as EventRow | null | undefined;
+    return row == null ? undefined : rowToEvent(row);
   }
 
   private _ledgerKey(kind: LedgerRow["kind"], entityId: string, revision: number): string {

@@ -1,6 +1,6 @@
 package attribution
 
-const ContractVersionV3 = "3.0.0"
+const ContractVersionV3 = "3.2.0"
 
 // BillingDimensionValueV3 is a tagged scalar used by server pricing
 // selectors. Value is string for string/integer/decimal dimensions and bool
@@ -27,6 +27,16 @@ type ProviderIdentityV3 = ProviderIdentityV2
 type ResourceV3 = ResourceV2
 type CostEvidenceV3 = CostEvidenceV2
 
+type CapabilityIdentityV3 struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	Namespace  string `json:"namespace,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
+	Invocation string `json:"invocation,omitempty"`
+}
+
 type TraceIdentityV3 struct {
 	TraceID string `json:"trace_id"`
 	SpanID  string `json:"span_id"`
@@ -38,12 +48,19 @@ type AttemptIdentityV3 struct {
 	RetryOf string `json:"retry_of,omitempty"`
 }
 
+type OperationErrorV3 struct {
+	Type string `json:"type"`
+	Code string `json:"code,omitempty"`
+}
+
 type OperationIdentityV3 struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Status  string            `json:"status"`
-	Attempt AttemptIdentityV3 `json:"attempt"`
-	Trace   *TraceIdentityV3  `json:"trace,omitempty"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Status    string            `json:"status"`
+	Attempt   AttemptIdentityV3 `json:"attempt"`
+	Trace     *TraceIdentityV3  `json:"trace,omitempty"`
+	LatencyMS *int              `json:"latency_ms,omitempty"`
+	Error     *OperationErrorV3 `json:"error,omitempty"`
 }
 
 type LifecycleV3 struct {
@@ -59,20 +76,22 @@ type UsagePeriodV3 struct {
 // ObservationV3 is the complete, details-free observation revision accepted
 // by /v1/ingest. Usage is a full snapshot and local cost is evidence only.
 type ObservationV3 struct {
-	SchemaVersion string              `json:"schema_version"`
-	EventID       string              `json:"event_id"`
-	TaskID        string              `json:"task_id"`
-	OccurredAt    string              `json:"occurred_at"`
-	ObservedAt    string              `json:"observed_at"`
-	Component     Component           `json:"component"`
-	Provider      ProviderIdentityV3  `json:"provider"`
-	Resource      *ResourceV3         `json:"resource,omitempty"`
-	Operation     OperationIdentityV3 `json:"operation"`
-	Lifecycle     LifecycleV3         `json:"lifecycle"`
-	UsageSnapshot string              `json:"usage_snapshot"`
-	UsagePeriod   *UsagePeriodV3      `json:"usage_period,omitempty"`
-	Usage         []UsageLineV3       `json:"usage"`
-	CostEvidence  *CostEvidenceV3     `json:"cost_evidence,omitempty"`
+	SchemaVersion string                `json:"schema_version"`
+	EventID       string                `json:"event_id"`
+	TaskID        string                `json:"task_id"`
+	OccurredAt    string                `json:"occurred_at"`
+	ObservedAt    string                `json:"observed_at"`
+	Environment   string                `json:"environment,omitempty"`
+	Component     Component             `json:"component"`
+	Provider      ProviderIdentityV3    `json:"provider"`
+	Resource      *ResourceV3           `json:"resource,omitempty"`
+	Capability    *CapabilityIdentityV3 `json:"capability,omitempty"`
+	Operation     OperationIdentityV3   `json:"operation"`
+	Lifecycle     LifecycleV3           `json:"lifecycle"`
+	UsageSnapshot string                `json:"usage_snapshot"`
+	UsagePeriod   *UsagePeriodV3        `json:"usage_period,omitempty"`
+	Usage         []UsageLineV3         `json:"usage"`
+	CostEvidence  *CostEvidenceV3       `json:"cost_evidence,omitempty"`
 }
 
 type EventV3 = ObservationV3

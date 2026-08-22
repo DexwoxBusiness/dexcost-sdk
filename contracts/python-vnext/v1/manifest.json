@@ -81,9 +81,9 @@
       "sha256": "1e16dcfd325704ecde2fd1ea5899546041f18cb8754de9a21120c4ea5509cee7"
     },
     {
-      "byte_size": 63721,
+      "byte_size": 63720,
       "path": "provider-capabilities.json",
-      "sha256": "0327cf9ab551033655965336637df2b886415d49ab3167fced5f7e7e0690714a"
+      "sha256": "d46b6856ad509d2b26e6186c4940922e7377f7b30fecde61e528636ec56fb86e"
     },
     {
       "byte_size": 69665,
@@ -182,19 +182,19 @@
   "freeze_id": "python-vnext-v1",
   "referenced_artifacts": [
     {
-      "byte_size": 22051,
+      "byte_size": 21795,
       "path": "fixtures/attribution_v3/conformance.json",
-      "sha256": "fee3785ab646fae658667e4e4608f610ee1f528fd3335102d785f70a09f43e80"
+      "sha256": "a737027bed8f70650b2f6f5d10fe48408fcb97c203d0aa78dc406a6035c65f68"
     },
     {
-      "byte_size": 43273,
+      "byte_size": 41816,
       "path": "fixtures/attribution_v3/schemas.json",
-      "sha256": "6c441880d84ead9770c2c1bbdfb935da2d85c9840b75e2298c3ccdae31b4429c"
+      "sha256": "0fc3007cb307a98d6ddb7df53fd394e91411abc75389652c22e0060dcea8e871"
     },
     {
-      "byte_size": 24403,
+      "byte_size": 24054,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "ecd0105a3d1477ccc60b72ee6c746450e422f4178ddf13de4e6bef8002a5e1ef"
+      "sha256": "a40d4d02c23805b04c2887eda20328d9d4bcb632972f14abde7b54174533de1f"
     }
   ],
   "schema_version": "1",
