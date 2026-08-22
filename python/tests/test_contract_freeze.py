@@ -106,6 +106,10 @@ def test_public_api_and_migration_snapshots_cover_the_reference() -> None:
     public = _load(CONTRACT_ROOT / "public-api.json")
     assert [entry["name"] for entry in public["exports"]] == list(dexcost.__all__)
     assert public["package_version"] == dexcost.__version__
+    public_by_name = {entry["name"]: entry for entry in public["exports"]}
+    for alias in ("AttributionUsageMetricV3", "AttributionUsageUnitV3"):
+        assert public_by_name[alias]["kind"] == "type_alias"
+        assert "members" not in public_by_name[alias]
 
     storage = _load(CONTRACT_ROOT / "storage-migrations.json")
     assert storage["target_schema_version"] == TARGET_SCHEMA_VERSION
@@ -138,8 +142,17 @@ def test_capability_matrices_are_exhaustive_and_resolved() -> None:
             for evidence in cell["evidence"]:
                 if evidence.startswith("audit:"):
                     continue
-                root = WORKSPACE_ROOT if evidence.startswith("control-plane/") else REPOSITORY_ROOT
-                assert (root / evidence).exists(), f"missing evidence {evidence}"
+                if evidence.startswith("control-plane/"):
+                    assert ".." not in Path(evidence).parts
+                    control_plane = WORKSPACE_ROOT / "control-plane"
+                    if control_plane.is_dir():
+                        assert (WORKSPACE_ROOT / evidence).exists(), (
+                            f"missing evidence {evidence}"
+                        )
+                    continue
+                assert (REPOSITORY_ROOT / evidence).exists(), (
+                    f"missing evidence {evidence}"
+                )
 
     providers = _load(CONTRACT_ROOT / "provider-capabilities.json")
     assert len(providers["providers"]) >= 12

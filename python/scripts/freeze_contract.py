@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from enum import Enum
 from pathlib import Path
 
 PYTHON_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,10 @@ def _json_bytes(value: object) -> bytes:
 
 
 def _stable_signature(value: object) -> str | None:
+    if inspect.isclass(value) and issubclass(value, Enum):
+        # EnumMeta's introspected constructor changes across CPython versions;
+        # the stable public contract is lookup by one value.
+        return "(value)"
     try:
         signature = str(inspect.signature(value))
     except (TypeError, ValueError):
@@ -52,14 +57,16 @@ def _stable_signature(value: object) -> str | None:
 
 
 def _kind(value: object) -> str:
+    if getattr(value, "__origin__", None) is not None:
+        return "type_alias"
     if inspect.isclass(value):
-        return "class"
+        # Public aliases such as AttributionUsageMetricV3 = str are contract
+        # types, not snapshots of CPython's version-specific built-in methods.
+        return "type_alias" if value.__module__ == "builtins" else "class"
     if inspect.iscoroutinefunction(value):
         return "async_function"
     if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         return "function"
-    if getattr(value, "__origin__", None) is not None:
-        return "type_alias"
     return "constant"
 
 
@@ -102,10 +109,10 @@ def public_api_snapshot() -> dict[str, object]:
             "kind": _kind(value),
             "module": getattr(value, "__module__", type(value).__module__),
         }
-        signature = _stable_signature(value)
+        signature = None if entry["kind"] == "type_alias" else _stable_signature(value)
         if signature is not None:
             entry["signature"] = signature
-        if inspect.isclass(value):
+        if entry["kind"] == "class":
             entry["members"] = _public_members(value)
         exports.append(entry)
     return {

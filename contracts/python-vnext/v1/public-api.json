@@ -74,38 +74,32 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionCapabilityInvocationV3",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionCapabilityInvocationV3"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionCapabilityKindV3",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionCapabilityKindV3"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionCapabilitySourceV3",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionCapabilitySourceV3"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionComponent",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionComponent"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionConfidence",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionConfidence"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionCostEvidenceSource",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionCostEvidenceSource"
     },
     {
       "kind": "class",
@@ -134,8 +128,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionLifecycleState",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionLifecycleState"
     },
     {
       "kind": "class",
@@ -170,8 +163,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionOperationStatusV3",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionOperationStatusV3"
     },
     {
       "kind": "class",
@@ -218,212 +210,10 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionUsageMetric",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionUsageMetric"
     },
     {
-      "kind": "class",
-      "members": [
-        {
-          "kind": "attribute",
-          "name": "capitalize",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "casefold",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "center",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "encode",
-          "signature": "(self, /, encoding='utf-8', errors='strict')"
-        },
-        {
-          "kind": "attribute",
-          "name": "expandtabs",
-          "signature": "(self, /, tabsize=8)"
-        },
-        {
-          "kind": "attribute",
-          "name": "format",
-          "signature": "(self, /, *args, **kwargs)"
-        },
-        {
-          "kind": "attribute",
-          "name": "format_map",
-          "signature": "(self, mapping, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isalnum",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isalpha",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isascii",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isdecimal",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isdigit",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isidentifier",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "islower",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isnumeric",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isprintable",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isspace",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "istitle",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isupper",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "join",
-          "signature": "(self, iterable, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "ljust",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "lower",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "lstrip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "static_method",
-          "name": "maketrans"
-        },
-        {
-          "kind": "attribute",
-          "name": "partition",
-          "signature": "(self, sep, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "removeprefix",
-          "signature": "(self, prefix, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "removesuffix",
-          "signature": "(self, suffix, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "replace",
-          "signature": "(self, old, new, /, count=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rjust",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rpartition",
-          "signature": "(self, sep, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rsplit",
-          "signature": "(self, /, sep=None, maxsplit=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rstrip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "split",
-          "signature": "(self, /, sep=None, maxsplit=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "splitlines",
-          "signature": "(self, /, keepends=False)"
-        },
-        {
-          "kind": "attribute",
-          "name": "strip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "swapcase",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "title",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "translate",
-          "signature": "(self, table, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "upper",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "zfill",
-          "signature": "(self, width, /)"
-        }
-      ],
+      "kind": "type_alias",
       "module": "builtins",
       "name": "AttributionUsageMetricV3"
     },
@@ -442,212 +232,10 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "AttributionUsageUnit",
-      "signature": "(*args, **kwargs)"
+      "name": "AttributionUsageUnit"
     },
     {
-      "kind": "class",
-      "members": [
-        {
-          "kind": "attribute",
-          "name": "capitalize",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "casefold",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "center",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "encode",
-          "signature": "(self, /, encoding='utf-8', errors='strict')"
-        },
-        {
-          "kind": "attribute",
-          "name": "expandtabs",
-          "signature": "(self, /, tabsize=8)"
-        },
-        {
-          "kind": "attribute",
-          "name": "format",
-          "signature": "(self, /, *args, **kwargs)"
-        },
-        {
-          "kind": "attribute",
-          "name": "format_map",
-          "signature": "(self, mapping, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isalnum",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isalpha",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isascii",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isdecimal",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isdigit",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isidentifier",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "islower",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isnumeric",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isprintable",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isspace",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "istitle",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "isupper",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "join",
-          "signature": "(self, iterable, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "ljust",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "lower",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "lstrip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "static_method",
-          "name": "maketrans"
-        },
-        {
-          "kind": "attribute",
-          "name": "partition",
-          "signature": "(self, sep, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "removeprefix",
-          "signature": "(self, prefix, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "removesuffix",
-          "signature": "(self, suffix, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "replace",
-          "signature": "(self, old, new, /, count=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rjust",
-          "signature": "(self, width, fillchar=' ', /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rpartition",
-          "signature": "(self, sep, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rsplit",
-          "signature": "(self, /, sep=None, maxsplit=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "rstrip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "split",
-          "signature": "(self, /, sep=None, maxsplit=-1)"
-        },
-        {
-          "kind": "attribute",
-          "name": "splitlines",
-          "signature": "(self, /, keepends=False)"
-        },
-        {
-          "kind": "attribute",
-          "name": "strip",
-          "signature": "(self, chars=None, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "swapcase",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "title",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "translate",
-          "signature": "(self, table, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "upper",
-          "signature": "(self, /)"
-        },
-        {
-          "kind": "attribute",
-          "name": "zfill",
-          "signature": "(self, width, /)"
-        }
-      ],
+      "kind": "type_alias",
       "module": "builtins",
       "name": "AttributionUsageUnitV3"
     },
@@ -700,20 +288,17 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "CapabilityInvocation",
-      "signature": "(*args, **kwargs)"
+      "name": "CapabilityInvocation"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "CapabilityKind",
-      "signature": "(*args, **kwargs)"
+      "name": "CapabilityKind"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "CapabilitySource",
-      "signature": "(*args, **kwargs)"
+      "name": "CapabilitySource"
     },
     {
       "kind": "class",
@@ -727,7 +312,7 @@
       "members": [],
       "module": "dexcost.models.enums",
       "name": "CostConfidence",
-      "signature": "(*values)"
+      "signature": "(value)"
     },
     {
       "kind": "class",
@@ -867,8 +452,7 @@
     {
       "kind": "type_alias",
       "module": "collections.abc",
-      "name": "DeliveryErrorCallback",
-      "signature": "(*args, **kwargs)"
+      "name": "DeliveryErrorCallback"
     },
     {
       "kind": "class",
@@ -963,7 +547,7 @@
       "members": [],
       "module": "dexcost.models.enums",
       "name": "EventType",
-      "signature": "(*values)"
+      "signature": "(value)"
     },
     {
       "kind": "class",
@@ -1004,8 +588,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "OutcomeState",
-      "signature": "(*args, **kwargs)"
+      "name": "OutcomeState"
     },
     {
       "kind": "class",
@@ -1033,8 +616,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "OutcomeValueType",
-      "signature": "(*args, **kwargs)"
+      "name": "OutcomeValueType"
     },
     {
       "kind": "class",
@@ -1110,8 +692,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "PricingExplanationStatus",
-      "signature": "(*args, **kwargs)"
+      "name": "PricingExplanationStatus"
     },
     {
       "kind": "class",
@@ -1136,7 +717,7 @@
       "members": [],
       "module": "dexcost.models.enums",
       "name": "PricingSource",
-      "signature": "(*values)"
+      "signature": "(value)"
     },
     {
       "kind": "class",
@@ -1260,14 +841,12 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "RevenueSourceType",
-      "signature": "(*args, **kwargs)"
+      "name": "RevenueSourceType"
     },
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "RevenueState",
-      "signature": "(*args, **kwargs)"
+      "name": "RevenueState"
     },
     {
       "kind": "class",
@@ -1402,7 +981,7 @@
       "members": [],
       "module": "dexcost.models.enums",
       "name": "TaskStatus",
-      "signature": "(*values)"
+      "signature": "(value)"
     },
     {
       "kind": "constant",
@@ -1412,8 +991,7 @@
     {
       "kind": "type_alias",
       "module": "typing",
-      "name": "ToolOperationStatus",
-      "signature": "(*args, **kwargs)"
+      "name": "ToolOperationStatus"
     },
     {
       "kind": "constant",

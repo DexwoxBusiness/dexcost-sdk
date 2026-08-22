@@ -86,9 +86,9 @@
       "sha256": "d46b6856ad509d2b26e6186c4940922e7377f7b30fecde61e528636ec56fb86e"
     },
     {
-      "byte_size": 69665,
+      "byte_size": 58949,
       "path": "public-api.json",
-      "sha256": "4dae56d1ebea1cce493ffa6308b5334924e235018eb924f8915afe16f37d25d2"
+      "sha256": "9ab864d3492c4fb3bd5507f71bafbc0d283fe30fdd0feafde69b539bd906db1c"
     },
     {
       "byte_size": 2375,
