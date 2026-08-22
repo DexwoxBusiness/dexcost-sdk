@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.22.0...typescript/v0.23.0) (2026-08-22)
+
+
+### Features
+
+* **sdk:** complete Python-first attribution, catalog runtime, and TypeScript parity ([#160](https://github.com/DexwoxBusiness/dexcost-sdk/issues/160)) ([914a6a6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/914a6a61c11c51c9403e6402a17f322356f6a4eb))
+
 ## [0.22.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.21.0...typescript/v0.22.0) (2026-08-14)
 
 
