@@ -57,6 +57,13 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.19.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.18.0...python/v0.19.0) (2026-08-22)
+
+
+### Features
+
+* **sdk:** complete Python-first attribution, catalog runtime, and TypeScript parity ([#160](https://github.com/DexwoxBusiness/dexcost-sdk/issues/160)) ([914a6a6](https://github.com/DexwoxBusiness/dexcost-sdk/commit/914a6a61c11c51c9403e6402a17f322356f6a4eb))
+
 ## [0.18.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.17.0...python/v0.18.0) (2026-08-20)
 
 
