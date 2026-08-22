@@ -156,9 +156,9 @@
       "sha256": "91a5d362f6b3a7840c7cd1db442d81a06b4e712f0b63962d0fff0faa51c165ff"
     },
     {
-      "byte_size": 37664,
+      "byte_size": 37674,
       "path": "typescript-api-map.json",
-      "sha256": "30a20182bbeca14fde4bb2c376228b44fa4295f6fd357cc94eb6f54715291cad"
+      "sha256": "bc00fd41fb70a6506c4f16bf55123f1983e7e73220af8ee68a29efcc0095bb89"
     },
     {
       "byte_size": 8479,
