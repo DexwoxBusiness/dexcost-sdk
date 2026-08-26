@@ -86,7 +86,8 @@ follows:
 `contracts/python-vnext/v1/` contains:
 
 - public Python and TypeScript API snapshots plus a complete cross-language
-  mapping (168 Python exports, zero unresolved);
+  mapping (171 Python exports, 168 equivalent TypeScript mappings, 3 reviewed
+  language-specific mappings, and zero unresolved);
 - storage migration sources and resulting SQLite schema;
 - capability and provider matrices;
 - wire-schema inventory and 10 frozen schemas;
@@ -99,6 +100,12 @@ follows:
 Python verifies this with `tests/test_contract_freeze.py`; TypeScript verifies
 it with `tests/contract-freeze.test.ts` and compiler-resolved package-surface
 tests.
+
+The final post-freeze matrix passed on Python 3.10.19, 3.11.14, 3.12.12,
+3.13.6, and 3.14.2. TypeScript passed 1,298 tests (6 skipped), strict package
+types, ESM/CJS build, catalog probes, and release-package inspection. The same
+built package passed runtime smoke on Node 20.19.6, Node 22.23.2, Node
+24.13.1, Bun 1.4.0, and Deno 2.9.5.
 
 ## Catalog release and slimming decision
 
