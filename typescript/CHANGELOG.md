@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.23.0...typescript/v0.24.0) (2026-08-26)
+
+
+### Features
+
+* **sdk:** finalize Python audit and TypeScript parity ([#164](https://github.com/DexwoxBusiness/dexcost-sdk/issues/164)) ([5bdea90](https://github.com/DexwoxBusiness/dexcost-sdk/commit/5bdea9040a42f08d6dd1763df162c1fbf238d9af))
+
 ## [0.23.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.22.0...typescript/v0.23.0) (2026-08-22)
 
 
