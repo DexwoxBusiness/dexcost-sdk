@@ -83,6 +83,39 @@ describe("attribution v3 pusher conformance", () => {
     expect(body.events[0]).not.toHaveProperty("details");
   });
 
+  it("replays a retained converter quarantine once after an SDK upgrade", async () => {
+    const event = createCostEvent({
+      eventId: randomUUID(), taskId: randomUUID(), eventType: "llm_call",
+      provider: "openai", model: "gpt-5", inputTokens: 2, outputTokens: 1,
+    });
+    buffer.addEvent(event);
+    buffer.markQuarantined([event.eventId]);
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ accepted: 1, rejected: 0 }), { status: 202 }),
+    );
+
+    const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 });
+    await pusher.flush();
+
+    expect(buffer.getQuarantinedEvents()).toEqual([]);
+    expect(buffer.getPendingEvents()).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("never invokes destructive pending cleanup from automatic delivery", async () => {
+    buffer.addEvent(createCostEvent({
+      eventId: randomUUID(), taskId: randomUUID(), eventType: "llm_call",
+      provider: "openai", model: "gpt-5", inputTokens: 2, outputTokens: 1,
+    }));
+    const cleanup = vi.spyOn(buffer, "purgeOldPending");
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ accepted: 1, rejected: 0 }), { status: 202 }),
+    );
+    const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 });
+    await pusher.flush();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
   it("throttles duplicate background warnings by failing event-set fingerprint", () => {
     const pusher = new EventPusher(buffer, { apiKey: "dx_test", batchSize: 10 });
     const internal = pusher as unknown as {

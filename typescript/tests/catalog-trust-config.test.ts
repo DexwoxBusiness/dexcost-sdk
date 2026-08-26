@@ -34,8 +34,16 @@ afterEach(() => {
 });
 
 describe("catalog trust configuration", () => {
-  it("keeps unsigned bootstrap compatibility when no trust policy exists", () => {
-    expect(resolveCatalogTrustPolicy()).toEqual({ trustedKeys: {}, requireSignature: false });
+  it("requires signatures from bundled production trust by default", () => {
+    const policy = resolveCatalogTrustPolicy();
+    expect(policy).toMatchObject({
+      requireSignature: true,
+      remoteRefreshEnabled: true,
+    });
+    expect(Object.keys(policy.trustedKeys).sort()).toEqual([
+      "catalog-prod-2026-08-a",
+      "catalog-prod-2026-08-b",
+    ]);
   });
 
   it("requires signatures by default when environment keys are configured", () => {
@@ -45,6 +53,7 @@ describe("catalog trust configuration", () => {
     expect(resolveCatalogTrustPolicy()).toEqual({
       trustedKeys: { "dexcost-prod-2026-01": PUBLIC_KEY },
       requireSignature: true,
+      remoteRefreshEnabled: true,
     });
   });
 
@@ -54,6 +63,7 @@ describe("catalog trust configuration", () => {
     expect(resolveCatalogTrustPolicy({}, false)).toEqual({
       trustedKeys: {},
       requireSignature: false,
+      remoteRefreshEnabled: true,
     });
   });
 
@@ -63,6 +73,7 @@ describe("catalog trust configuration", () => {
     });
     process.env.DEXCOST_CATALOG_REQUIRE_SIGNATURE = "false";
     expect(resolveCatalogTrustPolicy().requireSignature).toBe(false);
+    expect(resolveCatalogTrustPolicy().remoteRefreshEnabled).toBe(true);
   });
 
   it.each([
@@ -72,11 +83,15 @@ describe("catalog trust configuration", () => {
     [JSON.stringify({ "BAD KEY": PUBLIC_KEY }), undefined, /key ID is invalid/u],
     [JSON.stringify({ "dexcost-prod": "AAAA" }), undefined, /wrong byte length/u],
     [undefined, "1", /must be true or false/u],
-    [undefined, "true", /requires at least one/u],
   ] as const)("fails closed for malformed environment policy %#", (keys, requirement, message) => {
     if (keys !== undefined) process.env.DEXCOST_CATALOG_TRUSTED_KEYS = keys;
     if (requirement !== undefined) process.env.DEXCOST_CATALOG_REQUIRE_SIGNATURE = requirement;
     expect(() => resolveCatalogTrustPolicy()).toThrow(message);
+  });
+
+  it("fails closed when signatures are required with explicit empty trust", () => {
+    process.env.DEXCOST_CATALOG_REQUIRE_SIGNATURE = "true";
+    expect(() => resolveCatalogTrustPolicy({})).toThrow(/requires at least one/u);
   });
 
   it("fails before creating storage when the security policy is invalid", () => {
@@ -86,7 +101,26 @@ describe("catalog trust configuration", () => {
       dbPath: database,
       autoInstrument: [],
       trackHttp: false,
+      catalogTrustedKeys: {},
     })).toThrow(/requires at least one/u);
     expect(existsSync(database)).toBe(false);
+  });
+
+  it("surfaces bundled verified trust and validates offline bundles", () => {
+    const instance = new CostTracker({
+      dbPath: join(directory, "disabled.db"), autoInstrument: [], trackHttp: false,
+      storage: "local",
+    });
+    try {
+      expect(instance.catalogStatus).toMatchObject({
+        signatureVerification: "verified",
+        trustedKeyIds: ["catalog-prod-2026-08-a", "catalog-prod-2026-08-b"],
+        remoteRefreshEnabled: true,
+      });
+      expect(() => instance.importCatalogBundle(new Uint8Array()))
+        .toThrow(/catalog bundle is not valid UTF-8 JSON/u);
+    } finally {
+      instance.close();
+    }
   });
 });

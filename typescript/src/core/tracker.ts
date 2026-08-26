@@ -47,6 +47,9 @@ import {
   outcomeValue,
   revenueAmount,
   type OutcomeRevisionOptions,
+  type OutcomeInput,
+  type OutcomeState,
+  type OutcomeValue,
   type RevenueInput,
   type RevenueRevisionOptions,
 } from "./business.js";
@@ -72,7 +75,7 @@ import { GpuRuntimeKind, resolveGpuRuntime } from "./gpu-runtime.js";
 import { getCloudEnv } from "../cloud-detect.js";
 import { EventPusher } from "../transport/pusher.js";
 import { localDeliveryStatus, type DeliveryStatus } from "../transport/delivery.js";
-import { PricingEngine } from "../pricing/engine.js";
+import { PricingEngine, type CostResult } from "../pricing/engine.js";
 import { CatalogRuntime, type CatalogRuntimeStatus } from "../pricing/catalog-runtime.js";
 import { explainEventPricing, type PricingExplanation } from "../pricing/explain.js";
 import { RateRegistry } from "../pricing/rates.js";
@@ -296,8 +299,15 @@ export function globalRecordOutcome(
   return getTracker().recordOutcome(name, { ...options, taskId });
 }
 
-export function globalGetOutcomeHistory(outcomeId: string): Array<Record<string, unknown>> {
+export function globalGetOutcomeHistory(outcomeId: string): OutcomeRevision[] {
   return getTracker().getOutcomeHistory(outcomeId);
+}
+
+export function globalAmendOutcome(
+  outcomeId: string,
+  options: AmendOutcomeOptions,
+): OutcomeRevision {
+  return getTracker().amendOutcome(outcomeId, options);
 }
 
 export function globalRecordRevenue(
@@ -310,7 +320,7 @@ export function globalRecordRevenue(
   return getTracker().recordRevenue(amount, { ...options, taskId });
 }
 
-export function globalGetRevenueHistory(revenueId: string): Array<Record<string, unknown>> {
+export function globalGetRevenueHistory(revenueId: string): RevenueRevision[] {
   return getTracker().getRevenueHistory(revenueId);
 }
 
@@ -486,8 +496,10 @@ export interface TrackerOptions {
   catalogTrustedKeys?: Readonly<Record<string, string>>;
   /**
    * Reject unsigned catalog releases and unsigned durable cache entries.
-   * Defaults to true when trusted keys exist and false otherwise; the
-   * `DEXCOST_CATALOG_REQUIRE_SIGNATURE` environment value may be true/false.
+   * Defaults to true when trusted keys exist. With no trusted key, remote
+   * catalog/cache activation remains disabled unless this option (or
+   * `DEXCOST_CATALOG_REQUIRE_SIGNATURE`) is explicitly set to false for a
+   * controlled migration.
    */
   catalogRequireSignature?: boolean;
   /** Catalog manifest/artifact request timeout. Defaults to 10000 ms; max 60000. */
@@ -533,6 +545,7 @@ export function globalDeliveryStatus(): DeliveryStatus {
 export function globalCatalogStatus(): CatalogRuntimeStatus {
   return _instance?.catalogStatus ?? {
     source: "bootstrap", stale: false, overlayActive: false, overlayOverrideCount: 0,
+    signatureVerification: "unavailable", trustedKeyIds: [], remoteRefreshEnabled: false,
   };
 }
 
@@ -565,6 +578,16 @@ export interface TaskOptions {
   workflowId?: string;
   workflowSessionId?: string;
   trackGpu?: boolean;
+}
+
+/** Options for appending the next revision of an existing outcome. */
+export interface AmendOutcomeOptions {
+  state: OutcomeState;
+  value?: OutcomeInput | OutcomeValue;
+  /** Optimistic-lock guard against two writers amending the same revision. */
+  expectedRevision?: number;
+  effectiveAt?: Date;
+  observedAt?: Date;
 }
 
 export interface ToolCallOptions {
@@ -1023,6 +1046,17 @@ export class TrackedTask {
     options: Omit<ConstructorParameters<typeof OutcomeRevision>[0], "taskId" | "name"> = {},
   ): OutcomeRevision {
     return this._tracker.recordOutcome(name, { ...options, taskId: this._task.taskId });
+  }
+
+  amendOutcome(outcomeId: string, options: AmendOutcomeOptions): OutcomeRevision {
+    const history = this._tracker.getOutcomeHistory(outcomeId);
+    if (history.length === 0) {
+      throw new Error(`outcome ${outcomeId} was not found in the local ledger`);
+    }
+    if (history.at(-1)?.taskId !== this._task.taskId) {
+      throw new Error("outcome belongs to a different task");
+    }
+    return this._tracker.amendOutcome(outcomeId, options);
   }
 
   recordRevenue(
@@ -1671,6 +1705,7 @@ export class CostTracker {
           channel: this._options.catalogChannel,
           trustedKeys: catalogTrustPolicy?.trustedKeys,
           requireSignature: catalogTrustPolicy?.requireSignature,
+          remoteRefreshEnabled: catalogTrustPolicy?.remoteRefreshEnabled,
           timeoutMs: this._options.catalogTimeoutMs,
         });
         // Durable LKG is applied synchronously before any provider is patched.
@@ -1793,6 +1828,25 @@ export class CostTracker {
   /** The pricing engine used for cost calculations. */
   get pricing(): PricingEngine {
     return this._pricing;
+  }
+
+  /** Calculate an LLM cost using the active catalog snapshot. */
+  getCost(
+    model: string,
+    inputTokens: number,
+    outputTokens: number,
+    cachedTokens: number = 0,
+    cacheCreationTokens: number = 0,
+    cacheCreationTokens1h: number = 0,
+  ): CostResult {
+    return this._pricing.getCost(
+      model,
+      inputTokens,
+      outputTokens,
+      cachedTokens,
+      cacheCreationTokens,
+      cacheCreationTokens1h,
+    );
   }
 
   /** The compute pricing engine — wires through to TrackedTask.end finalize. */
@@ -1952,8 +2006,40 @@ export class CostTracker {
     return revision;
   }
 
-  getOutcomeHistory(outcomeId: string): Array<Record<string, unknown>> {
-    return this._buffer.getOutcomeHistory(outcomeId);
+  getOutcomeHistory(outcomeId: string): OutcomeRevision[] {
+    return this._buffer.getOutcomeHistory(outcomeId).map(OutcomeRevision.fromDict);
+  }
+
+  amendOutcome(outcomeId: string, options: AmendOutcomeOptions): OutcomeRevision {
+    const history = this.getOutcomeHistory(outcomeId);
+    if (history.length === 0) {
+      throw new Error(`outcome ${outcomeId} was not found in the local ledger`);
+    }
+    const latest = history.at(-1)!;
+    if (latest.state === "voided") throw new Error("voided outcomes cannot be amended");
+    if (options.expectedRevision !== undefined) {
+      if (!Number.isInteger(options.expectedRevision) || options.expectedRevision < 1) {
+        throw new Error("expectedRevision must be a positive integer");
+      }
+      if (latest.revision !== options.expectedRevision) {
+        throw new Error(
+          `outcome ${outcomeId} revision conflict: expected ${options.expectedRevision}, found ${latest.revision}`,
+        );
+      }
+    }
+    const now = new Date();
+    const revision = new OutcomeRevision({
+      taskId: latest.taskId,
+      name: latest.name,
+      state: options.state,
+      value: options.value,
+      outcomeId: latest.outcomeId,
+      revision: latest.revision + 1,
+      effectiveAt: options.effectiveAt ?? now,
+      observedAt: options.observedAt ?? now,
+    });
+    this._buffer.insertOutcomeRevision(revision);
+    return revision;
   }
 
   recordRevenue(
@@ -1969,8 +2055,8 @@ export class CostTracker {
     return revision;
   }
 
-  getRevenueHistory(revenueId: string): Array<Record<string, unknown>> {
-    return this._buffer.getRevenueHistory(revenueId);
+  getRevenueHistory(revenueId: string): RevenueRevision[] {
+    return this._buffer.getRevenueHistory(revenueId).map(RevenueRevision.fromDict);
   }
 
   recordProviderJob(options: ProviderJobRevisionOptions): ProviderJobRevision {

@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from dexcost.catalog_releases import (
     CATALOG_KINDS,
+    CatalogDowngradeError,
     CatalogOverlayClient,
     CatalogReleaseClient,
     CatalogReleaseStore,
@@ -38,15 +39,11 @@ from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
 _DATA = Path(__file__).resolve().parents[1] / "src" / "dexcost" / "data"
-_TEST_SEED = bytes.fromhex(
-    "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
-)
+_TEST_SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
 _TEST_PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 _TEST_PUBLIC_KEY_B64 = urlsafe_b64encode(bytes.fromhex(_TEST_PUBLIC_KEY)).rstrip(b"=").decode()
 _TEST_KEY_ID = "dexcost-test-rfc8032-1"
-_ROTATED_SEED = bytes.fromhex(
-    "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"
-)
+_ROTATED_SEED = bytes.fromhex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
 _ROTATED_PUBLIC_KEY = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
 _ROTATED_PUBLIC_KEY_B64 = (
     urlsafe_b64encode(bytes.fromhex(_ROTATED_PUBLIC_KEY)).rstrip(b"=").decode()
@@ -179,7 +176,9 @@ def _signed_release(
                 Ed25519PrivateKey.from_private_bytes(seed).sign(
                     catalog_manifest_signing_payload(manifest)
                 )
-            ).rstrip(b"=").decode(),
+            )
+            .rstrip(b"=")
+            .decode(),
         }
         for key_id, seed in keys
     ]
@@ -254,6 +253,57 @@ def test_store_activates_atomically_and_keeps_previous(tmp_path: Path) -> None:
         assert not snapshot.stale
     finally:
         reopened.close()
+
+
+def test_store_rejects_release_downgrade_without_replacing_active(
+    tmp_path: Path,
+) -> None:
+    store = CatalogReleaseStore(tmp_path / "catalog.db")
+    try:
+        _activate(store, 11)
+        older_raw, older_payloads = _release(10)
+
+        with pytest.raises(CatalogDowngradeError, match="older than active"):
+            store.activate(
+                parse_catalog_manifest(older_raw),
+                older_payloads,
+                '"release-10"',
+            )
+
+        active = store.active()
+        assert active is not None
+        assert active.manifest.release_sequence == 11
+    finally:
+        store.close()
+
+
+def test_store_rejects_same_sequence_with_different_content(
+    tmp_path: Path,
+) -> None:
+    store = CatalogReleaseStore(tmp_path / "catalog.db")
+    try:
+        _activate(store, 12)
+        changed_payloads = _artifact_payloads()
+        changed_llm = json.loads(changed_payloads["llm_prices"])
+        changed_llm["sample_spec"]["max_tokens"] = "same-sequence-substitution"
+        changed_payloads["llm_prices"] = _canonical(changed_llm)
+        changed_raw, changed_payloads = _release(12, payloads=changed_payloads)
+
+        with pytest.raises(
+            CatalogValidationError,
+            match="release sequence was reused with different content",
+        ):
+            store.activate(
+                parse_catalog_manifest(changed_raw),
+                changed_payloads,
+                '"release-12-substituted"',
+            )
+
+        active = store.active()
+        assert active is not None
+        assert active.manifest.release_sequence == 12
+    finally:
+        store.close()
 
 
 def test_store_falls_back_to_previous_when_only_active_manifest_is_corrupt(
@@ -339,12 +389,18 @@ def test_dual_signed_rotation_accepts_either_overlapping_trust_key(
         ),
     ]
     try:
-        assert stores[0].activate(
-            parse_catalog_manifest(raw), payloads, None
-        ).manifest.release_sequence == 13
-        assert stores[1].activate(
-            parse_catalog_manifest(raw), payloads, None
-        ).manifest.release_sequence == 13
+        assert (
+            stores[0]
+            .activate(parse_catalog_manifest(raw), payloads, None)
+            .manifest.release_sequence
+            == 13
+        )
+        assert (
+            stores[1]
+            .activate(parse_catalog_manifest(raw), payloads, None)
+            .manifest.release_sequence
+            == 13
+        )
         with pytest.raises(
             CatalogValidationError,
             match="not signed by a configured trusted key",
@@ -614,7 +670,12 @@ def test_runtime_applies_one_cached_release_to_every_pricing_engine(
     db_path = tmp_path / "catalog.db"
     seed_store = CatalogReleaseStore(db_path)
     try:
-        _activate(seed_store, 70)
+        payloads = _artifact_payloads()
+        service_catalog = json.loads(payloads["service_prices"])
+        service_catalog["exa_search"]["mcp_tools"] = ["server_defined_tool"]
+        payloads["service_prices"] = _canonical(service_catalog)
+        raw, payloads = _release(70, payloads=payloads)
+        seed_store.activate(parse_catalog_manifest(raw), payloads, '"release-70"')
     finally:
         seed_store.close()
 
@@ -634,6 +695,9 @@ def test_runtime_applies_one_cached_release_to_every_pricing_engine(
         assert tracker._compute_pricing.catalog_version.startswith("catalog-release:70:")
         assert tracker._gpu_pricing.catalog_version.startswith("catalog-release:70:")
         assert tracker._egress_pricing.catalog_version.startswith("catalog-release:70:")
+        mcp_service = tracker._service_catalog.lookup_mcp_tool("server_defined_tool")
+        assert mcp_service is not None
+        assert mcp_service.key == "exa_search"
         status = runtime.status()
         assert status.release_sequence == 70
         assert status.source == "active"
@@ -651,6 +715,48 @@ def test_runtime_applies_one_cached_release_to_every_pricing_engine(
         assert explanation.provenance.safety_policy_version == (
             snapshot.manifest.safety_policy_version
         )
+    finally:
+        runtime.close()
+        tracker.pricing.close()
+        tracker_storage.close()
+
+
+def test_runtime_without_bootstrapped_trust_never_activates_remote_or_cached_data(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "catalog.db"
+    seed_store = CatalogReleaseStore(db_path)
+    try:
+        _activate(seed_store, 70)
+    finally:
+        seed_store.close()
+
+    tracker_storage = SQLiteStorage(db_path)
+    tracker = CostTracker(storage=tracker_storage, auto_instrument=[])
+    runtime = CatalogRuntime(
+        endpoint="https://api.dexcost.test",
+        db_path=db_path,
+        tracker=tracker,
+        track_http=False,
+        remote_refresh_enabled=False,
+    )
+    manifest_raw, payloads = _release(71)
+    bundle = encode_catalog_bundle(parse_catalog_manifest(manifest_raw), payloads)
+    try:
+        assert runtime.load_cached() is None
+        result = runtime.refresh_once()
+        assert result.status == "failed"
+        assert result.snapshot is None
+        assert "trust is not bootstrapped" in (result.error or "")
+        with pytest.raises(CatalogValidationError, match="trust is not bootstrapped"):
+            runtime.import_bundle(bundle)
+
+        status = runtime.status()
+        assert status.source == "bootstrap"
+        assert status.signature_verification == "disabled_no_trust"
+        assert status.trusted_key_ids == ()
+        assert status.remote_refresh_enabled is False
+        assert status.last_refresh_status == "failed"
     finally:
         runtime.close()
         tracker.pricing.close()
@@ -762,9 +868,7 @@ def test_overlay_cache_is_api_key_isolated_and_revalidates_with_etag(
                 }
             ],
         )
-        client_a = CatalogOverlayClient(
-            "https://api.dexcost.test", "dx_key_a", store
-        )
+        client_a = CatalogOverlayClient("https://api.dexcost.test", "dx_key_a", store)
         calls: list[Any] = []
 
         def first_open(request: Any, *, timeout: float) -> _Response:
@@ -779,9 +883,7 @@ def test_overlay_cache_is_api_key_isolated_and_revalidates_with_etag(
         assert activated.status == "activated"
         assert activated.overlay is not None
 
-        client_b = CatalogOverlayClient(
-            "https://api.dexcost.test", "dx_key_b", store
-        )
+        client_b = CatalogOverlayClient("https://api.dexcost.test", "dx_key_b", store)
         assert client_b.cached(snapshot.manifest) is None
         principal = store._conn.execute(
             "SELECT principal_sha256 FROM sdk_catalog_overlays"
@@ -792,9 +894,7 @@ def test_overlay_cache_is_api_key_isolated_and_revalidates_with_etag(
         def not_modified(request: Any, *, timeout: float) -> _Response:
             assert timeout == 10
             assert request.get_header("If-none-match") == '"overlay-a"'
-            raise urllib.error.HTTPError(
-                request.full_url, 304, "Not Modified", Message(), None
-            )
+            raise urllib.error.HTTPError(request.full_url, 304, "Not Modified", Message(), None)
 
         monkeypatch.setattr(client_a._opener, "open", not_modified)
         cached = client_a.refresh(snapshot.manifest)
@@ -928,9 +1028,9 @@ def test_runtime_applies_all_overlay_kinds_and_drops_them_on_key_rotation(
         rotated = runtime.status()
         assert not rotated.overlay_active
         assert rotated.overlay_override_count == 0
-        assert tracker._egress_pricing.resolve_rate(
-            "aws", "us-east-1"
-        ).rate_per_gb == Decimal("0.09")
+        assert tracker._egress_pricing.resolve_rate("aws", "us-east-1").rate_per_gb == Decimal(
+            "0.09"
+        )
     finally:
         runtime.close()
         tracker.pricing.close()

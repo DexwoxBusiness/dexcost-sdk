@@ -1,4 +1,9 @@
-import { CatalogOverlayClient, CatalogReleaseClient, CatalogReleaseStore } from "./catalog-releases.js";
+import {
+  CatalogOverlayClient,
+  CatalogReleaseClient,
+  CatalogReleaseStore,
+  CatalogValidationError,
+} from "./catalog-releases.js";
 import type {
   CatalogChannel,
   CatalogOverlayRefreshResult,
@@ -32,6 +37,7 @@ export interface CatalogRuntimeOptions {
   channel?: CatalogChannel;
   trustedKeys?: Readonly<Record<string, string>>;
   requireSignature?: boolean;
+  remoteRefreshEnabled?: boolean;
   timeoutMs?: number;
 }
 
@@ -46,6 +52,9 @@ export interface CatalogRuntimeStatus {
   overlayOverrideCount: number;
   overlayLastRefreshStatus?: CatalogOverlayRefreshResult["status"];
   overlayLastError?: string;
+  signatureVerification: "verified" | "unsigned_override" | "disabled_no_trust" | "unavailable";
+  trustedKeyIds: readonly string[];
+  remoteRefreshEnabled: boolean;
 }
 
 interface GroupedOverrides {
@@ -73,6 +82,9 @@ export class CatalogRuntime {
   private overlay?: CatalogWorkspaceOverlay;
   private lastResult?: CatalogRefreshResult;
   private lastOverlayResult?: CatalogOverlayRefreshResult;
+  private readonly remoteRefreshEnabled: boolean;
+  private readonly signatureVerification: CatalogRuntimeStatus["signatureVerification"];
+  private readonly trustedKeyIds: readonly string[];
 
   constructor(private readonly targets: CatalogRuntimeTargets, private readonly options: CatalogRuntimeOptions) {
     this.intervalMs = options.refreshIntervalMs ?? 86_400_000;
@@ -83,6 +95,11 @@ export class CatalogRuntime {
     if (!Number.isFinite(this.jitterRatio) || this.jitterRatio < 0 || this.jitterRatio > 0.5) {
       throw new TypeError("catalog refresh jitter ratio must be between 0 and 0.5");
     }
+    this.remoteRefreshEnabled = options.remoteRefreshEnabled ?? true;
+    this.trustedKeyIds = Object.freeze(Object.keys(options.trustedKeys ?? {}).sort());
+    this.signatureVerification = options.requireSignature === true && this.trustedKeyIds.length > 0
+      ? "verified"
+      : this.remoteRefreshEnabled ? "unsigned_override" : "disabled_no_trust";
     this.store = new CatalogReleaseStore(options.storePath, {
       trustedKeys: options.trustedKeys,
       requireSignature: options.requireSignature,
@@ -97,6 +114,7 @@ export class CatalogRuntime {
   }
 
   loadCached(): CatalogSnapshot | undefined {
+    if (!this.remoteRefreshEnabled) return undefined;
     const snapshot = this.store.bestAvailable(this.options.channel ?? "stable");
     if (snapshot) {
       const overlay = this.cachedOverlay(snapshot);
@@ -106,6 +124,11 @@ export class CatalogRuntime {
   }
 
   importBundle(raw: Uint8Array): CatalogSnapshot {
+    if (!this.remoteRefreshEnabled) {
+      throw new CatalogValidationError(
+        "catalog trust is not bootstrapped; refusing offline bundle activation",
+      );
+    }
     const snapshot = this.store.importBundle(raw);
     this.apply(snapshot, this.cachedOverlay(snapshot), this.overlayGeneration);
     return snapshot;
@@ -206,6 +229,9 @@ export class CatalogRuntime {
   }
 
   async refreshOnce(): Promise<CatalogRefreshResult> {
+    if (!this.remoteRefreshEnabled) {
+      return { status: "not_modified" };
+    }
     if (this.refreshPromise) return this.refreshPromise;
     const operation = this.refreshInternal();
     this.refreshPromise = operation;
@@ -244,6 +270,7 @@ export class CatalogRuntime {
   }
 
   start(): void {
+    if (!this.remoteRefreshEnabled) return;
     if (!this.stopped) return;
     this.stopped = false;
     const run = async (): Promise<void> => {
@@ -272,6 +299,9 @@ export class CatalogRuntime {
       overlayOverrideCount: this.overlay?.overrides.length ?? 0,
       ...(this.lastOverlayResult ? { overlayLastRefreshStatus: this.lastOverlayResult.status } : {}),
       ...(this.lastOverlayResult?.error ? { overlayLastError: this.lastOverlayResult.error } : {}),
+      signatureVerification: this.signatureVerification,
+      trustedKeyIds: this.trustedKeyIds,
+      remoteRefreshEnabled: this.remoteRefreshEnabled,
     };
   }
 

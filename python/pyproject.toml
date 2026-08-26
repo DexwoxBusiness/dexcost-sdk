@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -34,7 +35,15 @@ dependencies = [
 
 [project.optional-dependencies]
 crewai = [
-    "crewai>=1.0",
+    # CrewAI currently declares Python <3.14. Keep the core SDK available on
+    # 3.14 while allowing the integration extra to become active as soon as
+    # upstream publishes a compatible release and this marker is reviewed.
+    "crewai>=1.0; python_version < '3.14'",
+    # CrewAI -> ChromaDB 1.1.x permits onnxruntime>=1.14.1, but
+    # onnxruntime 1.24+ no longer publishes CPython 3.10 wheels. Constrain the
+    # transitive dependency only on 3.10 so the advertised release matrix stays
+    # installable while newer interpreters retain the current runtime line.
+    "onnxruntime>=1.14.1,<1.24; python_version < '3.11'",
 ]
 griptape = [
     "griptape>=1.0",
@@ -46,13 +55,19 @@ anthropic = [
     "anthropic>=0.18,<1.0",
 ]
 litellm = [
-    "litellm>=1.0,<2.0",
+    # LiteLLM 1.97.0 declares Python 3.10 support, but its ModelResponse models
+    # retain unresolved Pydantic forward references on a clean 3.10 install.
+    # 1.96.2 is the last version verified by the real-response compatibility
+    # suite, so keep the upper bound exact instead of admitting 1.97.x.
+    "litellm>=1.0,<=1.96.2; python_version < '3.11'",
+    "litellm>=1.0,<2.0; python_version >= '3.11'",
 ]
 gemini = [
     "google-genai>=1.0,<3.0.0",
 ]
 bedrock = [
     "boto3>=1.34,<2.0",
+    "aws_sdk_bedrock_runtime>=0.2,<0.3; python_version >= '3.12'",
 ]
 cohere = [
     "cohere>=5.0,<6.0",
@@ -72,19 +87,28 @@ perplexity = [
 fal = [
     "fal-client>=0.14,<1.0",
 ]
+gpu = [
+    # NVIDIA publishes pynvml under nvidia-ml-py. Keep the supported major
+    # bounded because NVML binding majors may remove deprecated APIs.
+    "nvidia-ml-py>=12.535,<14.0",
+]
 all = [
     "openai>=1.0,<3.0",
     "anthropic>=0.18,<1.0",
-    "litellm>=1.0,<2.0",
+    "litellm>=1.0,<=1.96.2; python_version < '3.11'",
+    "litellm>=1.0,<2.0; python_version >= '3.11'",
     "google-genai>=1.0,<3.0.0",
     "boto3>=1.34,<2.0",
+    "aws_sdk_bedrock_runtime>=0.2,<0.3; python_version >= '3.12'",
     "cohere>=5.0,<6.0",
     "mcp>=1.0,<2.0",
     "ollama>=0.6,<1.0",
     "openrouter>=1.0,<2.0",
     "perplexityai>=0.43,<2.0",
     "fal-client>=0.14,<1.0",
-    "crewai>=1.0",
+    "nvidia-ml-py>=12.535,<14.0",
+    "crewai>=1.0; python_version < '3.14'",
+    "onnxruntime>=1.14.1,<1.24; python_version < '3.11'",
     "griptape>=1.0",
 ]
 
@@ -166,10 +190,20 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 module = ["wrapt", "wrapt.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# NumPy is a transitive optional-provider dependency, not part of DexCost's
+# public typing boundary. Current NumPy stubs use Python 3.12 ``type`` syntax,
+# which a strict Mypy run targeting the supported Python 3.10 floor cannot
+# parse. Skip following that third-party implementation while continuing to
+# type-check every DexCost source module strictly.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["crewai", "crewai.*"]
@@ -202,6 +236,20 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["botocore", "botocore.*", "boto3", "boto3.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "aws_sdk_bedrock_runtime",
+    "aws_sdk_bedrock_runtime.*",
+    "smithy_aws_core",
+    "smithy_aws_core.*",
+    "smithy_core",
+    "smithy_core.*",
+    "smithy_http",
+    "smithy_http.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["cohere", "cohere.*"]

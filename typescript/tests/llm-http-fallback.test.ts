@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { runWithTask, clearContext } from "../src/core/context.js";
+import { runWithCapability } from "../src/core/capabilities.js";
+import { idempotencyHash, runWithIdempotencyKey } from "../src/core/idempotency.js";
 import { createTask } from "../src/core/models.js";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
@@ -48,6 +50,8 @@ afterEach(() => {
   clearRecordedEvents();
   resetServiceCatalog();
   clearContext();
+  delete process.env.DEXCOST_LITELLM_PROXY_URL;
+  delete process.env.LITELLM_PROXY_URL;
   vi.unstubAllGlobals();
   buffer.close();
   rmSync(tmpDir, { recursive: true, force: true });
@@ -308,6 +312,154 @@ describe("LLM HTTP fallback — Gemini / Vertex format", () => {
     expect(llmEvents[0].model).toBe("gemini-2.5-pro");
     expect(llmEvents[0].inputTokens).toBe(900);
     expect(llmEvents[0].outputTokens).toBe(200); // last chunk authoritative
+  });
+});
+
+describe("LLM HTTP fallback — configured LiteLLM Proxy", () => {
+  const proxyUrl = "https://litellm.example.internal/v1/chat/completions";
+  const request = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "openrouter/openai/gpt-4.1", messages: [] }),
+  };
+  const payload = {
+    id: "gen-litellm-fetch",
+    model: "openai/gpt-4.1",
+    choices: [],
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      prompt_tokens_details: { cached_tokens: 20, cache_write_tokens: 5 },
+      completion_tokens_details: { reasoning_tokens: 10 },
+      cost: 0.0123,
+      cost_details: { upstream_inference_cost: 0.009 },
+      server_tool_use: {
+        tool_calls_requested: 2,
+        tool_calls_executed: 1,
+        web_search_requests: 1,
+      },
+    },
+  };
+
+  beforeEach(() => {
+    process.env.DEXCOST_LITELLM_PROXY_URL = "https://litellm.example.internal";
+  });
+
+  it("records exact routed attribution for raw JSON fetch", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "litellm.fetch" });
+
+    await runWithTask(task, () => runWithCapability(
+      { name: "crew-research", kind: "workflow", invocation: "automatic" },
+      () => runWithIdempotencyKey("litellm-fetch-original", async () => {
+        const response = await fetch(proxyUrl, request);
+        await response.json();
+      }),
+    ));
+
+    const [event] = buffer.getAllEvents();
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(event).toMatchObject({
+      eventType: "llm_call",
+      provider: "openrouter",
+      serviceName: "litellm",
+      model: "openrouter/openai/gpt-4.1",
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedTokens: 20,
+      costConfidence: "exact",
+      pricingSource: "provider_response",
+    });
+    expect(event.costUsd.toString()).toBe("0.0123");
+    expect(event.details).toMatchObject({
+      attribution_operation_name: "litellm.chat.create",
+      attribution_operation_status: "succeeded",
+      provider_reported_cost_usd: "0.0123",
+      provider_upstream_cost_usd: "0.009",
+      cache_write_input_tokens: 5,
+      reasoning_output_tokens: 10,
+      attribution_capability: {
+        name: "crew-research", kind: "workflow", invocation: "automatic",
+      },
+      _dexcost_idempotency_sha256: idempotencyHash("litellm-fetch-original"),
+      _dexcost_idempotency_occurrence: 0,
+      attribution_dimensions: [{ key: "gateway", value: { type: "string", value: "litellm" } }],
+    });
+    expect(event.details.attribution_usage_lines).toEqual(expect.arrayContaining([
+      { metric: "cache_read_input_tokens", quantity: "20", unit: "Tokens" },
+      { metric: "cache_write_input_tokens", quantity: "5", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "10", unit: "Tokens" },
+      { metric: "server_tool_calls_requested", quantity: "2", unit: "Calls" },
+      { metric: "server_tool_calls_executed", quantity: "1", unit: "Calls" },
+      { metric: "web_search_requests", quantity: "1", unit: "Requests" },
+    ]));
+  });
+
+  it("preserves the provider rejection while recording a failure observation", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("proxy unavailable")));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "litellm.fetch.failure" });
+
+    await expect(runWithTask(task, () => fetch(proxyUrl, request))).rejects.toThrow("proxy unavailable");
+
+    const [event] = buffer.getAllEvents();
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(event).toMatchObject({
+      provider: "openrouter",
+      serviceName: "litellm",
+      model: "openrouter/openai/gpt-4.1",
+      costConfidence: "unknown",
+    });
+    expect(event.details).toMatchObject({
+      attribution_operation_name: "litellm.chat.create",
+      attribution_operation_status: "failed",
+      attribution_error_type: "typeerror",
+      attribution_usage_lines: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+  });
+
+  it.each(["failed", "cancelled"] as const)("records raw SSE stream %s exactly once", async (mode) => {
+    const encoder = new TextEncoder();
+    let pulled = false;
+    const providerStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!pulled) {
+          pulled = true;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          return;
+        }
+        if (mode === "failed") controller.error(new Error("LiteLLM proxy stream failed"));
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(providerStream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: `litellm.fetch.${mode}` });
+    const response = await runWithTask(task, () => fetch(proxyUrl, request));
+    const reader = response.body!.getReader();
+    await reader.read();
+    if (mode === "failed") {
+      await expect(reader.read()).rejects.toThrow("LiteLLM proxy stream failed");
+    } else {
+      await reader.cancel("caller stopped");
+    }
+    await Promise.resolve();
+
+    const [event] = buffer.getAllEvents();
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(event).toMatchObject({
+      provider: "openrouter",
+      serviceName: "litellm",
+      model: "openrouter/openai/gpt-4.1",
+      costConfidence: "exact",
+    });
+    expect(event.details.attribution_operation_status).toBe(mode);
   });
 });
 

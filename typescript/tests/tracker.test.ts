@@ -19,6 +19,29 @@ afterEach(() => {
 });
 
 describe("CostTracker", () => {
+  it("exposes Python-parity pricing including the one-hour cache bucket", () => {
+    const tracker = new CostTracker({
+      dbPath: join(tmpDir, "test.db"),
+      autoInstrument: [],
+      trackHttp: false,
+    });
+    tracker.pricing.replaceCatalog({
+      "anthropic/test-cache-1h": {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 0.000001,
+        output_cost_per_token: 0.000004,
+        cache_read_input_token_cost: 0.0000005,
+        cache_creation_input_token_cost: 0.000002,
+        cache_creation_input_token_cost_above_1hr: 0.000003,
+      },
+    });
+
+    const result = tracker.getCost("anthropic/test-cache-1h", 100, 0, 20, 30, 40);
+    expect(result.costUsd.toString()).toBe("0.00029");
+    expect(result.costConfidence).toBe("computed");
+    tracker.close();
+  });
+
   it("creates a task with correct fields", async () => {
     const tracker = new CostTracker({ dbPath: join(tmpDir, "test.db") });
 

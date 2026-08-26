@@ -74,10 +74,22 @@ export function tokenMeasurement(
   if (cached > 0) lines.push({ metric: "cache_read_input_tokens", quantity: cached, unit: "Tokens" });
   if (cacheWrite > 0) lines.push({ metric: "cache_write_input_tokens", quantity: cacheWrite, unit: "Tokens" });
   if (reasoning > 0) lines.push({ metric: "reasoning_output_tokens", quantity: reasoning, unit: "Tokens" });
+  const serverTools = usage.server_tool_use ?? usage.server_tool_use_details ?? {};
+  for (const [metric, key, unit] of [
+    ["server_tool_calls_requested", "tool_calls_requested", "Calls"],
+    ["server_tool_calls_executed", "tool_calls_executed", "Calls"],
+    ["web_search_requests", "web_search_requests", "Requests"],
+  ] as const) {
+    const quantity = nonNegativeInteger(serverTools[key]);
+    if (quantity > 0) lines.push({ metric, quantity, unit });
+  }
   let providerCost: Decimal | undefined;
   let upstreamCost: Decimal | undefined;
   if (provider === "openrouter") {
-    providerCost = nonNegativeDecimal(usage.cost ?? response?.cost);
+    providerCost = nonNegativeDecimal(
+      usage.cost ?? response?.cost ??
+        field(response, "_hidden_params", "additional_headers", "llm_provider-x-litellm-response-cost"),
+    );
     upstreamCost = nonNegativeDecimal(
       usage.cost_details?.upstream_inference_cost ?? usage.cost_details?.upstream_cost,
     );

@@ -82,6 +82,14 @@ class StorageBackend(Protocol):
         """Retain unrepresentable events outside the normal pending queue."""
         ...
 
+    def requeue_quarantined_events(self) -> int:
+        """Move retained conversion failures back to pending after an upgrade.
+
+        Returns the number of rows requeued. Implementations must preserve the
+        original event identity, occurrence time, and payload.
+        """
+        ...
+
     def query_quarantined_events(self, limit: int = 100) -> list[Event]:
         """Return quarantined conversion failures, oldest first."""
         ...
@@ -158,15 +166,11 @@ class StorageBackend(Protocol):
         """Return the latest local snapshot for a provider-owned job identity."""
         ...
 
-    def query_provider_jobs_for_sync(
-        self, limit: int = 1000
-    ) -> list[ProviderJobRevision]:
+    def query_provider_jobs_for_sync(self, limit: int = 1000) -> list[ProviderJobRevision]:
         """Return pending provider-job revisions, oldest first."""
         ...
 
-    def query_current_provider_jobs_for_task(
-        self, task_id: str
-    ) -> list[ProviderJobRevision]:
+    def query_current_provider_jobs_for_task(self, task_id: str) -> list[ProviderJobRevision]:
         """Return the latest revision of every provider job attached to a task."""
         ...
 
@@ -174,9 +178,7 @@ class StorageBackend(Protocol):
         """Transition provider-job revisions from pending to synced."""
         ...
 
-    def mark_provider_jobs_quarantined(
-        self, revisions: list[tuple[str, int]]
-    ) -> None:
+    def mark_provider_jobs_quarantined(self, revisions: list[tuple[str, int]]) -> None:
         """Retain undeliverable provider-job revisions outside the pending queue."""
         ...
 
@@ -194,7 +196,9 @@ class StorageBackend(Protocol):
     def purge_old_pending(self, max_age_days: int = 7) -> int:
         """Remove pending or quarantined events older than *max_age_days*.
 
-        Safety net for events that can never be synced (invalid API key, etc.).
+        This is an explicit destructive maintenance operation. The background
+        delivery worker never calls it because unsent attribution records must
+        not disappear solely because delivery or conversion was unavailable.
         Returns the number of deleted rows.
         """
         ...

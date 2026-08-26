@@ -6,13 +6,16 @@ import {
   SchemaNotFoundError,
   ToolUsage,
   attachTask,
+  amendOutcome,
   explainPricing,
+  getOutcomeHistory,
   instrumentOpenAI,
   instrumentOpenRouter,
   recordOutcome,
   recordRevenue,
   trackTool,
   type CapabilityIdentity,
+  type AmendOutcomeOptions,
   type TaskOptions,
   type ToolCallOptions,
   type InfrastructureRateEntry,
@@ -47,8 +50,10 @@ const capabilityKind: AttributionCapabilityKindV3 = "tool";
 const capabilitySource: AttributionCapabilitySourceV3 = "plugin";
 const capabilityInvocation: AttributionCapabilityInvocationV3 = "automatic";
 const operationError: AttributionOperationErrorV3 = { type: "provider_error", code: "429" };
+const amendOptions: AmendOutcomeOptions = { state: "missed", expectedRevision: 1 };
 
 const tracker = new CostTracker({ autoInstrument: [], trackHttp: false });
+tracker.getCost("anthropic/claude", 100, 10, 20, 30, 40);
 tracker.registerRate("maps", "request", "0.005");
 tracker.registerInfrastructureRate("network", "local", "gb_transferred", "0.02");
 const exactRate: Decimal | undefined = tracker.getInfrastructureRate("network", "LOCAL");
@@ -61,7 +66,9 @@ const publicValues = [
   SchemaNotFoundError,
   ToolUsage,
   attachTask,
+  amendOutcome,
   explainPricing,
+  getOutcomeHistory,
   instrumentOpenAI,
   instrumentOpenRouter,
   recordOutcome,
@@ -85,5 +92,6 @@ void capabilityKind;
 void capabilitySource;
 void capabilityInvocation;
 void operationError;
+void amendOptions;
 void exactRate;
 void publicValues;

@@ -9,10 +9,10 @@
  * family (Anthropic, Amazon Titan, Meta Llama, Cohere, Mistral, AI21).
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createCostEvent, Decimal } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
@@ -20,13 +20,21 @@ import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import { stampAmbientAttribution } from "../core/capabilities.js";
-import { recordProviderFailure } from "./provider-metering.js";
+import {
+  ProviderOperationSession,
+  providerJobMeasurementFields,
+  recordProviderFailure,
+} from "./provider-metering.js";
+import type { OperationMeasurement } from "./provider-metering.js";
+import { ProviderJobRevision, providerJobFromDict } from "../core/provider-jobs.js";
+import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _patched = false;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 let _original: Function | null = null;
+let _patchedPrototype: any = null;
 let _clientClass: any = null;
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
@@ -67,6 +75,7 @@ export async function instrumentBedrock(
   }
 
   _original = ClientProto.send;
+  _patchedPrototype = ClientProto;
   _buffer = buffer;
   _pricing = pricing;
 
@@ -75,10 +84,25 @@ export async function instrumentBedrock(
     command: any,
     ...rest: any[]
   ): Promise<any> {
-    // Only intercept InvokeModelCommand (by constructor name convention)
     const commandName: string = command?.constructor?.name ?? "";
-    if (commandName !== "InvokeModelCommand") {
+    if (!["InvokeModelCommand", "StartAsyncInvokeCommand", "GetAsyncInvokeCommand"].includes(commandName)) {
       return _original!.call(this, command, ...rest);
+    }
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _original!.call(this, command, ...rest);
+    }
+
+    if (commandName === "StartAsyncInvokeCommand") {
+      return handleStartAsyncInvoke(this, command, rest);
+    }
+    if (commandName === "GetAsyncInvokeCommand") {
+      return handleGetAsyncInvoke(this, command, rest);
+    }
+
+    const requestedModel = canonicalBedrockModel(command?.input?.modelId);
+    const mode = _pricing?.modelMode(requestedModel);
+    if (["embedding", "image_generation", "image_edit", "rerank"].includes(mode ?? "")) {
+      return handleMeteredInvoke(this, command, rest, requestedModel, mode!);
     }
 
     let task = getCurrentTask();
@@ -101,7 +125,10 @@ export async function instrumentBedrock(
 
     const startTime = performance.now();
     try {
-      const response = await _original!.call(this, command, ...rest);
+      const response = await runWithProviderCapture(
+        "bedrock",
+        () => _original!.call(this, command, ...rest),
+      );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
         const modelId: string = command?.input?.modelId ?? "unknown";
@@ -133,13 +160,15 @@ export async function instrumentBedrock(
  * Remove the monkey-patch and restore the original `send` method.
  */
 export function uninstrumentBedrock(): void {
-  if (!_patched || !_original) return;
+  if (!_patched) return;
 
-  if (_clientClass) {
-    _clientClass.prototype.send = _original;
+  if (_patchedPrototype) {
+    if (_original) _patchedPrototype.send = _original;
+    else delete _patchedPrototype.send;
   }
 
   _original = null;
+  _patchedPrototype = null;
   _buffer = null;
   _pricing = null;
   _patched = false;
@@ -148,6 +177,259 @@ export function uninstrumentBedrock(): void {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+function canonicalBedrockModel(value: unknown): string {
+  const candidate = typeof value === "string" ? value.trim() || "unknown" : "unknown";
+  if (!candidate.startsWith("arn:")) return candidate;
+  const parts = candidate.split(":", 6);
+  if (parts.length !== 6) return "bedrock-resource";
+  const resource = parts[5] ?? "";
+  const slash = resource.indexOf("/");
+  const colon = resource.indexOf(":");
+  const separator = slash >= 0 ? slash : colon;
+  const resourceType = (separator >= 0 ? resource.slice(0, separator) : resource).trim();
+  const resourceId = separator >= 0 ? resource.slice(separator + 1) : "";
+  if (["foundation-model", "inference-profile"].includes(resourceType)) {
+    return resourceId || `bedrock-${resourceType}`;
+  }
+  const normalized = resourceType.toLowerCase().replace(/_/g, "-");
+  return /^[a-z0-9.-]+$/.test(normalized)
+    ? `bedrock-${normalized}`.slice(0, 128)
+    : "bedrock-resource";
+}
+
+function parsedResponseBody(response: any): any {
+  try {
+    const raw = response?.body;
+    if (raw instanceof Uint8Array) return JSON.parse(new TextDecoder().decode(raw));
+    if (typeof raw === "string") return JSON.parse(raw);
+    if (raw && typeof raw === "object") return raw;
+  } catch {
+    // A provider response is always returned even when its telemetry body is new/malformed.
+  }
+  return {};
+}
+
+function parsedRequestBody(command: any): any {
+  try {
+    const raw = command?.input?.body;
+    if (raw instanceof Uint8Array) return JSON.parse(new TextDecoder().decode(raw));
+    if (typeof raw === "string") return JSON.parse(raw);
+    if (raw && typeof raw === "object") return raw;
+  } catch {
+    // Request content is inspected transiently for non-sensitive dimensions only.
+  }
+  return {};
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : undefined;
+}
+
+function responseRequestId(response: any): string | undefined {
+  const value = response?.$metadata?.requestId ?? response?.$metadata?.request_id;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function meteredInvokeMeasurement(
+  mode: string,
+  response: any,
+  command: any,
+  model: string,
+): OperationMeasurement {
+  const body = parsedResponseBody(response);
+  const providerRecordId = responseRequestId(response);
+  if (mode === "embedding") {
+    const usage = body?.usage ?? {};
+    const inputTokens = [
+      usage?.inputTokens, usage?.input_tokens, usage?.totalTokens, usage?.total_tokens,
+      body?.inputTextTokenCount, body?.inputTokenCount, body?.input_tokens,
+    ].map(nonNegativeInteger).find((value) => value !== undefined);
+    return {
+      usageLines: inputTokens !== undefined && inputTokens > 0
+        ? [{ metric: "input_tokens", quantity: inputTokens, unit: "Tokens" }]
+        : [],
+      pricingUsage: inputTokens === undefined ? {} : { input_tokens: inputTokens },
+      providerRecordId,
+      responseModel: model,
+      inputTokens,
+    };
+  }
+  if (mode === "rerank") {
+    return {
+      usageLines: [{ metric: "query_count", quantity: 1, unit: "Queries" }],
+      pricingUsage: { query_count: 1 },
+      providerRecordId,
+      responseModel: model,
+    };
+  }
+
+  const imageValues = Array.isArray(body?.images)
+    ? body.images
+    : Array.isArray(body?.artifacts) ? body.artifacts : [];
+  const count = imageValues.length;
+  const request = parsedRequestBody(command);
+  const config = request?.imageGenerationConfig && typeof request.imageGenerationConfig === "object"
+    ? request.imageGenerationConfig
+    : request;
+  const width = nonNegativeInteger(config?.width);
+  const height = nonNegativeInteger(config?.height);
+  const steps = nonNegativeInteger(config?.steps);
+  const quality = typeof config?.quality === "string" ? config.quality.toLowerCase().slice(0, 256) : undefined;
+  const billingDimensions: Array<readonly [string, string]> = [];
+  if (width !== undefined && width > 0) billingDimensions.push(["image_width", String(width)]);
+  if (height !== undefined && height > 0) billingDimensions.push(["image_height", String(height)]);
+  if (steps !== undefined && steps > 0) billingDimensions.push(["image_steps", String(steps)]);
+  if (quality) billingDimensions.push(["image_quality", quality]);
+  const above1024 = (width ?? 0) > 1024 || (height ?? 0) > 1024;
+  const above512 = (width ?? 0) > 512 || (height ?? 0) > 512;
+  const premium = quality === "premium";
+  const pricingMetric = above1024 && premium
+    ? "output_image_count_above_1024_premium"
+    : above1024 ? "output_image_count_above_1024"
+      : above512 && premium ? "output_image_count_above_512_premium"
+        : above512 ? "output_image_count_above_512"
+          : premium ? "output_image_count_premium" : "output_image_count";
+  const modelCandidates = width && height && steps
+    ? [`${width}-x-${height}/${steps}-steps/bedrock/${model}`, `${width}-x-${height}/${steps}-steps/${model}`]
+    : [];
+  return {
+    usageLines: count > 0 ? [{ metric: "output_image_count", quantity: count, unit: "Images" }] : [],
+    pricingUsage: count > 0 ? { [pricingMetric]: count } : {},
+    providerRecordId,
+    responseModel: model,
+    modelCandidates,
+    billingDimensions,
+  };
+}
+
+async function handleMeteredInvoke(
+  receiver: any,
+  command: any,
+  rest: any[],
+  model: string,
+  mode: string,
+): Promise<any> {
+  const session = new ProviderOperationSession(_pricing!, _buffer!, {
+    taskType: "bedrock.invoke_model",
+    provider: "aws_bedrock",
+    service: "bedrock_runtime",
+    operation: "bedrock.invoke_model",
+    component: "external",
+    model,
+    eventType: "external_cost",
+  });
+  try {
+    const response = await session.invoke(() => _original!.call(receiver, command, ...rest));
+    session.finish(meteredInvokeMeasurement(mode, response, command, model));
+    return response;
+  } catch (error) {
+    session.fail(error);
+    throw error;
+  }
+}
+
+function asyncInvokeIdentity(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function handleStartAsyncInvoke(receiver: any, command: any, rest: any[]): Promise<any> {
+  const model = canonicalBedrockModel(command?.input?.modelId);
+  const session = new ProviderOperationSession(_pricing!, _buffer!, {
+    taskType: "bedrock.async_invoke.start",
+    provider: "aws_bedrock",
+    service: "bedrock_async_invoke",
+    operation: "bedrock.async_invoke.start",
+    component: "external",
+    model,
+    eventType: "external_cost",
+  });
+  try {
+    const response = await session.invoke(() => _original!.call(receiver, command, ...rest));
+    const recordId = asyncInvokeIdentity(response?.invocationArn);
+    if (recordId === undefined) {
+      session.fail(new Error("Bedrock async invoke response omitted invocationArn"));
+      return response;
+    }
+    const now = new Date();
+    const revision = new ProviderJobRevision({
+      taskId: session.task.taskId,
+      provider: "aws_bedrock",
+      service: "bedrock_async_invoke",
+      providerRecordId: recordId,
+      operation: "bedrock.async_invoke.start",
+      component: "external",
+      eventType: "external_cost",
+      resourceType: "model",
+      resourceId: model,
+      status: "submitted",
+      submittedAt: now,
+      observedAt: now,
+      ownsTask: session.autoCreated,
+      billingDimensions: [["output_destination", "s3"]],
+    });
+    session.releaseForProviderJob();
+    try { _buffer!.insertProviderJobRevision(revision); } catch { /* telemetry-only */ }
+    return response;
+  } catch (error) {
+    session.fail(error);
+    throw error;
+  }
+}
+
+async function handleGetAsyncInvoke(receiver: any, command: any, rest: any[]): Promise<any> {
+  const startedAt = performance.now();
+  const response = await suppressNetworkEvent(() => runWithProviderCapture(
+    "aws_bedrock",
+    () => _original!.call(receiver, command, ...rest),
+  ));
+  const recordId = asyncInvokeIdentity(command?.input?.invocationArn);
+  if (recordId === undefined || !_buffer || !_pricing) return response;
+  try {
+    const stored = _buffer.getProviderJob("aws_bedrock", "bedrock_async_invoke", recordId);
+    if (stored === undefined) return response;
+    const previous = providerJobFromDict(stored);
+    const rawStatus = response?.status;
+    const status = rawStatus === "InProgress" ? "running"
+      : rawStatus === "Completed" ? "succeeded"
+        : rawStatus === "Failed" ? "failed" : "unknown";
+    const measurement: OperationMeasurement | undefined = status === "succeeded"
+      ? {
+        usageLines: [{ metric: "request_count", quantity: 1, unit: "Requests" }],
+        pricingUsage: {},
+        responseModel: previous.resourceId,
+      }
+      : undefined;
+    const observedAt = new Date(Math.max(Date.now(), previous.observedAt.getTime()));
+    _buffer.insertProviderJobRevision(new ProviderJobRevision({
+      eventId: previous.eventId,
+      revision: previous.revision + 1,
+      taskId: previous.taskId,
+      provider: previous.provider,
+      service: previous.service,
+      providerRecordId: previous.providerRecordId,
+      operation: previous.operation,
+      component: previous.component,
+      eventType: previous.eventType,
+      resourceType: previous.resourceType,
+      resourceId: previous.resourceId,
+      status,
+      submittedAt: previous.submittedAt,
+      observedAt,
+      ownsTask: previous.ownsTask,
+      billingDimensions: previous.billingDimensions,
+      ...providerJobMeasurementFields(_pricing, previous.resourceId, measurement),
+      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      errorType: status === "failed" ? "bedrock_async_invoke_failed" : undefined,
+      capability: previous.capability,
+    }));
+  } catch {
+    // Reconciliation is telemetry-only and must never replace a valid AWS response.
+  }
+  return response;
+}
 
 /**
  * Parse token usage from a Bedrock InvokeModel response body.

@@ -288,10 +288,8 @@ _CREATE_OUTCOME_INDEXES = [
 ]
 
 _CREATE_REVENUE_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_revenues_sync "
-    "ON revenues(sync_status, observed_at);",
-    "CREATE INDEX IF NOT EXISTS idx_revenues_task "
-    "ON revenues(task_id, observed_at);",
+    "CREATE INDEX IF NOT EXISTS idx_revenues_sync " "ON revenues(sync_status, observed_at);",
+    "CREATE INDEX IF NOT EXISTS idx_revenues_task " "ON revenues(task_id, observed_at);",
 ]
 
 _CREATE_PROVIDER_JOB_INDEXES = [
@@ -386,9 +384,7 @@ class SQLiteStorage:
             # 4. The Lock serializes same-thread access from concurrent coroutines
             self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         except sqlite3.OperationalError as exc:
-            raise RuntimeError(
-                f"Cannot open dexcost database {self._path}: {exc}"
-            ) from exc
+            raise RuntimeError(f"Cannot open dexcost database {self._path}: {exc}") from exc
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.execute("PRAGMA foreign_keys=ON;")
@@ -585,9 +581,7 @@ class SQLiteStorage:
     def get_task(self, task_id: str) -> Task | None:
         """Return a single task by ID, or None if not found."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         if row is None:
             return None
         return self._row_to_task(row)
@@ -650,12 +644,8 @@ class SQLiteStorage:
                     event.occurred_at = stored.occurred_at
                     return
                 if idempotency_hash(stored) is not None:
-                    raise ValueError(
-                        "idempotency key was reused for different economic facts"
-                    )
-                raise ValueError(
-                    f"event {event.event_id} already exists with different contents"
-                )
+                    raise ValueError("idempotency key was reused for different economic facts")
+                raise ValueError(f"event {event.event_id} already exists with different contents")
             self._conn.execute(
                 """INSERT INTO events (
                     event_id, task_id, event_type, provider, model,
@@ -766,7 +756,10 @@ class SQLiteStorage:
             sql = "SELECT e.* FROM events e"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY e.timestamp DESC"
+        # Multiple operations can legitimately share the same wall-clock
+        # timestamp on coarse clocks. SQLite otherwise leaves tied rows in an
+        # unspecified order, so use insertion order as the stable tiebreaker.
+        sql += " ORDER BY e.timestamp DESC, e.rowid DESC"
 
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
@@ -777,7 +770,7 @@ class SQLiteStorage:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM events WHERE sync_status = 'pending' "
-                "ORDER BY timestamp ASC LIMIT ?",
+                "ORDER BY timestamp ASC, rowid ASC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_event(r) for r in rows]
@@ -788,8 +781,7 @@ class SQLiteStorage:
             return
         placeholders = ",".join("?" for _ in event_ids)
         sql = (
-            "UPDATE events SET sync_status = 'synced' "
-            "WHERE event_id IN (" + placeholders + ")"
+            "UPDATE events SET sync_status = 'synced' " "WHERE event_id IN (" + placeholders + ")"
         )
         with self._lock:
             self._conn.execute(sql, event_ids)
@@ -812,6 +804,16 @@ class SQLiteStorage:
         with self._lock:
             self._conn.execute(sql, event_ids)
             self._conn.commit()
+
+    def requeue_quarantined_events(self) -> int:
+        """Requeue retained conversion failures without mutating event data."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE events SET sync_status = 'pending' " "WHERE sync_status = 'quarantined'"
+            )
+            restored = cursor.rowcount
+            self._conn.commit()
+        return restored
 
     def query_quarantined_events(self, limit: int = 100) -> list[Event]:
         """Return quarantined conversion failures, oldest first."""
@@ -858,10 +860,7 @@ class SQLiteStorage:
         if not task_ids:
             return
         placeholders = ",".join("?" for _ in task_ids)
-        sql = (
-            "UPDATE tasks SET sync_status = 'synced' "
-            "WHERE task_id IN (" + placeholders + ")"
-        )
+        sql = "UPDATE tasks SET sync_status = 'synced' " "WHERE task_id IN (" + placeholders + ")"
         with self._lock:
             self._conn.execute(sql, task_ids)
             self._conn.commit()
@@ -959,8 +958,7 @@ class SQLiteStorage:
             return
         with self._lock:
             self._conn.executemany(
-                "UPDATE outcomes SET sync_status='synced' "
-                "WHERE outcome_id=? AND revision=?",
+                "UPDATE outcomes SET sync_status='synced' " "WHERE outcome_id=? AND revision=?",
                 revisions,
             )
             self._conn.commit()
@@ -997,8 +995,7 @@ class SQLiteStorage:
                 return
 
             previous = self._conn.execute(
-                "SELECT * FROM revenues WHERE revenue_id=? "
-                "ORDER BY revision DESC LIMIT 1",
+                "SELECT * FROM revenues WHERE revenue_id=? " "ORDER BY revision DESC LIMIT 1",
                 (str(revenue.revenue_id),),
             ).fetchone()
             expected_revision = (int(previous["revision"]) if previous is not None else 0) + 1
@@ -1018,8 +1015,7 @@ class SQLiteStorage:
                 )
                 if immutable_changed:
                     raise ValueError(
-                        "revenue cannot change task_id, outcome_id, or source "
-                        "across revisions"
+                        "revenue cannot change task_id, outcome_id, or source " "across revisions"
                     )
 
                 allowed = {
@@ -1035,9 +1031,7 @@ class SQLiteStorage:
                         f"{previous_state} -> {revenue.state}"
                     )
                 previous_currency = previous["currency"]
-                current_currency = (
-                    revenue.amount.currency if revenue.amount is not None else None
-                )
+                current_currency = revenue.amount.currency if revenue.amount is not None else None
                 if (
                     previous_currency is not None
                     and current_currency is not None
@@ -1100,8 +1094,7 @@ class SQLiteStorage:
             return
         with self._lock:
             self._conn.executemany(
-                "UPDATE revenues SET sync_status='synced' "
-                "WHERE revenue_id=? AND revision=?",
+                "UPDATE revenues SET sync_status='synced' " "WHERE revenue_id=? AND revision=?",
                 revisions,
             )
             self._conn.commit()
@@ -1142,9 +1135,7 @@ class SQLiteStorage:
                 (str(job.event_id),),
             ).fetchone()
             previous = (
-                self._row_to_provider_job(previous_row)
-                if previous_row is not None
-                else None
+                self._row_to_provider_job(previous_row) if previous_row is not None else None
             )
             expected_revision = (previous.revision if previous is not None else 0) + 1
             if job.revision != expected_revision:
@@ -1215,10 +1206,7 @@ class SQLiteStorage:
                         job.observed_at.isoformat(),
                         1 if job.owns_task else 0,
                         json.dumps(
-                            [
-                                {"key": key, "value": value}
-                                for key, value in job.billing_dimensions
-                            ]
+                            [{"key": key, "value": value} for key, value in job.billing_dimensions]
                         ),
                         json.dumps([line.to_dict() for line in job.usage]),
                         str(job.cost_amount) if job.cost_amount is not None else None,
@@ -1255,8 +1243,7 @@ class SQLiteStorage:
         """Return every immutable revision for one provider job."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM provider_job_revisions WHERE event_id=? "
-                "ORDER BY revision ASC",
+                "SELECT * FROM provider_job_revisions WHERE event_id=? " "ORDER BY revision ASC",
                 (event_id,),
             ).fetchall()
         return [self._row_to_provider_job(row) for row in rows]
@@ -1274,9 +1261,7 @@ class SQLiteStorage:
             ).fetchone()
         return self._row_to_provider_job(row) if row is not None else None
 
-    def query_provider_jobs_for_sync(
-        self, limit: int = 1000
-    ) -> list[ProviderJobRevision]:
+    def query_provider_jobs_for_sync(self, limit: int = 1000) -> list[ProviderJobRevision]:
         """Return pending provider-job revisions in causal order."""
         with self._lock:
             rows = self._conn.execute(
@@ -1286,9 +1271,7 @@ class SQLiteStorage:
             ).fetchall()
         return [self._row_to_provider_job(row) for row in rows]
 
-    def query_current_provider_jobs_for_task(
-        self, task_id: str
-    ) -> list[ProviderJobRevision]:
+    def query_current_provider_jobs_for_task(self, task_id: str) -> list[ProviderJobRevision]:
         """Return exactly one latest snapshot for every job on a task."""
         with self._lock:
             rows = self._conn.execute(
@@ -1318,9 +1301,7 @@ class SQLiteStorage:
             )
             self._conn.commit()
 
-    def mark_provider_jobs_quarantined(
-        self, revisions: list[tuple[str, int]]
-    ) -> None:
+    def mark_provider_jobs_quarantined(self, revisions: list[tuple[str, int]]) -> None:
         """Retain an undeliverable provider-job revision without queue poison."""
         if not revisions:
             return
@@ -1335,8 +1316,7 @@ class SQLiteStorage:
     def delivery_counts(self) -> dict[str, Any]:
         """Return one consistent snapshot of every durable delivery queue."""
         with self._lock:
-            row = self._conn.execute(
-                """SELECT
+            row = self._conn.execute("""SELECT
                      (SELECT COUNT(*) FROM events
                        WHERE sync_status='pending') AS pending_events,
                      (SELECT COUNT(*) FROM events
@@ -1370,8 +1350,7 @@ class SQLiteStorage:
                        UNION ALL
                        SELECT MIN(observed_at) AS pending_at FROM provider_job_revisions
                          WHERE sync_status='pending'
-                     )) AS oldest_pending_at"""
-            ).fetchone()
+                     )) AS oldest_pending_at""").fetchone()
         if row is None:  # pragma: no cover - aggregate query always returns one row
             return {}
         return {
@@ -1410,15 +1389,15 @@ class SQLiteStorage:
     def purge_old_pending(self, max_age_days: int = 7) -> int:
         """Remove pending or quarantined telemetry older than *max_age_days*.
 
-        Safety net for events that can never be synced (invalid API key, etc.).
+        This is an explicit destructive maintenance operation. The background
+        worker intentionally never calls it: financial attribution waiting on
+        authentication, transport, or a converter upgrade must remain durable.
         Outcome revisions are retained because removing one revision would
         corrupt the local sequence required by a later correction.
         Returns the number of deleted rows.
         """
         with self._lock:
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(days=max_age_days)
-            ).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
             cursor = self._conn.execute(
                 "DELETE FROM events "
                 "WHERE sync_status IN ('pending', 'quarantined') AND timestamp < ?",
@@ -1482,9 +1461,7 @@ class SQLiteStorage:
     def _row_to_provider_job(row: sqlite3.Row) -> ProviderJobRevision:
         raw_usage = json.loads(row["usage_json"])
         raw_capability = (
-            json.loads(row["capability_json"])
-            if row["capability_json"] is not None
-            else None
+            json.loads(row["capability_json"]) if row["capability_json"] is not None else None
         )
         return ProviderJobRevision.from_dict(
             {
@@ -1504,13 +1481,8 @@ class SQLiteStorage:
                 "submitted_at": row["submitted_at"],
                 "observed_at": row["observed_at"],
                 "owns_task": bool(row["owns_task"]),
-                "billing_dimensions": json.loads(
-                    row["billing_dimensions_json"]
-                ),
-                "usage": [
-                    ProviderJobUsageLine.from_dict(line).to_dict()
-                    for line in raw_usage
-                ],
+                "billing_dimensions": json.loads(row["billing_dimensions_json"]),
+                "usage": [ProviderJobUsageLine.from_dict(line).to_dict() for line in raw_usage],
                 "cost_amount": row["cost_amount"],
                 "cost_source": row["cost_source"],
                 "cost_confidence": row["cost_confidence"],
@@ -1555,14 +1527,10 @@ class SQLiteStorage:
             external_cost_usd=_dec(row["external_cost_usd"]),
             compute_cost_usd=_dec(row["compute_cost_usd"]),
             network_cost_usd=(
-                _dec(row["network_cost_usd"])
-                if "network_cost_usd" in row_keys
-                else Decimal("0")
+                _dec(row["network_cost_usd"]) if "network_cost_usd" in row_keys else Decimal("0")
             ),
             gpu_cost_usd=(
-                _dec(row["gpu_cost_usd"])
-                if "gpu_cost_usd" in row_keys
-                else Decimal("0")
+                _dec(row["gpu_cost_usd"]) if "gpu_cost_usd" in row_keys else Decimal("0")
             ),
             total_cost_usd=_dec(row["total_cost_usd"]),
             total_input_tokens=row["total_input_tokens"] or 0,
@@ -1579,9 +1547,7 @@ class SQLiteStorage:
             agent_version=(row["agent_version"] if "agent_version" in row_keys else None),
             workflow_id=row["workflow_id"] if "workflow_id" in row_keys else None,
             workflow_session_id=(
-                row["workflow_session_id"]
-                if "workflow_session_id" in row_keys
-                else None
+                row["workflow_session_id"] if "workflow_session_id" in row_keys else None
             ),
             user_id=row["user_id"] if "user_id" in row_keys else None,
             product_id=row["product_id"] if "product_id" in row_keys else None,

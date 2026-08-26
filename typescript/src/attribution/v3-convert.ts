@@ -286,14 +286,12 @@ function unknownExplicitUsage(event: CostEvent): {
   };
 }
 
-function explicitUsageLines(event: CostEvent): {
-  component: AttributionComponent;
-  usage: Array<{ metric: string; quantity: string; unit: string }>;
-  durationSeconds?: number;
-} | null | undefined {
+function explicitUsageLines(
+  event: CostEvent,
+): Array<{ metric: string; quantity: string; unit: string }> | null | undefined {
   const raw = event.details["attribution_usage_lines"];
   if (raw === undefined) return undefined;
-  if (!Array.isArray(raw) || raw.length > 64) return null;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 32) return null;
   const usage: Array<{ metric: string; quantity: string; unit: string }> = [];
   const identities = new Set<string>();
   for (const item of raw) {
@@ -308,11 +306,7 @@ function explicitUsageLines(event: CostEvent): {
     identities.add(identity);
     usage.push({ metric, quantity, unit });
   }
-  return {
-    component: "external",
-    usage,
-    durationSeconds: numberDetail(event.details, "attribution_usage_duration_seconds"),
-  };
+  return usage;
 }
 
 /** Convert durable v1 capture into the strict, details-free v3 observation. */
@@ -322,12 +316,19 @@ export function toAttributionObservationV3(
 ): AttributionEventV3 | null {
   const explicitLines = explicitUsageLines(event);
   if (explicitLines === null) return null;
-  const explicit = explicitLines ?? unknownExplicitUsage(event);
   const gpuSignal = event.eventType === "gpu_utilization_signal" ? gpuSignalUsage(event) : undefined;
-  const legacy = explicit === undefined && gpuSignal === undefined
-    ? attributionComponentAndUsage(event)
+  const legacy = gpuSignal === undefined ? attributionComponentAndUsage(event) : undefined;
+  const unknownExplicit = explicitLines === undefined && gpuSignal === undefined
+    ? unknownExplicitUsage(event)
     : undefined;
-  const mapped = explicit ?? gpuSignal ?? legacy;
+  const mapped = explicitLines !== undefined
+    ? {
+        component: legacy?.component ?? "external" as AttributionComponent,
+        usage: explicitLines,
+        durationSeconds: numberDetail(event.details, "attribution_usage_duration_seconds")
+          ?? legacy?.durationSeconds,
+      }
+    : gpuSignal ?? unknownExplicit ?? legacy;
   if (mapped === null || mapped === undefined) return null;
 
   const explicitBillingDimensions = explicitDimensions(event.details);

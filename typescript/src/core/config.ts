@@ -61,6 +61,8 @@ export interface ResolvedConfig {
 export interface ResolvedCatalogTrustPolicy {
   trustedKeys: Readonly<Record<string, string>>;
   requireSignature: boolean;
+  /** Remote/cache activation is disabled until trust exists or unsigned mode was explicit. */
+  remoteRefreshEnabled: boolean;
 }
 
 const CATALOG_KEY_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
@@ -147,6 +149,13 @@ function catalogSignatureRequirementFromEnvironment(
   throw new TypeError(`${CATALOG_REQUIRE_SIGNATURE_ENV} must be true or false`);
 }
 
+function catalogUnsignedOverrideRequested(requireSignature: boolean | undefined): boolean {
+  if (requireSignature !== undefined) return requireSignature === false;
+  return catalogSignatureRequirementFromEnvironment(
+    process.env[CATALOG_REQUIRE_SIGNATURE_ENV],
+  ) === false;
+}
+
 /**
  * Resolve catalog trust without ever silently weakening an invalid policy.
  * Explicit options override their corresponding environment settings. When
@@ -189,7 +198,12 @@ export function resolveCatalogTrustPolicy(
   if (resolvedRequirement && Object.keys(resolvedKeys).length === 0) {
     throw new TypeError("catalog signature verification requires at least one trusted public key");
   }
-  return { trustedKeys: Object.freeze({ ...resolvedKeys }), requireSignature: resolvedRequirement };
+  return {
+    trustedKeys: Object.freeze({ ...resolvedKeys }),
+    requireSignature: resolvedRequirement,
+    remoteRefreshEnabled: Object.keys(resolvedKeys).length > 0 ||
+      catalogUnsignedOverrideRequested(requireSignature),
+  };
 }
 
 /**

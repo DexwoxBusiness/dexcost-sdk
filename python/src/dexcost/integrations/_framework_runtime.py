@@ -419,7 +419,10 @@ def _finish_result(
     return _replace_streams(result, session, wrappers, force=force_stream)
 
 
-class FrameworkExecutionProxy(wrapt.ObjectProxy):  # type: ignore[misc]
+# wrapt is untyped in older environments and generic in its current stubs, so
+# the same runtime base produces different checker codes across the supported
+# dependency range. The ignore is confined to this third-party base expression.
+class FrameworkExecutionProxy(wrapt.ObjectProxy):  # type: ignore
     """Transparent proxy that tracks selected public execution methods."""
 
     def __init__(
@@ -475,7 +478,7 @@ class FrameworkExecutionProxy(wrapt.ObjectProxy):  # type: ignore[misc]
         )
 
     def __getattr__(self, name: str) -> Any:
-        value = super().__getattr__(name)
+        value = getattr(self.__wrapped__, name)
         if name not in self._self_methods or not callable(value):
             return value
 

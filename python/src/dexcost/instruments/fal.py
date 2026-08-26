@@ -10,6 +10,7 @@ from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
+from dexcost.instruments._capture import provider_capture_callable
 from dexcost.instruments._provider_metering import (
     AsyncProviderStream,
     OperationMeasurement,
@@ -87,8 +88,7 @@ def _model(application: str, path: Any = "") -> str:
 def _media_kind(application: str, result: Any = None) -> str | None:
     images = _value(result, "images")
     if (
-        isinstance(images, Sequence)
-        and not isinstance(images, (str, bytes, bytearray))
+        isinstance(images, Sequence) and not isinstance(images, (str, bytes, bytearray))
     ) or _value(result, "image") is not None:
         return "image"
     if _value(result, "video") is not None or _value(result, "video_url") is not None:
@@ -157,8 +157,7 @@ def _measurement(
     image = _value(result, "image")
     image_items: Sequence[Any] = (
         images
-        if isinstance(images, Sequence)
-        and not isinstance(images, (str, bytes, bytearray))
+        if isinstance(images, Sequence) and not isinstance(images, (str, bytes, bytearray))
         else (() if image is None else (image,))
     )
     if image_items:
@@ -512,7 +511,11 @@ def _patch(owner: Any, name: str, replacement: Any, key: str) -> None:
     original = getattr(owner, name, None)
     if callable(original):
         _originals[key] = (owner, name, original)
-        setattr(owner, name, replacement)
+        setattr(
+            owner,
+            name,
+            provider_capture_callable("fal", replacement, original),
+        )
 
 
 def _class_sync_wrapper(key: str, method: str) -> Any:
@@ -644,9 +647,11 @@ def instrument_fal(tracker: Any) -> None:
                 replacement = (
                     _class_async_stream_wrapper(key)
                     if is_async and method == "stream"
-                    else _class_async_wrapper(key, method)
-                    if is_async
-                    else _class_sync_wrapper(key, method)
+                    else (
+                        _class_async_wrapper(key, method)
+                        if is_async
+                        else _class_sync_wrapper(key, method)
+                    )
                 )
                 _patch(owner, method, replacement, key)
         for name, method, is_async in (
@@ -669,9 +674,11 @@ def instrument_fal(tracker: Any) -> None:
             replacement = (
                 _module_async_stream_wrapper(key)
                 if is_async and method == "stream"
-                else _module_async_wrapper(key, method)
-                if is_async
-                else _module_sync_wrapper(key, method)
+                else (
+                    _module_async_wrapper(key, method)
+                    if is_async
+                    else _module_sync_wrapper(key, method)
+                )
             )
             _patch(module, name, replacement, key)
         for class_name, is_async in (

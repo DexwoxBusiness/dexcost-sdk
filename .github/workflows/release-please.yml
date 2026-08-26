@@ -54,11 +54,44 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           target-branch: main
 
+  verify-python-release:
+    name: Verify Python release (${{ matrix.python-version }})
+    needs: release-please
+    if: ${{ needs.release-please.outputs.python_released == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/tiktoken
+      CUSTOM_TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/tiktoken
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Verify tests and frozen Python reference contract
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all]"
+          python -m pip install pytest pytest-asyncio mypy==2.3.1 ruff==0.16.4
+          python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+          python -m ruff check src
+          python -m mypy src
+          python scripts/freeze_contract.py --check
+          python -m pytest tests/ -q
+
   publish-python-pypi:
     name: Publish Python to PyPI
-    needs: release-please
-    # Only run when the Python package was actually released this push.
-    if: ${{ needs.release-please.outputs.python_released == 'true' }}
+    needs: [release-please, verify-python-release]
+    # Publish only after every supported Python version has passed the exact
+    # release suite. ``always`` lets the condition evaluate when verification
+    # is skipped because this push did not create a Python release.
+    if: ${{ always() && needs.release-please.outputs.python_released == 'true' && needs.verify-python-release.result == 'success' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -71,14 +104,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Verify tests and frozen Python reference contract
-        working-directory: python
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e . pytest pytest-asyncio
-          python scripts/freeze_contract.py --check
-          python -m pytest tests/ -q
 
       - name: Build sdist + wheel
         working-directory: python

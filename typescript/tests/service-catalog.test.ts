@@ -19,6 +19,47 @@ describe("ServiceCatalog", () => {
     expect(catalog.catalogVersion.length).toBe(12);
   });
 
+  it("resolves exact MCP tool aliases from the active catalog", () => {
+    const catalog = new ServiceCatalog(undefined, {
+      example_api: {
+        display_name: "Example API",
+        domains: ["api.example.test"],
+        category: "tool",
+        pricing_model: "per_request",
+        cost_per_request_usd: "0.01",
+        cost_extraction: { type: "fixed" },
+        source: "test",
+        last_verified: "2026-08-25",
+        mcp_tools: ["example_search", "example-search"],
+      },
+    });
+
+    expect(catalog.lookupMcpTool("example_search")).toBe(catalog.lookup("https://api.example.test"));
+    expect(catalog.lookupMcpTool("example-search")).not.toBeNull();
+    expect(catalog.lookupMcpTool("Example_Search")).toBeNull();
+  });
+
+  it("rejects duplicate MCP alias ownership atomically", () => {
+    const entry = (domain: string) => ({
+      display_name: domain,
+      domains: [domain],
+      category: "tool",
+      pricing_model: "per_request",
+      cost_per_request_usd: "0.01",
+      cost_extraction: { type: "fixed" },
+      source: "test",
+      last_verified: "2026-08-25",
+      mcp_tools: ["shared_tool"],
+    });
+    const catalog = new ServiceCatalog(undefined, {
+      first: entry("first.test"),
+      second: entry("second.test"),
+    });
+
+    expect(catalog.entryCount).toBe(0);
+    expect(catalog.lookupMcpTool("shared_tool")).toBeNull();
+  });
+
   // -----------------------------------------------------------------------
   // Domain matching — exact
   // -----------------------------------------------------------------------

@@ -300,10 +300,7 @@ class TestSyncLifecycle:
 
     def test_sync_status_column_exists(self, storage: SQLiteStorage) -> None:
         """events table must have a sync_status column."""
-        cols = [
-            r[1]
-            for r in storage._conn.execute("PRAGMA table_info(events)").fetchall()
-        ]
+        cols = [r[1] for r in storage._conn.execute("PRAGMA table_info(events)").fetchall()]
         assert "sync_status" in cols
 
     def test_sync_status_defaults_to_pending(self, storage: SQLiteStorage) -> None:
@@ -316,9 +313,7 @@ class TestSyncLifecycle:
         ).fetchone()
         assert row["sync_status"] == "pending"
 
-    def test_query_events_for_sync_returns_pending(
-        self, storage: SQLiteStorage
-    ) -> None:
+    def test_query_events_for_sync_returns_pending(self, storage: SQLiteStorage) -> None:
         """query_events_for_sync returns only pending events."""
         e1 = Event(event_type="llm_call", cost_usd=Decimal("0.01"))
         e2 = Event(event_type="llm_call", cost_usd=Decimal("0.02"))
@@ -331,9 +326,7 @@ class TestSyncLifecycle:
         assert e1.event_id in event_ids
         assert e2.event_id in event_ids
 
-    def test_query_events_for_sync_respects_limit(
-        self, storage: SQLiteStorage
-    ) -> None:
+    def test_query_events_for_sync_respects_limit(self, storage: SQLiteStorage) -> None:
         """query_events_for_sync honours an optional limit parameter."""
         for _ in range(5):
             storage.insert_event(Event(event_type="llm_call", cost_usd=Decimal("0.01")))
@@ -363,9 +356,7 @@ class TestSyncLifecycle:
         ).fetchone()
         assert row2["sync_status"] == "pending"
 
-    def test_synced_events_excluded_from_query_for_sync(
-        self, storage: SQLiteStorage
-    ) -> None:
+    def test_synced_events_excluded_from_query_for_sync(self, storage: SQLiteStorage) -> None:
         """After mark_synced, those events should not appear in query_events_for_sync."""
         e1 = Event(event_type="llm_call", cost_usd=Decimal("0.01"))
         e2 = Event(event_type="llm_call", cost_usd=Decimal("0.02"))
@@ -388,9 +379,26 @@ class TestSyncLifecycle:
         storage.mark_quarantined([str(event.event_id)])
 
         assert storage.query_events_for_sync() == []
-        assert [item.event_id for item in storage.query_quarantined_events()] == [
-            event.event_id
-        ]
+        assert [item.event_id for item in storage.query_quarantined_events()] == [event.event_id]
+
+    def test_requeue_quarantined_events_preserves_original_payload(
+        self, storage: SQLiteStorage
+    ) -> None:
+        event = Event(
+            event_type="llm_call",
+            provider="openrouter",
+            model="anthropic/claude-sonnet-4.5",
+            cost_usd=Decimal("0.01"),
+            details={"attribution_usage_lines": []},
+        )
+        storage.insert_event(event)
+        storage.mark_quarantined([str(event.event_id)])
+
+        assert storage.requeue_quarantined_events() == 1
+
+        pending = storage.query_events_for_sync()
+        assert pending == [event]
+        assert storage.query_quarantined_events() == []
 
     def test_update_event_requeues_a_corrected_quarantined_event(
         self, storage: SQLiteStorage
@@ -402,9 +410,7 @@ class TestSyncLifecycle:
         event.event_type = "llm_call"
         storage.update_event(event)
 
-        assert [item.event_id for item in storage.query_events_for_sync()] == [
-            event.event_id
-        ]
+        assert [item.event_id for item in storage.query_events_for_sync()] == [event.event_id]
         assert storage.query_quarantined_events() == []
 
     def test_mark_synced_empty_list_is_noop(self, storage: SQLiteStorage) -> None:
@@ -418,9 +424,7 @@ class TestSyncLifecycle:
         ).fetchall()
         assert len(rows) == 1
 
-    def test_update_event_remarks_sync_status_pending(
-        self, storage: SQLiteStorage
-    ) -> None:
+    def test_update_event_remarks_sync_status_pending(self, storage: SQLiteStorage) -> None:
         """update_event on a synced row resets sync_status back to 'pending'.
 
         Mirrors update_task. Without this, finalize-time mutations to an

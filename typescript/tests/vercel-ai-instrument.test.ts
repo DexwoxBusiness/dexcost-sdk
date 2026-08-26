@@ -55,6 +55,12 @@ function createFakeAiModule() {
       };
       return iterable;
     },
+    rerank: async function (opts: { documents?: unknown[] }): Promise<unknown> {
+      return {
+        ranking: [{ originalIndex: 0, score: 0.9, document: opts.documents?.[0] }],
+        response: { id: "rank-123", modelId: "rerank-v3.5", timestamp: new Date() },
+      };
+    },
   };
 }
 
@@ -249,6 +255,31 @@ describe("Vercel AI SDK instrumentation", () => {
     const events = buffer.getAllEvents();
     expect(events[0].latencyMs).toBeDefined();
     expect(typeof events[0].latencyMs).toBe("number");
+  });
+
+  it("attributes rerank usage and provider response identity without retaining documents", async () => {
+    await instrumentVercelAi(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const result = await fakeAi.rerank({
+        model: { modelId: "rerank-v3.5", provider: "cohere.reranking" },
+        documents: ["private document one", "private document two"],
+      } as any);
+      expect((result as any).response.id).toBe("rank-123");
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("external_cost");
+    expect(events[0].provider).toBe("cohere");
+    expect(events[0].serviceName).toBe("rerank");
+    expect(events[0].model).toBe("rerank-v3.5");
+    expect(events[0].details.provider_record_id).toBe("rank-123");
+    expect(events[0].details.attribution_usage_lines).toEqual([
+      { metric: "query_count", quantity: "1", unit: "Queries" },
+    ]);
+    expect(JSON.stringify(events[0].details)).not.toContain("private document");
   });
 
   it("records AI SDK v5+ usage field names for generateText", async () => {

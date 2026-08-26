@@ -220,6 +220,52 @@ describe("durable v1 capture to attribution v3 conversion", () => {
     expect(converted).not.toHaveProperty("cost_evidence");
   });
 
+  it("preserves provider-native multiline usage on known event types", () => {
+    const converted = toAttributionObservationV3(createCostEvent({
+      ...base,
+      eventType: "llm_call",
+      provider: "openrouter",
+      model: "openrouter/anthropic/claude-sonnet-4",
+      inputTokens: 999,
+      outputTokens: 999,
+      details: {
+        attribution_usage_duration_seconds: "2.5",
+        attribution_usage_lines: [
+          { metric: "input_tokens", quantity: "10", unit: "Tokens" },
+          { metric: "cache_read_input_tokens", quantity: "20", unit: "Tokens" },
+          { metric: "output_tokens", quantity: "5", unit: "Tokens" },
+        ],
+      },
+    }));
+    expect(converted?.component).toBe("llm");
+    expect(converted?.usage.map(({ metric, quantity, unit }) => ({ metric, quantity, unit })))
+      .toEqual([
+        { metric: "input_tokens", quantity: "10", unit: "Tokens" },
+        { metric: "cache_read_input_tokens", quantity: "20", unit: "Tokens" },
+        { metric: "output_tokens", quantity: "5", unit: "Tokens" },
+      ]);
+    expect(converted?.usage_period).toEqual({
+      start_at: "2026-08-11T09:59:57.623000Z",
+      end_at: "2026-08-11T10:00:00.123000Z",
+    });
+  });
+
+  it("rejects empty, oversized, duplicate, and malformed multiline usage", () => {
+    const rows = Array.from({ length: 33 }, (_, index) => ({
+      metric: `meter_${index}`, quantity: "1", unit: "Units",
+    }));
+    for (const usage of [
+      [], rows,
+      [{ metric: "input_tokens", quantity: "1", unit: "Tokens" },
+        { metric: "input_tokens", quantity: "2", unit: "Tokens" }],
+      [{ metric: "Input Tokens", quantity: "1", unit: "Tokens" }],
+    ]) {
+      expect(toAttributionObservationV3(createCostEvent({
+        ...base, eventType: "llm_call", details: { attribution_usage_lines: usage },
+      }))).toBeNull();
+    }
+  });
+
   it("retains GPU utilization as non-monetary extensible meters", () => {
     const converted = toAttributionObservationV3(createCostEvent({
       ...base,

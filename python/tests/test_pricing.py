@@ -54,7 +54,15 @@ def minimal_data(tmp_path: Path) -> Path:
             "output_cost_per_token": 0.000015,
             "cache_read_input_token_cost": 0.0000003,
             "cache_creation_input_token_cost": 0.00000375,
+            "cache_creation_input_token_cost_above_1hr": 0.000006,
             "litellm_provider": "anthropic",
+        },
+        "us.amazon.nova-cache-test": {
+            "input_cost_per_token": 0.000001,
+            "output_cost_per_token": 0.000004,
+            "cache_read_input_token_cost": 0.0000001,
+            "cache_creation_input_token_cost": 0.00000125,
+            "litellm_provider": "bedrock_converse",
         },
         "gpt-3.5-turbo": {
             "input_cost_per_token": 0.0000005,
@@ -119,6 +127,13 @@ class TestCostResult:
         )
         with pytest.raises(AttributeError):
             r.cost_usd = Decimal("1")  # type: ignore[misc]
+
+
+def test_model_mode_uses_catalog_resolution(engine: PricingEngine) -> None:
+    assert engine.model_mode("gpt-4o") == "chat"
+    assert engine.model_mode("missing-model") is None
+    with pytest.raises(ValueError, match="non-empty"):
+        engine.model_mode("")
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +204,83 @@ class TestMeteredCosts:
         result = engine.get_metered_cost("tts-test", {"characters": "250"})
         assert result.cost_usd == Decimal("0.00250")
         assert result.cost_confidence == "computed"
+
+    def test_image_tiers_follow_fields_on_the_resolved_model(
+        self, engine: PricingEngine
+    ) -> None:
+        engine.replace_catalog(
+            {
+                "amazon.titan-image-generator-v1": {
+                    "output_cost_per_image": 0.008,
+                    "output_cost_per_image_premium_image": 0.01,
+                    "output_cost_per_image_above_512_and_512_pixels": 0.01,
+                    "output_cost_per_image_above_512_and_512_pixels_and_premium_image": 0.012,
+                },
+                "amazon.titan-image-generator-v2:0": {
+                    "output_cost_per_image": 0.008,
+                    "output_cost_per_image_premium_image": 0.01,
+                    "output_cost_per_image_above_1024_and_1024_pixels": 0.01,
+                    "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image": 0.012,
+                },
+            },
+            "image-tier-test",
+        )
+        cases = (
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_premium",
+                "0.01",
+                "output_cost_per_image_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_512",
+                "0.01",
+                "output_cost_per_image_above_512_and_512_pixels",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_512",
+                "0.008",
+                "output_cost_per_image",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_512_premium",
+                "0.012",
+                "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_512_premium",
+                "0.01",
+                "output_cost_per_image_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_1024",
+                "0.01",
+                "output_cost_per_image_above_1024_and_1024_pixels",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_1024_premium",
+                "0.012",
+                "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_1024_premium",
+                "0.012",
+                "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image",
+            ),
+        )
+        for model, dimension, expected_cost, expected_field in cases:
+            result = engine.get_metered_cost(model, {dimension: 1})
+            assert result.cost_usd == Decimal(expected_cost)
+            assert result.cost_confidence == "computed"
+            assert result.unpriced_dimensions == ()
+            assert result.lines[0].rate_field == expected_field
 
     def test_candidate_selects_resolution_specific_video_sku(
         self, engine: PricingEngine
@@ -335,6 +427,33 @@ class TestCachedTokens:
             cache_creation_tokens=5000,
         )
         assert result.cost_usd == Decimal("0.01878000")
+        assert result.cost_confidence == "computed"
+
+    def test_anthropic_one_hour_cache_creation_uses_its_own_rate(
+        self, engine: PricingEngine
+    ) -> None:
+        result = engine.get_cost(
+            "claude-3-5-sonnet-20241022",
+            input_tokens=10,
+            output_tokens=0,
+            cache_creation_tokens=20,
+            cache_creation_tokens_1h=30,
+        )
+        assert result.cost_usd == Decimal("0.00028500")
+        assert result.cost_confidence == "computed"
+
+    def test_bedrock_converse_cache_buckets_are_disjoint(
+        self, engine: PricingEngine
+    ) -> None:
+        """Converse reports normal, cache-read, and cache-write input separately."""
+        result = engine.get_cost(
+            "us.amazon.nova-cache-test",
+            input_tokens=10,
+            output_tokens=3,
+            cached_tokens=100,
+            cache_creation_tokens=20,
+        )
+        assert result.cost_usd == Decimal("0.000057000")
         assert result.cost_confidence == "computed"
 
     def test_no_cache_rate_model(self, engine: PricingEngine) -> None:

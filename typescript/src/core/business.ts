@@ -19,6 +19,28 @@ function requireRevision(value: number, name: string): number {
   return value;
 }
 
+function requireDate(value: Date | undefined, name: string): Date {
+  const resolved = value ?? new Date();
+  if (!(resolved instanceof Date) || !Number.isFinite(resolved.getTime())) {
+    throw new Error(`${name} must be a valid Date`);
+  }
+  return new Date(resolved.getTime());
+}
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireWireDate(value: unknown, name: string): Date {
+  if (typeof value !== "string") throw new Error(`${name} must be an RFC3339 string`);
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) throw new Error(`${name} must be an RFC3339 string`);
+  return parsed;
+}
+
 export type OutcomeState = "pending" | "achieved" | "missed" | "voided";
 export type OutcomeValueType = "string" | "boolean" | "integer" | "decimal";
 export type OutcomeInput = string | boolean | bigint | number | Decimal;
@@ -26,6 +48,33 @@ export type OutcomeInput = string | boolean | bigint | number | Decimal;
 export interface OutcomeValue {
   type: OutcomeValueType;
   value: string | boolean;
+}
+
+function normalizeOutcomeValue(value: OutcomeInput | OutcomeValue): OutcomeValue {
+  if (value instanceof Decimal || typeof value !== "object" || value === null) {
+    return outcomeValue(value as OutcomeInput);
+  }
+  const candidate = value as { type?: unknown; value?: unknown };
+  if (!(["string", "boolean", "integer", "decimal"] as const).includes(candidate.type as OutcomeValueType)) {
+    throw new Error("invalid outcome value type");
+  }
+  const type = candidate.type as OutcomeValueType;
+  if (type === "string") {
+    if (typeof candidate.value !== "string" || candidate.value.length < 1 || candidate.value.length > 1024) {
+      throw new Error("string outcome values must contain 1 to 1024 characters");
+    }
+  } else if (type === "boolean") {
+    if (typeof candidate.value !== "boolean") {
+      throw new Error("boolean outcome values must contain a boolean");
+    }
+  } else {
+    if (typeof candidate.value !== "string") {
+      throw new Error(`${type} outcome values must use a plain decimal string`);
+    }
+    const pattern = type === "integer" ? INTEGER : DECIMAL;
+    if (!pattern.test(candidate.value)) throw new Error(`invalid ${type} outcome value`);
+  }
+  return { type, value: candidate.value as string | boolean };
 }
 
 export function outcomeValue(value: OutcomeInput): OutcomeValue {
@@ -82,13 +131,10 @@ export class OutcomeRevision {
       throw new Error(`unsupported outcome state ${this.state}`);
     }
     this.revision = requireRevision(options.revision ?? 1, "outcome");
-    this.effectiveAt = options.effectiveAt ?? new Date();
-    this.observedAt = options.observedAt ?? new Date();
+    this.effectiveAt = requireDate(options.effectiveAt, "effectiveAt");
+    this.observedAt = requireDate(options.observedAt, "observedAt");
     if (options.value !== undefined) {
-      this.value = typeof options.value === "object" && !(options.value instanceof Decimal) &&
-        "type" in options.value && "value" in options.value
-        ? options.value as OutcomeValue
-        : outcomeValue(options.value as OutcomeInput);
+      this.value = normalizeOutcomeValue(options.value);
     }
     if ((this.state === "pending" || this.state === "voided") && this.value !== undefined) {
       throw new Error(`${this.state} outcomes cannot assert a value`);
@@ -96,6 +142,24 @@ export class OutcomeRevision {
     if (this.state === "voided" && this.revision === 1) {
       throw new Error("voided outcomes must supersede an earlier revision");
     }
+  }
+
+  static fromDict(data: Record<string, unknown>): OutcomeRevision {
+    if (data["schema_version"] !== "1") throw new Error("outcome schema_version must be '1'");
+    const lifecycle = requireRecord(data["lifecycle"], "outcome lifecycle");
+    const rawValue = data["value"];
+    return new OutcomeRevision({
+      outcomeId: String(data["outcome_id"]),
+      taskId: String(data["task_id"]),
+      name: String(data["name"]),
+      state: String(lifecycle["state"]) as OutcomeState,
+      revision: Number(lifecycle["revision"]),
+      effectiveAt: requireWireDate(data["effective_at"], "effective_at"),
+      observedAt: requireWireDate(data["observed_at"], "observed_at"),
+      value: rawValue === undefined
+        ? undefined
+        : normalizeOutcomeValue(requireRecord(rawValue, "outcome value") as unknown as OutcomeValue),
+    });
   }
 
   toDict(): Record<string, unknown> {
@@ -131,7 +195,8 @@ export function revenueAmount(value: RevenueInput, currency: string): RevenueAmo
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw new Error("revenue currency must be a three-letter uppercase code");
   }
-  if (typeof value === "number" && !Number.isSafeInteger(value)) {
+  if ((typeof value === "number" && !Number.isSafeInteger(value)) ||
+      (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint" && !(value instanceof Decimal))) {
     throw new TypeError("revenue amount must be a Decimal, safe integer, bigint, or decimal string");
   }
   const exact = value instanceof Decimal ? value : new Decimal(String(value));
@@ -175,10 +240,13 @@ export class RevenueRevision {
       throw new Error(`unsupported revenue state ${this.state}`);
     }
     this.revision = requireRevision(options.revision ?? 1, "revenue");
-    this.effectiveAt = options.effectiveAt ?? new Date();
-    this.observedAt = options.observedAt ?? new Date();
-    this.amount = options.amount;
-    this.source = options.source ?? { type: "sdk" };
+    this.effectiveAt = requireDate(options.effectiveAt, "effectiveAt");
+    this.observedAt = requireDate(options.observedAt, "observedAt");
+    this.amount = options.amount === undefined
+      ? undefined
+      : revenueAmount(options.amount.value as unknown as RevenueInput, options.amount.currency);
+    const source = options.source ?? { type: "sdk" };
+    this.source = { type: source.type, recordId: source.recordId };
     if (!["sdk", "workspace_api", "import", "manual"].includes(this.source.type)) {
       throw new Error(`unsupported revenue source ${this.source.type}`);
     }
@@ -192,6 +260,36 @@ export class RevenueRevision {
     if (this.state === "voided" && this.revision === 1) {
       throw new Error("voided revenue must supersede an earlier revision");
     }
+  }
+
+  static fromDict(data: Record<string, unknown>): RevenueRevision {
+    if (data["schema_version"] !== "1") throw new Error("revenue schema_version must be '1'");
+    const lifecycle = requireRecord(data["lifecycle"], "revenue lifecycle");
+    const source = requireRecord(data["source"], "revenue source");
+    const rawAmount = data["amount"];
+    let amount: RevenueAmount | undefined;
+    if (rawAmount !== undefined) {
+      const encoded = requireRecord(rawAmount, "revenue amount");
+      if (typeof encoded["value"] !== "string" || typeof encoded["currency"] !== "string") {
+        throw new Error("revenue amount must contain string value and currency");
+      }
+      amount = revenueAmount(encoded["value"], encoded["currency"]);
+    }
+    const recordId = source["record_id"];
+    if (recordId !== undefined && typeof recordId !== "string") {
+      throw new Error("revenue source record_id must be a string");
+    }
+    return new RevenueRevision({
+      revenueId: String(data["revenue_id"]),
+      taskId: String(data["task_id"]),
+      outcomeId: data["outcome_id"] === undefined ? undefined : String(data["outcome_id"]),
+      state: String(lifecycle["state"]) as RevenueState,
+      revision: Number(lifecycle["revision"]),
+      effectiveAt: requireWireDate(data["effective_at"], "effective_at"),
+      observedAt: requireWireDate(data["observed_at"], "observed_at"),
+      amount,
+      source: { type: String(source["type"]) as RevenueSourceType, recordId },
+    });
   }
 
   toDict(): Record<string, unknown> {

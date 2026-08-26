@@ -12,6 +12,11 @@ import {
   type ProviderUsageLine,
 } from "./provider-metering.js";
 import { nonNegativeDecimal, nonNegativeInteger, prefixedModel, tokenMeasurement } from "./provider-extract.js";
+import {
+  canonicalLiteLlmModel,
+  classifyLiteLlmProvider,
+  isConfiguredLiteLlmProxyUrl,
+} from "./litellm-routing.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -27,9 +32,19 @@ interface DirectSpec {
   kind: DirectKind;
 }
 
-function routedProvider(resource: any): "openai" | "openrouter" | "perplexity" | "azure_openai" {
+function resourceBaseUrl(resource: any): string {
+  return String(resource?._client?.baseURL ?? resource?._client?.base_url ?? "");
+}
+
+function isLiteLlmGateway(resource: any): boolean {
+  return isConfiguredLiteLlmProxyUrl(resourceBaseUrl(resource));
+}
+
+function routedProvider(resource: any, requestedModel?: unknown): string {
   try {
-    const hostname = new URL(String(resource?._client?.baseURL ?? resource?._client?.base_url ?? "")).hostname.toLowerCase();
+    const raw = resourceBaseUrl(resource);
+    if (isConfiguredLiteLlmProxyUrl(raw)) return classifyLiteLlmProvider(requestedModel);
+    const hostname = new URL(raw).hostname.toLowerCase();
     if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) return "azure_openai";
@@ -37,10 +52,16 @@ function routedProvider(resource: any): "openai" | "openrouter" | "perplexity" |
   return "openai";
 }
 
-function modelFor(provider: string, requested: unknown, response?: any): string {
+function modelFor(provider: string, requested: unknown, response?: any, liteLlm = false): string {
   const selected = typeof response?.model === "string" ? response.model :
     typeof requested === "string" ? requested : "unknown";
+  if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
   return provider === "openai" ? selected : prefixedModel(provider, selected);
+}
+
+function gatewayDimensions(provider: string, liteLlm: boolean): Array<readonly [string, string]> {
+  if (liteLlm) return [["gateway", "litellm"]];
+  return provider === "openai" ? [] : [["gateway", provider]];
 }
 
 function line(metric: string, quantity: unknown, unit: string): ProviderUsageLine[] {
@@ -48,7 +69,7 @@ function line(metric: string, quantity: unknown, unit: string): ProviderUsageLin
   return value?.gt(0) ? [{ metric, quantity: value, unit }] : [];
 }
 
-function imageMeasurement(response: any, body: any, provider: string): OperationMeasurement {
+function imageMeasurement(response: any, body: any, provider: string, liteLlm = false): OperationMeasurement {
   const usage = response?.usage ?? {};
   const input = nonNegativeInteger(usage.input_tokens);
   const hasInputDetails = usage.input_tokens_details !== undefined && usage.input_tokens_details !== null;
@@ -74,7 +95,7 @@ function imageMeasurement(response: any, body: any, provider: string): Operation
   const pricingUsage = Object.fromEntries(
     usageLines.filter((item) => item.metric !== "image_count").map((item) => [item.metric, item.quantity]),
   );
-  const model = modelFor(provider, body?.model ?? "gpt-image-1", response);
+  const model = modelFor(provider, body?.model ?? "gpt-image-1", response, liteLlm);
   if (response?.usage === undefined && count > 0) pricingUsage.image_count = count;
   return {
     usageLines, pricingUsage,
@@ -85,22 +106,22 @@ function imageMeasurement(response: any, body: any, provider: string): Operation
       : [],
     inputTokens: input, outputTokens: output,
     billingDimensions: [
-      ...(provider === "openai" ? [] : [["gateway", provider] as const]),
+      ...gatewayDimensions(provider, liteLlm),
       ...(typeof body?.quality === "string" ? [["quality", body.quality] as const] : []),
       ...(typeof body?.size === "string" ? [["size", body.size] as const] : []),
     ],
   };
 }
 
-function transcriptionMeasurement(response: any, body: any, provider: string): OperationMeasurement {
+function transcriptionMeasurement(response: any, body: any, provider: string, liteLlm = false): OperationMeasurement {
   const usage = response?.usage ?? {};
   if (usage.type === "duration" || usage.seconds !== undefined || response?.duration !== undefined) {
     const seconds = usage.seconds ?? response.duration;
     return {
       usageLines: line("audio_seconds", seconds, "Seconds"),
       pricingUsage: { input_audio_seconds: seconds },
-      responseModel: modelFor(provider, body?.model, response),
-      billingDimensions: provider === "openai" ? [] : [["gateway", provider]],
+      responseModel: modelFor(provider, body?.model, response, liteLlm),
+      billingDimensions: gatewayDimensions(provider, liteLlm),
     };
   }
   const input = nonNegativeInteger(usage.input_tokens);
@@ -121,38 +142,39 @@ function transcriptionMeasurement(response: any, body: any, provider: string): O
       ["input_tokens", text || (audio === 0 ? input : 0)],
       ["input_audio_tokens", audio], ["output_tokens", output],
     ].filter(([, quantity]) => Number(quantity) > 0)),
-    providerRecordId: response?.id, responseModel: modelFor(provider, body?.model, response),
+    providerRecordId: response?.id, responseModel: modelFor(provider, body?.model, response, liteLlm),
     inputTokens: input, outputTokens: output,
-    billingDimensions: provider === "openai" ? [] : [["gateway", provider]],
+    billingDimensions: gatewayDimensions(provider, liteLlm),
   };
 }
 
-function measurement(kind: DirectKind, response: any, body: any, provider: string): OperationMeasurement {
-  if (kind === "images") return imageMeasurement(response, body, provider);
-  if (kind === "transcription") return transcriptionMeasurement(response, body, provider);
+function measurement(kind: DirectKind, response: any, body: any, provider: string, liteLlm = false): OperationMeasurement {
+  if (kind === "images") return imageMeasurement(response, body, provider, liteLlm);
+  if (kind === "transcription") return transcriptionMeasurement(response, body, provider, liteLlm);
   if (kind === "speech") {
     const characters = typeof body?.input === "string" ? [...body.input].length : 0;
     return {
       usageLines: line("characters", characters, "Characters"),
       pricingUsage: characters > 0 ? { characters } : {},
-      responseModel: modelFor(provider, body?.model, response),
-      billingDimensions: provider === "openai" ? [] : [["gateway", provider]],
+      responseModel: modelFor(provider, body?.model, response, liteLlm),
+      billingDimensions: gatewayDimensions(provider, liteLlm),
     };
   }
   if (kind === "moderation") {
     return {
       usageLines: [{ metric: "request_count", quantity: 1, unit: "Requests" }],
       pricingUsage: { request_count: 1 },
-      providerRecordId: response?.id, responseModel: modelFor(provider, body?.model, response),
-      billingDimensions: provider === "openai" ? [] : [["gateway", provider]],
+      providerRecordId: response?.id, responseModel: modelFor(provider, body?.model, response, liteLlm),
+      billingDimensions: gatewayDimensions(provider, liteLlm),
     };
   }
-  const result = tokenMeasurement(response, modelFor(provider, body?.model, response), provider);
+  const result = tokenMeasurement(response, modelFor(provider, body?.model, response, liteLlm), provider);
   if (kind === "embeddings") {
     const count = Array.isArray(response?.data) ? response.data.length : 0;
     result.usageLines = [...(result.usageLines ?? []), ...line("embedding_count", count, "Embeddings")];
   }
-  result.responseModel = modelFor(provider, body?.model, response);
+  result.responseModel = modelFor(provider, body?.model, response, liteLlm);
+  result.billingDimensions = gatewayDimensions(provider, liteLlm);
   return result;
 }
 
@@ -168,10 +190,12 @@ function patchDirect(
   const original = owner[name] as (...args: any[]) => any;
   owner[name] = function (this: any, ...args: any[]): any {
     const body = args[0] ?? {};
-    const provider = routedProvider(this);
+    const liteLlm = isLiteLlmGateway(this);
+    const provider = routedProvider(this, body?.model);
+    const operation = liteLlm ? `litellm.${spec.service}.${name}` : spec.operation;
     const session = new ProviderOperationSession(pricing, buffer, {
-      taskType: spec.operation, provider, service: spec.service, operation: spec.operation,
-      component: spec.component, model: modelFor(provider, body?.model), eventType: spec.eventType,
+      taskType: operation, provider, service: liteLlm ? "litellm" : spec.service, operation,
+      component: spec.component, model: modelFor(provider, body?.model, undefined, liteLlm), eventType: spec.eventType,
     });
     let result: any;
     try { result = session.invoke(() => original.apply(this, args)); }
@@ -181,9 +205,9 @@ function patchDirect(
         let terminal = response;
         return wrapProviderStream(response, session, (chunk) => {
           if ((chunk as any)?.usage !== undefined) terminal = chunk;
-        }, () => measurement(spec.kind, terminal, body, provider));
+        }, () => measurement(spec.kind, terminal, body, provider, liteLlm));
       }
-      session.finish(measurement(spec.kind, response, body, provider));
+      session.finish(measurement(spec.kind, response, body, provider, liteLlm));
       return response;
     };
     return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
@@ -201,8 +225,21 @@ function providerJobStatus(resource: any, submission = false): ProviderJobStatus
   return submission ? "submitted" : "unknown";
 }
 
-function jobMeasurement(kind: "responses" | "batches" | "fine_tuning" | "videos", resource: any): OperationMeasurement | undefined {
-  if (kind === "responses") return tokenMeasurement(resource, resource?.model ?? "unknown", "openai");
+function jobMeasurement(
+  kind: "responses" | "batches" | "fine_tuning" | "videos",
+  resource: any,
+  provider = "openai",
+  liteLlm = false,
+): OperationMeasurement | undefined {
+  if (kind === "responses") {
+    const result = tokenMeasurement(
+      resource,
+      modelFor(provider, resource?.model ?? "unknown", resource, liteLlm),
+      provider,
+    );
+    result.billingDimensions = gatewayDimensions(provider, liteLlm);
+    return result;
+  }
   if (kind === "batches") {
     const usage = resource?.usage ?? {};
     const input = nonNegativeInteger(usage.input_tokens);
@@ -220,8 +257,10 @@ function jobMeasurement(kind: "responses" | "batches" | "fine_tuning" | "videos"
       ...line("batch_failed_request_count", counts.failed, "Requests"),
     ];
     return lines.length === 0 ? undefined : {
-      usageLines: lines, providerRecordId: resource?.id, responseModel: resource?.model ?? "batch",
+      usageLines: lines, providerRecordId: resource?.id,
+      responseModel: modelFor(provider, resource?.model ?? "batch", resource, liteLlm),
       inputTokens: input, outputTokens: output, cachedTokens: cached,
+      billingDimensions: gatewayDimensions(provider, liteLlm),
     };
   }
   if (kind === "fine_tuning") {
@@ -231,7 +270,8 @@ function jobMeasurement(kind: "responses" | "batches" | "fine_tuning" | "videos"
     ];
     return lines.length === 0 ? undefined : {
       usageLines: lines, providerRecordId: resource?.id,
-      responseModel: resource?.model ?? resource?.fine_tuned_model ?? "fine_tuning",
+      responseModel: modelFor(provider, resource?.model ?? resource?.fine_tuned_model ?? "fine_tuning", resource, liteLlm),
+      billingDimensions: gatewayDimensions(provider, liteLlm),
     };
   }
   const count = resource?.id ? 1 : 0;
@@ -241,13 +281,29 @@ function jobMeasurement(kind: "responses" | "batches" | "fine_tuning" | "videos"
     ...(seconds?.gt(0) ? line("output_video_seconds", seconds.times(count), "Seconds") : []),
   ];
   return lines.length === 0 ? undefined : {
-    usageLines: lines, providerRecordId: resource?.id, responseModel: resource?.model ?? "video",
+    usageLines: lines, providerRecordId: resource?.id,
+    responseModel: modelFor(provider, resource?.model ?? "video", resource, liteLlm),
+    billingDimensions: gatewayDimensions(provider, liteLlm),
   };
 }
 
 function jobId(resource: any, args: any[]): string | undefined {
   const value = resource?.id ?? (typeof args[0] === "string" ? args[0] : args[0]?.id);
   return typeof value === "string" && value.length > 0 ? value.slice(0, 256) : undefined;
+}
+
+function liteLlmJobService(kind: "responses" | "batches" | "fine_tuning" | "videos"): string {
+  return `litellm.${kind}`;
+}
+
+function liteLlmJobProvider(resource: any, requestedModel: unknown, fallback: string): string {
+  return classifyLiteLlmProvider(
+    resource?._hidden_params?.custom_llm_provider,
+    resource?.provider,
+    resource?.model,
+    requestedModel,
+    fallback,
+  );
 }
 
 function patchJob(
@@ -266,14 +322,19 @@ function patchJob(
     if (kind === "responses" && action === "create" && body.background !== true) {
       return original.apply(this, args);
     }
-    const provider = routedProvider(this);
-    if (provider !== "openai") return original.apply(this, args);
-    const operation = `openai.${kind}.${action}`;
-    const model = typeof body.model === "string" ? body.model :
+    const liteLlm = isLiteLlmGateway(this);
+    const provider = routedProvider(this, body?.model);
+    if (provider !== "openai" && !liteLlm) return original.apply(this, args);
+    const service = liteLlm ? liteLlmJobService(kind) : kind;
+    const operation = liteLlm ? `litellm.${kind}.${action}` : `openai.${kind}.${action}`;
+    const requestedModel = typeof body.model === "string" ? body.model :
       kind === "batches" ? "batch" : kind === "fine_tuning" ? body.model ?? "fine_tuning" : "unknown";
+    const model = modelFor(provider, requestedModel, undefined, liteLlm);
+    const component = kind === "responses" || kind === "batches" ? "llm" : "external";
+    const eventType = kind === "fine_tuning" || kind === "videos" ? "external_cost" : "llm_call";
     const session = action === "create" ? new ProviderOperationSession(pricing, buffer, {
-      taskType: operation, provider: "openai", service: kind, operation,
-      component: "external", model, eventType: kind === "fine_tuning" || kind === "videos" ? "external_cost" : "llm_call",
+      taskType: operation, provider, service, operation,
+      component, model, eventType,
     }) : undefined;
     let result: any;
     try { result = session ? session.invoke(() => original.apply(this, args)) : original.apply(this, args); }
@@ -281,25 +342,30 @@ function patchJob(
     const complete = (resource: any): any => {
       const id = jobId(resource, args);
       if (id === undefined) { session?.fail(new Error("OpenAI provider job omitted its id")); return resource; }
-      const meter = jobMeasurement(kind, resource);
+      const resolvedProvider = liteLlm ? liteLlmJobProvider(resource, body?.model, provider) : provider;
+      const resolvedModel = modelFor(resolvedProvider, requestedModel, resource, liteLlm);
+      const meter = jobMeasurement(kind, resource, resolvedProvider, liteLlm);
       if (action === "create" && session) {
         let status = providerJobStatus(resource, true);
         if (status === "succeeded" && meter === undefined) status = "unknown";
         const snapshot = status === "succeeded" ? meter : undefined;
+        const now = new Date();
         buffer.insertProviderJobRevision(new ProviderJobRevision({
-          taskId: session.task.taskId, provider: "openai", service: kind, providerRecordId: id,
-          operation, component: "external",
-          eventType: kind === "fine_tuning" || kind === "videos" ? "external_cost" : "llm_call",
-          resourceType: "model", resourceId: model, status, ownsTask: session.autoCreated,
+          taskId: session.task.taskId, provider: resolvedProvider, service, providerRecordId: id,
+          operation, component, eventType,
+          resourceType: "model", resourceId: resolvedModel, status,
+          submittedAt: now, observedAt: now, ownsTask: session.autoCreated,
           billingDimensions: [
+            ...gatewayDimensions(resolvedProvider, liteLlm),
             ...(typeof body.endpoint === "string" ? [["batch_endpoint", body.endpoint] as const] : []),
             ...(typeof body.completion_window === "string" ? [["batch_completion_window", body.completion_window] as const] : []),
           ],
-          ...providerJobMeasurementFields(pricing, model, snapshot),
+          ...providerJobMeasurementFields(pricing, resolvedModel, snapshot),
+          capability: session.capability,
         }));
         session.releaseForProviderJob();
       } else {
-        const raw = buffer.getProviderJob("openai", kind, id);
+        const raw = buffer.getProviderJob(resolvedProvider, service, id);
         if (raw === undefined) return resource;
         const previous = providerJobFromDict(raw);
         let status = action === "cancel" ? "cancelled" as const : providerJobStatus(resource);
@@ -309,9 +375,12 @@ function patchJob(
           taskId: previous.taskId, provider: previous.provider, service: previous.service,
           providerRecordId: id, operation: previous.operation, component: previous.component,
           eventType: previous.eventType, resourceType: previous.resourceType, resourceId: previous.resourceId,
-          status, submittedAt: previous.submittedAt, ownsTask: previous.ownsTask,
+          status, submittedAt: previous.submittedAt,
+          observedAt: new Date(Math.max(Date.now(), previous.observedAt.getTime())),
+          ownsTask: previous.ownsTask,
           billingDimensions: previous.billingDimensions,
           ...providerJobMeasurementFields(pricing, previous.resourceId, meter),
+          capability: previous.capability,
         }));
       }
       return resource;

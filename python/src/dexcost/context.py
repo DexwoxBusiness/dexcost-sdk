@@ -132,13 +132,13 @@ def _reset_current_task(token: contextvars.Token[Task | None]) -> None:
 # package (__init__.py / __all__).  Only two internal modules consume these
 # symbols:
 #   • dexcost.adapters.http  — imports `is_network_event_suppressed` to decide
-#     whether to emit a standalone `network` event for an outbound HTTP call.
+#     whether to emit any standalone HTTP attribution for a provider-owned call.
 #   • dexcost.instruments.*  — import `suppress_network_event` to wrap the
 #     outbound LLM HTTP call so it does not double-emit (`llm_call` + `network`).
 #
 # When set, the HTTP adapter records bytes for the call but does NOT emit a
-# standalone `network` event — used by the LLM instruments so an LLM API call
-# does not produce both an `llm_call` event and a `network` event.
+# standalone catalog, observer, or network event — used by provider instruments
+# so one provider operation cannot produce duplicate attribution rows.
 
 _suppress_network: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_suppress_network", default=False
@@ -152,11 +152,11 @@ def is_network_event_suppressed() -> bool:
 
 @contextmanager
 def suppress_network_event() -> Generator[None, None, None]:
-    """Within this block, the HTTP adapter suppresses standalone network events.
+    """Suppress standalone HTTP attribution for a provider-owned operation.
 
-    Bytes are still recorded into the task counters; only the per-call
-    `network` event is withheld. Used by LLM instruments around their HTTP
-    call so it does not double-emit (`llm_call` + `network`).
+    Bytes are still recorded into task counters. Catalog, usage-observer, and
+    notable-network events are withheld because the provider instrument emits
+    the authoritative operation event after the call completes.
     """
     token = _suppress_network.set(True)
     try:

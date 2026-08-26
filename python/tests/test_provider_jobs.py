@@ -316,6 +316,87 @@ def test_provider_reported_cost_overrides_catalog_for_calls_and_jobs(
         storage.close()
 
 
+def test_sdk_computed_multimodel_cost_is_atomic_and_preserved(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires source"):
+        OperationMeasurement(
+            pricing_usage={},
+            usage_lines=(),
+            computed_cost_usd="0.75",
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        OperationMeasurement(
+            pricing_usage={},
+            usage_lines=(),
+            provider_cost_usd="0.5",
+            computed_cost_usd="0.75",
+            computed_cost_source="sdk_catalog",
+            computed_cost_confidence="computed",
+            computed_pricing_version="multi-model-v1",
+        )
+
+    storage = SQLiteStorage(tmp_path / "computed-cost.db")
+    tracker = CostTracker(storage=storage, pricing=_Pricing(), auto_instrument=[])
+    task = _task()
+    storage.insert_task(task)
+    measurement = OperationMeasurement(
+        pricing_usage={},
+        usage_lines=(ProviderUsageLine("output_tokens", 30, "Tokens"),),
+        computed_cost_usd="0.75",
+        computed_cost_source="sdk_catalog",
+        computed_cost_confidence="computed",
+        computed_pricing_version="multi-model-v1",
+        task_output_tokens=30,
+    )
+    try:
+        event = record_provider_operation(
+            tracker=tracker,
+            task=task,
+            provider="anthropic",
+            service="message_batches",
+            operation="anthropic.messages.batches.results",
+            component="llm",
+            event_type="llm_call",
+            model="anthropic-message-batch",
+            measurement=measurement,
+            latency_ms=1,
+        )
+        assert event.cost_usd == Decimal("0.75")
+        assert event.cost_confidence == "computed"
+        assert event.pricing_source == "service_catalog"
+        assert event.pricing_version == "multi-model-v1"
+        assert event.details["sdk_computed_cost_usd"] == "0.75"
+
+        submitted = record_provider_job_submission(
+            tracker=tracker,
+            task=task,
+            owns_task=False,
+            provider="anthropic",
+            service="message_batches",
+            provider_record_id="multi-model-batch-1",
+            operation="anthropic.messages.batches.create",
+            component="llm",
+            event_type="llm_call",
+            resource_type="model",
+            resource_id="anthropic-message-batch",
+        )
+        final = reconcile_provider_job(
+            tracker=tracker,
+            provider="anthropic",
+            service="message_batches",
+            provider_record_id=submitted.provider_record_id,
+            status="succeeded",
+            measurement=measurement,
+        )
+        assert final.cost_amount == Decimal("0.75")
+        assert final.cost_source == "sdk_catalog"
+        assert final.cost_confidence == "computed"
+        assert final.pricing_version == "multi-model-v1"
+    finally:
+        storage.close()
+
+
 def test_two_storage_connections_reconcile_same_terminal_poll_once(
     tmp_path: Path,
 ) -> None:

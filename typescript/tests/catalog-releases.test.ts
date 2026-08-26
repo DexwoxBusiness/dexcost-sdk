@@ -221,6 +221,19 @@ describe("catalog releases", () => {
     expect(() => store.activate(first.raw, first.artifacts)).toThrow(CatalogDowngradeError);
   });
 
+  it("rejects changed content that reuses the active release sequence", () => {
+    const store = new CatalogReleaseStore(storePath());
+    const active = release(7);
+    store.activate(active.raw, active.artifacts);
+
+    const substituted = release(7);
+    changeArtifact(substituted, "llm_prices");
+    expect(() => store.activate(substituted.raw, substituted.artifacts))
+      .toThrow(/release sequence was reused with different content/u);
+    expect(store.bestAvailable()?.manifest.artifacts.llm_prices.sha256)
+      .toBe(active.manifest.artifacts.llm_prices.sha256);
+  });
+
   it("falls back to the previous slot when only the active manifest is corrupt", () => {
     const path = storePath();
     const store = new CatalogReleaseStore(path);

@@ -16,13 +16,32 @@ import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
-import type { PricingEngine, CostResult } from "../pricing/engine.js";
+import type { PricingEngine, MeteredCostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
+import {
+  applyEventCapability,
+  getCapability,
+  type CapabilityIdentity,
+} from "../core/capabilities.js";
+import {
+  applyEventIdempotency,
+  captureIdempotencyKey,
+  type CapturedIdempotencyKey,
+} from "../core/idempotency.js";
+import {
+  nonNegativeDecimal,
+  nonNegativeInteger,
+  prefixedModel,
+  tokenMeasurement,
+} from "./provider-extract.js";
 import { normalizeOpenAIUsage, OpenAIUsageError } from "./openai-usage.js";
-import { applyEventCapability } from "../core/capabilities.js";
-import { applyEventIdempotency } from "../core/idempotency.js";
-import { nonNegativeDecimal, prefixedModel } from "./provider-extract.js";
 import { mapProviderResult, recordProviderFailure } from "./provider-metering.js";
+import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
+import {
+  canonicalLiteLlmModel,
+  classifyLiteLlmProvider,
+  isConfiguredLiteLlmProxyUrl,
+} from "./litellm-routing.js";
 import {
   installOpenAIModern,
   recordOpenAIResponseTools,
@@ -152,6 +171,9 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     body: any,
     options?: any,
   ): any {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return original.call(this, body, options);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -170,29 +192,33 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
       }
     }
 
+    const requestedModel = typeof body?.model === "string" ? body.model : "unknown";
     const startTime = performance.now();
     const self = this;
-    const routedProvider = providerForResource(self);
-    const requestedModel = typeof body?.model === "string" ? body.model : "unknown";
+    const route = providerForResource(self, requestedModel);
+    const capability = getCapability();
+    const idempotencyKey = captureIdempotencyKey();
 
     let result: any;
     try {
       result = suppressNetworkEvent(() =>
-        runWithTask(task, () => original.call(self, body, options)),
+        runWithProviderCapture(route.provider, () =>
+          runWithTask(task, () => original.call(self, body, options))),
       );
     } catch (err) {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-        taskType, provider: routedProvider, service: responsesApi ? "responses" : "chat",
-        operation: `${routedProvider}.${responsesApi ? "responses" : "chat"}.create`,
-        component: "llm", model: routedModel(routedProvider, undefined, requestedModel), eventType: "llm_call",
-      }, err, startTime);
+        taskType, provider: route.provider, service: routedService(route, responsesApi),
+        operation: routedOperation(route, responsesApi),
+        component: "llm", model: routedModel(route, undefined, requestedModel), eventType: "llm_call",
+      }, err, startTime, capability, idempotencyKey);
       if (autoCreated) finalizeAutoTask(task, "failed", _buffer);
       throw err;
     }
     const complete = (response: any): any => {
       if (body?.stream) {
         return wrapStream(
-          response, task, startTime, autoCreated, responsesApi, routedProvider, requestedModel,
+          response, task, startTime, autoCreated, responsesApi, route, requestedModel,
+          capability, idempotencyKey,
         );
       }
       if (_modernInstalled && responsesApi && body?.background === true) {
@@ -201,8 +227,12 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
       }
       try {
         const latencyMs = Math.round(performance.now() - startTime);
-        recordEvent(response, task, latencyMs, routedProvider, requestedModel);
-        if (responsesApi && routedProvider === "openai" && _pricing && _buffer) {
+        recordEvent(
+          response, task, latencyMs, route, requestedModel, responsesApi,
+          capability, idempotencyKey,
+        );
+        if (responsesApi && route.provider === "openai" && route.gateway === undefined &&
+            _pricing && _buffer) {
           recordOpenAIResponseTools(response, task, _pricing, _buffer);
         }
       } catch {
@@ -215,10 +245,10 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     };
     return mapProviderResult(result, complete, (err) => {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-        taskType, provider: routedProvider, service: responsesApi ? "responses" : "chat",
-        operation: `${routedProvider}.${responsesApi ? "responses" : "chat"}.create`,
-        component: "llm", model: routedModel(routedProvider, undefined, requestedModel), eventType: "llm_call",
-      }, err, startTime);
+        taskType, provider: route.provider, service: routedService(route, responsesApi),
+        operation: routedOperation(route, responsesApi),
+        component: "llm", model: routedModel(route, undefined, requestedModel), eventType: "llm_call",
+      }, err, startTime, capability, idempotencyKey);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
       }
@@ -246,42 +276,70 @@ export function uninstrumentOpenai(): void {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-type RoutedProvider = "openai" | "openrouter" | "perplexity" | "azure_openai";
+interface RoutedIdentity {
+  provider: string;
+  gateway?: "litellm";
+}
 
-function providerForResource(resource: any): RoutedProvider {
+function providerForResource(resource: any, requestedModel: string): RoutedIdentity {
   try {
     const raw = String(resource?._client?.baseURL ?? resource?._client?.base_url ?? "");
     const hostname = new URL(raw).hostname.toLowerCase();
-    if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
-    if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
+    if (isConfiguredLiteLlmProxyUrl(raw)) {
+      return { provider: classifyLiteLlmProvider(requestedModel), gateway: "litellm" };
+    }
+    if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) {
+      return { provider: "openrouter" };
+    }
+    if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) {
+      return { provider: "perplexity" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
-      return "azure_openai";
+      return { provider: "azure_openai" };
     }
   } catch { /* the default OpenAI client may expose a relative/opaque URL */ }
-  return "openai";
+  return { provider: "openai" };
 }
 
-function routedModel(provider: RoutedProvider, responseModel: unknown, requestedModel: string): string {
-  if (provider === "openai") {
+function routedService(route: RoutedIdentity, responsesApi: boolean): string {
+  return route.gateway ?? (responsesApi ? "responses" : "chat");
+}
+
+function routedOperation(route: RoutedIdentity, responsesApi: boolean): string {
+  const owner = route.gateway ?? route.provider;
+  return `${owner}.${responsesApi ? "responses" : "chat"}.create`;
+}
+
+function routedModel(route: RoutedIdentity, responseModel: unknown, requestedModel: string): string {
+  if (route.gateway === "litellm") {
+    return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
+  }
+  if (route.provider === "openai" && route.gateway === undefined) {
     return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
   }
-  const selected = provider === "azure_openai"
+  const selected = route.provider === "azure_openai" || route.gateway !== undefined
     ? requestedModel
     : (typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel);
-  return prefixedModel(provider, selected);
+  return prefixedModel(route.provider, selected);
 }
 
 function recordEvent(
   response: any,
   task: Task,
   latencyMs: number,
-  provider: RoutedProvider,
+  route: RoutedIdentity,
   requestedModel: string,
+  responsesApi: boolean,
+  capability: CapabilityIdentity | undefined,
+  idempotencyKey: CapturedIdempotencyKey | undefined,
 ): void {
   if (!_buffer || !_pricing) return;
 
-  const model = routedModel(provider, response?.model, requestedModel);
-  recordUsageEvent(task, model, response?.usage, latencyMs, response?.id, provider);
+  const model = routedModel(route, response?.model, requestedModel);
+  recordUsageEvent(
+    task, model, response?.usage, latencyMs, response?.id, route,
+    responsesApi, "succeeded", undefined, capability, idempotencyKey, response,
+  );
 }
 
 function recordUsageEvent(
@@ -290,77 +348,150 @@ function recordUsageEvent(
   rawUsage: unknown,
   latencyMs: number,
   providerRecordId?: unknown,
-  provider: RoutedProvider = "openai",
+  route: RoutedIdentity = { provider: "openai" },
+  responsesApi: boolean = false,
+  status: "succeeded" | "failed" | "cancelled" = "succeeded",
+  operationError?: unknown,
+  capability?: CapabilityIdentity,
+  idempotencyKey?: CapturedIdempotencyKey,
+  rawResponse?: unknown,
 ): void {
   if (!_buffer || !_pricing) return;
+  const provider = route.provider;
+  const service = routedService(route, responsesApi);
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let billableInputTokens = 0;
+  let billableOutputTokens = 0;
   let cachedTokens = 0;
   let cacheWriteTokens = 0;
   let reasoningTokens = 0;
+  let serverToolCallsRequested = 0;
+  let serverToolCallsExecuted = 0;
+  let webSearchRequests = 0;
   let costUsd: Decimal = new Decimal(0);
-  let costConfidence: CostConfidence = "estimated";
+  let costConfidence: CostConfidence = status === "succeeded" ? "estimated" : "unknown";
   let pricingSource: PricingSource = "unknown";
   let pricingVersion: string | undefined;
-  const details: Record<string, unknown> = {};
+  const details: Record<string, unknown> = {
+    attribution_component: "llm",
+    attribution_operation_name: routedOperation(route, responsesApi),
+    attribution_operation_status: status,
+    attribution_resource_type: "model",
+    attribution_resource_id: model,
+  };
 
   if (typeof providerRecordId === "string" && providerRecordId.length > 0) {
     details.provider_record_id = providerRecordId;
   }
-  if (provider !== "openai") {
+  if (route.gateway !== undefined) {
+    details.attribution_dimensions = [{
+      key: "gateway",
+      value: { type: "string", value: route.gateway },
+    }];
+  } else if (provider !== "openai") {
     details.attribution_dimensions = [{ key: "gateway", value: { type: "string", value: provider } }];
   }
   if (provider === "azure_openai") {
     details.azure_deployment = model.replace(/^azure\//, "");
   }
 
+  let providerCostUsd: Decimal | undefined;
+  let providerUpstreamCostUsd: Decimal | undefined;
   if (rawUsage !== undefined && rawUsage !== null) {
     try {
-      const usage = normalizeOpenAIUsage(rawUsage);
-      inputTokens = usage.totalInputTokens;
-      outputTokens = usage.totalOutputTokens;
-      cachedTokens = usage.cacheReadInputTokens;
-      cacheWriteTokens = usage.cacheWriteInputTokens;
-      reasoningTokens = usage.reasoningOutputTokens;
-      if (cacheWriteTokens > 0) details.cache_write_input_tokens = cacheWriteTokens;
-      if (reasoningTokens > 0) details.reasoning_output_tokens = reasoningTokens;
-
-      const result: CostResult = _pricing.getCost(
-        model,
-        inputTokens,
-        outputTokens,
-        cachedTokens,
-        cacheWriteTokens,
+      // Native OpenAI-compatible routes preserve the strict validation and
+      // durable diagnostic used by the established contract. LiteLLM is
+      // intentionally tolerant because some upstream providers expose only
+      // ordinary totals plus non-OpenAI detail buckets.
+      if (route.gateway === undefined) normalizeOpenAIUsage(rawUsage);
+      const measurement = tokenMeasurement(rawResponse ?? { model, usage: rawUsage }, model, provider);
+      inputTokens = measurement.inputTokens ?? 0;
+      outputTokens = measurement.outputTokens ?? 0;
+      cachedTokens = measurement.cachedTokens ?? 0;
+      cacheWriteTokens = measurement.cacheWriteTokens ?? 0;
+      reasoningTokens = measurement.reasoningTokens ?? 0;
+      const quantities = new Map(
+        (measurement.usageLines ?? []).map((line) => [line.metric, nonNegativeInteger(line.quantity)]),
       );
-      costUsd = result.costUsd;
-      costConfidence = result.costConfidence;
-      pricingSource = result.pricingSource;
-      pricingVersion = result.pricingVersion;
-      const exact = provider === "openrouter"
-        ? nonNegativeDecimal((rawUsage as any)?.cost)
-        : provider === "perplexity"
-          ? nonNegativeDecimal((rawUsage as any)?.cost?.total_cost)
-          : undefined;
-      if (exact !== undefined) {
-        costUsd = exact;
-        costConfidence = "exact";
-        pricingSource = "provider_response";
-        pricingVersion = undefined;
-        details.provider_reported_cost_usd = exact.toString();
-      }
-      if (provider === "openrouter") {
-        const upstream = nonNegativeDecimal(
-          (rawUsage as any)?.cost_details?.upstream_inference_cost ??
-          (rawUsage as any)?.cost_details?.upstream_cost,
-        );
-        if (upstream !== undefined) details.provider_upstream_cost_usd = upstream.toString();
-      }
+      billableInputTokens = quantities.get("input_tokens") ?? 0;
+      billableOutputTokens = quantities.get("output_tokens") ?? 0;
+      serverToolCallsRequested = quantities.get("server_tool_calls_requested") ?? 0;
+      serverToolCallsExecuted = quantities.get("server_tool_calls_executed") ?? 0;
+      webSearchRequests = quantities.get("web_search_requests") ?? 0;
+      providerCostUsd = measurement.providerCostUsd === undefined
+        ? undefined
+        : nonNegativeDecimal(measurement.providerCostUsd);
+      providerUpstreamCostUsd = measurement.providerUpstreamCostUsd === undefined
+        ? undefined
+        : nonNegativeDecimal(measurement.providerUpstreamCostUsd);
     } catch (error) {
-      if (!(error instanceof OpenAIUsageError)) throw error;
-      details.openai_usage_error = error.message;
-      costConfidence = "unknown";
+      // Response parsing is telemetry-only. Preserve trustworthy ordinary
+      // totals even if a newly added detail bucket is malformed.
+      if (error instanceof OpenAIUsageError) details.openai_usage_error = error.message;
+      const usage = rawUsage as any;
+      inputTokens = nonNegativeInteger(usage?.prompt_tokens ?? usage?.input_tokens);
+      outputTokens = nonNegativeInteger(usage?.completion_tokens ?? usage?.output_tokens);
+      billableInputTokens = inputTokens;
+      billableOutputTokens = outputTokens;
     }
+    if (cacheWriteTokens > 0) details.cache_write_input_tokens = cacheWriteTokens;
+    if (reasoningTokens > 0) details.reasoning_output_tokens = reasoningTokens;
+
+    const result: MeteredCostResult = _pricing.getMeteredCost(model, {
+      input_tokens: billableInputTokens,
+      cache_read_input_tokens: cachedTokens,
+      cache_write_input_tokens: cacheWriteTokens,
+      output_tokens: billableOutputTokens,
+      reasoning_output_tokens: reasoningTokens,
+      server_tool_calls_requested: serverToolCallsRequested,
+      server_tool_calls_executed: serverToolCallsExecuted,
+      web_search_requests: webSearchRequests,
+    });
+    costUsd = result.costUsd;
+    costConfidence = result.costConfidence;
+    pricingSource = result.pricingSource;
+    pricingVersion = result.pricingVersion;
+    if (result.unpricedDimensions.length > 0) {
+      details.pricing_unpriced_dimensions = result.unpricedDimensions;
+    }
+    if (providerCostUsd !== undefined) {
+      costUsd = providerCostUsd;
+      costConfidence = "exact";
+      pricingSource = "provider_response";
+      pricingVersion = undefined;
+      details.provider_reported_cost_usd = providerCostUsd.toString();
+    }
+    if (providerUpstreamCostUsd !== undefined) {
+      details.provider_upstream_cost_usd = providerUpstreamCostUsd.toString();
+    }
+  }
+  const usageLines = [
+    ...(billableInputTokens > 0 ? [{ metric: "input_tokens", quantity: String(billableInputTokens), unit: "Tokens" }] : []),
+    ...(cachedTokens > 0 ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }] : []),
+    ...(cacheWriteTokens > 0 ? [{ metric: "cache_write_input_tokens", quantity: String(cacheWriteTokens), unit: "Tokens" }] : []),
+    ...(billableOutputTokens > 0 ? [{ metric: "output_tokens", quantity: String(billableOutputTokens), unit: "Tokens" }] : []),
+    ...(reasoningTokens > 0 ? [{ metric: "reasoning_output_tokens", quantity: String(reasoningTokens), unit: "Tokens" }] : []),
+    ...(serverToolCallsRequested > 0 ? [{
+      metric: "server_tool_calls_requested", quantity: String(serverToolCallsRequested), unit: "Calls",
+    }] : []),
+    ...(serverToolCallsExecuted > 0 ? [{
+      metric: "server_tool_calls_executed", quantity: String(serverToolCallsExecuted), unit: "Calls",
+    }] : []),
+    ...(webSearchRequests > 0 ? [{
+      metric: "web_search_requests", quantity: String(webSearchRequests), unit: "Requests",
+    }] : []),
+  ];
+  if (details.openai_usage_error === undefined) {
+    details.attribution_usage_lines = usageLines.length > 0
+      ? usageLines
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }];
+  }
+  if (operationError !== undefined) {
+    details.attribution_error_type = operationError instanceof Error
+      ? operationError.name.toLowerCase()
+      : typeof operationError;
   }
 
   const event = createCostEvent({
@@ -377,11 +508,12 @@ function recordUsageEvent(
     outputTokens,
     cachedTokens,
     latencyMs,
+    serviceName: service,
     isRetry: false,
     details,
   });
-  applyEventCapability(event);
-  applyEventIdempotency(event);
+  applyEventCapability(event, capability);
+  applyEventIdempotency(event, idempotencyKey);
 
   _buffer.addEvent(event);
   registerLlmCapture(task.taskId, inputTokens, outputTokens);
@@ -400,51 +532,49 @@ function wrapStream(
   startTime: number,
   autoCreated: boolean = false,
   responsesApi: boolean = false,
-  provider: RoutedProvider = "openai",
+  route: RoutedIdentity = { provider: "openai" },
   requestedModel: string = "unknown",
+  capability?: CapabilityIdentity,
+  idempotencyKey?: CapturedIdempotencyKey,
 ): AsyncIterable<any> {
-  let model = routedModel(provider, undefined, requestedModel);
+  let model = routedModel(route, undefined, requestedModel);
   let usage: unknown;
   let providerRecordId: unknown;
+  let terminalResponse: unknown;
   let finalized = false;
+
+  const finalize = (
+    status: "succeeded" | "failed" | "cancelled",
+    error?: unknown,
+  ): void => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      recordUsageEvent(
+        task, routedModel(route, model, requestedModel), usage,
+        Math.round(performance.now() - startTime), providerRecordId, route,
+        responsesApi, status, error, capability, idempotencyKey, terminalResponse,
+      );
+    } catch {
+      // dexcost errors must never crash the provider stream
+    }
+    if (autoCreated) finalizeAutoTask(task, status === "succeeded" ? "success" : "failed", _buffer);
+  };
 
   return {
     [Symbol.asyncIterator]() {
       const iter = rawStream[Symbol.asyncIterator]();
-      const finalizeTask = (status: "success" | "failed") => {
-        if (finalized) return;
-        finalized = true;
-        if (autoCreated) {
-          finalizeAutoTask(task, status, _buffer);
-        }
-      };
       return {
         async next(): Promise<IteratorResult<any>> {
           let result: IteratorResult<any>;
           try {
             result = await iter.next();
           } catch (err) {
-            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-              taskType: `${provider}.${responsesApi ? "responses" : "chat"}`,
-              provider, service: responsesApi ? "responses" : "chat",
-              operation: `${provider}.${responsesApi ? "responses" : "chat"}.create`,
-              component: "llm", model, eventType: "llm_call",
-            }, err, startTime);
-            finalizeTask("failed");
+            finalize("failed", err);
             throw err;
           }
           if (result.done) {
-            if (finalized) return result;
-            finalized = true;
-            try {
-              const latencyMs = Math.round(performance.now() - startTime);
-              recordUsageEvent(task, routedModel(provider, model, requestedModel), usage, latencyMs, providerRecordId, provider);
-            } catch {
-              // dexcost errors must never crash user code
-            }
-            if (autoCreated) {
-              finalizeAutoTask(task, "success", _buffer);
-            }
+            finalize("succeeded");
             return result;
           }
 
@@ -452,19 +582,32 @@ function wrapStream(
           const response = responsesApi && chunk?.type === "response.completed"
             ? chunk.response
             : chunk;
+          terminalResponse = response;
           if (response?.model) model = response.model;
           if (response?.id) providerRecordId = response.id;
           if (response?.usage) usage = response.usage;
           return result;
         },
         async return(value?: any): Promise<IteratorResult<any>> {
-          finalizeTask("success");
-          return iter.return ? await iter.return(value) : { done: true as const, value };
+          try {
+            const result = iter.return ? await iter.return(value) : { done: true as const, value };
+            finalize("cancelled");
+            return result;
+          } catch (error) {
+            finalize("failed", error);
+            throw error;
+          }
         },
         async throw(error?: any): Promise<IteratorResult<any>> {
-          finalizeTask("failed");
-          if (iter.throw) return await iter.throw(error);
-          throw error;
+          try {
+            if (!iter.throw) throw error;
+            const result = await iter.throw(error);
+            if (result.done) finalize("failed", error);
+            return result;
+          } catch (raised) {
+            finalize("failed", raised);
+            throw raised;
+          }
         },
       };
     },

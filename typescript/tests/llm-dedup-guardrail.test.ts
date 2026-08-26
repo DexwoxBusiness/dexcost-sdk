@@ -31,10 +31,10 @@ const EXPECTED_REGISTRATIONS: Record<string, number> = {
   "adapters/http.ts": 2, // JSON fallback + SSE fallback
   "clients.ts": 1, // TrackedOpenAI/TrackedAnthropic shared helper
   "core/tracker.ts": 1, // TrackedTask.recordLlmCall (manual layer)
-  "instruments/anthropic.ts": 3, // non-stream + stream usage + stream no-usage
+  "instruments/anthropic.ts": 2, // non-stream + single terminal stream finalizer
   "instruments/bedrock.ts": 1,
-  "instruments/cohere.ts": 3,
-  "instruments/gemini.ts": 3,
+  "instruments/cohere.ts": 2, // non-stream + single terminal stream finalizer
+  "instruments/gemini.ts": 2, // non-stream + single terminal stream finalizer
   "instruments/openai.ts": 1, // Chat/Responses share recordUsageEvent
   "instruments/vercel-ai.ts": 1, // single shared recordEvent
   "integrations/ai-sdk.ts": 1, // single shared _recordEvent

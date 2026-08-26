@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 170,
-  "typescript_export_count": 322,
-  "equivalent_count": 167,
+  "python_export_count": 171,
+  "typescript_export_count": 324,
+  "equivalent_count": 168,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -14,7 +14,7 @@
       "typescript_exports": [
         "ALL_SUPPORTED_INSTRUMENTS"
       ],
-      "notes": null
+      "notes": "Equivalent supported-instrument registry; TypeScript additionally exposes its Vercel AI and legacy @google/generative-ai adapters, while Python's gemini entry maps to the current google.genai adapter."
     },
     {
       "python_name": "ATTRIBUTION_COMPONENTS",
@@ -99,7 +99,7 @@
     },
     {
       "python_name": "AttributionBillingDimensionValue",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "AttributionBillingDimensionValue"
@@ -577,7 +577,7 @@
     },
     {
       "python_name": "OutcomeInput",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "OutcomeInput"
@@ -694,7 +694,7 @@
     },
     {
       "python_name": "RevenueInput",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "RevenueInput"
@@ -793,7 +793,7 @@
     },
     {
       "python_name": "ToolDimensionInput",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "ToolDimensionInput"
@@ -811,7 +811,7 @@
     },
     {
       "python_name": "ToolQuantityInput",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "ToolQuantityInput"
@@ -856,7 +856,7 @@
     },
     {
       "python_name": "WebhookHeader",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "WebhookHeader"
@@ -865,7 +865,7 @@
     },
     {
       "python_name": "WebhookSecret",
-      "python_kind": "constant",
+      "python_kind": "type_alias",
       "classification": "equivalent",
       "typescript_exports": [
         "WebhookSecret"
@@ -887,6 +887,15 @@
       "classification": "language_specific",
       "typescript_exports": [],
       "notes": "Node package version is authoritative in package.json rather than a root runtime export."
+    },
+    {
+      "python_name": "amend_outcome",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "amendOutcome"
+      ],
+      "notes": null
     },
     {
       "python_name": "assert_attribution_event_v2",
@@ -1145,9 +1154,9 @@
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
-        "instrumentGemini"
+        "instrumentGoogleGenAI"
       ],
-      "notes": null
+      "notes": "Python google.genai maps to TypeScript @google/genai; instrumentGemini is the separate legacy @google/generative-ai adapter."
     },
     {
       "python_name": "instrument_litellm",
@@ -1429,9 +1438,9 @@
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
-        "uninstrumentGemini"
+        "uninstrumentGoogleGenAI"
       ],
-      "notes": null
+      "notes": "Python google.genai maps to TypeScript @google/genai; uninstrumentGemini is the separate legacy @google/generative-ai adapter."
     },
     {
       "python_name": "uninstrument_litellm",

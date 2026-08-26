@@ -2,7 +2,19 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { eventToDict, type CostEvent } from "./models.js";
 
-const keyStore = new AsyncLocalStorage<string | undefined>();
+interface IdempotencyScope {
+  readonly key: string;
+  nextOccurrence: number;
+}
+
+export interface CapturedIdempotencyKey {
+  readonly key: string;
+  readonly occurrence: number;
+}
+
+export type IdempotencyKey = string | CapturedIdempotencyKey;
+
+const keyStore = new AsyncLocalStorage<IdempotencyScope | undefined>();
 const EVENT_NAMESPACE = "ee9858ce-fc4e-5c97-a803-2ea9df316d5c";
 
 function validateKey(key: string): string {
@@ -19,18 +31,27 @@ function validateKey(key: string): string {
 }
 
 export function getIdempotencyKey(): string | undefined {
-  return keyStore.getStore();
+  return keyStore.getStore()?.key;
+}
+
+/** Reserve one deterministic operation occurrence from the active scope. */
+export function captureIdempotencyKey(): CapturedIdempotencyKey | undefined {
+  const scope = keyStore.getStore();
+  if (scope === undefined) return undefined;
+  const occurrence = scope.nextOccurrence;
+  scope.nextOccurrence += 1;
+  return { key: scope.key, occurrence };
 }
 
 /** Set or clear the caller key for the remaining async context. */
 export function setIdempotencyKey(key?: string): string | undefined {
-  const previous = keyStore.getStore();
-  keyStore.enterWith(key === undefined ? undefined : validateKey(key));
+  const previous = keyStore.getStore()?.key;
+  keyStore.enterWith(key === undefined ? undefined : { key: validateKey(key), nextOccurrence: 0 });
   return previous;
 }
 
 export function runWithIdempotencyKey<T>(key: string, fn: () => T): T {
-  return keyStore.run(validateKey(key), fn);
+  return keyStore.run({ key: validateKey(key), nextOccurrence: 0 }, fn);
 }
 
 export function idempotencyHash(key: string): string;
@@ -65,9 +86,16 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function applyEventIdempotency(event: CostEvent, key = getIdempotencyKey()): CostEvent {
-  if (key === undefined) return event;
-  const hash = idempotencyHash(key);
+export function applyEventIdempotency(
+  event: CostEvent,
+  key: IdempotencyKey | undefined = captureIdempotencyKey(),
+): CostEvent {
+  // The operation wrapper may already have reserved and stamped this event.
+  // Defensive storage/capability stamping must not consume another occurrence.
+  if (idempotencyHash(event) !== undefined || key === undefined) return event;
+  const resolvedKey = typeof key === "string" ? key : key.key;
+  const occurrence = typeof key === "string" ? undefined : key.occurrence;
+  const hash = idempotencyHash(resolvedKey);
   const identity = stableJson({
     event_type: event.eventType,
     provider: event.provider ?? null,
@@ -79,8 +107,13 @@ export function applyEventIdempotency(event: CostEvent, key = getIdempotencyKey(
     capability: event.details["attribution_capability"] ?? null,
   });
   const oldId = event.eventId;
-  event.eventId = uuid5(EVENT_NAMESPACE, `${event.taskId}\0${hash}\0${identity}`);
-  event.details = { ...event.details, _dexcost_idempotency_sha256: hash };
+  const occurrencePart = occurrence === undefined ? "" : `${occurrence}\0`;
+  event.eventId = uuid5(EVENT_NAMESPACE, `${event.taskId}\0${hash}\0${occurrencePart}${identity}`);
+  event.details = {
+    ...event.details,
+    _dexcost_idempotency_sha256: hash,
+    ...(occurrence === undefined ? {} : { _dexcost_idempotency_occurrence: occurrence }),
+  };
   for (const field of ["attribution_operation_id", "attribution_attempt_id"]) {
     if (event.details[field] === oldId) event.details[field] = event.eventId;
   }

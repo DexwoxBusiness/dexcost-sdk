@@ -24,6 +24,7 @@ from dexcost.attribution.types import (
     AttributionTaskIngestV1,
     AttributionUsageLineV2,
     AttributionUsageMetric,
+    _is_attribution_usage_metric,
 )
 from dexcost.attribution.validate import validate_attribution_event_v2
 from dexcost.models._serde import canonical_decimal, iso_canonical
@@ -371,11 +372,7 @@ def _component_and_usage(
         inferred_metric = "characters"
     else:
         inferred_metric = "request_count"
-    metric = (
-        cast(AttributionUsageMetric, explicit_metric)
-        if explicit_metric in ATTRIBUTION_UNIT_BY_METRIC
-        else inferred_metric
-    )
+    metric = explicit_metric if _is_attribution_usage_metric(explicit_metric) else inferred_metric
     component: AttributionComponent = cast(
         AttributionComponent,
         explicit_component

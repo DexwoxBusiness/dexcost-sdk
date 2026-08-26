@@ -554,7 +554,11 @@ class TestSyncBatch:
         warnings = [record for record in caplog.records if record.levelname == "WARNING"]
         assert len(warnings) == 2
 
-    def test_stale_quarantine_is_purged_without_a_successful_upload(self, tmp_path: Path) -> None:
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_stale_recoverable_quarantine_is_replayed_before_cleanup(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_urlopen.return_value = _mock_urlopen_success()
         storage = _make_storage(tmp_path)
         stale = _make_event()
         stale.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -563,8 +567,26 @@ class TestSyncBatch:
         worker = SyncWorker(config=_make_config(), storage=storage)
         worker._last_purge = -3600.0
 
-        assert worker._sync_batch() is False
+        assert worker._sync_batch() is True
         assert storage.query_quarantined_events() == []
+        assert storage.query_events_for_sync() == []
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        assert [event["event_id"] for event in body["events"]] == [str(stale.event_id)]
+
+    def test_automatic_cleanup_never_deletes_unsent_quarantine(self, tmp_path: Path) -> None:
+        storage = _make_storage(tmp_path)
+        stale = _make_event()
+        stale.event_type = "future_internal_signal"
+        stale.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        storage.insert_event(stale)
+        storage.mark_quarantined([str(stale.event_id)])
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        worker._last_purge = -3600.0
+
+        with pytest.raises(_AttributionConversionError):
+            worker._sync_batch()
+
+        assert [event.event_id for event in storage.query_quarantined_events()] == [stale.event_id]
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_batch_size_respected(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:

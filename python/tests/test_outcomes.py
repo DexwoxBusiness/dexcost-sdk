@@ -118,6 +118,55 @@ def test_storage_enforces_outcome_revision_stream(tmp_path: Path) -> None:
     storage.close()
 
 
+def test_amend_outcome_appends_next_revision_with_optimistic_guard(tmp_path: Path) -> None:
+    storage = SQLiteStorage(db_path=tmp_path / "amend.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    task_id = uuid.uuid4()
+    first = tracker.record_outcome(
+        "lead_converted",
+        task_id=task_id,
+        state="pending",
+    )
+
+    amended = tracker.amend_outcome(
+        first.outcome_id,
+        state="achieved",
+        value=Decimal("125.50"),
+        expected_revision=1,
+    )
+
+    assert amended.task_id == task_id
+    assert amended.name == "lead_converted"
+    assert amended.revision == 2
+    assert amended.value == OutcomeValue(type="decimal", value="125.5")
+    assert tracker.get_outcome_history(first.outcome_id) == [first, amended]
+
+    with pytest.raises(ValueError, match="revision conflict: expected 1, found 2"):
+        tracker.amend_outcome(
+            first.outcome_id,
+            state="missed",
+            expected_revision=1,
+        )
+    storage.close()
+
+
+def test_tracked_task_cannot_amend_another_tasks_outcome(tmp_path: Path) -> None:
+    storage = SQLiteStorage(db_path=tmp_path / "amend-owner.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    first = tracker.record_outcome(
+        "ticket_resolved",
+        task_id=uuid.uuid4(),
+        state="pending",
+    )
+
+    with (
+        tracker.task(task_type="different-task") as task,
+        pytest.raises(ValueError, match="different task"),
+    ):
+        task.amend_outcome(first.outcome_id, state="achieved", value=True)
+    storage.close()
+
+
 def test_cleanup_retains_outcome_ledger_for_later_corrections(tmp_path: Path) -> None:
     storage = SQLiteStorage(db_path=tmp_path / "retention.db")
     task_id = uuid.uuid4()
@@ -191,7 +240,14 @@ def test_singleton_record_outcome_uses_current_task(tmp_path: Path) -> None:
             root_task_id=root_id,
         ):
             outcome = dexcost.record_outcome("campaign_exported", value=True)
+        amended = dexcost.amend_outcome(
+            outcome.outcome_id,
+            state="missed",
+            value=False,
+            expected_revision=1,
+        )
         assert outcome.task_id == root_id
         assert outcome.to_dict()["lifecycle"] == {"state": "achieved", "revision": 1}
+        assert amended.to_dict()["lifecycle"] == {"state": "missed", "revision": 2}
     finally:
         dexcost.close()

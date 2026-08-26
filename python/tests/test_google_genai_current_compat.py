@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from google.auth.credentials import AnonymousCredentials
 
 from dexcost.instruments.gemini import instrument_gemini, uninstrument_gemini
 from dexcost.storage.sqlite import SQLiteStorage
@@ -367,10 +368,12 @@ def test_actual_google_http_encoder_and_response_model(
             return httpx.Response(
                 200,
                 json={
-                    "embeddings": [
+                    "predictions": [
                         {
-                            "values": [0.1],
-                            "statistics": {"tokenCount": 9.0},
+                            "embeddings": {
+                                "values": [0.1],
+                                "statistics": {"token_count": 9.0},
+                            }
                         }
                     ],
                     "metadata": {"billableCharacterCount": 20},
@@ -412,8 +415,13 @@ def test_actual_google_http_encoder_and_response_model(
         )
 
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    credentials = AnonymousCredentials()
+    credentials.token = "test-token"
     client = genai.Client(
-        api_key="test-key",
+        vertexai=True,
+        credentials=credentials,
+        project="test-project",
+        location="us-central1",
         http_options=types.HttpOptions(
             base_url="https://google.test",
             httpx_client=http_client,

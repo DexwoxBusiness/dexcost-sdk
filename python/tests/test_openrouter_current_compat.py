@@ -323,6 +323,14 @@ def test_sync_official_sdk_covers_every_current_billable_resource(tmp_path: Path
         assert chat.output_tokens == 5
         assert chat.cached_tokens == 2
         assert chat.details["provider_upstream_cost_usd"] == "0.011"
+        reconciled_usage = {
+            line["metric"]: line["quantity"]
+            for line in chat.details["attribution_usage_lines"]
+        }
+        assert reconciled_usage["input_tokens"] == "8"
+        assert reconciled_usage["cache_read_input_tokens"] == "2"
+        assert reconciled_usage["output_tokens"] == "3"
+        assert reconciled_usage["reasoning_output_tokens"] == "2"
         assert {
             dimension["key"]: dimension["value"]["value"]
             for dimension in chat.details["attribution_dimensions"]

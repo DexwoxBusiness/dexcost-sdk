@@ -11,6 +11,7 @@ import {
   instrumentAnthropic,
   uninstrumentAnthropic,
   _setMessagesClass,
+  _setMessageBatchesClass,
   _resetMessagesClass,
 } from "../src/instruments/anthropic.js";
 
@@ -44,6 +45,55 @@ function makeMockResponse(overrides: Record<string, unknown> = {}) {
 class FakeMessages {
   async create(_body: unknown, _options?: unknown): Promise<unknown> {
     return makeMockResponse();
+  }
+}
+
+class FakeMessageBatches {
+  async create(): Promise<unknown> {
+    return {
+      id: "msgbatch_123",
+      processing_status: "in_progress",
+      request_counts: { processing: 2, succeeded: 0, errored: 0, canceled: 0, expired: 0 },
+    };
+  }
+
+  async retrieve(id: string): Promise<unknown> {
+    return {
+      id,
+      processing_status: "ended",
+      request_counts: { processing: 0, succeeded: 2, errored: 0, canceled: 0, expired: 0 },
+    };
+  }
+
+  async cancel(id: string): Promise<unknown> {
+    return {
+      id,
+      processing_status: "canceling",
+      request_counts: { processing: 2, succeeded: 0, errored: 0, canceled: 0, expired: 0 },
+    };
+  }
+
+  async results(): Promise<AsyncIterable<unknown>> {
+    const rows = [
+      {
+        custom_id: "private-custom-id",
+        result: {
+          type: "succeeded",
+          message: {
+            model: "claude-3-5-sonnet-20241022",
+            content: [{ type: "text", text: "private output" }],
+            usage: {
+              input_tokens: 100,
+              output_tokens: 20,
+              cache_read_input_tokens: 10,
+              cache_creation_input_tokens: 4,
+            },
+          },
+        },
+      },
+      { custom_id: "private-error-id", result: { type: "errored", error: { message: "private" } } },
+    ];
+    return { async *[Symbol.asyncIterator]() { for (const row of rows) yield row; } };
   }
 }
 
@@ -246,6 +296,64 @@ describe("Anthropic instrumentation", () => {
     expect(events[0].latencyMs).toBeDefined();
     expect(typeof events[0].latencyMs).toBe("number");
   });
+
+  it("persists and reconciles Message Batch lifecycle revisions", async () => {
+    _setMessageBatchesClass(FakeMessageBatches);
+    await instrumentAnthropic(pricing, buffer);
+    const batches = new FakeMessageBatches();
+    const created = await batches.create({
+      requests: [
+        { custom_id: "private-one", params: { model: "claude-3-5-sonnet-20241022", messages: [] } },
+        { custom_id: "private-two", params: { model: "claude-3-5-sonnet-20241022", messages: [] } },
+      ],
+    } as any) as any;
+    expect(created.id).toBe("msgbatch_123");
+
+    await batches.retrieve("msgbatch_123");
+    const revisions = buffer.getPendingLedger("provider_job");
+    expect(revisions).toHaveLength(2);
+    expect(revisions[0].status).toBe("submitted");
+    expect(revisions[0].resource_id).toBe("claude-3-5-sonnet-20241022");
+    expect(revisions[0].billing_dimensions).toEqual([
+      { key: "batch_request_count", value: "2" },
+      { key: "batch_model_count", value: "1" },
+    ]);
+    expect(revisions[1].status).toBe("succeeded");
+    expect(revisions[1].usage).toEqual([
+      { metric: "batch_succeeded_request_count", quantity: "2", unit: "Requests" },
+    ]);
+    expect(JSON.stringify(revisions)).not.toContain("private-one");
+    expect(JSON.stringify(revisions)).not.toContain("private-two");
+  });
+
+  it("aggregates batch result usage only after full stream exhaustion", async () => {
+    _setMessageBatchesClass(FakeMessageBatches);
+    await instrumentAnthropic(pricing, buffer);
+    const batches = new FakeMessageBatches();
+    await batches.create({
+      requests: [{ custom_id: "private", params: { model: "claude-3-5-sonnet-20241022" } }],
+    } as any);
+    const stream = await batches.results("msgbatch_123" as any);
+    const received: unknown[] = [];
+    for await (const row of stream) received.push(row);
+    expect(received).toHaveLength(2);
+
+    const revisions = buffer.getPendingLedger("provider_job");
+    expect(revisions).toHaveLength(2);
+    const final = revisions[1];
+    expect(final.status).toBe("succeeded");
+    expect(final.task_input_tokens).toBe(100);
+    expect(final.task_output_tokens).toBe(20);
+    expect(final.task_cached_tokens).toBe(10);
+    expect(final.usage).toEqual(expect.arrayContaining([
+      { metric: "anthropic_batch_input_tokens", quantity: "100", unit: "Tokens" },
+      { metric: "anthropic_batch_output_tokens", quantity: "20", unit: "Tokens" },
+      { metric: "batch_succeeded_request_count", quantity: "1", unit: "Requests" },
+      { metric: "batch_errored_request_count", quantity: "1", unit: "Requests" },
+    ]));
+    expect(JSON.stringify(final)).not.toContain("private-custom-id");
+    expect(JSON.stringify(final)).not.toContain("private output");
+  });
 });
 
 describe("Anthropic streaming instrumentation", () => {
@@ -392,5 +500,72 @@ describe("Anthropic streaming instrumentation", () => {
     expect(events[0].details["cache_creation_input_tokens"]).toBe(200);
     expect(events[0].inputTokens).toBe(400);
     expect(events[0].outputTokens).toBe(75);
+  });
+
+  it("retains partial usage and failure identity when the stream raises", async () => {
+    class FailingMessages {
+      async create(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "message_start",
+              message: {
+                model: "claude-3-5-sonnet-20241022",
+                usage: { input_tokens: 41, cache_read_input_tokens: 7 },
+              },
+            };
+            throw new Error("provider stream failed");
+          },
+        };
+      }
+    }
+    _setMessagesClass(FailingMessages);
+    await instrumentAnthropic(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await expect(runWithTask(task, async () => {
+      const stream = await new FailingMessages().create({ stream: true });
+      for await (const _chunk of stream as AsyncIterable<unknown>) { /* drain */ }
+    })).rejects.toThrow("provider stream failed");
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 41, cachedTokens: 7 });
+    expect(buffer.getAllEvents()[0].details).toMatchObject({
+      attribution_operation_status: "failed",
+      attribution_error_type: "error",
+    });
+  });
+
+  it("records early stream close as cancelled exactly once", async () => {
+    class CancelledMessages {
+      async create(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "message_start",
+              message: {
+                model: "claude-3-5-sonnet-20241022",
+                usage: { input_tokens: 17, cache_read_input_tokens: 3 },
+              },
+            };
+            yield { type: "message_delta", usage: { output_tokens: 9 } };
+          },
+        };
+      }
+    }
+    _setMessagesClass(CancelledMessages);
+    await instrumentAnthropic(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const stream = await new CancelledMessages().create({ stream: true });
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.return?.();
+    });
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0].details.attribution_operation_status).toBe("cancelled");
+    expect(buffer.getAllEvents()[0].inputTokens).toBe(17);
   });
 });

@@ -15,6 +15,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { getCurrentTask, isNetworkEventSuppressed } from "../core/context.js";
+import { applyEventCapability, getCapability, type CapabilityIdentity } from "../core/capabilities.js";
+import {
+  applyEventIdempotency,
+  captureIdempotencyKey,
+  type CapturedIdempotencyKey,
+} from "../core/idempotency.js";
+import { providerCaptureIsClaimed } from "../instruments/provider-capture.js";
+import { nonNegativeDecimal, tokenMeasurement } from "../instruments/provider-extract.js";
+import {
+  canonicalLiteLlmModel,
+  classifyLiteLlmProvider,
+  isConfiguredLiteLlmProxyUrl,
+} from "../instruments/litellm-routing.js";
 import {
   classifyDestination,
   measureBytesFromHeaders,
@@ -44,7 +57,7 @@ import {
 } from "../core/session.js";
 import { scrubUrl } from "../security/redaction.js";
 import type { EventBuffer } from "../transport/buffer.js";
-import type { PricingEngine, CostResult } from "../pricing/engine.js";
+import type { PricingEngine, CostResult, MeteredCostResult } from "../pricing/engine.js";
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -215,6 +228,14 @@ export function clearDomainRates(): void {
 /** Response formats the LLM fallback can parse. */
 type LlmFormat = "openai" | "anthropic" | "gemini";
 
+interface _LlmUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** Bounded parsed provider payload, retained only for quantity extraction. */
+  rawResponse?: unknown;
+}
+
 /** Known LLM API domains and their response format. */
 const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.openai.com": "openai",
@@ -319,7 +340,7 @@ function _extractLlmUsage(
   body: unknown,
   format: LlmFormat,
   modelHint?: string,
-): { model: string; inputTokens: number; outputTokens: number } | null {
+): _LlmUsage | null {
   if (!body || typeof body !== "object") return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const b = body as Record<string, any>;
@@ -342,6 +363,7 @@ function _extractLlmUsage(
           : modelHint ?? "unknown",
       inputTokens: typeof inTok === "number" ? inTok : 0,
       outputTokens: (typeof outTok === "number" ? outTok : 0) + thoughts,
+      rawResponse: body,
     };
   }
 
@@ -364,6 +386,7 @@ function _extractLlmUsage(
     model,
     inputTokens: typeof u[inKey] === "number" ? u[inKey] : 0,
     outputTokens: typeof u[outKey] === "number" ? u[outKey] : 0,
+    rawResponse: body,
   };
 }
 
@@ -375,15 +398,18 @@ async function _tryExtractLlmFromResponse(
   response: Response,
   format: LlmFormat,
   modelHint?: string,
-): Promise<{ model: string; inputTokens: number; outputTokens: number } | null> {
+): Promise<_LlmUsage | null> {
   try {
-    const cloned = response.clone();
-    const contentType = cloned.headers.get("content-type") ?? "";
     // Only parse JSON responses (non-streaming)
+    // Check before clone(): cloning an SSE response tees and replaces the
+    // original body, which can strand the unused branch and make caller
+    // cancellation wait forever.
+    const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return null;
-    const contentLength = cloned.headers.get("content-length");
+    const contentLength = response.headers.get("content-length");
     const cl = Number.parseInt(contentLength ?? "", 10);
     if (contentLength !== null && !Number.isNaN(cl) && cl > MAX_BODY_SIZE) return null;
+    const cloned = response.clone();
     const body = await cloned.json();
     return _extractLlmUsage(body, format, modelHint);
   } catch {
@@ -407,13 +433,14 @@ function _modelHintFromPath(pathname: string): string | undefined {
 function _parseSseUsage(
   sseData: string,
   format: LlmFormat,
-): { model: string; inputTokens: number; outputTokens: number } | null {
+): _LlmUsage | null {
   // Split into SSE events (separated by double newlines)
   const events = sseData.split(/\n\n+/).filter(Boolean);
   let model = "unknown";
   let inputTokens = 0;
   let outputTokens = 0;
   let found = false;
+  let rawResponse: unknown;
 
   for (const event of events) {
     // Extract the data line(s)
@@ -445,6 +472,7 @@ function _parseSseUsage(
         if (format === "openai" && data.usage) {
           inputTokens = data.usage.prompt_tokens ?? inputTokens;
           outputTokens = data.usage.completion_tokens ?? outputTokens;
+          rawResponse = data;
           found = true;
         }
         if (format === "anthropic") {
@@ -462,7 +490,7 @@ function _parseSseUsage(
     }
   }
 
-  return found ? { model, inputTokens, outputTokens } : null;
+  return found ? { model, inputTokens, outputTokens, rawResponse } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,9 +558,28 @@ function _buildInstrumentedFetch(
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
     const requestBodyLen = _resolveRequestBodyLen(input, init);
-    const observerRequestBodyPromise = serviceUsageObservers?.needsRequestBody(urlStr) === true
+    let potentialLlmFormat: LlmFormat | null = null;
+    let knownLlmHost = false;
+    try {
+      const candidate = new URL(urlStr);
+      potentialLlmFormat = _detectLlmEndpoint(candidate, method);
+      knownLlmHost = _LLM_DOMAINS[candidate.hostname] !== undefined;
+    } catch { /* opaque URL */ }
+    const liteLlmProxy = isConfiguredLiteLlmProxyUrl(urlStr);
+    const captureSuppressed = isNetworkEventSuppressed() || providerCaptureIsClaimed();
+    const observerRequestBodyPromise = serviceUsageObservers?.needsRequestBody(urlStr) === true ||
+        potentialLlmFormat !== null || liteLlmProxy
       ? _resolveObserverRequestBody(input, init)
       : Promise.resolve(undefined);
+    const llmCapability = potentialLlmFormat !== null && !captureSuppressed ? getCapability() : undefined;
+    // Reserving an occurrence is stateful, so do it only for an explicitly
+    // configured proxy or known LLM host. Unknown path-shaped endpoints are
+    // classified after response usage arrives and must not consume a key on
+    // false positives.
+    const llmIdempotencyKey = potentialLlmFormat !== null && !captureSuppressed &&
+        (liteLlmProxy || knownLlmHost)
+      ? captureIdempotencyKey()
+      : undefined;
     const requestBytes = measureBytesFromHeaders(
       method,
       urlStr,
@@ -540,7 +587,41 @@ function _buildInstrumentedFetch(
       requestBodyLen,
     );
 
-    const response = await base(input, init);
+    let response: Response;
+    try {
+      response = await base(input, init);
+    } catch (error) {
+      const observerRequestBody = await observerRequestBodyPromise;
+      if (potentialLlmFormat !== null && liteLlmProxy && !captureSuppressed && _pricing !== null) {
+        try {
+          const parsed = new URL(urlStr);
+          const resolved = _resolveHttpTask();
+          const failedContext: _HttpCallContext = {
+            urlStr,
+            method,
+            hostname: parsed.hostname,
+            protocol: parsed.protocol.replace(":", "") || "https",
+            requestBytes,
+            responseHeaderBytes: 0,
+            isInternal: classifyDestination(parsed.hostname),
+            suppressed: false,
+            liteLlmProxy: true,
+            llmCapability,
+            llmIdempotencyKey,
+            observerRequestBody,
+            resolvedTask: resolved.task,
+            resolvedTaskAutoCreated: resolved.autoCreated,
+          };
+          _recordHttpLlmEvent(
+            failedContext, resolved.task, null, 0, "http_llm_fallback", "failed", error,
+          );
+          _finaliseAdapterAutoTask(resolved.task, resolved.autoCreated, "failed");
+        } catch {
+          // Telemetry must never replace the provider's original failure.
+        }
+      }
+      throw error;
+    }
     const observerRequestBody = await observerRequestBodyPromise;
 
     // ── v1 destination classification + byte details ─────────────────────
@@ -555,7 +636,7 @@ function _buildInstrumentedFetch(
       // returns null for empty input.
     }
     const isInternal = classifyDestination(hostname);
-    const suppressed = isNetworkEventSuppressed();
+    const suppressed = captureSuppressed;
 
     // Resolve accountant from registry via the active task. The task's id
     // is looked up via the existing context — see _resolveHttpTask below.
@@ -586,6 +667,15 @@ function _buildInstrumentedFetch(
       suppressed,
       responseHeaderBytes: _measureResponseHeaderBytes(response),
       llmStreamFormat,
+      liteLlmProxy,
+      llmCapability,
+      llmIdempotencyKey,
+      liteLlmGatewayCost: liteLlmProxy
+        ? response.headers.get("x-litellm-response-cost") ?? undefined
+        : undefined,
+      liteLlmProviderCost: liteLlmProxy
+        ? response.headers.get("llm_provider-x-litellm-response-cost") ?? undefined
+        : undefined,
       observerRequestBody,
     };
 
@@ -1037,6 +1127,14 @@ interface _HttpCallContext {
   suppressed: boolean;
   /** LLM response format detected for this call (for SSE stream parsing). */
   llmStreamFormat?: LlmFormat;
+  /** Explicitly configured LiteLLM Proxy route, never inferred from hostname. */
+  liteLlmProxy?: boolean;
+  /** Invocation-time attribution snapshots survive deferred stream draining. */
+  llmCapability?: CapabilityIdentity;
+  llmIdempotencyKey?: CapturedIdempotencyKey;
+  llmStreamStatus?: "succeeded" | "failed" | "cancelled";
+  liteLlmGatewayCost?: string;
+  liteLlmProviderCost?: string;
   /** Bounded JSON request metadata used only for observer billing identity. */
   observerRequestBody?: unknown;
   /** Response BODY bytes, known once the counting stream has drained.
@@ -1293,9 +1391,10 @@ function _wrapResponseForByteCounting(
 ): Response {
   let bytesRead = 0;
   let finalised = false;
-  const finalise = () => {
+  const finalise = (status: "succeeded" | "failed" | "cancelled" = "succeeded") => {
     if (finalised) return;
     finalised = true;
+    ctx.llmStreamStatus = status;
     _finaliseHttpCall(ctx, bytesRead);
   };
 
@@ -1337,7 +1436,7 @@ function _wrapResponseForByteCounting(
           }
         } catch { /* ignore decode errors */ }
       }
-      finalise();
+      finalise("succeeded");
     },
   });
 
@@ -1345,31 +1444,170 @@ function _wrapResponseForByteCounting(
   // Add an early-abort hook by wrapping `piped` in a ReadableStream that
   // forwards reads from `piped`'s reader and triggers finalise on cancel.
   const reader = piped.getReader();
+  let wrapperCancelled = false;
   const earlyAbortWrapper = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const { value, done } = await reader.read();
-        if (done) {
-          controller.close();
-          return;
-        }
-        controller.enqueue(value);
-      } catch (err) {
+    pull(controller) {
+      // Do not return the pending provider read. Web Streams waits for a
+      // pending pull before settling cancel(), so a silent provider could
+      // otherwise make caller cancellation hang forever.
+      void reader.read().then(({ value, done }) => {
+        if (wrapperCancelled) return;
+        if (done) controller.close();
+        else controller.enqueue(value);
+      }, (err: unknown) => {
+        if (wrapperCancelled) return;
         controller.error(err);
-        finalise();
-      }
+        finalise("failed");
+      });
     },
     cancel(reason) {
-      finalise(); // v1 §5.5 early-abort: bytes-actually-received.
-      return reader.cancel(reason);
+      wrapperCancelled = true;
+      finalise("cancelled"); // v1 §5.5 early-abort: bytes-actually-received.
+      // A provider can leave the upstream pull pending indefinitely. The
+      // caller's cancellation must still settle promptly; signal upstream
+      // cleanup without coupling it to attribution finalization.
+      void reader.cancel(reason).catch(() => undefined);
     },
-  });
+  }, { highWaterMark: 0 });
 
   return new Response(earlyAbortWrapper, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
   });
+}
+
+function _requestModel(ctx: _HttpCallContext): string | undefined {
+  const body = ctx.observerRequestBody;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const model = (body as Record<string, unknown>).model;
+  return typeof model === "string" && model.trim().length > 0 ? model.trim() : undefined;
+}
+
+/** Record one HTTP-level LLM observation, with richer LiteLLM proxy identity. */
+function _recordHttpLlmEvent(
+  ctx: _HttpCallContext,
+  task: Task,
+  usage: _LlmUsage | null,
+  responseBytes: number,
+  source: "http_llm_fallback" | "http_llm_fallback_stream",
+  status: "succeeded" | "failed" | "cancelled" = "succeeded",
+  operationError?: unknown,
+): boolean {
+  if (_pricing === null) return false;
+  const requestedModel = _requestModel(ctx);
+  const provider = ctx.liteLlmProxy
+    ? classifyLiteLlmProvider(requestedModel, usage?.model)
+    : ctx.hostname;
+  const model = ctx.liteLlmProxy
+    ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
+    : usage?.model ?? requestedModel ?? "unknown";
+
+  const measurement = ctx.liteLlmProxy && usage?.rawResponse !== undefined
+    ? tokenMeasurement(usage.rawResponse, model, provider)
+    : undefined;
+  const inputTokens = measurement?.inputTokens ?? usage?.inputTokens ?? 0;
+  const outputTokens = measurement?.outputTokens ?? usage?.outputTokens ?? 0;
+  const cachedTokens = measurement?.cachedTokens ?? 0;
+  const usageLines = measurement?.usageLines ?? [
+    ...(inputTokens > 0 ? [{ metric: "input_tokens", quantity: inputTokens, unit: "Tokens" }] : []),
+    ...(outputTokens > 0 ? [{ metric: "output_tokens", quantity: outputTokens, unit: "Tokens" }] : []),
+  ];
+  const pricingUsage = measurement?.pricingUsage ?? Object.fromEntries(
+    usageLines.map((line) => [line.metric, line.quantity]),
+  );
+  const priced: MeteredCostResult = _pricing.getMeteredCost(model, pricingUsage);
+  let costUsd = priced.costUsd;
+  let costConfidence: CostEvent["costConfidence"] = priced.costConfidence;
+  let pricingSource: CostEvent["pricingSource"] = priced.pricingSource;
+  let pricingVersion: string | undefined = priced.pricingVersion;
+  const providerCost = measurement?.providerCostUsd === undefined
+    ? (provider === "openrouter" ? nonNegativeDecimal(ctx.liteLlmProviderCost) : undefined)
+    : nonNegativeDecimal(measurement.providerCostUsd);
+  const gatewayCost = nonNegativeDecimal(ctx.liteLlmGatewayCost);
+  if (providerCost !== undefined) {
+    costUsd = providerCost;
+    costConfidence = "exact";
+    pricingSource = "provider_response";
+    pricingVersion = undefined;
+  } else if (ctx.liteLlmProxy && gatewayCost !== undefined) {
+    costUsd = gatewayCost;
+    costConfidence = "computed";
+    pricingSource = "litellm";
+    pricingVersion = undefined;
+  }
+
+  const details: Record<string, unknown> = {
+    url: ctx.urlStr,
+    source,
+    request_bytes: ctx.requestBytes,
+    response_bytes: responseBytes,
+    attribution_component: "llm",
+    attribution_operation_name: ctx.liteLlmProxy ? "litellm.chat.create" : "llm.http.create",
+    attribution_operation_status: status,
+    attribution_resource_type: "model",
+    attribution_resource_id: model,
+    attribution_usage_lines: usageLines.length > 0
+      ? usageLines.map((line) => ({ ...line, quantity: String(line.quantity) }))
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    provider_usage_privacy: "quantities_only",
+  };
+  if (ctx.liteLlmProxy) {
+    details.attribution_dimensions = [{
+      key: "gateway", value: { type: "string", value: "litellm" },
+    }];
+  }
+  if (measurement?.providerRecordId) details.provider_record_id = measurement.providerRecordId;
+  if (providerCost !== undefined) details.provider_reported_cost_usd = providerCost.toString();
+  if (measurement?.providerUpstreamCostUsd !== undefined) {
+    details.provider_upstream_cost_usd = String(measurement.providerUpstreamCostUsd);
+  }
+  if (ctx.liteLlmProxy && providerCost === undefined && gatewayCost !== undefined) {
+    details.gateway_calculated_cost_usd = gatewayCost.toString();
+  }
+  if ((measurement?.cacheWriteTokens ?? 0) > 0) {
+    details.cache_write_input_tokens = measurement?.cacheWriteTokens;
+  }
+  if ((measurement?.reasoningTokens ?? 0) > 0) {
+    details.reasoning_output_tokens = measurement?.reasoningTokens;
+  }
+  if (priced.unpricedDimensions.length > 0) {
+    details.pricing_unpriced_dimensions = priced.unpricedDimensions;
+  }
+  if (operationError !== undefined) {
+    const raw = operationError instanceof Error ? operationError.name : typeof operationError;
+    details.attribution_error_type = raw.toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "_").replace(/^[._-]+/u, "").slice(0, 128) || "provider_error";
+  }
+
+  const event = createCostEvent({
+    eventId: randomUUID(),
+    taskId: task.taskId,
+    eventType: "llm_call",
+    costUsd,
+    costConfidence,
+    pricingSource,
+    pricingVersion,
+    provider,
+    serviceName: ctx.liteLlmProxy ? "litellm" : undefined,
+    model,
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    details,
+  });
+  applyEventCapability(event, ctx.llmCapability);
+  applyEventIdempotency(event, ctx.llmIdempotencyKey);
+  _pushRecordedEvent(event);
+  if (_buffer) _buffer.addEvent(event);
+  registerLlmCapture(task.taskId, inputTokens, outputTokens);
+  task.llmCostUsd = task.llmCostUsd.plus(costUsd);
+  task.totalCostUsd = task.totalCostUsd.plus(costUsd);
+  task.totalInputTokens += inputTokens;
+  task.totalOutputTokens += outputTokens;
+  task.totalCachedTokens += cachedTokens;
+  if (_buffer) _buffer.upsertTask(task);
+  return true;
 }
 
 /**
@@ -1403,7 +1641,7 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
   }
 
   // LLM streaming fallback — extract usage from accumulated SSE data.
-  if (ctx.llmStreamFormat && ctx.sseTailBuffer && _pricing && !ctx.suppressed) {
+  if (ctx.llmStreamFormat && (ctx.sseTailBuffer || ctx.liteLlmProxy) && _pricing && !ctx.suppressed) {
     // Merge head + tail buffers so Anthropic message_start (model + input
     // tokens) survives even when the stream exceeds the 8k tail window.
     // Only merge when the tail does NOT already start with the head — for
@@ -1414,47 +1652,17 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
         ? ctx.sseHeadBuffer + ctx.sseTailBuffer
         : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
     const llmUsage = _parseSseUsage(sseData, ctx.llmStreamFormat);
-    if (llmUsage) {
-      const costResult: CostResult = _pricing.getCost(
-        llmUsage.model,
-        llmUsage.inputTokens,
-        llmUsage.outputTokens,
+    if (llmUsage || ctx.liteLlmProxy) {
+      const status = ctx.llmStreamStatus ?? "unknown";
+      _recordHttpLlmEvent(
+        ctx, task, llmUsage, responseBytes, "http_llm_fallback_stream",
+        status === "unknown" ? "failed" : status,
       );
-      const event = createCostEvent({
-        eventId: randomUUID(),
-        taskId: task.taskId,
-        eventType: "llm_call",
-        costUsd: costResult.costUsd,
-        costConfidence: costResult.costConfidence,
-        pricingSource: costResult.pricingSource,
-        provider: ctx.hostname,
-        model: llmUsage.model,
-        inputTokens: llmUsage.inputTokens,
-        outputTokens: llmUsage.outputTokens,
-        details: {
-          url: ctx.urlStr,
-          source: "http_llm_fallback_stream",
-          request_bytes: ctx.requestBytes,
-          response_bytes: responseBytes,
-        },
-      });
-      _pushRecordedEvent(event);
-      if (_buffer) {
-        _buffer.addEvent(event);
-      }
       debugLog(
         "http",
-        `llm_call captured via http fallback (sse): ${ctx.hostname} model=${llmUsage.model} ` +
-          `in=${llmUsage.inputTokens} out=${llmUsage.outputTokens}`,
+        `llm_call captured via http fallback (sse): ${ctx.hostname} model=${llmUsage?.model ?? "unknown"} ` +
+          `in=${llmUsage?.inputTokens ?? 0} out=${llmUsage?.outputTokens ?? 0}`,
       );
-      registerLlmCapture(task.taskId, llmUsage.inputTokens, llmUsage.outputTokens);
-      task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-      task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-      task.totalInputTokens += llmUsage.inputTokens;
-      task.totalOutputTokens += llmUsage.outputTokens;
-      if (_buffer) {
-        _buffer.upsertTask(task);
-      }
       ctx._matchedCatalog = true; // prevent network event emission
     }
   }
@@ -1552,10 +1760,14 @@ function _maybeEmitNetworkOutcome(ctx: _HttpCallContext): void {
  * (SessionManager sweep / TrackedTask.end) and pass autoCreated=false.
  * Pre-fix these tasks were never finalized and stayed "pending" forever.
  */
-function _finaliseAdapterAutoTask(task: Task, autoCreated: boolean): void {
+function _finaliseAdapterAutoTask(
+  task: Task,
+  autoCreated: boolean,
+  status: "success" | "failed" = "success",
+): void {
   if (!autoCreated) return;
   try {
-    finalizeAutoTask(task, "success", _buffer ?? undefined);
+    finalizeAutoTask(task, status, _buffer ?? undefined);
   } catch {
     // never crash user code
   }
@@ -1608,6 +1820,22 @@ async function _maybeRecordCost(
   if (ctx) {
     ctx.resolvedTask = task;
     ctx.resolvedTaskAutoCreated = resolved.autoCreated;
+  }
+
+  // A provider adapter owns this logical call. Byte accounting is finalized
+  // by the response stream, but every HTTP pricing/observer path must be
+  // bypassed or one provider invocation can produce a second billable row.
+  const providerOwned = ctx?.suppressed === true ||
+    isNetworkEventSuppressed() || providerCaptureIsClaimed();
+  if (providerOwned) {
+    if (ctx) {
+      ctx._matchedCatalog = true;
+      ctx.classificationDone = true;
+      _maybeEmitNetworkOutcome(ctx);
+    } else if (resolved.autoCreated) {
+      finalizeAutoTask(task, "success", _buffer ?? undefined);
+    }
+    return;
   }
 
   // Node-level http/https calls (no ctx) have no byte-counting stream and
@@ -1665,12 +1893,7 @@ async function _maybeRecordCost(
         llmFormat,
         _modelHintFromPath(parsedUrl.pathname),
       );
-        if (llmUsage) {
-          const costResult: CostResult = _pricing.getCost(
-            llmUsage.model,
-            llmUsage.inputTokens,
-            llmUsage.outputTokens,
-          );
+        if (llmUsage || (ctx?.liteLlmProxy === true && ctx.llmStreamFormat === undefined)) {
           // The clone().json() above drained the counting stream, so by now
           // _finaliseHttpCall has stamped the response body bytes on ctx.
           // Attach the complete byte picture: this llm_call REPLACES the
@@ -1680,43 +1903,44 @@ async function _maybeRecordCost(
             ctx !== undefined && ctx.responseBodyBytes !== undefined
               ? { response_bytes: ctx.responseHeaderBytes + ctx.responseBodyBytes }
               : {};
-          const event = createCostEvent({
-            eventId: randomUUID(),
-            taskId: task.taskId,
-            eventType: "llm_call",
-            costUsd: costResult.costUsd,
-            costConfidence: costResult.costConfidence,
-            pricingSource: costResult.pricingSource,
-            provider: domain,
-            model: llmUsage.model,
-            inputTokens: llmUsage.inputTokens,
-            outputTokens: llmUsage.outputTokens,
-            details: {
-              url: urlStr,
-              source: "http_llm_fallback",
-              ...byteDetailsRequestOnly,
-              ...responseBytesKnown,
-            },
-          });
-
-          _pushRecordedEvent(event);
-          if (_buffer) {
-            _buffer.addEvent(event);
+          if (ctx !== undefined) {
+            _recordHttpLlmEvent(
+              ctx,
+              task,
+              llmUsage,
+              typeof responseBytesKnown.response_bytes === "number"
+                ? responseBytesKnown.response_bytes
+                : ctx.responseHeaderBytes,
+              "http_llm_fallback",
+              response.ok ? "succeeded" : "failed",
+            );
+          } else if (llmUsage !== null) {
+            const costResult: CostResult = _pricing.getCost(
+              llmUsage.model,
+              llmUsage.inputTokens,
+              llmUsage.outputTokens,
+            );
+            const event = createCostEvent({
+              eventId: randomUUID(), taskId: task.taskId, eventType: "llm_call",
+              costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
+              pricingSource: costResult.pricingSource, provider: domain, model: llmUsage.model,
+              inputTokens: llmUsage.inputTokens, outputTokens: llmUsage.outputTokens,
+              details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
+            });
+            _pushRecordedEvent(event);
+            if (_buffer) _buffer.addEvent(event);
+            registerLlmCapture(task.taskId, llmUsage.inputTokens, llmUsage.outputTokens);
+            task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+            task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+            task.totalInputTokens += llmUsage.inputTokens;
+            task.totalOutputTokens += llmUsage.outputTokens;
+            if (_buffer) _buffer.upsertTask(task);
           }
           debugLog(
             "http",
-            `llm_call captured via http fallback (json): ${domain} model=${llmUsage.model} ` +
-              `in=${llmUsage.inputTokens} out=${llmUsage.outputTokens}`,
+            `llm_call captured via http fallback (json): ${domain} model=${llmUsage?.model ?? "unknown"} ` +
+              `in=${llmUsage?.inputTokens ?? 0} out=${llmUsage?.outputTokens ?? 0}`,
           );
-          registerLlmCapture(task.taskId, llmUsage.inputTokens, llmUsage.outputTokens);
-          // Update task aggregates
-          task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-          task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-          task.totalInputTokens += llmUsage.inputTokens;
-          task.totalOutputTokens += llmUsage.outputTokens;
-          if (_buffer) {
-            _buffer.upsertTask(task);
-          }
           if (ctx) ctx._matchedCatalog = true;
           return;
         }

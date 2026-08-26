@@ -72,13 +72,9 @@ def _print_status(storage: Any, db_path: Path) -> None:
             click.echo("Last task:         (none)")
 
         # Sync status
-        row = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE sync_status = 'pending'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM events WHERE sync_status = 'pending'").fetchone()
         pending: int = row[0] if row else 0
-        row = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE sync_status = 'synced'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM events WHERE sync_status = 'synced'").fetchone()
         synced: int = row[0] if row else 0
         click.echo(f"Pending sync:      {pending}")
         click.echo(f"Synced:            {synced}")
@@ -105,16 +101,21 @@ def _print_status(storage: Any, db_path: Path) -> None:
 
 
 def _print_sdk_versions() -> None:
-    """Detect and print installed SDK versions."""
+    """Detect installed SDK versions without importing provider packages.
+
+    Some provider SDKs perform network or native-runtime initialization during
+    import. A local diagnostic command must remain usable offline and must not
+    execute third-party package initialization merely to read distribution
+    metadata.
+    """
+    from contextlib import suppress
+    from importlib.metadata import PackageNotFoundError, version
+
     sdks = {"openai": "openai", "anthropic": "anthropic", "litellm": "litellm"}
     detected: list[str] = []
-    for label, module_name in sdks.items():
-        try:
-            mod = __import__(module_name)
-            version = getattr(mod, "__version__", "unknown")
-            detected.append(f"{label}=={version}")
-        except ImportError:
-            pass
+    for label, distribution_name in sdks.items():
+        with suppress(PackageNotFoundError):
+            detected.append(f"{label}=={version(distribution_name)}")
 
     if detected:
         click.echo(f"SDKs detected:     {', '.join(detected)}")
@@ -165,9 +166,7 @@ def rates(
             click.echo("-" * 70)
             for service in sorted(all_rates):
                 rate_entry = all_rates[service]
-                click.echo(
-                    f"{service:<40} {rate_entry.per:<15} {rate_entry.cost_usd:<15}"
-                )
+                click.echo(f"{service:<40} {rate_entry.per:<15} {rate_entry.cost_usd:<15}")
         if infrastructure:
             click.echo()
             click.echo(f"{'Infrastructure':<40} {'Per':<15} {'Cost (USD)':<15}")

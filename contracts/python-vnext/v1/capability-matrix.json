@@ -170,7 +170,7 @@
         "dexcost_typescript": {
           "status": "implemented",
           "evidence": [
-            "typescript/tests/attribution-contexts.test.ts"
+            "typescript/tests/business-ledgers.test.ts"
           ]
         },
         "control_plane": {
@@ -206,7 +206,7 @@
         "dexcost_typescript": {
           "status": "implemented",
           "evidence": [
-            "typescript/tests/attribution-contexts.test.ts"
+            "typescript/tests/business-ledgers.test.ts"
           ]
         },
         "control_plane": {
@@ -759,7 +759,8 @@
         "dexcost_typescript": {
           "status": "implemented",
           "evidence": [
-            "typescript/tests/buffer.test.ts"
+            "typescript/tests/buffer.test.ts",
+            "typescript/tests/business-ledgers.test.ts"
           ]
         },
         "control_plane": {

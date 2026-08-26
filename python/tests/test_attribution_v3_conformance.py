@@ -11,6 +11,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.attribution.v3_types import ATTRIBUTION_V3_CONTRACT_VERSION
 from dexcost.attribution.v3_validate import validate_attribution_observation_v3
@@ -129,6 +131,91 @@ def test_llm_conversion_has_stable_operation_and_usage_identities() -> None:
     assert all(line["dimensions"] == [] for line in first["usage"])
     assert len({line["line_id"] for line in first["usage"]}) == 4
     assert validate_attribution_observation_v3(first).success
+
+
+def test_llm_conversion_preserves_provider_native_multiline_usage() -> None:
+    event = _event(
+        event_type="llm_call",
+        provider="openrouter",
+        model="anthropic/claude-sonnet-4.5",
+        input_tokens=100,
+        output_tokens=25,
+        cost_usd=Decimal("0.001"),
+        details={
+            "attribution_component": "llm",
+            "attribution_operation_name": "openrouter.chat.completions.create",
+            "attribution_usage_lines": [
+                {"metric": "input_tokens", "quantity": "100", "unit": "Tokens"},
+                {"metric": "output_tokens", "quantity": "25", "unit": "Tokens"},
+                {"metric": "request_count", "quantity": "1", "unit": "Requests"},
+            ],
+        },
+    )
+
+    converted = to_attribution_observation_v3(event)
+
+    assert converted is not None
+    assert converted["component"] == "llm"
+    assert converted["operation"]["name"] == "openrouter.chat.completions.create"
+    assert [(line["metric"], line["quantity"], line["unit"]) for line in converted["usage"]] == [
+        ("input_tokens", "100", "Tokens"),
+        ("output_tokens", "25", "Tokens"),
+        ("request_count", "1", "Requests"),
+    ]
+    assert validate_attribution_observation_v3(converted).success
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "openai",
+        "azure_openai",
+        "anthropic",
+        "bedrock",
+        "google",
+        "cohere",
+        "ollama",
+        "litellm",
+        "openrouter",
+        "perplexity",
+        "fal_ai",
+        "huggingface",
+        "together",
+        "mistral",
+        "groq",
+    ],
+)
+def test_every_supported_provider_route_round_trips_to_attribution_v3(
+    provider: str,
+) -> None:
+    event = _event(
+        event_type="llm_call",
+        provider=provider,
+        model="provider/model-v1",
+        input_tokens=7,
+        output_tokens=3,
+        details={
+            "attribution_component": "llm",
+            "attribution_operation_name": f"{provider}.inference",
+            "attribution_usage_lines": [
+                {"metric": "input_tokens", "quantity": "7", "unit": "Tokens"},
+                {"metric": "output_tokens", "quantity": "3", "unit": "Tokens"},
+                {"metric": "request_count", "quantity": "1", "unit": "Requests"},
+            ],
+        },
+    )
+
+    converted = to_attribution_observation_v3(event)
+
+    assert converted is not None, provider
+    assert converted["operation"]["name"] == f"{provider}.inference"
+    assert [line["metric"] for line in converted["usage"]] == [
+        "input_tokens",
+        "output_tokens",
+        "request_count",
+    ]
+    validation = validate_attribution_observation_v3(converted)
+    assert validation.success, (provider, validation.issues)
 
 
 def test_successful_compute_without_usage_is_not_invented() -> None:

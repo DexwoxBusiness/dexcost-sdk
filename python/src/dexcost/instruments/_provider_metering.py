@@ -19,7 +19,11 @@ from typing import Any, Literal
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.capabilities import apply_event_capability, get_capability
 from dexcost.context import _reset_current_task, get_current_task, set_current_task
-from dexcost.idempotency import apply_event_idempotency, get_idempotency_key
+from dexcost.idempotency import (
+    IdempotencyKey,
+    apply_event_idempotency,
+    capture_idempotency_key,
+)
 from dexcost.instruments._errors import error_details
 from dexcost.models._serde import canonical_decimal
 from dexcost.models.capability import CapabilityIdentity
@@ -67,8 +71,13 @@ class OperationMeasurement:
     pricing_usage: Mapping[str, Decimal | int | str]
     usage_lines: tuple[ProviderUsageLine, ...]
     provider_record_id: str | None = None
+    provider_retry_count: int | None = None
     provider_cost_usd: Decimal | int | str | None = None
     provider_upstream_cost_usd: Decimal | int | str | None = None
+    computed_cost_usd: Decimal | int | str | None = None
+    computed_cost_source: Literal["sdk_catalog", "sdk_rate_registry", "litellm"] | None = None
+    computed_cost_confidence: Literal["computed", "estimated", "unknown"] | None = None
+    computed_pricing_version: str | None = None
     response_model: str | None = None
     model_candidates: tuple[str, ...] = ()
     billing_dimensions: tuple[tuple[str, str], ...] = ()
@@ -77,7 +86,11 @@ class OperationMeasurement:
     task_cached_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        for cost_field in ("provider_cost_usd", "provider_upstream_cost_usd"):
+        for cost_field in (
+            "provider_cost_usd",
+            "provider_upstream_cost_usd",
+            "computed_cost_usd",
+        ):
             cost_value = getattr(self, cost_field)
             if cost_value is not None:
                 object.__setattr__(
@@ -85,6 +98,25 @@ class OperationMeasurement:
                     cost_field,
                     _quantity(cost_field, cost_value),
                 )
+        computed_fields = (
+            self.computed_cost_source,
+            self.computed_cost_confidence,
+            self.computed_pricing_version,
+        )
+        if self.computed_cost_usd is None:
+            if any(value is not None for value in computed_fields):
+                raise ValueError("computed cost evidence requires computed_cost_usd")
+        elif (
+            self.computed_cost_source is None
+            or self.computed_cost_confidence is None
+            or not isinstance(self.computed_pricing_version, str)
+            or not self.computed_pricing_version
+        ):
+            raise ValueError(
+                "computed cost evidence requires source, confidence, and pricing version"
+            )
+        if self.provider_cost_usd is not None and self.computed_cost_usd is not None:
+            raise ValueError("provider and SDK-computed cost evidence are mutually exclusive")
         if len(self.billing_dimensions) > 24:
             raise ValueError("provider billing dimensions cannot exceed 24 entries")
         dimension_keys: set[str] = set()
@@ -100,6 +132,7 @@ class OperationMeasurement:
             "task_input_tokens",
             "task_output_tokens",
             "task_cached_tokens",
+            "provider_retry_count",
         ):
             value = getattr(self, field_name)
             if value is not None and (
@@ -164,7 +197,7 @@ def record_provider_operation(
     status: OperationStatus = "succeeded",
     error: BaseException | None = None,
     capability: CapabilityIdentity | None = None,
-    idempotency_key: str | None = None,
+    idempotency_key: IdempotencyKey | None = None,
 ) -> Event:
     """Persist one provider operation without retaining prompts or outputs."""
     resolved_model = measurement.response_model or model or "unknown"
@@ -181,6 +214,11 @@ def record_provider_operation(
     provider_cost = (
         _quantity("provider_cost_usd", measurement.provider_cost_usd)
         if measurement.provider_cost_usd is not None
+        else None
+    )
+    computed_cost = (
+        _quantity("computed_cost_usd", measurement.computed_cost_usd)
+        if measurement.computed_cost_usd is not None
         else None
     )
     details: dict[str, Any] = {
@@ -206,27 +244,60 @@ def record_provider_operation(
         details["pricing_unpriced_dimensions"] = list(pricing.unpriced_dimensions)
     if provider_cost is not None:
         details["provider_reported_cost_usd"] = canonical_decimal(provider_cost)
+    if computed_cost is not None:
+        details["sdk_computed_cost_usd"] = canonical_decimal(computed_cost)
+        if measurement.computed_cost_source == "litellm":
+            details["gateway_calculated_cost_usd"] = canonical_decimal(computed_cost)
     if measurement.provider_upstream_cost_usd is not None:
         upstream_cost = _quantity(
             "provider_upstream_cost_usd", measurement.provider_upstream_cost_usd
         )
-        details["provider_upstream_cost_usd"] = canonical_decimal(
-            upstream_cost
-        )
+        details["provider_upstream_cost_usd"] = canonical_decimal(upstream_cost)
     if measurement.provider_record_id:
         details["provider_record_id"] = measurement.provider_record_id[:256]
+    if measurement.provider_retry_count is not None:
+        details["provider_retry_count"] = measurement.provider_retry_count
+        details["provider_attempt_count"] = measurement.provider_retry_count + 1
     if error is not None:
         details.update(error_details(error))
 
     event = Event(
         task_id=task.task_id,
         event_type=event_type,
-        cost_usd=provider_cost if provider_cost is not None else pricing.cost_usd,
-        cost_confidence="exact" if provider_cost is not None else pricing.cost_confidence,
-        pricing_source=(
-            "provider_response" if provider_cost is not None else pricing.pricing_source
+        cost_usd=(
+            provider_cost
+            if provider_cost is not None
+            else computed_cost if computed_cost is not None else pricing.cost_usd
         ),
-        pricing_version=None if provider_cost is not None else pricing.pricing_version,
+        cost_confidence=(
+            "exact"
+            if provider_cost is not None
+            else measurement.computed_cost_confidence or "unknown"
+            if computed_cost is not None
+            else pricing.cost_confidence
+        ),
+        pricing_source=(
+            "provider_response"
+            if provider_cost is not None
+            else (
+                "service_catalog"
+                if measurement.computed_cost_source == "sdk_catalog"
+                else (
+                    "litellm"
+                    if measurement.computed_cost_source == "litellm"
+                    else "rate_registry"
+                )
+            )
+            if computed_cost is not None
+            else pricing.pricing_source
+        ),
+        pricing_version=(
+            None
+            if provider_cost is not None
+            else measurement.computed_pricing_version
+            if computed_cost is not None
+            else pricing.pricing_version
+        ),
         service_name=service,
         provider=provider,
         model=resolved_model,
@@ -272,7 +343,7 @@ class ProviderOperationSession:
         self._context_released = False
         self._finalized = False
         self._capability = get_capability()
-        self._idempotency_key = get_idempotency_key()
+        self._idempotency_key = capture_idempotency_key()
 
     def release_context(self) -> None:
         if self._context_released:
@@ -332,9 +403,13 @@ class ProviderOperationSession:
         """Finalize a provider result whose terminal status is response data."""
         return self._record(measurement, status)
 
-    def fail(self, error: BaseException) -> Event | None:
+    def fail(
+        self,
+        error: BaseException,
+        measurement: OperationMeasurement | None = None,
+    ) -> Event | None:
         return self._record(
-            OperationMeasurement(pricing_usage={}, usage_lines=()),
+            measurement or OperationMeasurement(pricing_usage={}, usage_lines=()),
             "failed",
             error,
         )
@@ -374,14 +449,55 @@ class SyncProviderStream(Iterator[Any]):
     def __next__(self) -> Any:
         try:
             item = next(self._stream)
-            self._observe(item)
-            return item
         except StopIteration:
-            self._session.finish(self._measurement(), self._completion_status())
+            self._finish_terminal()
             raise
         except BaseException as exc:
-            self._session.fail(exc)
+            self._fail_with_partial_measurement(exc)
             raise
+        self._observe_safely(item)
+        return item
+
+    def _observe_safely(self, item: Any) -> None:
+        try:
+            self._observe(item)
+        except Exception:
+            # Usage extraction is telemetry-only. A new or malformed provider
+            # chunk must never replace a valid provider item with an SDK error.
+            _log.debug("dexcost: failed to observe provider stream item", exc_info=True)
+
+    def _measurement_safely(self, phase: str) -> OperationMeasurement:
+        try:
+            return self._measurement()
+        except Exception:
+            _log.debug(
+                "dexcost: failed to extract %s provider stream usage",
+                phase,
+                exc_info=True,
+            )
+            return OperationMeasurement(pricing_usage={}, usage_lines=())
+
+    def _finish_terminal(self) -> None:
+        measurement = self._measurement_safely("terminal")
+        try:
+            status = self._completion_status()
+            if status not in {"succeeded", "failed", "cancelled", "unknown"}:
+                raise ValueError(f"invalid provider stream completion status {status!r}")
+        except Exception:
+            _log.debug(
+                "dexcost: failed to extract provider stream completion status",
+                exc_info=True,
+            )
+            status = "unknown"
+        self._session.finish(measurement, status)
+
+    def _fail_with_partial_measurement(self, exc: BaseException) -> None:
+        try:
+            measurement = self._measurement()
+        except Exception:
+            _log.debug("dexcost: failed to extract partial stream usage", exc_info=True)
+            measurement = None
+        self._session.fail(exc, measurement)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -390,24 +506,32 @@ class SyncProviderStream(Iterator[Any]):
         try:
             result = self._stream.close() if hasattr(self._stream, "close") else None
         except BaseException as exc:
-            self._session.fail(exc)
+            self._fail_with_partial_measurement(exc)
             raise
-        self._session.cancel(self._measurement())
+        self._session.cancel(self._measurement_safely("cancelled"))
         return result
 
     def __enter__(self) -> SyncProviderStream:
-        if hasattr(self._stream, "__enter__"):
-            self._stream.__enter__()
+        try:
+            if hasattr(self._stream, "__enter__"):
+                self._stream.__enter__()
+        except BaseException as exc:
+            self._fail_with_partial_measurement(exc)
+            raise
         return self
 
     def __exit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> Any:
-        if exc is not None:
-            self._session.fail(exc)
-        else:
-            self._session.cancel(self._measurement())
-        if hasattr(self._stream, "__exit__"):
-            return self._stream.__exit__(exc_type, exc, tb)
-        return None
+        try:
+            result = (
+                self._stream.__exit__(exc_type, exc, tb)
+                if hasattr(self._stream, "__exit__")
+                else None
+            )
+        except BaseException as exit_exc:
+            self._fail_with_partial_measurement(exit_exc)
+            raise
+        self._session.cancel(self._measurement_safely("cancelled"))
+        return result
 
 
 class AsyncProviderStream(AsyncIterator[Any]):
@@ -434,14 +558,55 @@ class AsyncProviderStream(AsyncIterator[Any]):
     async def __anext__(self) -> Any:
         try:
             item = await self._stream.__anext__()
-            self._observe(item)
-            return item
         except StopAsyncIteration:
-            self._session.finish(self._measurement(), self._completion_status())
+            self._finish_terminal()
             raise
         except BaseException as exc:
-            self._session.fail(exc)
+            self._fail_with_partial_measurement(exc)
             raise
+        self._observe_safely(item)
+        return item
+
+    def _observe_safely(self, item: Any) -> None:
+        try:
+            self._observe(item)
+        except Exception:
+            # Usage extraction is telemetry-only. A new or malformed provider
+            # chunk must never replace a valid provider item with an SDK error.
+            _log.debug("dexcost: failed to observe provider stream item", exc_info=True)
+
+    def _measurement_safely(self, phase: str) -> OperationMeasurement:
+        try:
+            return self._measurement()
+        except Exception:
+            _log.debug(
+                "dexcost: failed to extract %s provider stream usage",
+                phase,
+                exc_info=True,
+            )
+            return OperationMeasurement(pricing_usage={}, usage_lines=())
+
+    def _finish_terminal(self) -> None:
+        measurement = self._measurement_safely("terminal")
+        try:
+            status = self._completion_status()
+            if status not in {"succeeded", "failed", "cancelled", "unknown"}:
+                raise ValueError(f"invalid provider stream completion status {status!r}")
+        except Exception:
+            _log.debug(
+                "dexcost: failed to extract provider stream completion status",
+                exc_info=True,
+            )
+            status = "unknown"
+        self._session.finish(measurement, status)
+
+    def _fail_with_partial_measurement(self, exc: BaseException) -> None:
+        try:
+            measurement = self._measurement()
+        except Exception:
+            _log.debug("dexcost: failed to extract partial stream usage", exc_info=True)
+            measurement = None
+        self._session.fail(exc, measurement)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -450,24 +615,32 @@ class AsyncProviderStream(AsyncIterator[Any]):
         try:
             result = await self._stream.aclose() if hasattr(self._stream, "aclose") else None
         except BaseException as exc:
-            self._session.fail(exc)
+            self._fail_with_partial_measurement(exc)
             raise
-        self._session.cancel(self._measurement())
+        self._session.cancel(self._measurement_safely("cancelled"))
         return result
 
     async def __aenter__(self) -> AsyncProviderStream:
-        if hasattr(self._stream, "__aenter__"):
-            await self._stream.__aenter__()
+        try:
+            if hasattr(self._stream, "__aenter__"):
+                await self._stream.__aenter__()
+        except BaseException as exc:
+            self._fail_with_partial_measurement(exc)
+            raise
         return self
 
     async def __aexit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> Any:
-        if exc is not None:
-            self._session.fail(exc)
-        else:
-            self._session.cancel(self._measurement())
-        if hasattr(self._stream, "__aexit__"):
-            return await self._stream.__aexit__(exc_type, exc, tb)
-        return None
+        try:
+            result = (
+                await self._stream.__aexit__(exc_type, exc, tb)
+                if hasattr(self._stream, "__aexit__")
+                else None
+            )
+        except BaseException as exit_exc:
+            self._fail_with_partial_measurement(exit_exc)
+            raise
+        self._session.cancel(self._measurement_safely("cancelled"))
+        return result
 
 
 __all__ = [

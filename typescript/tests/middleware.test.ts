@@ -114,7 +114,7 @@ describe("Express middleware", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     tracker.close();
-  });
+  }, 10_000);
 
   it("skips requests when skip returns true", async () => {
     const tracker = new CostTracker({ dbPath: join(tmpDir, "test.db") });

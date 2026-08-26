@@ -12,6 +12,7 @@ import decimal
 import hashlib
 import json
 import logging
+import re
 import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
@@ -25,6 +26,7 @@ _log = logging.getLogger(__name__)
 SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2"
 
 _DEFAULT_DATA_PATH = Path(__file__).parent / "data" / "service_prices.json"
+_MCP_TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
 
 
 class _NoCatalogRedirects(urllib.request.HTTPRedirectHandler):
@@ -53,6 +55,7 @@ class ServiceEntry:
     source: str
     last_verified: str
     endpoints: list[str] | None = None
+    mcp_tools: list[str] | None = None
     # Pricing fields (varying names in JSON — stored generically)
     rate_fields: dict[str, Any] | None = None
     note: str | None = None
@@ -84,6 +87,7 @@ class ServiceCatalog:
         self._initial_data = data
         self._catalog_version_override = catalog_version
         self._entries: dict[str, ServiceEntry] = {}
+        self._mcp_entries: dict[str, ServiceEntry] = {}
         self._overrides: dict[str, dict[str, Any]] = {}
         self._workspace_overrides: dict[str, dict[str, Any]] = {}
         self._raw_data: dict[str, Any] = {}
@@ -108,6 +112,11 @@ class ServiceCatalog:
             entries = {}
         self._raw_data = data
         self._entries = entries
+        self._mcp_entries = {
+            tool: entry
+            for entry in entries.values()
+            for tool in (entry.mcp_tools or ())
+        }
 
     @staticmethod
     def _parse_entry(key: str, data: dict[str, Any]) -> ServiceEntry:
@@ -115,7 +124,7 @@ class ServiceCatalog:
         # Collect all rate/cost fields that aren't standard fields
         standard_keys = {
             "display_name", "domains", "category", "pricing_model",
-            "cost_extraction", "source", "last_verified", "endpoints", "note",
+            "cost_extraction", "source", "last_verified", "endpoints", "mcp_tools", "note",
         }
         rate_fields = {k: v for k, v in data.items() if k not in standard_keys}
 
@@ -129,6 +138,7 @@ class ServiceCatalog:
             source=data["source"],
             last_verified=data["last_verified"],
             endpoints=data.get("endpoints"),
+            mcp_tools=data.get("mcp_tools"),
             rate_fields=rate_fields if rate_fields else None,
             note=data.get("note"),
         )
@@ -139,6 +149,7 @@ class ServiceCatalog:
             raise ValueError("catalog data must be an object")
 
         entries: dict[str, ServiceEntry] = {}
+        mcp_tool_owners: dict[str, str] = {}
         for key, entry_data in data.items():
             if key == "_meta":
                 continue
@@ -164,6 +175,23 @@ class ServiceCatalog:
                 or not all(isinstance(endpoint, str) and endpoint for endpoint in endpoints)
             ):
                 raise ValueError(f"catalog entry {key} has invalid endpoints")
+            mcp_tools = entry_data.get("mcp_tools")
+            if mcp_tools is not None and (
+                not isinstance(mcp_tools, list)
+                or not mcp_tools
+                or not all(
+                    isinstance(tool, str) and _MCP_TOOL_NAME.fullmatch(tool)
+                    for tool in mcp_tools
+                )
+                or len(set(mcp_tools)) != len(mcp_tools)
+            ):
+                raise ValueError(f"catalog entry {key} has invalid mcp_tools")
+            for tool in mcp_tools or ():
+                owner = mcp_tool_owners.setdefault(tool, key)
+                if owner != key:
+                    raise ValueError(
+                        f"MCP tool alias {tool} belongs to both {owner} and {key}"
+                    )
             extraction = entry_data.get("cost_extraction")
             if not isinstance(extraction, dict):
                 raise ValueError(f"catalog entry {key} has invalid cost extraction")
@@ -208,6 +236,10 @@ class ServiceCatalog:
         if not entries:
             raise ValueError("catalog must contain at least one service entry")
         return entries
+
+    def lookup_mcp_tool(self, tool_name: str) -> ServiceEntry | None:
+        """Resolve a signed catalog MCP alias to its service entry."""
+        return self._mcp_entries.get(tool_name)
 
     @classmethod
     def _parse_remote_envelope(

@@ -38,20 +38,26 @@ def _make_bedrock_response(
     Anthropic-on-Bedrock format.
     """
     if model_family == "anthropic":
-        body_content = json.dumps({
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-            "content": [{"text": "Hello"}],
-        }).encode()
+        body_content = json.dumps(
+            {
+                "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+                "content": [{"text": "Hello"}],
+            }
+        ).encode()
     elif model_family == "titan":
-        body_content = json.dumps({
-            "inputTextTokenCount": input_tokens,
-            "results": [{"tokenCount": output_tokens, "outputText": "Hello"}],
-        }).encode()
+        body_content = json.dumps(
+            {
+                "inputTextTokenCount": input_tokens,
+                "results": [{"tokenCount": output_tokens, "outputText": "Hello"}],
+            }
+        ).encode()
     else:
         # Generic
-        body_content = json.dumps({
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-        }).encode()
+        body_content = json.dumps(
+            {
+                "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+            }
+        ).encode()
 
     body = io.BytesIO(body_content)
 
@@ -107,6 +113,10 @@ def _make_bedrock_stream_response(
         "body": iter(events),
         "ResponseMetadata": {"HTTPStatusCode": 200},
     }
+
+
+def _stream_chunk(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"chunk": {"bytes": json.dumps(payload).encode("utf-8")}}
 
 
 def _install_fake_botocore() -> type:
@@ -213,16 +223,17 @@ class TestInvokeModel:
         ev = events[0]
         assert ev.event_type == "llm_call"
         assert ev.provider == "aws_bedrock"
-        # model_id "anthropic.claude-v2" is stripped to "claude-v2"
-        assert ev.model == "claude-v2"
+        # Preserve the exact Bedrock identity; regional profile prefixes carry
+        # distinct AWS pricing and must not be stripped.
+        assert ev.model == "anthropic.claude-v2"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        # This legacy model is intentionally absent from the active catalog;
+        # measured usage must not be mislabeled as an exact price.
+        assert ev.cost_confidence == "unknown"
         assert ev.cost_usd >= Decimal("0")
 
-    def test_anthropic_response_format(
-        self, tracker: CostTracker, storage: SQLiteStorage
-    ) -> None:
+    def test_anthropic_response_format(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """Anthropic-on-Bedrock response format is correctly parsed."""
         from botocore.client import BaseClient
 
@@ -348,6 +359,63 @@ class TestInvokeModel:
         assert ev.input_tokens == 0
         assert ev.output_tokens == 0
 
+    def test_provider_metadata_tools_and_private_payload_are_bounded(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from botocore.client import BaseClient
+
+        from dexcost.instruments.bedrock import instrument_bedrock
+
+        private_tool_input = "private-bedrock-tool-input"
+        private_tool_name = "private_bedrock_tool"
+        body = {
+            "usage": {"input_tokens": 20, "output_tokens": 10},
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": private_tool_name,
+                    "input": {"query": private_tool_input},
+                }
+            ],
+        }
+        response = {
+            "body": io.BytesIO(json.dumps(body).encode()),
+            "ResponseMetadata": {
+                "HTTPStatusCode": 200,
+                "RequestId": "bedrock-request-123",
+                "RetryAttempts": 2,
+            },
+        }
+
+        def fake_make_api_call(self: Any, operation_name: str, api_params: dict[str, Any]) -> Any:
+            return response
+
+        BaseClient._make_api_call = fake_make_api_call  # type: ignore[assignment]
+        instrument_bedrock(tracker)
+        client = BaseClient(service_name="bedrock-runtime")
+
+        with tracker.task(task_type="bedrock_metadata") as task:
+            client._make_api_call(
+                "InvokeModel",
+                {
+                    "modelId": "anthropic.claude-v2",
+                    "body": json.dumps(
+                        {"tools": [{"name": private_tool_name}], "prompt": private_tool_input}
+                    ).encode(),
+                },
+            )
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.details["provider_record_id"] == "bedrock-request-123"
+        assert event.details["provider_retry_count"] == 2
+        assert event.details["provider_attempt_count"] == 3
+        assert {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }["tool_call_count"] == "1"
+        persisted = json.dumps(event.to_dict())
+        assert private_tool_input not in persisted
+        assert private_tool_name not in persisted
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests (Fix 2)
@@ -391,10 +459,10 @@ class TestInvokeModelWithResponseStream:
         ev = events[0]
         assert ev.event_type == "llm_call"
         assert ev.provider == "aws_bedrock"
-        assert ev.model == "claude-v2"
+        assert ev.model == "anthropic.claude-v2"
         assert ev.input_tokens == 160
         assert ev.output_tokens == 80
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "unknown"
 
     def test_streaming_without_metrics_sets_estimated(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -429,6 +497,188 @@ class TestInvokeModelWithResponseStream:
         assert ev.input_tokens == 0
         assert ev.output_tokens == 0
 
+    def test_stream_context_is_snapshotted_at_invocation_and_request_metadata_survives(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from botocore.client import BaseClient
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.bedrock import instrument_bedrock
+        from dexcost.models.capability import CapabilityIdentity
+
+        response = _make_bedrock_stream_response(input_tokens=8, output_tokens=3)
+        response["ResponseMetadata"].update(
+            {"RequestId": "bedrock-stream-request-1", "RetryAttempts": 1}
+        )
+
+        def fake_make_api_call(self: Any, operation_name: str, api_params: dict[str, Any]) -> Any:
+            return response
+
+        BaseClient._make_api_call = fake_make_api_call  # type: ignore[assignment]
+        instrument_bedrock(tracker)
+        client = BaseClient(service_name="bedrock-runtime")
+        capability = CapabilityIdentity(
+            name="support.answer",
+            kind="workflow",
+            source="project",
+            source_id="support.answer/v1",
+            invocation="automatic",
+        )
+
+        with tracker.task(task_type="bedrock_stream_context") as task:
+            with capability_context(capability), idempotency_key("private-bedrock-idempotency"):
+                result = client._make_api_call(
+                    "InvokeModelWithResponseStream",
+                    {"modelId": "anthropic.claude-v2", "body": b"private-request-body"},
+                )
+            list(result["body"])
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.details["attribution_capability"] == capability.to_dict()
+        assert len(event.details["_dexcost_idempotency_sha256"]) == 64
+        assert event.details["provider_record_id"] == "bedrock-stream-request-1"
+        assert event.details["provider_retry_count"] == 1
+        persisted = json.dumps(event.to_dict())
+        assert "private-bedrock-idempotency" not in persisted
+        assert "private-request-body" not in persisted
+
+    def test_early_close_records_one_cancelled_event_with_partial_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from botocore.client import BaseClient
+
+        from dexcost.instruments.bedrock import instrument_bedrock
+
+        response = {
+            "body": iter(
+                [
+                    _stream_chunk(
+                        {
+                            "type": "message_start",
+                            "message": {"usage": {"input_tokens": 12}},
+                        }
+                    ),
+                    _stream_chunk({"type": "message_delta", "usage": {"output_tokens": 7}}),
+                ]
+            ),
+            "ResponseMetadata": {"RequestId": "cancelled-request", "RetryAttempts": 0},
+        }
+
+        def fake_make_api_call(self: Any, operation_name: str, api_params: dict[str, Any]) -> Any:
+            return response
+
+        BaseClient._make_api_call = fake_make_api_call  # type: ignore[assignment]
+        instrument_bedrock(tracker)
+        client = BaseClient(service_name="bedrock-runtime")
+
+        with tracker.task(task_type="bedrock_stream_cancel") as task:
+            result = client._make_api_call(
+                "InvokeModelWithResponseStream",
+                {"modelId": "anthropic.claude-v2", "body": b"{}"},
+            )
+            next(result["body"])
+            result["body"].close()
+            result["body"].close()
+
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        event = events[0]
+        assert event.details["attribution_operation_status"] == "cancelled"
+        assert event.input_tokens == 12
+        assert event.output_tokens == 0
+        assert event.details["provider_record_id"] == "cancelled-request"
+
+    def test_stream_failure_records_one_failed_event_with_partial_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from botocore.client import BaseClient
+
+        from dexcost.instruments.bedrock import instrument_bedrock
+
+        def failing_stream() -> Generator[dict[str, Any], None, None]:
+            yield _stream_chunk(
+                {"type": "message_start", "message": {"usage": {"input_tokens": 9}}}
+            )
+            yield _stream_chunk(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "private_tool"},
+                }
+            )
+            raise RuntimeError("private-stream-provider-error")
+
+        response = {
+            "body": failing_stream(),
+            "ResponseMetadata": {"RequestId": "failed-request", "RetryAttempts": 3},
+        }
+
+        def fake_make_api_call(self: Any, operation_name: str, api_params: dict[str, Any]) -> Any:
+            return response
+
+        BaseClient._make_api_call = fake_make_api_call  # type: ignore[assignment]
+        instrument_bedrock(tracker)
+        client = BaseClient(service_name="bedrock-runtime")
+
+        with tracker.task(task_type="bedrock_stream_failure") as task:
+            result = client._make_api_call(
+                "InvokeModelWithResponseStream",
+                {"modelId": "anthropic.claude-v2", "body": b"{}"},
+            )
+            with pytest.raises(RuntimeError, match="private-stream-provider-error"):
+                list(result["body"])
+
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        event = events[0]
+        assert event.details["attribution_operation_status"] == "failed"
+        assert event.input_tokens == 9
+        assert event.output_tokens is None
+        assert event.details["provider_retry_count"] == 3
+        assert event.details["provider_attempt_count"] == 4
+        usage = {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }
+        assert usage == {"input_tokens": "9", "tool_call_count": "1"}
+        assert "private_tool" not in json.dumps(event.to_dict())
+        assert "private-stream-provider-error" not in json.dumps(event.to_dict())
+
+    def test_auto_stream_tasks_finalize_for_success_and_cancellation(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from botocore.client import BaseClient
+
+        from dexcost.instruments.bedrock import instrument_bedrock
+
+        responses = [
+            _make_bedrock_stream_response(input_tokens=4, output_tokens=2),
+            _make_bedrock_stream_response(input_tokens=6, output_tokens=3),
+        ]
+
+        def fake_make_api_call(self: Any, operation_name: str, api_params: dict[str, Any]) -> Any:
+            return responses.pop(0)
+
+        BaseClient._make_api_call = fake_make_api_call  # type: ignore[assignment]
+        instrument_bedrock(tracker)
+        client = BaseClient(service_name="bedrock-runtime")
+
+        completed = client._make_api_call(
+            "InvokeModelWithResponseStream",
+            {"modelId": "anthropic.claude-v2", "body": b"{}"},
+        )
+        list(completed["body"])
+        cancelled = client._make_api_call(
+            "InvokeModelWithResponseStream",
+            {"modelId": "anthropic.claude-v2", "body": b"{}"},
+        )
+        next(cancelled["body"])
+        cancelled["body"].close()
+
+        tasks = storage.query_tasks(task_type="bedrock.invoke")
+        assert len(tasks) == 2
+        assert sorted(task.status for task in tasks) == ["failed", "success"]
+        assert len(storage.query_events()) == 2
+
 
 # ---------------------------------------------------------------------------
 # Passthrough (no active task) tests
@@ -438,9 +688,7 @@ class TestInvokeModelWithResponseStream:
 class TestPassthrough:
     """When no explicit task context is active, calls create an auto-task."""
 
-    def test_no_task_creates_auto_task(
-        self, tracker: CostTracker, storage: SQLiteStorage
-    ) -> None:
+    def test_no_task_creates_auto_task(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         from botocore.client import BaseClient
 
         from dexcost.instruments.bedrock import instrument_bedrock
@@ -520,13 +768,14 @@ class TestInstrumentLifecycle:
 
         _uninstall_fake_botocore()
 
-        blocked = {k: None for k in list(sys.modules) if k == "botocore" or k.startswith("botocore.")}
+        blocked = {
+            k: None for k in list(sys.modules) if k == "botocore" or k.startswith("botocore.")
+        }
         blocked.setdefault("botocore", None)
         blocked.setdefault("botocore.client", None)
 
-        with patch.dict(sys.modules, blocked):
-            with pytest.raises(ImportError, match="botocore"):
-                instrument_bedrock(tracker)
+        with patch.dict(sys.modules, blocked), pytest.raises(ImportError, match="botocore"):
+            instrument_bedrock(tracker)
 
         # Re-install for cleanup
         _install_fake_botocore()

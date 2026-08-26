@@ -14,7 +14,7 @@ from typing import Any, cast
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.capabilities import get_capability
 from dexcost.context import _reset_current_task, get_current_task, set_current_task
-from dexcost.idempotency import get_idempotency_key
+from dexcost.idempotency import capture_idempotency_key
 from dexcost.instruments._errors import error_details
 from dexcost.instruments._provider_metering import (
     OperationMeasurement,
@@ -59,7 +59,9 @@ def _error_identity(
     return normalized, raw_code[:64] if raw_code else None
 
 
-def _cost_evidence(pricing: Any) -> tuple[
+def _cost_evidence(
+    pricing: Any,
+) -> tuple[
     Decimal | None,
     ProviderJobCostSource | None,
     ProviderJobCostConfidence | None,
@@ -80,8 +82,7 @@ def _cost_evidence(pricing: Any) -> tuple[
     if source == "rate_registry":
         mapped_source: ProviderJobCostSource = "sdk_rate_registry"
     elif source in {"service_catalog", "litellm", "tokencost"} or bool(
-        source
-        and source.startswith(("compute_catalog:", "gpu_catalog:", "egress_catalog:"))
+        source and source.startswith(("compute_catalog:", "gpu_catalog:", "egress_catalog:"))
     ):
         mapped_source = "sdk_catalog"
     else:
@@ -135,6 +136,25 @@ def _measurement_fields(
             source = None
             confidence = None
         version = None
+    elif measurement.computed_cost_usd is not None:
+        computed_amount = Decimal(str(measurement.computed_cost_usd))
+        if computed_amount > 0:
+            amount = computed_amount
+            source = (
+                "sdk_catalog"
+                if measurement.computed_cost_source == "litellm"
+                else cast(ProviderJobCostSource, measurement.computed_cost_source)
+            )
+            confidence = cast(
+                ProviderJobCostConfidence,
+                measurement.computed_cost_confidence,
+            )
+            version = measurement.computed_pricing_version
+        else:
+            amount = None
+            source = None
+            confidence = None
+            version = None
     else:
         pricing = tracker._pricing.get_metered_cost(
             resolved_model,
@@ -256,14 +276,10 @@ def reconcile_provider_job(
     for _attempt in range(5):
         previous = cast(
             ProviderJobRevision | None,
-            tracker._storage.get_provider_job(
-                provider, service, provider_record_id
-            ),
+            tracker._storage.get_provider_job(provider, service, provider_record_id),
         )
         if previous is None:
-            raise LookupError(
-                f"unknown provider job {provider}/{service}/{provider_record_id}"
-            )
+            raise LookupError(f"unknown provider job {provider}/{service}/{provider_record_id}")
         resolved_error_type, resolved_error_code = _error_identity(
             error, error_type=error_type, error_code=error_code
         )
@@ -342,7 +358,7 @@ class ProviderJobSession:
         self._released = False
         self._finished = False
         self._capability = get_capability()
-        self._idempotency_key = get_idempotency_key()
+        self._idempotency_key = capture_idempotency_key()
 
     def release_context(self) -> None:
         if self._released:
@@ -408,9 +424,7 @@ class ProviderJobSession:
                 event_type=self.event_type,
                 model=self.resource_id,
                 measurement=OperationMeasurement(pricing_usage={}, usage_lines=()),
-                latency_ms=max(
-                    0, int((time.perf_counter() - self._started_clock) * 1000)
-                ),
+                latency_ms=max(0, int((time.perf_counter() - self._started_clock) * 1000)),
                 status="failed",
                 error=error,
                 capability=self._capability,

@@ -9,6 +9,8 @@ against our fakes.
 from __future__ import annotations
 
 import asyncio
+import gc
+import json
 import sys
 import types
 from collections.abc import Generator
@@ -18,7 +20,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dexcost.context import get_current_task
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
@@ -157,6 +158,12 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 @pytest.fixture(autouse=True)
 def _fake_anthropic() -> Generator[None, None, None]:
     """Install/uninstall fake anthropic for every test and ensure uninstrument."""
+    original_modules = {
+        key: value
+        for key, value in sys.modules.items()
+        if key == "anthropic" or key.startswith("anthropic.")
+    }
+    _uninstall_fake_anthropic()
     _install_fake_anthropic()
     yield
     # Always uninstrument after each test to reset module-level state
@@ -164,6 +171,7 @@ def _fake_anthropic() -> Generator[None, None, None]:
 
     uninstrument_anthropic()
     _uninstall_fake_anthropic()
+    sys.modules.update(original_modules)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +210,7 @@ class TestSyncNonStreaming:
         assert ev.model == "claude-3-5-sonnet-20241022"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.cost_usd >= Decimal("0")
 
     def test_missing_usage_sets_estimated(
@@ -344,6 +352,66 @@ class TestSyncNonStreaming:
         events = storage.query_events(task_id=str(task.task_id))
         assert events[0].model == "claude-3-5-sonnet-20241022"
 
+    def test_request_id_tools_context_and_privacy_contract(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.anthropic import instrument_anthropic
+        from dexcost.models.capability import CapabilityIdentity
+
+        private_prompt = "private-anthropic-prompt"
+        private_tool_input = "private-anthropic-tool-input"
+        response = _make_response(input_tokens=31, output_tokens=7)
+        response.id = "msg_provider_123"
+        response.content = [
+            types.SimpleNamespace(
+                type="tool_use",
+                name="private_tool_name",
+                input={"query": private_tool_input},
+            )
+        ]
+        Messages.create = staticmethod(lambda **kwargs: response)  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+        capability = CapabilityIdentity(
+            name="support.answer",
+            kind="workflow",
+            source="project",
+            source_id="support.answer/v1",
+            invocation="automatic",
+        )
+
+        with (
+            tracker.task(task_type="anthropic_contract") as task,
+            capability_context(capability),
+            idempotency_key("private-anthropic-idempotency"),
+        ):
+            Messages.create(
+                model="claude-3-5-sonnet-20241022",
+                messages=[{"role": "user", "content": private_prompt}],
+                tools=[{"name": "private_tool_name"}],
+            )
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.service_name == "messages"
+        assert event.details["provider_record_id"] == "msg_provider_123"
+        assert event.details["attribution_capability"] == capability.to_dict()
+        assert len(event.details["_dexcost_idempotency_sha256"]) == 64
+        usage = {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }
+        assert usage == {"input_tokens": "31", "output_tokens": "7", "tool_call_count": "1"}
+        persisted = json.dumps(event.to_dict())
+        for secret in (
+            private_prompt,
+            private_tool_input,
+            "private_tool_name",
+            "private-anthropic-idempotency",
+        ):
+            assert secret not in persisted
+
 
 # ---------------------------------------------------------------------------
 # Passthrough (no active task) tests
@@ -418,7 +486,7 @@ class TestSyncStreaming:
         assert ev.model == "claude-3-5-sonnet-20241022"
         assert ev.input_tokens == 120
         assert ev.output_tokens == 60
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_streaming_with_cache_tokens(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -460,6 +528,72 @@ class TestSyncStreaming:
         assert ev.output_tokens == 80
         assert ev.cached_tokens == 50
         assert ev.details.get("cache_creation_input_tokens") == 100
+
+    def test_stream_snapshots_context_request_id_and_tool_count_at_invocation(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.anthropic import instrument_anthropic
+        from dexcost.models.capability import CapabilityIdentity
+
+        usage = _make_usage(input_tokens=17, output_tokens=0)
+        message = types.SimpleNamespace(
+            id="msg_stream_provider_1",
+            model="claude-3-5-sonnet-20241022",
+            usage=usage,
+            content=[],
+        )
+        tool_start = _make_stream_event("content_block_start")
+        tool_start.content_block = types.SimpleNamespace(
+            type="tool_use",
+            name="private_stream_tool",
+            input={"query": "private-stream-tool-input"},
+        )
+        delta_usage = types.SimpleNamespace(output_tokens=5)
+        raw_events = [
+            _make_stream_event("message_start", message=message),
+            tool_start,
+            _make_stream_event("message_delta", usage=delta_usage),
+            _make_stream_event("message_stop"),
+        ]
+        Messages.create = staticmethod(lambda **kwargs: iter(raw_events))  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+        capability = CapabilityIdentity(name="agent.tool_route", kind="workflow")
+
+        with tracker.task(task_type="anthropic_stream_contract") as task:
+            with (
+                capability_context(capability),
+                idempotency_key("private-anthropic-stream-idempotency"),
+            ):
+                stream = Messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    messages=[{"role": "user", "content": "private-stream-prompt"}],
+                    stream=True,
+                )
+            list(stream)
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.details["provider_record_id"] == "msg_stream_provider_1"
+        assert event.details["attribution_capability"] == capability.to_dict()
+        usage_lines = {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }
+        assert usage_lines == {
+            "input_tokens": "17",
+            "output_tokens": "5",
+            "tool_call_count": "1",
+        }
+        persisted = json.dumps(event.to_dict())
+        for secret in (
+            "private_stream_tool",
+            "private-stream-tool-input",
+            "private-stream-prompt",
+            "private-anthropic-stream-idempotency",
+        ):
+            assert secret not in persisted
 
     def test_streaming_without_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """When no usage appears in the stream, cost_confidence is 'estimated'."""
@@ -521,6 +655,154 @@ class TestSyncStreaming:
         assert recorded[0].latency_ms is not None
         assert recorded[0].latency_ms >= 0
 
+    def test_streaming_without_explicit_task_finishes_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=70, output_tokens=0)
+        delta_usage = MagicMock(output_tokens=22)
+        events_list = [
+            _make_stream_event(
+                "message_start",
+                model="claude-3-5-sonnet-20241022",
+                usage=usage,
+            ),
+            _make_stream_event("message_delta", usage=delta_usage),
+            _make_stream_event("message_stop"),
+        ]
+        Messages.create = staticmethod(lambda **kwargs: iter(events_list))  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        assert (
+            len(
+                list(Messages.create(model="claude-3-5-sonnet-20241022", messages=[], stream=True))
+            )
+            == 3
+        )
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].task_id == tasks[0].task_id
+        assert events[0].input_tokens == 70
+        assert events[0].details["attribution_operation_status"] == "succeeded"
+        assert tasks[0].status == "success"
+
+    def test_close_records_cancelled_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=35, output_tokens=0)
+        events_list = [
+            _make_stream_event(
+                "message_start",
+                model="claude-3-5-sonnet-20241022",
+                usage=usage,
+            ),
+            _make_stream_event("message_stop"),
+        ]
+        Messages.create = staticmethod(lambda **kwargs: iter(events_list))  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        stream = Messages.create(model="claude-3-5-sonnet-20241022", messages=[], stream=True)
+        next(stream)
+        stream.close()
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 35
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
+    def test_mid_stream_failure_preserves_incremental_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(
+            input_tokens=31,
+            output_tokens=0,
+            cache_creation_input_tokens=3,
+            cache_read_input_tokens=4,
+        )
+        delta_usage = MagicMock(output_tokens=9)
+
+        def failing_stream() -> Generator[Any, None, None]:
+            yield _make_stream_event(
+                "message_start",
+                model="claude-3-5-sonnet-20241022",
+                usage=usage,
+            )
+            yield _make_stream_event("message_delta", usage=delta_usage)
+            raise RuntimeError("transport closed after tokens")
+
+        Messages.create = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: failing_stream()
+        )
+        instrument_anthropic(tracker)
+
+        with (
+            tracker.task(task_type="stream_partial_failure") as task,
+            pytest.raises(RuntimeError, match="transport closed"),
+        ):
+            list(Messages.create(model="claude-3-5-sonnet-20241022", messages=[], stream=True))
+
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 31
+        assert events[0].output_tokens == 9
+        assert events[0].cached_tokens == 4
+        assert events[0].cost_confidence == "computed"
+        assert events[0].details["cache_creation_input_tokens"] == 3
+        assert events[0].details["attribution_operation_status"] == "failed"
+        assert events[0].details["error_type"] == "runtimeerror"
+
+    def test_garbage_collected_stream_records_cancelled_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import Messages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=19, output_tokens=0)
+        Messages.create = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: iter(
+                [
+                    _make_stream_event(
+                        "message_start",
+                        model="claude-3-5-sonnet-20241022",
+                        usage=usage,
+                    ),
+                    _make_stream_event("message_stop"),
+                ]
+            )
+        )
+        instrument_anthropic(tracker)
+
+        stream = Messages.create(model="claude-3-5-sonnet-20241022", messages=[], stream=True)
+        next(stream)
+        del stream
+        gc.collect()
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 19
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Async non-streaming tests
@@ -567,7 +849,7 @@ class TestAsyncNonStreaming:
         assert ev.model == "claude-3-5-sonnet-20241022"
         assert ev.input_tokens == 200
         assert ev.output_tokens == 80
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_missing_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         from anthropic.resources.messages import AsyncMessages
@@ -663,6 +945,7 @@ class _FakeAsyncIter:
     def __init__(self, items: list[Any]) -> None:
         self._items = items
         self._index = 0
+        self.closed = False
 
     def __aiter__(self) -> _FakeAsyncIter:
         return self
@@ -673,6 +956,9 @@ class _FakeAsyncIter:
         item = self._items[self._index]
         self._index += 1
         return item
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class TestAsyncStreaming:
@@ -723,7 +1009,7 @@ class TestAsyncStreaming:
         assert ev.model == "claude-3-5-sonnet-20241022"
         assert ev.input_tokens == 90
         assert ev.output_tokens == 40
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_streaming_without_usage(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -812,6 +1098,183 @@ class TestAsyncStreaming:
         assert ev.input_tokens == 500
         assert ev.output_tokens == 60
 
+    def test_async_stream_without_explicit_task_finishes_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import AsyncMessages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=48, output_tokens=0)
+        delta_usage = MagicMock(output_tokens=19)
+        events_list = [
+            _make_stream_event(
+                "message_start",
+                model="claude-3-5-sonnet-20241022",
+                usage=usage,
+            ),
+            _make_stream_event("message_delta", usage=delta_usage),
+            _make_stream_event("message_stop"),
+        ]
+
+        async def fake_create(**kwargs: Any) -> Any:
+            return _FakeAsyncIter(events_list)
+
+        AsyncMessages.create = staticmethod(fake_create)  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        async def run() -> None:
+            stream = await AsyncMessages.create(
+                model="claude-3-5-sonnet-20241022", messages=[], stream=True
+            )
+            assert len([event async for event in stream]) == 3
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].task_id == tasks[0].task_id
+        assert events[0].input_tokens == 48
+        assert events[0].details["attribution_operation_status"] == "succeeded"
+
+    def test_aclose_records_cancelled_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import AsyncMessages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=28, output_tokens=0)
+        raw_stream = _FakeAsyncIter(
+            [
+                _make_stream_event(
+                    "message_start",
+                    model="claude-3-5-sonnet-20241022",
+                    usage=usage,
+                ),
+                _make_stream_event("message_stop"),
+            ]
+        )
+
+        async def fake_create(**kwargs: Any) -> Any:
+            return raw_stream
+
+        AsyncMessages.create = staticmethod(fake_create)  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        async def run() -> None:
+            stream = await AsyncMessages.create(
+                model="claude-3-5-sonnet-20241022", messages=[], stream=True
+            )
+            await stream.__anext__()
+            await stream.aclose()
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert raw_stream.closed is True
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 28
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
+    def test_async_mid_stream_failure_preserves_incremental_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import AsyncMessages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(
+            input_tokens=37,
+            output_tokens=0,
+            cache_creation_input_tokens=5,
+            cache_read_input_tokens=8,
+        )
+        delta_usage = MagicMock(output_tokens=12)
+
+        async def failing_stream() -> Any:
+            yield _make_stream_event(
+                "message_start",
+                model="claude-3-5-sonnet-20241022",
+                usage=usage,
+            )
+            yield _make_stream_event("message_delta", usage=delta_usage)
+            raise RuntimeError("async transport closed after tokens")
+
+        async def fake_create(**kwargs: Any) -> Any:
+            return failing_stream()
+
+        AsyncMessages.create = staticmethod(fake_create)  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        async def run() -> None:
+            async with tracker.task(task_type="async_stream_partial_failure"):
+                with pytest.raises(RuntimeError, match="transport closed"):
+                    stream = await AsyncMessages.create(
+                        model="claude-3-5-sonnet-20241022", messages=[], stream=True
+                    )
+                    _ = [event async for event in stream]
+
+        asyncio.run(run())
+
+        tasks = storage.query_tasks(task_type="async_stream_partial_failure")
+        events = storage.query_events(task_id=str(tasks[0].task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 37
+        assert events[0].output_tokens == 12
+        assert events[0].cached_tokens == 8
+        assert events[0].cost_confidence == "computed"
+        assert events[0].details["cache_creation_input_tokens"] == 5
+        assert events[0].details["attribution_operation_status"] == "failed"
+        assert events[0].details["error_type"] == "runtimeerror"
+
+    def test_garbage_collected_async_stream_records_cancelled_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from anthropic.resources.messages import AsyncMessages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        usage = _make_usage(input_tokens=22, output_tokens=0)
+
+        async def fake_create(**kwargs: Any) -> Any:
+            return _FakeAsyncIter(
+                [
+                    _make_stream_event(
+                        "message_start",
+                        model="claude-3-5-sonnet-20241022",
+                        usage=usage,
+                    ),
+                    _make_stream_event("message_stop"),
+                ]
+            )
+
+        AsyncMessages.create = staticmethod(fake_create)  # type: ignore[assignment]
+        instrument_anthropic(tracker)
+
+        async def run() -> None:
+            stream = await AsyncMessages.create(
+                model="claude-3-5-sonnet-20241022", messages=[], stream=True
+            )
+            await stream.__anext__()
+            del stream
+            gc.collect()
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="anthropic.messages")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 22
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Instrument / uninstrument lifecycle tests
@@ -866,14 +1329,15 @@ class TestInstrumentLifecycle:
 
         # Block the import of anthropic.resources.messages even if the real
         # anthropic package is installed in the environment.
-        blocked = {k: None for k in list(sys.modules) if k == "anthropic" or k.startswith("anthropic.")}
+        blocked = {
+            k: None for k in list(sys.modules) if k == "anthropic" or k.startswith("anthropic.")
+        }
         blocked.setdefault("anthropic", None)
         blocked.setdefault("anthropic.resources", None)
         blocked.setdefault("anthropic.resources.messages", None)
 
-        with patch.dict(sys.modules, blocked):
-            with pytest.raises(ImportError, match="anthropic"):
-                instrument_anthropic(tracker)
+        with patch.dict(sys.modules, blocked), pytest.raises(ImportError, match="anthropic"):
+            instrument_anthropic(tracker)
 
         # Re-install for cleanup
         _install_fake_anthropic()

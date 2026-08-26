@@ -1,5 +1,8 @@
 {
   "schema_version": "1",
   "algorithm": "ed25519",
-  "trusted_keys": {}
+  "trusted_keys": {
+    "catalog-prod-2026-08-a": "An77ZvsmGHRFr9Sk7lGeovemeKs4GjmRoSyjOpdOFqM",
+    "catalog-prod-2026-08-b": "aVyFkgHGKew8wF13IcbX38eGsKIeQlUIkaexJBwzYt0"
+  }
 }
