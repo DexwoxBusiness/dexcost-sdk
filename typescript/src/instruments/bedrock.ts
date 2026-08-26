@@ -283,11 +283,14 @@ function meteredInvokeMeasurement(
   if (steps !== undefined && steps > 0) billingDimensions.push(["image_steps", String(steps)]);
   if (quality) billingDimensions.push(["image_quality", quality]);
   const above1024 = (width ?? 0) > 1024 || (height ?? 0) > 1024;
+  const above512 = (width ?? 0) > 512 || (height ?? 0) > 512;
   const premium = quality === "premium";
   const pricingMetric = above1024 && premium
     ? "output_image_count_above_1024_premium"
     : above1024 ? "output_image_count_above_1024"
-      : premium ? "output_image_count_premium" : "output_image_count";
+      : above512 && premium ? "output_image_count_above_512_premium"
+        : above512 ? "output_image_count_above_512"
+          : premium ? "output_image_count_premium" : "output_image_count";
   const modelCandidates = width && height && steps
     ? [`${width}-x-${height}/${steps}-steps/bedrock/${model}`, `${width}-x-${height}/${steps}-steps/${model}`]
     : [];

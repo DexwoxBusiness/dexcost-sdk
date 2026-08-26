@@ -249,17 +249,18 @@ describe("Bedrock instrumentation", () => {
     }
     _setClientClass(ImageClient);
     pricing.replaceCatalog({
-      "amazon.titan-image-generator-v2:0": {
+      "amazon.titan-image-generator-v1": {
         mode: "image_generation",
-        output_cost_per_image: 0.01,
+        output_cost_per_image: 0.008,
+        output_cost_per_image_above_512_and_512_pixels: 0.01,
       },
     }, "test-image");
     await instrumentBedrock(pricing, buffer);
     const task = createTask({ taskId: randomUUID(), taskType: "test" });
     const client = new ImageClient();
     await runWithTask(task, () => client.send(new InvokeModelCommand({
-      modelId: "amazon.titan-image-generator-v2:0",
-      body: JSON.stringify({ imageGenerationConfig: { width: 1536, height: 1024, quality: "premium" } }),
+      modelId: "amazon.titan-image-generator-v1",
+      body: JSON.stringify({ imageGenerationConfig: { width: 513, height: 512 } }),
     })));
 
     const event = buffer.getAllEvents()[0];
@@ -269,6 +270,8 @@ describe("Bedrock instrumentation", () => {
     expect(event.details.attribution_usage_lines).toEqual([
       { metric: "output_image_count", quantity: "1", unit: "Images" },
     ]);
+    expect(event.costUsd.toString()).toBe("0.01");
+    expect(event.costConfidence).toBe("computed");
     expect(JSON.stringify(event.details)).not.toContain("private-base64");
   });
 

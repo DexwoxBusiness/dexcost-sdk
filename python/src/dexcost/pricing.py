@@ -157,14 +157,32 @@ _METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
     "output_image_count_premium": (
         ("output_cost_per_image_premium_image", Decimal(1)),
     ),
+    "output_image_count_above_512": (
+        ("output_cost_per_image_above_512_and_512_pixels", Decimal(1)),
+        ("output_cost_per_image", Decimal(1)),
+    ),
+    "output_image_count_above_512_premium": (
+        (
+            "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            Decimal(1),
+        ),
+        ("output_cost_per_image_premium_image", Decimal(1)),
+    ),
     "output_image_count_above_1024": (
         ("output_cost_per_image_above_1024_and_1024_pixels", Decimal(1)),
+        ("output_cost_per_image_above_512_and_512_pixels", Decimal(1)),
+        ("output_cost_per_image", Decimal(1)),
     ),
     "output_image_count_above_1024_premium": (
         (
             "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image",
             Decimal(1),
         ),
+        (
+            "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            Decimal(1),
+        ),
+        ("output_cost_per_image_premium_image", Decimal(1)),
     ),
     "input_pixels": (("input_cost_per_pixel", Decimal(1)),),
     "output_pixels": (("output_cost_per_pixel", Decimal(1)),),

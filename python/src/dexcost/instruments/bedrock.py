@@ -1648,11 +1648,16 @@ def _image_measurement(
 
     pricing_metric = "output_image_count"
     above_1024 = (width or 0) > 1024 or (height or 0) > 1024
+    above_512 = (width or 0) > 512 or (height or 0) > 512
     premium = quality == "premium"
     if above_1024 and premium:
         pricing_metric = "output_image_count_above_1024_premium"
     elif above_1024:
         pricing_metric = "output_image_count_above_1024"
+    elif above_512 and premium:
+        pricing_metric = "output_image_count_above_512_premium"
+    elif above_512:
+        pricing_metric = "output_image_count_above_512"
     elif premium:
         pricing_metric = "output_image_count_premium"
 

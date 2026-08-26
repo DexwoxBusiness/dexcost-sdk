@@ -35,9 +35,9 @@ _GENERATED = frozenset({"public-api.json", "storage-migrations.json", "manifest.
 
 
 def _canonical_artifact_bytes(relative: str, data: bytes) -> bytes:
-    """Normalize JSON checkout line endings before hashing frozen artifacts."""
+    """Normalize text checkout line endings before hashing frozen artifacts."""
 
-    return data.replace(b"\r\n", b"\n") if relative.endswith(".json") else data
+    return data.replace(b"\r\n", b"\n") if relative.endswith((".json", ".md")) else data
 
 
 def _json_bytes(value: object) -> bytes:

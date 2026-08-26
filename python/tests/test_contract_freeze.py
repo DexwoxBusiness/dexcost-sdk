@@ -33,7 +33,7 @@ FORMAT_CHECKER = FormatChecker()
 
 
 def _canonical_artifact_bytes(relative: str, data: bytes) -> bytes:
-    return data.replace(b"\r\n", b"\n") if relative.endswith(".json") else data
+    return data.replace(b"\r\n", b"\n") if relative.endswith((".json", ".md")) else data
 
 
 def _load(path: Path) -> Any:

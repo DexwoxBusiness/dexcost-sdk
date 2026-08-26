@@ -473,6 +473,11 @@ def test_current_invoke_model_classifies_embedding_image_and_rerank(
                 {"images": ["private-image-one", "private-image-two"]},
                 "bedrock-image-1",
             )
+        if model == "amazon.titan-image-generator-v1":
+            return encoded(
+                {"images": ["private-image-v1"]},
+                "bedrock-image-v1",
+            )
         if model == "amazon.rerank-v1:0":
             return encoded(
                 {"results": [{"index": 0, "relevanceScore": 0.9}]},
@@ -506,6 +511,20 @@ def test_current_invoke_model_classifies_embedding_image_and_rerank(
             ).encode(),
         )
         client.invoke_model(
+            modelId="amazon.titan-image-generator-v1",
+            body=json.dumps(
+                {
+                    "taskType": "TEXT_IMAGE",
+                    "textToImageParams": {"text": private_prompt},
+                    "imageGenerationConfig": {
+                        "numberOfImages": 1,
+                        "width": 513,
+                        "height": 512,
+                    },
+                }
+            ).encode(),
+        )
+        client.invoke_model(
             modelId="amazon.rerank-v1:0",
             body=json.dumps(
                 {"query": private_prompt, "documents": [{"text": "private-document"}]}
@@ -513,7 +532,7 @@ def test_current_invoke_model_classifies_embedding_image_and_rerank(
         )
 
     events = storage.query_events(task_id=str(task.task_id))
-    assert len(events) == 3
+    assert len(events) == 4
     by_model = {event.model: event for event in events}
 
     embedding = by_model["amazon.titan-embed-text-v2:0"]
@@ -541,6 +560,11 @@ def test_current_invoke_model_classifies_embedding_image_and_rerank(
         "image_width": "2048",
     }
 
+    titan_v1_image = by_model["amazon.titan-image-generator-v1"]
+    assert titan_v1_image.cost_usd == Decimal("0.01")
+    assert titan_v1_image.cost_confidence == "computed"
+    assert titan_v1_image.details["provider_record_id"] == "bedrock-image-v1"
+
     rerank = by_model["amazon.rerank-v1:0"]
     assert rerank.cost_usd == Decimal("0.001")
     assert rerank.cost_confidence == "computed"
@@ -553,6 +577,7 @@ def test_current_invoke_model_classifies_embedding_image_and_rerank(
     assert private_prompt not in persisted
     assert "private-document" not in persisted
     assert "private-image-one" not in persisted
+    assert "private-image-v1" not in persisted
     assert "private-image-two" not in persisted
 
 

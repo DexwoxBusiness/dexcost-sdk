@@ -205,6 +205,83 @@ class TestMeteredCosts:
         assert result.cost_usd == Decimal("0.00250")
         assert result.cost_confidence == "computed"
 
+    def test_image_tiers_follow_fields_on_the_resolved_model(
+        self, engine: PricingEngine
+    ) -> None:
+        engine.replace_catalog(
+            {
+                "amazon.titan-image-generator-v1": {
+                    "output_cost_per_image": 0.008,
+                    "output_cost_per_image_premium_image": 0.01,
+                    "output_cost_per_image_above_512_and_512_pixels": 0.01,
+                    "output_cost_per_image_above_512_and_512_pixels_and_premium_image": 0.012,
+                },
+                "amazon.titan-image-generator-v2:0": {
+                    "output_cost_per_image": 0.008,
+                    "output_cost_per_image_premium_image": 0.01,
+                    "output_cost_per_image_above_1024_and_1024_pixels": 0.01,
+                    "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image": 0.012,
+                },
+            },
+            "image-tier-test",
+        )
+        cases = (
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_premium",
+                "0.01",
+                "output_cost_per_image_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_512",
+                "0.01",
+                "output_cost_per_image_above_512_and_512_pixels",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_512",
+                "0.008",
+                "output_cost_per_image",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_512_premium",
+                "0.012",
+                "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_512_premium",
+                "0.01",
+                "output_cost_per_image_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_1024",
+                "0.01",
+                "output_cost_per_image_above_1024_and_1024_pixels",
+            ),
+            (
+                "amazon.titan-image-generator-v1",
+                "output_image_count_above_1024_premium",
+                "0.012",
+                "output_cost_per_image_above_512_and_512_pixels_and_premium_image",
+            ),
+            (
+                "amazon.titan-image-generator-v2:0",
+                "output_image_count_above_1024_premium",
+                "0.012",
+                "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image",
+            ),
+        )
+        for model, dimension, expected_cost, expected_field in cases:
+            result = engine.get_metered_cost(model, {dimension: 1})
+            assert result.cost_usd == Decimal(expected_cost)
+            assert result.cost_confidence == "computed"
+            assert result.unpriced_dimensions == ()
+            assert result.lines[0].rate_field == expected_field
+
     def test_candidate_selects_resolution_specific_video_sku(
         self, engine: PricingEngine
     ) -> None:

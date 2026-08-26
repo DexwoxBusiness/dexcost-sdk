@@ -108,6 +108,43 @@ describe("PricingEngine", () => {
     expect(result.costConfidence).toBe("computed");
   });
 
+  it("selects Bedrock image tiers from the resolved model's rate fields", () => {
+    const engine = new PricingEngine();
+    engine.replaceCatalog({
+      "amazon.titan-image-generator-v1": {
+        output_cost_per_image: 0.008,
+        output_cost_per_image_premium_image: 0.01,
+        output_cost_per_image_above_512_and_512_pixels: 0.01,
+        output_cost_per_image_above_512_and_512_pixels_and_premium_image: 0.012,
+      },
+      "amazon.titan-image-generator-v2:0": {
+        output_cost_per_image: 0.008,
+        output_cost_per_image_premium_image: 0.01,
+        output_cost_per_image_above_1024_and_1024_pixels: 0.01,
+        output_cost_per_image_above_1024_and_1024_pixels_and_premium_image: 0.012,
+      },
+    }, "image-tier-test");
+
+    const cases = [
+      ["amazon.titan-image-generator-v1", "output_image_count_premium", "0.01", "output_cost_per_image_premium_image"],
+      ["amazon.titan-image-generator-v1", "output_image_count_above_512", "0.01", "output_cost_per_image_above_512_and_512_pixels"],
+      ["amazon.titan-image-generator-v2:0", "output_image_count_above_512", "0.008", "output_cost_per_image"],
+      ["amazon.titan-image-generator-v1", "output_image_count_above_512_premium", "0.012", "output_cost_per_image_above_512_and_512_pixels_and_premium_image"],
+      ["amazon.titan-image-generator-v2:0", "output_image_count_above_512_premium", "0.01", "output_cost_per_image_premium_image"],
+      ["amazon.titan-image-generator-v2:0", "output_image_count_above_1024", "0.01", "output_cost_per_image_above_1024_and_1024_pixels"],
+      ["amazon.titan-image-generator-v1", "output_image_count_above_1024_premium", "0.012", "output_cost_per_image_above_512_and_512_pixels_and_premium_image"],
+      ["amazon.titan-image-generator-v2:0", "output_image_count_above_1024_premium", "0.012", "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image"],
+    ] as const;
+
+    for (const [model, dimension, expectedCost, expectedField] of cases) {
+      const result = engine.getMeteredCost(model, { [dimension]: 1 });
+      expect(result.costUsd.toString()).toBe(expectedCost);
+      expect(result.costConfidence).toBe("computed");
+      expect(result.unpricedDimensions).toEqual([]);
+      expect(result.lines[0]?.rateField).toBe(expectedField);
+    }
+  });
+
   it("marks an unpriced Anthropic one-hour cache bucket unknown", () => {
     const engine = new PricingEngine();
     engine.replaceCatalog({
