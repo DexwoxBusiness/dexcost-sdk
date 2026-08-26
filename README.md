@@ -80,7 +80,7 @@ Each SDK's README has the full, language-idiomatic API, configuration, and examp
 <summary><b>Python</b></summary>
 
 ```bash
-pip install dexcost            # add [all] for every provider: pip install "dexcost[all]"
+pip install dexcost            # or: pip install "dexcost[all]" for every optional integration
 ```
 ```python
 import dexcost

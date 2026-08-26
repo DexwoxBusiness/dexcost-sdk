@@ -82,6 +82,34 @@ def test_same_key_can_identify_distinct_component_operations(tmp_path: Path) -> 
         storage.close()
 
 
+def test_one_ambient_scope_distinguishes_occurrences_and_replays_deterministically(
+    tmp_path: Path,
+) -> None:
+    storage = SQLiteStorage(tmp_path / "idempotency-occurrences.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    try:
+        with tracker.task(task_type="workflow.run") as task:
+            with idempotency_key("workflow-10"):
+                first = task.record_tool_call("search", cost_usd="0.01")
+                second = task.record_tool_call("search", cost_usd="0.01")
+            with idempotency_key("workflow-10"):
+                first_replay = task.record_tool_call("search", cost_usd="0.01")
+                second_replay = task.record_tool_call("search", cost_usd="0.01")
+
+        assert first.event_id != second.event_id
+        assert first_replay.event_id == first.event_id
+        assert second_replay.event_id == second.event_id
+        assert first.details["_dexcost_idempotency_occurrence"] == 0
+        assert second.details["_dexcost_idempotency_occurrence"] == 1
+        persisted = {
+            event.event_id: event
+            for event in storage.query_events(task_id=str(task.task_id))
+        }
+        assert persisted == {first.event_id: first, second.event_id: second}
+    finally:
+        storage.close()
+
+
 def test_llm_manual_capture_uses_same_durable_idempotency_contract(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "idempotent-llm.db")
     tracker = CostTracker(storage=storage, auto_instrument=[])
@@ -115,9 +143,7 @@ def test_raw_idempotency_key_never_persists_or_reaches_wire(tmp_path: Path) -> N
     raw_key = "customer-secret-order-42"
     try:
         with tracker.task(task_type="privacy.run") as task:
-            event = task.record_tool_call(
-                "search", idempotency_key=raw_key
-            )
+            event = task.record_tool_call("search", idempotency_key=raw_key)
         persisted = storage.query_events(task_id=str(task.task_id))[0]
         assert raw_key not in str(persisted.to_dict())
         assert len(persisted.details["_dexcost_idempotency_sha256"]) == 64

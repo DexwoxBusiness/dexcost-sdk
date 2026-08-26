@@ -13,6 +13,7 @@ from contextlib import suppress
 from typing import Any
 from urllib.parse import urlparse
 
+from dexcost.instruments._capture import provider_capture_callable
 from dexcost.instruments._provider_metering import (
     AsyncProviderStream,
     OperationMeasurement,
@@ -208,9 +209,7 @@ def _new_session(operation: str, target: Any, model: str | None) -> ProviderOper
     cloud = _is_cloud_call(target, model)
     is_web = operation in _WEB_OPERATIONS
     canonical_model = (
-        f"ollama-{operation.replace('_', '-')}"
-        if is_web
-        else _canonical_model(model, cloud=cloud)
+        f"ollama-{operation.replace('_', '-')}" if is_web else _canonical_model(model, cloud=cloud)
     )
     return ProviderOperationSession(
         tracker=_active_tracker,
@@ -365,7 +364,11 @@ def _patch(owner: Any, name: str, replacement: Any, key: str) -> None:
     if not callable(original):
         return
     _originals[key] = (owner, name, original)
-    setattr(owner, name, replacement)
+    setattr(
+        owner,
+        name,
+        provider_capture_callable("ollama", replacement, original),
+    )
 
 
 def _restore_all() -> None:
@@ -385,8 +388,7 @@ def instrument_ollama(tracker: Any) -> None:
         from ollama import AsyncClient, Client
     except ImportError as exc:
         raise ImportError(
-            "Ollama instrumentation requires the 'ollama' package; "
-            "install dexcost[ollama]"
+            "Ollama instrumentation requires the 'ollama' package; " "install dexcost[ollama]"
         ) from exc
 
     _active_tracker = tracker

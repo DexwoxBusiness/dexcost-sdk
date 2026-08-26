@@ -28,7 +28,13 @@ def _uses_disjoint_cache_buckets(model: str, provider: str = "") -> bool:
     normalized_model = model.lower()
     normalized_provider = provider.lower()
     return (
-        normalized_provider in {"anthropic", "vertex_ai-anthropic_models"}
+        normalized_provider
+        in {
+            "anthropic",
+            "bedrock",
+            "bedrock_converse",
+            "vertex_ai-anthropic_models",
+        }
         or "claude" in normalized_model
         or "anthropic." in normalized_model
     )
@@ -88,6 +94,9 @@ _METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
     "output_tokens": (("output_cost_per_token", Decimal(1)),),
     "cache_read_input_tokens": (("cache_read_input_token_cost", Decimal(1)),),
     "cache_write_input_tokens": (("cache_creation_input_token_cost", Decimal(1)),),
+    "cache_write_input_tokens_1h": (
+        ("cache_creation_input_token_cost_above_1hr", Decimal(1)),
+    ),
     "reasoning_output_tokens": (
         ("output_cost_per_reasoning_token", Decimal(1)),
         ("output_cost_per_token", Decimal(1)),
@@ -145,6 +154,18 @@ _METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
     ),
     "image_count": (("input_cost_per_image", Decimal(1)),),
     "output_image_count": (("output_cost_per_image", Decimal(1)),),
+    "output_image_count_premium": (
+        ("output_cost_per_image_premium_image", Decimal(1)),
+    ),
+    "output_image_count_above_1024": (
+        ("output_cost_per_image_above_1024_and_1024_pixels", Decimal(1)),
+    ),
+    "output_image_count_above_1024_premium": (
+        (
+            "output_cost_per_image_above_1024_and_1024_pixels_and_premium_image",
+            Decimal(1),
+        ),
+    ),
     "input_pixels": (("input_cost_per_pixel", Decimal(1)),),
     "output_pixels": (("output_cost_per_pixel", Decimal(1)),),
     "request_count": (("input_cost_per_request", Decimal(1)),),
@@ -152,6 +173,7 @@ _METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
     "web_search_calls": (
         ("web_search_cost_per_call", Decimal(1)),
         ("input_cost_per_query", Decimal(1)),
+        ("search_context_cost_per_query", Decimal(1)),
     ),
     "session_count": (("code_interpreter_cost_per_session", Decimal(1)),),
     "file_search_calls": (("file_search_cost_per_1k_calls", Decimal(1000)),),
@@ -162,6 +184,20 @@ _METERED_RATE_FIELDS: dict[str, tuple[tuple[str, Decimal], ...]] = {
     "batch_output_tokens": (("output_cost_per_token_batches", Decimal(1)),),
     "batch_reasoning_output_tokens": (
         ("output_cost_per_token_batches", Decimal(1)),
+    ),
+    # Anthropic's Message Batches discount is 50% and stacks with prompt
+    # caching. Provider-specific dimensions make that documented policy
+    # explicit without changing the meaning of generic batch meters.
+    "anthropic_batch_input_tokens": (("input_cost_per_token", Decimal(2)),),
+    "anthropic_batch_output_tokens": (("output_cost_per_token", Decimal(2)),),
+    "anthropic_batch_cache_read_input_tokens": (
+        ("cache_read_input_token_cost", Decimal(2)),
+    ),
+    "anthropic_batch_cache_write_input_tokens": (
+        ("cache_creation_input_token_cost", Decimal(2)),
+    ),
+    "anthropic_batch_cache_write_input_tokens_1h": (
+        ("cache_creation_input_token_cost_above_1hr", Decimal(2)),
     ),
 }
 
@@ -178,6 +214,24 @@ def _metered_quantity(name: str, value: object) -> Decimal:
     if not quantity.is_finite() or quantity < 0:
         raise ValueError(f"metered usage {name!r} must be finite and non-negative")
     return quantity
+
+
+def _metered_rate(model_info: Mapping[str, object], rate_field: str) -> Decimal:
+    """Read a scalar catalog rate, including unambiguous search-rate maps."""
+    raw_rate = model_info[rate_field]
+    if rate_field == "search_context_cost_per_query" and isinstance(raw_rate, Mapping):
+        # LiteLLM represents some provider search prices as a context-size map.
+        # Anthropic reports only a search count (no context size), so it is safe
+        # to use the map only when every published tier has the same price.
+        rates = tuple(Decimal(str(value)) for value in raw_rate.values())
+        if not rates or any(rate != rates[0] for rate in rates[1:]):
+            raise ValueError("search context rates are not a single flat provider rate")
+        rate = rates[0]
+    else:
+        rate = Decimal(str(raw_rate))
+    if not rate.is_finite() or rate < 0:
+        raise ValueError("catalog rate must be finite and non-negative")
+    return rate
 
 
 @dataclass
@@ -262,6 +316,7 @@ class PricingEngine:
         output_tokens: int,
         cached_tokens: int = 0,
         cache_creation_tokens: int = 0,
+        cache_creation_tokens_1h: int = 0,
     ) -> CostResult:
         """Calculate the cost for an LLM call.
 
@@ -273,9 +328,15 @@ class PricingEngine:
                 discount. OpenAI includes these inside ``input_tokens``;
                 Anthropic reports them as a separate, disjoint bucket.
             cache_creation_tokens: Number of input tokens written to cache
-                (Anthropic-specific).  Charged at the higher
+                with the default TTL (five minutes for Anthropic and
+                Bedrock). Charged at the higher
                 ``cache_creation_input_token_cost`` rate instead of the normal
                 input rate.
+            cache_creation_tokens_1h: Number of input tokens written with the
+                one-hour TTL. Charged at the catalog's
+                ``cache_creation_input_token_cost_above_1hr`` rate. This is a
+                disjoint provider-reported bucket, not part of
+                ``cache_creation_tokens``.
 
         Returns:
             A :class:`CostResult` with ``cost_usd``, ``cost_confidence``,
@@ -291,12 +352,13 @@ class PricingEngine:
             safe_output = max(0, output_tokens)
             safe_cached = max(0, cached_tokens)
             safe_creation = max(0, cache_creation_tokens)
+            safe_creation_1h = max(0, cache_creation_tokens_1h)
             has_unpriced_disjoint_cache = _uses_disjoint_cache_buckets(model) and (
-                safe_cached > 0 or safe_creation > 0
+                safe_cached > 0 or safe_creation > 0 or safe_creation_1h > 0
             )
             billable_input = safe_input
             if has_unpriced_disjoint_cache:
-                billable_input += safe_cached + safe_creation
+                billable_input += safe_cached + safe_creation + safe_creation_1h
             cost = custom.input_per_1k * Decimal(str(billable_input)) / Decimal(
                 "1000"
             ) + custom.output_per_1k * Decimal(str(safe_output)) / Decimal("1000")
@@ -331,16 +393,28 @@ class PricingEngine:
         output_cost_per_token = Decimal(str(model_info.get("output_cost_per_token", 0)))
         has_cache_read_rate = "cache_read_input_token_cost" in model_info
         has_cache_creation_rate = "cache_creation_input_token_cost" in model_info
+        has_cache_creation_1h_rate = (
+            "cache_creation_input_token_cost_above_1hr" in model_info
+        )
         cache_read_cost_per_token = Decimal(
             str(model_info.get("cache_read_input_token_cost", input_cost_per_token))
         )
         cache_creation_cost_per_token = Decimal(
             str(model_info.get("cache_creation_input_token_cost", input_cost_per_token))
         )
+        cache_creation_1h_cost_per_token = Decimal(
+            str(
+                model_info.get(
+                    "cache_creation_input_token_cost_above_1hr",
+                    input_cost_per_token,
+                )
+            )
+        )
         safe_input = max(0, input_tokens)
         safe_output = max(0, output_tokens)
         safe_cached = max(0, cached_tokens)
         safe_creation = max(0, cache_creation_tokens)
+        safe_creation_1h = max(0, cache_creation_tokens_1h)
         disjoint_cache_buckets = _uses_disjoint_cache_buckets(
             model, str(model_info.get("litellm_provider", ""))
         )
@@ -353,10 +427,14 @@ class PricingEngine:
                 input_cost_per_token * Decimal(str(safe_input))
                 + cache_read_cost_per_token * Decimal(str(safe_cached))
                 + cache_creation_cost_per_token * Decimal(str(safe_creation))
+                + cache_creation_1h_cost_per_token
+                * Decimal(str(safe_creation_1h))
                 + output_cost_per_token * Decimal(str(safe_output))
             )
             if (safe_cached > 0 and not has_cache_read_rate) or (
                 safe_creation > 0 and not has_cache_creation_rate
+            ) or (
+                safe_creation_1h > 0 and not has_cache_creation_1h_rate
             ):
                 cost_confidence = "unknown"
         else:
@@ -367,11 +445,19 @@ class PricingEngine:
             effective_creation = (
                 min(safe_creation, remaining) if has_cache_creation_rate else 0
             )
-            non_cached_input = remaining - effective_creation
+            remaining -= effective_creation
+            effective_creation_1h = (
+                min(safe_creation_1h, remaining)
+                if has_cache_creation_1h_rate
+                else 0
+            )
+            non_cached_input = remaining - effective_creation_1h
             cost = (
                 input_cost_per_token * Decimal(str(non_cached_input))
                 + cache_read_cost_per_token * Decimal(str(effective_cached))
                 + cache_creation_cost_per_token * Decimal(str(effective_creation))
+                + cache_creation_1h_cost_per_token
+                * Decimal(str(effective_creation_1h))
                 + output_cost_per_token * Decimal(str(safe_output))
             )
 
@@ -460,11 +546,8 @@ class PricingEngine:
                 continue
             rate_field, divisor = selected
             try:
-                rate = Decimal(str(model_info[rate_field]))
+                rate = _metered_rate(model_info, rate_field)
             except (decimal.InvalidOperation, TypeError, ValueError):
-                unpriced.append(dimension)
-                continue
-            if not rate.is_finite() or rate < 0:
                 unpriced.append(dimension)
                 continue
             line_cost = quantity * rate / divisor
@@ -543,6 +626,22 @@ class PricingEngine:
         """Number of models in the active pricing catalog."""
         with self._lock:
             return len(self._model_map)
+
+    def model_mode(self, model: str) -> str | None:
+        """Return the catalog operation mode for *model*, when declared.
+
+        Provider instruments use this read-only resolver to distinguish chat,
+        embedding, image, rerank, and other model surfaces without duplicating
+        the server-distributed catalog or guessing from model-name substrings.
+        """
+        if not isinstance(model, str) or not model:
+            raise ValueError("model must be a non-empty string")
+        with self._lock:
+            resolved = self._resolve_model_entry(model)
+            if resolved is None:
+                return None
+            raw_mode = resolved[1].get("mode")
+        return raw_mode if isinstance(raw_mode, str) and raw_mode else None
 
     def close(self) -> None:
         """Stop background pricing refresh workers, if running."""

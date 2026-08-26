@@ -36,14 +36,19 @@ from urllib.parse import urlparse
 import wrapt
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
-from dexcost.capabilities import get_capability
+from dexcost.capabilities import apply_event_capability, get_capability
 from dexcost.context import (
     _current_task,
     get_current_task,
     set_current_task,
     suppress_network_event,
 )
-from dexcost.idempotency import get_idempotency_key
+from dexcost.idempotency import (
+    IdempotencyKey,
+    apply_event_idempotency,
+    capture_idempotency_key,
+)
+from dexcost.instruments._capture import provider_capture_wrapper
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
     record_call_failure,
@@ -96,9 +101,7 @@ def _provider_for_instance(instance: Any) -> str:
             hostname = (urlparse(str(base_url)).hostname or "").lower()
             if hostname == "openrouter.ai" or hostname.endswith(".openrouter.ai"):
                 return "openrouter"
-            if hostname == "api.perplexity.ai" or hostname.endswith(
-                ".perplexity.ai"
-            ):
+            if hostname == "api.perplexity.ai" or hostname.endswith(".perplexity.ai"):
                 return "perplexity"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
@@ -134,7 +137,7 @@ def _routed_wrapper(wrapper: Any) -> Any:
 
         return await_result()
 
-    return routed
+    return provider_capture_wrapper("openai", routed)
 
 
 def _patch_optional_method(
@@ -339,9 +342,7 @@ def instrument_openai(tracker: Any) -> None:
             _async_image_variation_wrapper,
         ),
     ):
-        _patch_optional_method(
-            "openai.resources.images", "Images", method_name, sync_wrapper
-        )
+        _patch_optional_method("openai.resources.images", "Images", method_name, sync_wrapper)
         _patch_optional_method(
             "openai.resources.images", "AsyncImages", method_name, async_wrapper
         )
@@ -401,9 +402,7 @@ def instrument_openai(tracker: Any) -> None:
         ("retrieve", _sync_batch_reconcile_wrapper, _async_batch_reconcile_wrapper),
         ("cancel", _sync_batch_reconcile_wrapper, _async_batch_reconcile_wrapper),
     ):
-        _patch_optional_method(
-            "openai.resources.batches", "Batches", method_name, sync_wrapper
-        )
+        _patch_optional_method("openai.resources.batches", "Batches", method_name, sync_wrapper)
         _patch_optional_method(
             "openai.resources.batches", "AsyncBatches", method_name, async_wrapper
         )
@@ -571,6 +570,54 @@ def uninstrument_openai() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _service_name(operation_name: str) -> str:
+    parts = operation_name.split(".")
+    return parts[1] if len(parts) > 1 and parts[1] else "chat"
+
+
+def _operation_details(
+    *,
+    provider: str,
+    operation_name: str,
+    model: str,
+    status: str,
+    record_id: str | None = None,
+) -> dict[str, Any]:
+    operation_name = {
+        "openai.chat": "openai.chat.completions.create",
+        "openai.responses": "openai.responses.create",
+        "openai.completions": "openai.completions.create",
+    }.get(operation_name, operation_name)
+    details: dict[str, Any] = {
+        "attribution_component": "llm",
+        "attribution_operation_name": operation_name,
+        "attribution_operation_status": status,
+        "attribution_resource_type": "model",
+        "attribution_resource_id": model,
+        "attribution_usage_lines": [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ],
+        "provider_usage_privacy": "quantities_only",
+    }
+    if isinstance(record_id, str) and record_id:
+        details["provider_record_id"] = record_id[:256]
+    if provider != "openai":
+        details["attribution_dimensions"] = [
+            {"key": "gateway", "value": {"type": "string", "value": provider}}
+        ]
+    return details
+
+
+def _stream_failure_tokens(usage: Any) -> tuple[int | None, int | None]:
+    if usage is None:
+        return None, None
+    try:
+        normalized = normalize_openai_usage(usage)
+    except OpenAIUsageError:
+        return None, None
+    return normalized.total_input_tokens, normalized.total_output_tokens
+
+
 def _sync_create_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -613,6 +660,9 @@ def _record_call_failure(
     kwargs: dict[str, Any],
     task: Any = None,
     auto_task_obj: Any = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Event | None:
     """Record a raised OpenAI call as a failed operation.
 
@@ -630,6 +680,15 @@ def _record_call_failure(
         model=requested_model(kwargs),
         latency_ms=latency_ms,
         task=task,
+        service_name=_service_name(operation_name),
+        details=_operation_details(
+            provider=_current_provider(),
+            operation_name=operation_name,
+            model=requested_model(kwargs) or "unknown",
+            status="failed",
+        ),
+        capability=capability,
+        idempotency_key=idempotency_key,
     )
     finalize_failed_auto_task(_active_tracker, auto_task_obj, event)
     return event
@@ -643,6 +702,8 @@ def _sync_create_common(
     responses_stream: bool,
 ) -> Any:
     task = get_current_task()
+    capability = get_capability()
+    idempotency_key = capture_idempotency_key()
     auto = task is None
     auto_task_obj = None
     auto_token = None
@@ -661,7 +722,16 @@ def _sync_create_common(
                 with suppress_network_event():
                     raw_stream = wrapped(*args, **kwargs)
             except Exception as exc:
-                _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+                _record_call_failure(
+                    exc,
+                    start_time,
+                    kwargs,
+                    task,
+                    auto_task_obj,
+                    capability,
+                    idempotency_key,
+                    task_type,
+                )
                 raise
             return _SyncStreamWrapper(
                 raw_stream,
@@ -670,19 +740,37 @@ def _sync_create_common(
                 task,
                 auto_task_obj,
                 requested_model(kwargs),
+                capability,
+                idempotency_key,
+                task_type,
             )
 
         try:
             with suppress_network_event():
                 response = wrapped(*args, **kwargs)
         except Exception as exc:
-            _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+            _record_call_failure(
+                exc,
+                start_time,
+                kwargs,
+                task,
+                auto_task_obj,
+                capability,
+                idempotency_key,
+                task_type,
+            )
             raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
             event = _record_from_response(
-                response, latency_ms, requested=requested_model(kwargs)
+                response,
+                latency_ms,
+                task=task,
+                requested=requested_model(kwargs),
+                capability=capability,
+                idempotency_key=idempotency_key,
+                operation_name=task_type,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -750,6 +838,8 @@ def _async_create_common(
     responses_stream: bool,
 ) -> Any:
     task = get_current_task()
+    capability = get_capability()
+    idempotency_key = capture_idempotency_key()
     auto = task is None
     auto_task_obj = None
     auto_token = None
@@ -757,7 +847,6 @@ def _async_create_common(
     if auto:
         auto_task_obj = create_auto_task(task_type)
         task = auto_task_obj
-        auto_token = set_current_task(auto_task_obj)
 
     stream = kwargs.get("stream", False)
     start_time = time.perf_counter()
@@ -772,9 +861,23 @@ def _async_create_common(
             auto_token,
             responses_stream,
             task,
+            capability,
+            idempotency_key,
+            task_type,
         )
 
-    return _async_non_stream_handler(wrapped, args, kwargs, start_time, auto_task_obj, auto_token)
+    return _async_non_stream_handler(
+        wrapped,
+        args,
+        kwargs,
+        start_time,
+        auto_task_obj,
+        auto_token,
+        task,
+        capability,
+        idempotency_key,
+        task_type,
+    )
 
 
 async def _async_non_stream_handler(
@@ -784,20 +887,41 @@ async def _async_non_stream_handler(
     start_time: float,
     auto_task_obj: Any = None,
     auto_token: Any = None,
+    task: Any = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Any:
     """Await the async create call and record the response."""
+    if auto_task_obj is not None and auto_token is None:
+        auto_token = set_current_task(auto_task_obj)
     try:
         try:
             with suppress_network_event():
                 response = await wrapped(*args, **kwargs)
         except Exception as exc:
-            _record_call_failure(exc, start_time, kwargs, None, auto_task_obj)
+            _record_call_failure(
+                exc,
+                start_time,
+                kwargs,
+                task,
+                auto_task_obj,
+                capability,
+                idempotency_key,
+                operation_name,
+            )
             raise
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         event: Any = None
         try:
             event = _record_from_response(
-                response, latency_ms, requested=requested_model(kwargs)
+                response,
+                latency_ms,
+                task=task,
+                requested=requested_model(kwargs),
+                capability=capability,
+                idempotency_key=idempotency_key,
+                operation_name=operation_name,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -826,14 +950,28 @@ async def _async_stream_handler(
     auto_token: Any = None,
     responses_stream: bool = False,
     task: Any = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Any:
     """Wrap async streaming to capture usage from the final chunk."""
+    if auto_task_obj is not None and auto_token is None:
+        auto_token = set_current_task(auto_task_obj)
     try:
         try:
             with suppress_network_event():
                 raw_stream = await wrapped(*args, **kwargs)
         except Exception as exc:
-            _record_call_failure(exc, start_time, kwargs, task, auto_task_obj)
+            _record_call_failure(
+                exc,
+                start_time,
+                kwargs,
+                task,
+                auto_task_obj,
+                capability,
+                idempotency_key,
+                operation_name,
+            )
             raise
         return _AsyncStreamWrapper(
             raw_stream,
@@ -842,6 +980,9 @@ async def _async_stream_handler(
             task,
             auto_task_obj,
             requested_model(kwargs),
+            capability,
+            idempotency_key,
+            operation_name,
         )
     finally:
         if auto_token is not None:
@@ -864,6 +1005,9 @@ class _SyncStreamWrapper(Iterator[Any]):
         task: Any = None,
         auto_task_obj: Any = None,
         requested: str | None = None,
+        capability: Any = None,
+        idempotency_key: IdempotencyKey | None = None,
+        operation_name: str = "openai.chat",
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -877,6 +1021,9 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._task = task
         self._auto_task_obj = auto_task_obj
         self._provider = _current_provider()
+        self._capability = capability
+        self._idempotency_key = idempotency_key
+        self._operation_name = operation_name
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -903,6 +1050,14 @@ class _SyncStreamWrapper(Iterator[Any]):
         if self._finalized:
             return
         self._finalized = True
+        input_tokens, output_tokens = _stream_failure_tokens(self._usage)
+        details = _operation_details(
+            provider=self._provider,
+            operation_name=self._operation_name,
+            model=self._model or self._requested or "unknown",
+            status="failed",
+            record_id=self._record_id,
+        )
         record_stream_failure(
             tracker=_active_tracker,
             exc=exc,
@@ -911,6 +1066,12 @@ class _SyncStreamWrapper(Iterator[Any]):
             model=self._model or self._requested,
             task=self._task,
             auto_task_obj=self._auto_task_obj,
+            service_name=_service_name(self._operation_name),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            details=details,
+            capability=self._capability,
+            idempotency_key=self._idempotency_key,
         )
 
     def _process_chunk(self, chunk: Any) -> None:
@@ -922,8 +1083,9 @@ class _SyncStreamWrapper(Iterator[Any]):
                 chunk = response
         if hasattr(chunk, "model") and chunk.model:
             self._model = chunk.model
-        if hasattr(chunk, "id") and chunk.id:
-            self._record_id = chunk.id
+        record_id = getattr(chunk, "id", None)
+        if isinstance(record_id, str) and record_id:
+            self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
 
@@ -943,6 +1105,9 @@ class _SyncStreamWrapper(Iterator[Any]):
                 self._completed_response,
                 provider=self._provider,
                 requested=self._requested,
+                capability=self._capability,
+                idempotency_key=self._idempotency_key,
+                operation_name=self._operation_name,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -964,6 +1129,9 @@ class _SyncStreamWrapper(Iterator[Any]):
                 status="cancelled",
                 provider=self._provider,
                 requested=self._requested,
+                capability=self._capability,
+                idempotency_key=self._idempotency_key,
+                operation_name=self._operation_name,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -971,19 +1139,27 @@ class _SyncStreamWrapper(Iterator[Any]):
 
     # Forward close/context-manager to the underlying stream
     def close(self) -> None:
+        try:
+            if hasattr(self._stream, "close"):
+                self._stream.close()
+        except BaseException as exc:
+            self._record_failure(exc)
+            raise
         self._cancel()
-        if hasattr(self._stream, "close"):
-            self._stream.close()
 
     def __enter__(self) -> _SyncStreamWrapper:
         if hasattr(self._stream, "__enter__"):
             self._stream.__enter__()
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: Any) -> Any:
+        try:
+            result = self._stream.__exit__(*args) if hasattr(self._stream, "__exit__") else None
+        except BaseException as exc:
+            self._record_failure(exc)
+            raise
         self._cancel()
-        if hasattr(self._stream, "__exit__"):
-            self._stream.__exit__(*args)
+        return result
 
 
 class _AsyncStreamWrapper:
@@ -997,6 +1173,9 @@ class _AsyncStreamWrapper:
         task: Any = None,
         auto_task_obj: Any = None,
         requested: str | None = None,
+        capability: Any = None,
+        idempotency_key: IdempotencyKey | None = None,
+        operation_name: str = "openai.chat",
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1010,6 +1189,9 @@ class _AsyncStreamWrapper:
         self._task = task
         self._auto_task_obj = auto_task_obj
         self._provider = _current_provider()
+        self._capability = capability
+        self._idempotency_key = idempotency_key
+        self._operation_name = operation_name
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -1036,6 +1218,14 @@ class _AsyncStreamWrapper:
         if self._finalized:
             return
         self._finalized = True
+        input_tokens, output_tokens = _stream_failure_tokens(self._usage)
+        details = _operation_details(
+            provider=self._provider,
+            operation_name=self._operation_name,
+            model=self._model or self._requested or "unknown",
+            status="failed",
+            record_id=self._record_id,
+        )
         record_stream_failure(
             tracker=_active_tracker,
             exc=exc,
@@ -1044,6 +1234,12 @@ class _AsyncStreamWrapper:
             model=self._model or self._requested,
             task=self._task,
             auto_task_obj=self._auto_task_obj,
+            service_name=_service_name(self._operation_name),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            details=details,
+            capability=self._capability,
+            idempotency_key=self._idempotency_key,
         )
 
     def _process_chunk(self, chunk: Any) -> None:
@@ -1055,8 +1251,9 @@ class _AsyncStreamWrapper:
                 chunk = response
         if hasattr(chunk, "model") and chunk.model:
             self._model = chunk.model
-        if hasattr(chunk, "id") and chunk.id:
-            self._record_id = chunk.id
+        record_id = getattr(chunk, "id", None)
+        if isinstance(record_id, str) and record_id:
+            self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
 
@@ -1076,6 +1273,9 @@ class _AsyncStreamWrapper:
                 self._completed_response,
                 provider=self._provider,
                 requested=self._requested,
+                capability=self._capability,
+                idempotency_key=self._idempotency_key,
+                operation_name=self._operation_name,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1097,6 +1297,9 @@ class _AsyncStreamWrapper:
                 status="cancelled",
                 provider=self._provider,
                 requested=self._requested,
+                capability=self._capability,
+                idempotency_key=self._idempotency_key,
+                operation_name=self._operation_name,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1107,24 +1310,34 @@ class _AsyncStreamWrapper:
 
     async def close(self) -> None:
         """Cancel metering and forward both OpenAI async close conventions."""
+        try:
+            closer = getattr(self._stream, "aclose", None)
+            if not callable(closer):
+                closer = getattr(self._stream, "close", None)
+            if callable(closer):
+                result = closer()
+                if isawaitable(result):
+                    await result
+        except BaseException as exc:
+            self._record_failure(exc)
+            raise
         self._cancel()
-        closer = getattr(self._stream, "aclose", None)
-        if not callable(closer):
-            closer = getattr(self._stream, "close", None)
-        if callable(closer):
-            result = closer()
-            if isawaitable(result):
-                await result
 
     async def __aenter__(self) -> _AsyncStreamWrapper:
         if hasattr(self._stream, "__aenter__"):
             await self._stream.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> Any:
+        try:
+            result = (
+                await self._stream.__aexit__(*args) if hasattr(self._stream, "__aexit__") else None
+            )
+        except BaseException as exc:
+            self._record_failure(exc)
+            raise
         self._cancel()
-        if hasattr(self._stream, "__aexit__"):
-            await self._stream.__aexit__(*args)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -1135,9 +1348,7 @@ class _AsyncStreamWrapper:
 def _response_tool_counts(response: Any) -> dict[str, int]:
     """Return terminal tool-call counts and discard all tool payload data."""
     output = _value(response, "output")
-    if not isinstance(output, Sequence) or isinstance(
-        output, (str, bytes, bytearray)
-    ):
+    if not isinstance(output, Sequence) or isinstance(output, (str, bytes, bytearray)):
         return {}
 
     counts: dict[str, int] = {}
@@ -1187,7 +1398,12 @@ def _response_tool_counts(response: Any) -> dict[str, int]:
 
 
 def _record_response_tool_events(
-    response: Any, task: Any, latency_ms: int
+    response: Any,
+    task: Any,
+    latency_ms: int,
+    *,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
 ) -> None:
     """Persist provider-observed built-in tool calls without tool payloads."""
     tracker = _active_tracker
@@ -1275,8 +1491,8 @@ def _record_response_tool_events(
                     model_candidates=candidates,
                 ),
                 latency_ms=latency_ms,
-                capability=get_capability(),
-                idempotency_key=get_idempotency_key(),
+                capability=capability,
+                idempotency_key=idempotency_key,
             )
         except Exception:
             _log.debug(
@@ -1366,15 +1582,22 @@ def _perplexity_usage_details(usage: Any, provider: str) -> dict[str, Any]:
 
 
 def _record_from_response(
-    response: Any, latency_ms: int, *, requested: str | None = None
+    response: Any,
+    latency_ms: int,
+    *,
+    task: Any = None,
+    requested: str | None = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Event | None:
     """Extract fields from a Chat Completion or Responses response."""
     tracker = _active_tracker
     if tracker is None:
         return None
 
-    task = get_current_task()
-    if task is None:
+    resolved_task = task or get_current_task()
+    if resolved_task is None:
         return None
 
     provider = _current_provider()
@@ -1407,7 +1630,7 @@ def _record_from_response(
 
     event = _insert_llm_event(
         tracker=tracker,
-        task_id=task.task_id,
+        task_id=resolved_task.task_id,
         model=model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -1424,8 +1647,17 @@ def _record_from_response(
         provider_is_byok=is_byok,
         requested_model=requested,
         provider_details=_perplexity_usage_details(usage, provider),
+        capability=capability,
+        idempotency_key=idempotency_key,
+        operation_name=operation_name,
     )
-    _record_response_tool_events(response, task, latency_ms)
+    _record_response_tool_events(
+        response,
+        resolved_task,
+        latency_ms,
+        capability=capability,
+        idempotency_key=idempotency_key,
+    )
     return event
 
 
@@ -1439,6 +1671,9 @@ def _record_from_stream_usage(
     status: str = "succeeded",
     provider: str | None = None,
     requested: str | None = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Event | None:
     """Record an event from accumulated stream data."""
     tracker = _active_tracker
@@ -1451,9 +1686,7 @@ def _record_from_stream_usage(
 
     resolved_provider = provider or _current_provider()
     resolved_model = _provider_model(model or "unknown", resolved_provider)
-    provider_cost, upstream_cost, is_byok = _openrouter_costs(
-        usage, resolved_provider
-    )
+    provider_cost, upstream_cost, is_byok = _openrouter_costs(usage, resolved_provider)
     if provider_cost is None:
         provider_cost = _perplexity_cost(usage, resolved_provider)
 
@@ -1497,9 +1730,18 @@ def _record_from_stream_usage(
         operation_status=status,
         requested_model=requested,
         provider_details=_perplexity_usage_details(usage, resolved_provider),
+        capability=capability,
+        idempotency_key=idempotency_key,
+        operation_name=operation_name,
     )
     if response is not None:
-        _record_response_tool_events(response, resolved_task, latency_ms)
+        _record_response_tool_events(
+            response,
+            resolved_task,
+            latency_ms,
+            capability=capability,
+            idempotency_key=idempotency_key,
+        )
     return event
 
 
@@ -1538,6 +1780,9 @@ def _insert_llm_event(
     provider_is_byok: bool | None = None,
     requested_model: str | None = None,
     provider_details: Mapping[str, Any] | None = None,
+    capability: Any = None,
+    idempotency_key: IdempotencyKey | None = None,
+    operation_name: str = "openai.chat",
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -1567,15 +1812,34 @@ def _insert_llm_event(
         pricing_source = "unknown"
         pricing_version = None
 
-    details: dict[str, Any] = {}
+    details = _operation_details(
+        provider=provider,
+        operation_name=operation_name,
+        model=model,
+        status=operation_status,
+        record_id=record_id,
+    )
+    usage_lines: list[dict[str, str]] = []
+    billable_input_tokens = max(0, input_tokens - cached_tokens - cache_write_tokens)
+    visible_output_tokens = max(0, output_tokens - reasoning_tokens)
+    for metric, quantity in (
+        ("input_tokens", billable_input_tokens),
+        ("cache_read_input_tokens", cached_tokens),
+        ("cache_write_input_tokens", cache_write_tokens),
+        ("output_tokens", visible_output_tokens),
+        ("reasoning_output_tokens", reasoning_tokens),
+    ):
+        if quantity > 0:
+            usage_lines.append({"metric": metric, "quantity": str(quantity), "unit": "Tokens"})
+    if usage_lines:
+        details["attribution_usage_lines"] = usage_lines
     if cache_write_tokens > 0:
         details["cache_write_input_tokens"] = cache_write_tokens
     if reasoning_tokens > 0:
         details["reasoning_output_tokens"] = reasoning_tokens
-    if isinstance(record_id, str) and record_id:
-        details["provider_record_id"] = record_id
     if usage_error is not None:
         details["openai_usage_error"] = usage_error
+        details.pop("attribution_usage_lines", None)
     if operation_status != "succeeded":
         details["attribution_operation_status"] = operation_status
     if provider_cost_usd is not None:
@@ -1600,17 +1864,24 @@ def _insert_llm_event(
                 "value": {"type": "string", "value": requested_model[:256]},
             }
         )
-    if provider == "perplexity":
-        dimensions.append(
-            {
-                "key": "gateway",
-                "value": {"type": "string", "value": "perplexity"},
-            }
-        )
     if dimensions:
         details["attribution_dimensions"] = dimensions
     if provider_details:
-        details.update(provider_details)
+        extra_usage = provider_details.get("attribution_usage_lines")
+        details.update(
+            {
+                key: value
+                for key, value in provider_details.items()
+                if key != "attribution_usage_lines"
+            }
+        )
+        if isinstance(extra_usage, Sequence) and not isinstance(
+            extra_usage, (str, bytes, bytearray)
+        ):
+            details["attribution_usage_lines"] = [
+                *details.get("attribution_usage_lines", []),
+                *extra_usage,
+            ]
 
     event = Event(
         task_id=task_id,
@@ -1625,8 +1896,11 @@ def _insert_llm_event(
         output_tokens=output_tokens,
         cached_tokens=cached_tokens,
         latency_ms=latency_ms,
+        service_name=_service_name(operation_name),
         details=details,
     )
+    apply_event_capability(event, capability)
+    apply_event_idempotency(event, idempotency_key)
     tracker._storage.insert_event(event)
     return event
 
@@ -1698,8 +1972,7 @@ def _augment_openrouter_measurement(
         response_model = _provider_model(response_model, "openrouter")
     return replace(
         measurement,
-        provider_record_id=measurement.provider_record_id
-        or _openrouter_record_id(response),
+        provider_record_id=measurement.provider_record_id or _openrouter_record_id(response),
         provider_cost_usd=cost,
         provider_upstream_cost_usd=upstream,
         response_model=response_model,
@@ -1785,9 +2058,7 @@ def _job_error_identity(
     if status == "failed":
         raw_status = _value(resource, "status")
         suffix = raw_status if isinstance(raw_status, str) else "failed"
-        return f"openai.{namespace}.{suffix}", (
-            str(code) if code is not None else None
-        )
+        return f"openai.{namespace}.{suffix}", (str(code) if code is not None else None)
     return None, None
 
 
@@ -2090,9 +2361,10 @@ def _fail_realtime_sessions(connection: object, exc: BaseException) -> None:
 
 
 def _realtime_reconnect_configured(connection: object, exc: BaseException) -> bool:
-    if getattr(connection, "_on_reconnecting", None) is None or getattr(
-        connection, "_make_ws", None
-    ) is None:
+    if (
+        getattr(connection, "_on_reconnecting", None) is None
+        or getattr(connection, "_make_ws", None) is None
+    ):
         return False
     try:
         module = import_module("openai.resources.realtime.realtime")
@@ -2194,9 +2466,7 @@ def _batch_dimensions(kwargs: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(dimensions))
 
 
-def _batch_measurement(
-    resource: object, *, fallback_model: str
-) -> OperationMeasurement | None:
+def _batch_measurement(resource: object, *, fallback_model: str) -> OperationMeasurement | None:
     usage = _value(resource, "usage")
     pricing: dict[str, int] = {}
     lines: list[ProviderUsageLine] = []
@@ -2207,15 +2477,11 @@ def _batch_measurement(
         uncached = max(0, input_tokens - cached_tokens)
         if uncached > 0:
             pricing["batch_input_tokens"] = uncached
-            lines.append(
-                ProviderUsageLine("batch_input_tokens", uncached, "Tokens")
-            )
+            lines.append(ProviderUsageLine("batch_input_tokens", uncached, "Tokens"))
         if cached_tokens > 0:
             pricing["batch_cache_read_input_tokens"] = cached_tokens
             lines.append(
-                ProviderUsageLine(
-                    "batch_cache_read_input_tokens", cached_tokens, "Tokens"
-                )
+                ProviderUsageLine("batch_cache_read_input_tokens", cached_tokens, "Tokens")
             )
 
     output_tokens = _count(_value(usage, "output_tokens"))
@@ -2225,14 +2491,10 @@ def _batch_measurement(
         # OpenAI output_tokens already includes reasoning tokens. Price the
         # total once and retain the reasoning subset as native evidence only.
         pricing["batch_output_tokens"] = output_tokens
-        lines.append(
-            ProviderUsageLine("batch_output_tokens", output_tokens, "Tokens")
-        )
+        lines.append(ProviderUsageLine("batch_output_tokens", output_tokens, "Tokens"))
     if reasoning_tokens is not None and reasoning_tokens > 0:
         lines.append(
-            ProviderUsageLine(
-                "batch_reasoning_output_tokens", reasoning_tokens, "Tokens"
-            )
+            ProviderUsageLine("batch_reasoning_output_tokens", reasoning_tokens, "Tokens")
         )
 
     counts = _value(resource, "request_counts")
@@ -2260,9 +2522,7 @@ def _batch_measurement(
     )
 
 
-def _response_job_status(
-    resource: object, *, submission: bool = False
-) -> ProviderJobStatus:
+def _response_job_status(resource: object, *, submission: bool = False) -> ProviderJobStatus:
     status = _value(resource, "status")
     if status == "completed":
         return "succeeded"
@@ -2344,9 +2604,7 @@ def _response_job_measurement(
     )
 
 
-def _fine_tuning_status(
-    resource: object, *, submission: bool = False
-) -> ProviderJobStatus:
+def _fine_tuning_status(resource: object, *, submission: bool = False) -> ProviderJobStatus:
     status = _value(resource, "status")
     if status == "succeeded":
         return "succeeded"
@@ -2383,11 +2641,7 @@ def _fine_tuning_measurement(
         # Training stays unpriced until the authoritative catalog supplies the
         # matching training SKU/rate.
         pricing_usage={},
-        usage_lines=(
-            ProviderUsageLine(
-                "training_billable_tokens", trained_tokens, "Tokens"
-            ),
-        ),
+        usage_lines=(ProviderUsageLine("training_billable_tokens", trained_tokens, "Tokens"),),
         provider_record_id=_resource_id(resource),
         response_model=model,
         model_candidates=_openai_candidates(model),
@@ -2417,16 +2671,12 @@ def _video_dimensions(kwargs: dict[str, Any]) -> tuple[tuple[str, str], ...]:
 def _video_candidates(model: str, size: object) -> tuple[str, ...]:
     candidates: list[str] = []
     if model.startswith("sora-2-pro") and size in {"1024x1792", "1792x1024"}:
-        candidates.extend(
-            (f"openai/{model}-high-res", f"{model}-high-res")
-        )
+        candidates.extend((f"openai/{model}-high-res", f"{model}-high-res"))
     candidates.extend(_openai_candidates(model))
     return tuple(candidates)
 
 
-def _video_measurement(
-    resource: object, *, fallback_model: str
-) -> OperationMeasurement | None:
+def _video_measurement(resource: object, *, fallback_model: str) -> OperationMeasurement | None:
     seconds = _decimal_quantity(_value(resource, "seconds"))
     if seconds is None or seconds <= 0:
         return None
@@ -2450,9 +2700,7 @@ def _video_measurement(
 def _terminal_status_with_usage(
     status: ProviderJobStatus, measurement: OperationMeasurement | None
 ) -> ProviderJobStatus:
-    if status == "succeeded" and (
-        measurement is None or not measurement.usage_lines
-    ):
+    if status == "succeeded" and (measurement is None or not measurement.usage_lines):
         return "unknown"
     return status
 
@@ -2526,9 +2774,7 @@ def _submit_batch(session: ProviderJobSession, resource: object) -> None:
     if measurement is not None:
         measurement = _augment_openrouter_measurement(resource, measurement)
     status = _terminal_status_with_usage(raw_status, measurement)
-    error_type, error_code = _job_error_identity(
-        resource, namespace="batch", status=status
-    )
+    error_type, error_code = _job_error_identity(resource, namespace="batch", status=status)
     session.submit(
         record_id,
         status=status,
@@ -2551,9 +2797,7 @@ def _submit_response_job(session: ProviderJobSession, resource: object) -> None:
     if measurement is not None:
         measurement = _augment_openrouter_measurement(resource, measurement)
     status = _terminal_status_with_usage(raw_status, measurement)
-    error_type, error_code = _job_error_identity(
-        resource, namespace="response", status=status
-    )
+    error_type, error_code = _job_error_identity(resource, namespace="response", status=status)
     session.submit(
         record_id,
         status=status,
@@ -2576,9 +2820,7 @@ def _submit_fine_tuning(session: ProviderJobSession, resource: object) -> None:
     if measurement is not None:
         measurement = _augment_openrouter_measurement(resource, measurement)
     status = _terminal_status_with_usage(raw_status, measurement)
-    error_type, error_code = _job_error_identity(
-        resource, namespace="fine_tuning", status=status
-    )
+    error_type, error_code = _job_error_identity(resource, namespace="fine_tuning", status=status)
     session.submit(
         record_id,
         status=status,
@@ -2601,9 +2843,7 @@ def _submit_video(session: ProviderJobSession, resource: object) -> None:
     if measurement is not None:
         measurement = _augment_openrouter_measurement(resource, measurement)
     status = _terminal_status_with_usage(raw_status, measurement)
-    error_type, error_code = _job_error_identity(
-        resource, namespace="video", status=status
-    )
+    error_type, error_code = _job_error_identity(resource, namespace="video", status=status)
     session.submit(
         record_id,
         status=status,
@@ -2613,9 +2853,7 @@ def _submit_video(session: ProviderJobSession, resource: object) -> None:
     )
 
 
-def _reconcile_openai_job(
-    resource: object, *, service: str, kind: str
-) -> None:
+def _reconcile_openai_job(resource: object, *, service: str, kind: str) -> None:
     if _active_tracker is None:
         return
     record_id = _resource_id(resource)
@@ -2628,9 +2866,7 @@ def _reconcile_openai_job(
     if kind == "response":
         raw_status = _response_job_status(resource)
         measurement = (
-            _response_job_measurement(
-                resource, fallback_model=previous.resource_id
-            )
+            _response_job_measurement(resource, fallback_model=previous.resource_id)
             if raw_status not in {"submitted", "running"}
             else None
         )
@@ -2644,9 +2880,7 @@ def _reconcile_openai_job(
     elif kind == "fine_tuning":
         raw_status = _fine_tuning_status(resource)
         measurement = (
-            _fine_tuning_measurement(
-                resource, fallback_model=previous.resource_id
-            )
+            _fine_tuning_measurement(resource, fallback_model=previous.resource_id)
             if raw_status not in {"submitted", "running"}
             else None
         )
@@ -2660,9 +2894,7 @@ def _reconcile_openai_job(
     if measurement is not None:
         measurement = _augment_openrouter_measurement(resource, measurement)
     status = _terminal_status_with_usage(raw_status, measurement)
-    error_type, error_code = _job_error_identity(
-        resource, namespace=kind, status=status
-    )
+    error_type, error_code = _job_error_identity(resource, namespace=kind, status=status)
     try:
         reconcile_provider_job(
             tracker=_active_tracker,
@@ -2691,14 +2923,10 @@ def _sync_batch_create_wrapper(
         event_type="llm_call",
         billing_dimensions=_batch_dimensions(kwargs),
     )
-    return _sync_job_submission_call(
-        wrapped, args, kwargs, session, _submit_batch
-    )
+    return _sync_job_submission_call(wrapped, args, kwargs, session, _submit_batch)
 
 
-def _sync_response_job_create(
-    wrapped: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> Any:
+def _sync_response_job_create(wrapped: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     model = _requested_model_or_default(kwargs, "unknown")
     session = _provider_job_session(
         task_type="openai.responses.create.background",
@@ -2709,14 +2937,10 @@ def _sync_response_job_create(
         component="llm",
         billing_dimensions=_response_job_dimensions(kwargs),
     )
-    return _sync_job_submission_call(
-        wrapped, args, kwargs, session, _submit_response_job
-    )
+    return _sync_job_submission_call(wrapped, args, kwargs, session, _submit_response_job)
 
 
-def _async_response_job_create(
-    wrapped: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> Any:
+def _async_response_job_create(wrapped: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     model = _requested_model_or_default(kwargs, "unknown")
     session = _provider_job_session(
         task_type="openai.responses.create.background",
@@ -2727,14 +2951,10 @@ def _async_response_job_create(
         component="llm",
         billing_dimensions=_response_job_dimensions(kwargs),
     )
-    return _async_job_submission_call(
-        wrapped, args, kwargs, session, _submit_response_job
-    )
+    return _async_job_submission_call(wrapped, args, kwargs, session, _submit_response_job)
 
 
-def _response_job_id_from_call(
-    args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> str | None:
+def _response_job_id_from_call(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
     value = kwargs.get("response_id")
     if not isinstance(value, str) and args:
         value = args[0]
@@ -2759,9 +2979,7 @@ class _ResponseJobPollMeter:
 
     def complete(self) -> None:
         if self.response is not None:
-            _reconcile_openai_job(
-                self.response, service="responses", kind="response"
-            )
+            _reconcile_openai_job(self.response, service="responses", kind="response")
 
 
 def _sync_response_job_reconcile_wrapper(
@@ -2771,10 +2989,7 @@ def _sync_response_job_reconcile_wrapper(
     known = (
         _active_tracker is not None
         and record_id is not None
-        and _active_tracker._storage.get_provider_job(
-            "openai", "responses", record_id
-        )
-        is not None
+        and _active_tracker._storage.get_provider_job("openai", "responses", record_id) is not None
     )
     with suppress_network_event():
         resource = wrapped(*args, **kwargs)
@@ -2797,9 +3012,7 @@ def _async_response_job_reconcile_wrapper(
         known = (
             _active_tracker is not None
             and record_id is not None
-            and _active_tracker._storage.get_provider_job(
-                "openai", "responses", record_id
-            )
+            and _active_tracker._storage.get_provider_job("openai", "responses", record_id)
             is not None
         )
         with suppress_network_event():
@@ -2830,9 +3043,7 @@ def _async_batch_create_wrapper(
         event_type="llm_call",
         billing_dimensions=_batch_dimensions(kwargs),
     )
-    return _async_job_submission_call(
-        wrapped, args, kwargs, session, _submit_batch
-    )
+    return _async_job_submission_call(wrapped, args, kwargs, session, _submit_batch)
 
 
 def _sync_batch_reconcile_wrapper(
@@ -2868,9 +3079,7 @@ def _sync_fine_tuning_create_wrapper(
         event_type="external_cost",
         billing_dimensions=_fine_tuning_dimensions(kwargs),
     )
-    return _sync_job_submission_call(
-        wrapped, args, kwargs, session, _submit_fine_tuning
-    )
+    return _sync_job_submission_call(wrapped, args, kwargs, session, _submit_fine_tuning)
 
 
 def _async_fine_tuning_create_wrapper(
@@ -2885,9 +3094,7 @@ def _async_fine_tuning_create_wrapper(
         event_type="external_cost",
         billing_dimensions=_fine_tuning_dimensions(kwargs),
     )
-    return _async_job_submission_call(
-        wrapped, args, kwargs, session, _submit_fine_tuning
-    )
+    return _async_job_submission_call(wrapped, args, kwargs, session, _submit_fine_tuning)
 
 
 def _sync_fine_tuning_reconcile_wrapper(
@@ -2895,9 +3102,7 @@ def _sync_fine_tuning_reconcile_wrapper(
 ) -> Any:
     with suppress_network_event():
         resource = wrapped(*args, **kwargs)
-    _reconcile_openai_job(
-        resource, service="fine_tuning", kind="fine_tuning"
-    )
+    _reconcile_openai_job(resource, service="fine_tuning", kind="fine_tuning")
     return resource
 
 
@@ -2907,9 +3112,7 @@ def _async_fine_tuning_reconcile_wrapper(
     async def invoke() -> Any:
         with suppress_network_event():
             resource = await wrapped(*args, **kwargs)
-        _reconcile_openai_job(
-            resource, service="fine_tuning", kind="fine_tuning"
-        )
+        _reconcile_openai_job(resource, service="fine_tuning", kind="fine_tuning")
         return resource
 
     return invoke()
@@ -2931,9 +3134,7 @@ def _sync_video_submit_wrapper(method_name: str) -> Any:
             event_type="external_cost",
             billing_dimensions=_video_dimensions(kwargs),
         )
-        return _sync_job_submission_call(
-            wrapped, args, kwargs, session, _submit_video
-        )
+        return _sync_job_submission_call(wrapped, args, kwargs, session, _submit_video)
 
     return wrapper
 
@@ -2954,9 +3155,7 @@ def _async_video_submit_wrapper(method_name: str) -> Any:
             event_type="external_cost",
             billing_dimensions=_video_dimensions(kwargs),
         )
-        return _async_job_submission_call(
-            wrapped, args, kwargs, session, _submit_video
-        )
+        return _async_job_submission_call(wrapped, args, kwargs, session, _submit_video)
 
     return wrapper
 
@@ -3183,9 +3382,7 @@ def _image_measurement_values(
         elif total_input > allocated:
             unallocated = total_input - allocated
             pricing_usage["unallocated_input_tokens"] = unallocated
-            lines.append(
-                ProviderUsageLine("unallocated_input_tokens", unallocated, "Tokens")
-            )
+            lines.append(ProviderUsageLine("unallocated_input_tokens", unallocated, "Tokens"))
 
     total_output = _count(_value(usage, "output_tokens"))
     output_details = _value(usage, "output_tokens_details")
@@ -3205,17 +3402,13 @@ def _image_measurement_values(
         elif total_output > allocated:
             unallocated = total_output - allocated
             pricing_usage["unallocated_output_tokens"] = unallocated
-            lines.append(
-                ProviderUsageLine("unallocated_output_tokens", unallocated, "Tokens")
-            )
+            lines.append(ProviderUsageLine("unallocated_output_tokens", unallocated, "Tokens"))
 
     if image_count > 0:
         lines.append(ProviderUsageLine("image_count", image_count, "Images"))
     if usage is None and image_count > 0:
         pixel_match = (
-            re.fullmatch(r"([1-9]\d*)x([1-9]\d*)", size)
-            if isinstance(size, str)
-            else None
+            re.fullmatch(r"([1-9]\d*)x([1-9]\d*)", size) if isinstance(size, str) else None
         )
         if model.startswith("dall-e-") and pixel_match is not None:
             pricing_usage["input_pixels"] = (
@@ -3328,15 +3521,11 @@ def _sync_image_call(
         operation=f"openai.images.{operation}",
         component="external",
         model=model,
-        extract=lambda response, call_kwargs: _image_measurement(
-            response, call_kwargs, operation
-        ),
+        extract=lambda response, call_kwargs: _image_measurement(response, call_kwargs, operation),
         stream_factory=(
             None
             if operation == "create_variation"
-            else lambda stream, session: _sync_image_stream(
-                stream, session, kwargs, operation
-            )
+            else lambda stream, session: _sync_image_stream(stream, session, kwargs, operation)
         ),
     )
 
@@ -3357,15 +3546,11 @@ def _async_image_call(
         operation=f"openai.images.{operation}",
         component="external",
         model=model,
-        extract=lambda response, call_kwargs: _image_measurement(
-            response, call_kwargs, operation
-        ),
+        extract=lambda response, call_kwargs: _image_measurement(response, call_kwargs, operation),
         stream_factory=(
             None
             if operation == "create_variation"
-            else lambda stream, session: _async_image_stream(
-                stream, session, kwargs, operation
-            )
+            else lambda stream, session: _async_image_stream(stream, session, kwargs, operation)
         ),
     )
 
@@ -3434,9 +3619,7 @@ def _audio_measurement(response: Any, kwargs: dict[str, Any]) -> OperationMeasur
             if details is None or total_input > allocated:
                 unallocated = total_input if details is None else total_input - allocated
                 pricing_usage["unallocated_input_tokens"] = unallocated
-                lines.append(
-                    ProviderUsageLine("unallocated_input_tokens", unallocated, "Tokens")
-                )
+                lines.append(ProviderUsageLine("unallocated_input_tokens", unallocated, "Tokens"))
         output_tokens = _count(_value(usage, "output_tokens"))
         if output_tokens is not None:
             pricing_usage["output_tokens"] = output_tokens
@@ -3583,9 +3766,7 @@ def _speech_measurement(response: Any, kwargs: dict[str, Any]) -> OperationMeasu
     return OperationMeasurement(
         pricing_usage={} if characters == 0 else {"characters": characters},
         usage_lines=(
-            ()
-            if characters == 0
-            else (ProviderUsageLine("characters", characters, "Characters"),)
+            () if characters == 0 else (ProviderUsageLine("characters", characters, "Characters"),)
         ),
         response_model=requested_model(kwargs),
     )

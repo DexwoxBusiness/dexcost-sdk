@@ -24,7 +24,13 @@ from dexcost.adapters.http import (
 )
 from dexcost.attribution.convert import to_attribution_event_v2
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
-from dexcost.context import clear_context, set_current_task, task_context
+from dexcost.context import (
+    clear_context,
+    set_current_task,
+    suppress_network_event,
+    task_context,
+)
+from dexcost.instruments._capture import provider_capture_scope
 from dexcost.models.task import Task
 from dexcost.session import reset_session_manager
 
@@ -125,6 +131,50 @@ class TestKnownServiceExtraction:
         }
         assert wire["usage"] == [{"metric": "input_tokens", "quantity": "17", "unit": "Tokens"}]
         assert "cost_evidence" not in wire
+
+    def test_provider_suppression_precedes_usage_observer(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            body={
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 17, "total_tokens": 17},
+            },
+        )
+
+        with task_context(task), suppress_network_event():
+            _handle_http_call(
+                "https://api.openai.com/v1/embeddings",
+                method="POST",
+                request_body_len=31,
+                response=response,
+            )
+
+        assert get_recorded_events() == []
+        counters = task._network.finalize()
+        assert counters["call_count"] == 1
+        assert counters["bytes_in"] > 0
+        assert counters["bytes_out"] >= 31
+
+    def test_provider_capture_owner_suppresses_usage_observer(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            body={
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 17, "total_tokens": 17},
+            },
+        )
+
+        with task_context(task), provider_capture_scope("openai") as claimed:
+            assert claimed is True
+            _handle_http_call(
+                "https://api.openai.com/v1/embeddings",
+                method="POST",
+                request_body_len=31,
+                response=response,
+            )
+
+        assert get_recorded_events() == []
+        assert task._network.finalize()["call_count"] == 1
 
     def test_failed_provider_response_is_not_observed(self) -> None:
         task = _make_task("embedding")
@@ -322,6 +372,24 @@ class TestKnownServiceExtraction:
         assert event.cost_confidence == "computed"
         assert event.pricing_source == "service_catalog"
         assert event.service_name == "Tavily Search"
+
+    def test_provider_suppression_precedes_service_catalog(self) -> None:
+        task = _make_task()
+        response = _make_response(body={"usage": {"credits": 2}, "results": []})
+
+        with task_context(task), suppress_network_event():
+            _handle_http_call(
+                "https://api.tavily.com/search",
+                method="POST",
+                request_body_len=19,
+                response=response,
+            )
+
+        assert get_recorded_events() == []
+        counters = task._network.finalize()
+        assert counters["call_count"] == 1
+        assert counters["bytes_in"] > 0
+        assert counters["bytes_out"] >= 19
 
     def test_pinecone_cost_from_response_body(self) -> None:
         """Pinecone: cost extracted from response_body.usage.readUnits."""

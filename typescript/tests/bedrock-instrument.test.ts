@@ -32,6 +32,18 @@ class InvokeModelCommand {
   }
 }
 
+class StartAsyncInvokeCommand {
+  input: { modelId: string; modelInput: unknown; outputDataConfig: unknown };
+  constructor(input: { modelId: string; modelInput: unknown; outputDataConfig: unknown }) {
+    this.input = input;
+  }
+}
+
+class GetAsyncInvokeCommand {
+  input: { invocationArn: string };
+  constructor(input: { invocationArn: string }) { this.input = input; }
+}
+
 function makeMockResponse(bodyObj: Record<string, unknown> = {}) {
   const defaultBody = {
     usage: { input_tokens: 100, output_tokens: 50 },
@@ -224,5 +236,108 @@ describe("Bedrock instrumentation", () => {
     const events = buffer.getAllEvents();
     expect(events[0].latencyMs).toBeDefined();
     expect(typeof events[0].latencyMs).toBe("number");
+  });
+
+  it("classifies and meters Bedrock image inference without retaining image payloads", async () => {
+    class ImageClient {
+      async send(): Promise<unknown> {
+        return {
+          body: new TextEncoder().encode(JSON.stringify({ images: ["private-base64"] })),
+          $metadata: { requestId: "aws-image-123" },
+        };
+      }
+    }
+    _setClientClass(ImageClient);
+    pricing.replaceCatalog({
+      "amazon.titan-image-generator-v2:0": {
+        mode: "image_generation",
+        output_cost_per_image: 0.01,
+      },
+    }, "test-image");
+    await instrumentBedrock(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+    const client = new ImageClient();
+    await runWithTask(task, () => client.send(new InvokeModelCommand({
+      modelId: "amazon.titan-image-generator-v2:0",
+      body: JSON.stringify({ imageGenerationConfig: { width: 1536, height: 1024, quality: "premium" } }),
+    })));
+
+    const event = buffer.getAllEvents()[0];
+    expect(event.eventType).toBe("external_cost");
+    expect(event.provider).toBe("aws_bedrock");
+    expect(event.details.provider_record_id).toBe("aws-image-123");
+    expect(event.details.attribution_usage_lines).toEqual([
+      { metric: "output_image_count", quantity: "1", unit: "Images" },
+    ]);
+    expect(JSON.stringify(event.details)).not.toContain("private-base64");
+  });
+
+  it("meters embedding and rerank InvokeModel modes from the finalized catalog contract", async () => {
+    class MeteredClient {
+      async send(command: any): Promise<unknown> {
+        const body = command.input.modelId === "amazon.titan-embed-text-v2:0"
+          ? { inputTextTokenCount: 17, embedding: [0.1] }
+          : { results: [{ index: 0, relevanceScore: 0.9 }] };
+        return { body: new TextEncoder().encode(JSON.stringify(body)) };
+      }
+    }
+    _setClientClass(MeteredClient);
+    pricing.replaceCatalog({
+      "amazon.titan-embed-text-v2:0": { mode: "embedding", input_cost_per_token: 0.000001 },
+      "cohere.rerank-v3-5:0": { mode: "rerank", input_cost_per_query: 0.002 },
+    }, "test-metered");
+    await instrumentBedrock(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+    const client = new MeteredClient();
+    await runWithTask(task, async () => {
+      await client.send(new InvokeModelCommand({ modelId: "amazon.titan-embed-text-v2:0" }));
+      await client.send(new InvokeModelCommand({ modelId: "cohere.rerank-v3-5:0" }));
+    });
+
+    const [embedding, rerank] = buffer.getAllEvents();
+    expect(embedding.serviceName).toBe("bedrock_runtime");
+    expect(embedding.inputTokens).toBe(17);
+    expect(embedding.details.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "17", unit: "Tokens" },
+    ]);
+    expect(rerank.details.attribution_usage_lines).toEqual([
+      { metric: "query_count", quantity: "1", unit: "Queries" },
+    ]);
+  });
+
+  it("persists and reconciles privacy-safe StartAsyncInvoke/GetAsyncInvoke revisions", async () => {
+    const invocationArn = "arn:aws:bedrock:us-east-1:123456789012:async-invoke/abcdefghijkl";
+    class AsyncInvokeClient {
+      async send(command: any): Promise<unknown> {
+        if (command.constructor.name === "StartAsyncInvokeCommand") return { invocationArn };
+        return { invocationArn, status: "Completed", modelArn: "private-account-model-arn" };
+      }
+    }
+    _setClientClass(AsyncInvokeClient);
+    await instrumentBedrock(pricing, buffer);
+    const client = new AsyncInvokeClient();
+    const started = await client.send(new StartAsyncInvokeCommand({
+      modelId: "amazon.nova-reel-v1:1",
+      modelInput: { prompt: "private prompt" },
+      outputDataConfig: { s3OutputDataConfig: { s3Uri: "s3://private-bucket/output" } },
+    })) as any;
+    expect(started.invocationArn).toBe(invocationArn);
+
+    let revisions = buffer.getPendingLedger("provider_job");
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0].status).toBe("submitted");
+    expect(revisions[0].provider_record_id).not.toBe(invocationArn);
+    expect(JSON.stringify(revisions[0])).not.toContain("123456789012");
+    expect(JSON.stringify(revisions[0])).not.toContain("private-bucket");
+    expect(JSON.stringify(revisions[0])).not.toContain("private prompt");
+
+    await client.send(new GetAsyncInvokeCommand({ invocationArn }));
+    revisions = buffer.getPendingLedger("provider_job");
+    expect(revisions).toHaveLength(2);
+    expect(revisions[1].revision).toBe(2);
+    expect(revisions[1].status).toBe("succeeded");
+    expect(revisions[1].usage).toEqual([
+      { metric: "request_count", quantity: "1", unit: "Requests" },
+    ]);
   });
 });

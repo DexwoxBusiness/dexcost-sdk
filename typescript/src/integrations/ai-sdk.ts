@@ -45,7 +45,7 @@ import {
 } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { getAmbientSessionTask } from "../core/session.js";
-import { extractUsage } from "../instruments/ai-usage.js";
+import { extractedUsageLines, extractUsage } from "../instruments/ai-usage.js";
 import type { ExtractedUsage } from "../instruments/ai-usage.js";
 import { debugLog } from "../core/debug.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
@@ -156,18 +156,40 @@ function _recordEvent(
   source: "generate" | "stream",
 ): void {
   const { inputTokens, outputTokens, cachedTokens } = usage;
-  const hasUsage = inputTokens > 0 || outputTokens > 0;
+  const usageLines = extractedUsageLines(usage);
+  const hasUsage = usageLines.length > 0;
 
   let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
+  let pricingVersion: string | undefined;
 
   if (hasUsage) {
-    const result = tracker.pricing.getCost(model, inputTokens, outputTokens, cachedTokens);
+    const result = tracker.pricing.getMeteredCost(
+      model,
+      Object.fromEntries(usageLines.map((line) => [line.metric, line.quantity])),
+    );
     costUsd = result.costUsd;
     costConfidence = result.costConfidence;
     pricingSource = result.pricingSource;
+    pricingVersion = result.pricingVersion;
   }
+
+  const details: Record<string, unknown> = {
+    source: `ai_sdk_middleware_${source}`,
+    attribution_component: "llm",
+    attribution_operation_name: source === "generate"
+      ? "vercel_ai.middleware.generate"
+      : "vercel_ai.middleware.stream",
+    attribution_operation_status: "succeeded",
+    attribution_resource_type: "model",
+    attribution_resource_id: model,
+    attribution_usage_lines: usageLines.length > 0
+      ? usageLines
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+  };
+  if (usage.cacheWriteTokens > 0) details.cache_write_input_tokens = usage.cacheWriteTokens;
+  if (usage.reasoningTokens > 0) details.reasoning_output_tokens = usage.reasoningTokens;
 
   const event = createCostEvent({
     eventId: randomUUID(),
@@ -176,6 +198,7 @@ function _recordEvent(
     costUsd,
     costConfidence,
     pricingSource,
+    pricingVersion,
     provider,
     model,
     inputTokens,
@@ -183,7 +206,7 @@ function _recordEvent(
     cachedTokens,
     latencyMs,
     isRetry: false,
-    details: { source: `ai_sdk_middleware_${source}` },
+    details,
   });
   stampAmbientAttribution(event);
 

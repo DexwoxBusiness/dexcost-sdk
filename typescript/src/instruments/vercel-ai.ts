@@ -17,13 +17,14 @@ import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/conte
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { getAmbientSessionTask } from "../core/session.js";
-import { extractUsage } from "./ai-usage.js";
+import { emptyExtractedUsage, extractedUsageLines, extractUsage } from "./ai-usage.js";
 import type { ExtractedUsage } from "./ai-usage.js";
 import type { EventBuffer } from "../transport/buffer.js";
-import type { PricingEngine, CostResult } from "../pricing/engine.js";
+import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import { stampAmbientAttribution } from "../core/capabilities.js";
-import { recordProviderFailure } from "./provider-metering.js";
+import { ProviderOperationSession, recordProviderFailure } from "./provider-metering.js";
+import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -32,6 +33,8 @@ let _patched = false;
 let _originalGenerateText: Function | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 let _originalStreamText: Function | null = null;
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+let _originalRerank: Function | null = null;
 let _aiModule: any = null;
 /**
  * All distinct module objects that were patched (CJS and/or ESM).
@@ -87,26 +90,48 @@ function recordEvent(
   task: Task,
   latencyMs: number,
   provider: string = "vercel-ai",
+  status: "succeeded" | "failed" | "cancelled" = "succeeded",
+  operationError?: unknown,
+  operation: "vercel_ai.generate_text" | "vercel_ai.stream_text" = "vercel_ai.generate_text",
 ): void {
   if (!_buffer || !_pricing) return;
 
   const { inputTokens, outputTokens, cachedTokens } = usage;
-  const hasUsage = inputTokens > 0 || outputTokens > 0;
+  const usageLines = extractedUsageLines(usage);
+  const hasUsage = usageLines.length > 0;
 
   let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
+  let pricingVersion: string | undefined;
 
   if (hasUsage) {
-    const result: CostResult = _pricing.getCost(
+    const result = _pricing.getMeteredCost(
       model,
-      inputTokens,
-      outputTokens,
-      cachedTokens,
+      Object.fromEntries(usageLines.map((line) => [line.metric, line.quantity])),
     );
     costUsd = result.costUsd;
     costConfidence = result.costConfidence;
     pricingSource = result.pricingSource;
+    pricingVersion = result.pricingVersion;
+  }
+
+  const details: Record<string, unknown> = {
+    attribution_component: "llm",
+    attribution_operation_name: operation,
+    attribution_operation_status: status,
+    attribution_resource_type: "model",
+    attribution_resource_id: model,
+    attribution_usage_lines: usageLines.length > 0
+      ? usageLines
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+  };
+  if (usage.cacheWriteTokens > 0) details.cache_write_input_tokens = usage.cacheWriteTokens;
+  if (usage.reasoningTokens > 0) details.reasoning_output_tokens = usage.reasoningTokens;
+  if (operationError !== undefined) {
+    details.attribution_error_type = operationError instanceof Error
+      ? operationError.name.toLowerCase()
+      : typeof operationError;
   }
 
   const event = createCostEvent({
@@ -116,6 +141,7 @@ function recordEvent(
     costUsd,
     costConfidence,
     pricingSource,
+    pricingVersion,
     provider,
     model,
     inputTokens,
@@ -123,6 +149,7 @@ function recordEvent(
     cachedTokens,
     latencyMs,
     isRetry: false,
+    details,
   });
   stampAmbientAttribution(event);
 
@@ -210,6 +237,7 @@ export async function instrumentVercelAi(
 
   _originalGenerateText = _aiModule.generateText;
   _originalStreamText = _aiModule.streamText;
+  _originalRerank = typeof _aiModule.rerank === "function" ? _aiModule.rerank : null;
   _buffer = buffer;
   _pricing = pricing;
 
@@ -218,6 +246,9 @@ export async function instrumentVercelAi(
     this: any,
     opts: any,
   ): Promise<any> {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _originalGenerateText!.call(this, opts);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -240,7 +271,8 @@ export async function instrumentVercelAi(
     const self = this;
     try {
       const result = await suppressNetworkEvent(() =>
-        runWithTask(task, () => _originalGenerateText!.call(self, opts)),
+        runWithProviderCapture(extractProvider(opts), () =>
+          runWithTask(task, () => _originalGenerateText!.call(self, opts))),
       );
       const latencyMs = Math.round(performance.now() - startTime);
 
@@ -275,6 +307,9 @@ export async function instrumentVercelAi(
     this: any,
     opts: any,
   ): any {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _originalStreamText!.call(this, opts);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -297,7 +332,8 @@ export async function instrumentVercelAi(
     const self = this;
     try {
       const streamResult = suppressNetworkEvent(() =>
-        runWithTask(task, () => _originalStreamText!.call(self, opts)),
+        runWithProviderCapture(extractProvider(opts), () =>
+          runWithTask(task, () => _originalStreamText!.call(self, opts))),
       );
 
       // The real Vercel AI SDK `StreamTextResult` is NOT async-iterable —
@@ -328,10 +364,11 @@ export async function instrumentVercelAi(
             // Stream errored or was aborted before usage was known.
             if (recorded) return;
             recorded = true;
-            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-              taskType: "vercel_ai.stream_text", provider: extractProvider(opts), service: "ai_sdk",
-              operation: "vercel_ai.stream_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
-            }, error, startTime);
+            recordEvent(
+              extractModel(opts), emptyExtractedUsage(),
+              task, Math.round(performance.now() - startTime), extractProvider(opts), "failed", error,
+              "vercel_ai.stream_text",
+            );
             if (autoCreated) {
               finalizeAutoTask(task, "failed", _buffer);
             }
@@ -365,6 +402,48 @@ export async function instrumentVercelAi(
     }
   };
 
+  // Current AI SDK releases expose `rerank` as an async standalone export.
+  // Its public result includes provider response identity/model but no token
+  // usage object, so attribute one provider-billable query without retaining
+  // the query or any document content.
+  const patchedRerank = async function patchedRerank(
+    this: any,
+    opts: any,
+  ): Promise<any> {
+    if (_originalRerank === null) throw new TypeError("ai.rerank is not available");
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _originalRerank.call(this, opts);
+    }
+    const provider = extractProvider(opts);
+    const requestedModel = extractModel(opts);
+    const session = new ProviderOperationSession(_pricing!, _buffer!, {
+      taskType: "vercel_ai.rerank",
+      provider,
+      service: "rerank",
+      operation: "vercel_ai.rerank",
+      component: "external",
+      model: requestedModel,
+      eventType: "external_cost",
+    });
+    try {
+      const result = await session.invoke(() => _originalRerank!.call(this, opts));
+      const response = result?.response;
+      session.finish({
+        usageLines: [{ metric: "query_count", quantity: 1, unit: "Queries" }],
+        pricingUsage: { query_count: 1 },
+        providerRecordId: typeof response?.id === "string" ? response.id : undefined,
+        responseModel: typeof response?.modelId === "string" ? response.modelId : requestedModel,
+        billingDimensions: Array.isArray(opts?.documents)
+          ? [["document_count", String(opts.documents.length)]]
+          : [],
+      });
+      return result;
+    } catch (error) {
+      session.fail(error);
+      throw error;
+    }
+  };
+
   // Apply patches to ALL resolved module objects (CJS + ESM).
   // ESM module namespace objects have read-only properties (per spec):
   // assigning to them throws in strict mode and is SILENTLY IGNORED in
@@ -380,9 +459,13 @@ export async function instrumentVercelAi(
     try {
       mod.generateText = patchedGenerateText;
       mod.streamText = patchedStreamText;
+      if (typeof mod.rerank === "function" && _originalRerank !== null) {
+        mod.rerank = patchedRerank;
+      }
       if (
         mod.generateText === patchedGenerateText &&
-        mod.streamText === patchedStreamText
+        mod.streamText === patchedStreamText &&
+        (_originalRerank === null || typeof mod.rerank !== "function" || mod.rerank === patchedRerank)
       ) {
         successfullyPatched.push(mod);
       }
@@ -420,6 +503,7 @@ export function uninstrumentVercelAi(): void {
     try {
       if (_originalGenerateText) mod.generateText = _originalGenerateText;
       if (_originalStreamText) mod.streamText = _originalStreamText;
+      if (_originalRerank) mod.rerank = _originalRerank;
     } catch {
       // Module became frozen between instrument and uninstrument — unusual
       // but harmless; the module will be GC'd with the patched wrappers.
@@ -428,6 +512,7 @@ export function uninstrumentVercelAi(): void {
 
   _originalGenerateText = null;
   _originalStreamText = null;
+  _originalRerank = null;
   _patchedModules = [];
   _buffer = null;
   _pricing = null;
@@ -442,62 +527,66 @@ function wrapStream(
   autoCreated: boolean = false,
 ): AsyncIterable<any> & Record<string, any> {
   let recorded = false;
+  let observedUsage: ExtractedUsage = emptyExtractedUsage();
+
+  const finalize = async (
+    status: "succeeded" | "failed" | "cancelled",
+    error?: unknown,
+  ): Promise<void> => {
+    if (recorded) return;
+    recorded = true;
+    let usage = observedUsage;
+    try { usage = extractUsage(await (rawStream.totalUsage ?? rawStream.usage)); }
+    catch { /* retain usage observed before failure/cancellation */ }
+    recordEvent(
+      extractModel(opts), usage, task, Math.round(performance.now() - startTime),
+      extractProvider(opts), status, error, "vercel_ai.stream_text",
+    );
+    if (autoCreated) finalizeAutoTask(task, status === "succeeded" ? "success" : "failed", _buffer);
+  };
 
   // Preserve all properties of the original stream result
   const wrapped: any = Object.create(rawStream);
 
   wrapped[Symbol.asyncIterator] = function () {
     const iter = rawStream[Symbol.asyncIterator]();
-    const finalizeTask = (status: "success" | "failed") => {
-      if (recorded) return;
-      recorded = true;
-      if (autoCreated) {
-        finalizeAutoTask(task, status, _buffer);
-      }
-    };
     return {
       async next(): Promise<IteratorResult<any>> {
         let result: IteratorResult<any>;
         try {
           result = await iter.next();
         } catch (err) {
-          if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-            taskType: "vercel_ai.stream_text", provider: extractProvider(opts), service: "ai_sdk",
-            operation: "vercel_ai.stream_text", component: "llm", model: extractModel(opts), eventType: "llm_call",
-          }, err, startTime);
-          finalizeTask("failed");
+          await finalize("failed", err);
           throw err;
         }
-        if (result.done && !recorded) {
-          recorded = true;
-          const latencyMs = Math.round(performance.now() - startTime);
-
-          // After stream completes, try to read usage from the stream result.
-          // Vercel AI SDK exposes usage as a property or promise on the result.
-          let usage: ExtractedUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-
-          try {
-            usage = extractUsage(await (rawStream.totalUsage ?? rawStream.usage));
-          } catch {
-            // usage not available
-          }
-
-          const model = extractModel(opts);
-          recordEvent(model, usage, task, latencyMs, extractProvider(opts));
-          if (autoCreated) {
-            finalizeAutoTask(task, "success", _buffer);
-          }
+        if (!result.done) {
+          const candidate = result.value?.totalUsage ?? result.value?.usage;
+          if (candidate !== undefined) observedUsage = extractUsage(candidate);
+        } else {
+          await finalize("succeeded");
         }
         return result;
       },
       async return(value?: any): Promise<IteratorResult<any>> {
-        finalizeTask("success");
-        return iter.return ? await iter.return(value) : { done: true as const, value };
+        try {
+          const result = iter.return ? await iter.return(value) : { done: true as const, value };
+          await finalize("cancelled");
+          return result;
+        } catch (error) {
+          await finalize("failed", error);
+          throw error;
+        }
       },
       async throw(error?: any): Promise<IteratorResult<any>> {
-        finalizeTask("failed");
-        if (iter.throw) return await iter.throw(error);
-        throw error;
+        try {
+          if (!iter.throw) throw error;
+          const result = await iter.throw(error);
+          if (result.done) await finalize("failed", error);
+          return result;
+        } catch (raised) {
+          await finalize("failed", raised);
+          throw raised;
+        }
       },
     };
   };

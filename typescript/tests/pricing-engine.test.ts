@@ -90,6 +90,39 @@ describe("PricingEngine", () => {
     expect(result.costConfidence).toBe("computed");
   });
 
+  it("prices the Anthropic one-hour cache-creation bucket independently", () => {
+    const engine = new PricingEngine();
+    engine.replaceCatalog({
+      "anthropic/test-cache-1h": {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 0.000001,
+        output_cost_per_token: 0.000004,
+        cache_read_input_token_cost: 0.0000005,
+        cache_creation_input_token_cost: 0.000002,
+        cache_creation_input_token_cost_above_1hr: 0.000003,
+      },
+    });
+
+    const result = engine.getCost("anthropic/test-cache-1h", 100, 0, 20, 30, 40);
+    expect(result.costUsd.toString()).toBe("0.00029");
+    expect(result.costConfidence).toBe("computed");
+  });
+
+  it("marks an unpriced Anthropic one-hour cache bucket unknown", () => {
+    const engine = new PricingEngine();
+    engine.replaceCatalog({
+      "anthropic/test-cache-1h": {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 0.000001,
+        output_cost_per_token: 0.000004,
+      },
+    });
+
+    const result = engine.getCost("anthropic/test-cache-1h", 0, 0, 0, 0, 40);
+    expect(result.costUsd.toString()).toBe("0.00004");
+    expect(result.costConfidence).toBe("unknown");
+  });
+
   it("pricing version is stable 12-char hash", () => {
     const engine = new PricingEngine();
     expect(engine.pricingVersion).toBeTruthy();

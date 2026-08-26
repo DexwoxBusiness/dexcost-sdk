@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 from importlib import import_module
 from typing import Any, Literal
 
+from dexcost.instruments._capture import provider_capture_callable
 from dexcost.instruments._provider_metering import (
     AsyncProviderStream,
     OperationMeasurement,
@@ -347,9 +348,7 @@ def _tts_measurement(response: Any, model: str, kwargs: Mapping[str, Any]) -> Op
     return OperationMeasurement(
         pricing_usage={} if characters == 0 else {"characters": characters},
         usage_lines=(
-            ()
-            if characters == 0
-            else (ProviderUsageLine("characters", characters, "Characters"),)
+            () if characters == 0 else (ProviderUsageLine("characters", characters, "Characters"),)
         ),
         provider_record_id=_record_id(response),
         response_model=model,
@@ -376,9 +375,7 @@ def _rerank_measurement(response: Any, model: str) -> OperationMeasurement:
     response_model = _canonical_model(_value(response, "model") or model)
     provider = _value(response, "provider")
     dimensions = (
-        (("upstream_provider", provider[:256]),)
-        if isinstance(provider, str) and provider
-        else ()
+        (("upstream_provider", provider[:256]),) if isinstance(provider, str) and provider else ()
     )
     return OperationMeasurement(
         pricing_usage={} if total_tokens is None else {"input_tokens": total_tokens},
@@ -695,9 +692,7 @@ def _async_video_generate(key: str) -> Any:
 
 
 def _reconcile_video(result: Any, job_id: str) -> None:
-    previous = _active_tracker._storage.get_provider_job(
-        "openrouter", "video_generation", job_id
-    )
+    previous = _active_tracker._storage.get_provider_job("openrouter", "video_generation", job_id)
     if previous is None:
         return
     status = _job_status(result)
@@ -741,14 +736,29 @@ def _async_video_get(key: str) -> Any:
 
 def _generation_measurement(data: Any) -> OperationMeasurement:
     model = _canonical_model(_value(data, "model"))
-    input_tokens = _non_negative_int(
+    total_input_tokens = _non_negative_int(
         _value(data, "native_tokens_prompt") or _value(data, "tokens_prompt")
     )
-    output_tokens = _non_negative_int(
+    total_output_tokens = _non_negative_int(
         _value(data, "native_tokens_completion") or _value(data, "tokens_completion")
     )
     cached = _non_negative_int(_value(data, "native_tokens_cached"))
     reasoning = _non_negative_int(_value(data, "native_tokens_reasoning"))
+    # OpenRouter reports cached tokens within the prompt total and reasoning
+    # tokens within the completion total.  Attribution usage lines must be
+    # disjoint so catalog pricing cannot charge those subsets twice.
+    input_tokens = total_input_tokens
+    if total_input_tokens is not None and cached is not None:
+        if cached <= total_input_tokens:
+            input_tokens = total_input_tokens - cached
+        else:
+            cached = None
+    output_tokens = total_output_tokens
+    if total_output_tokens is not None and reasoning is not None:
+        if reasoning <= total_output_tokens:
+            output_tokens = total_output_tokens - reasoning
+        else:
+            reasoning = None
     media_prompt = _non_negative_int(_value(data, "num_media_prompt"))
     media_completion = _non_negative_int(_value(data, "num_media_completion"))
     search_results = _non_negative_int(_value(data, "num_search_results"))
@@ -792,14 +802,12 @@ def _generation_measurement(data: Any) -> OperationMeasurement:
         usage_lines=lines,
         provider_record_id=_record_id(data),
         provider_cost_usd=_non_negative_decimal(_value(data, "total_cost")),
-        provider_upstream_cost_usd=_non_negative_decimal(
-            _value(data, "upstream_inference_cost")
-        ),
+        provider_upstream_cost_usd=_non_negative_decimal(_value(data, "upstream_inference_cost")),
         response_model=model,
         model_candidates=(model,),
         billing_dimensions=tuple(dimensions),
-        task_input_tokens=input_tokens,
-        task_output_tokens=output_tokens,
+        task_input_tokens=total_input_tokens,
+        task_output_tokens=total_output_tokens,
         task_cached_tokens=cached,
     )
 
@@ -824,9 +832,7 @@ def _reconcile_generation(result: Any) -> None:
             event.cost_confidence = "exact"
             event.pricing_source = "provider_response"
             event.pricing_version = None
-            event.details["provider_reported_cost_usd"] = str(
-                measurement.provider_cost_usd
-            )
+            event.details["provider_reported_cost_usd"] = str(measurement.provider_cost_usd)
         if measurement.provider_upstream_cost_usd is not None:
             event.details["provider_upstream_cost_usd"] = str(
                 measurement.provider_upstream_cost_usd
@@ -874,7 +880,11 @@ def _patch(owner: Any, name: str, replacement: Any, key: str) -> None:
     if not callable(original):
         return
     _originals[key] = (owner, name, original)
-    setattr(owner, name, replacement)
+    setattr(
+        owner,
+        name,
+        provider_capture_callable("openrouter", replacement, original),
+    )
 
 
 def _restore_all() -> None:

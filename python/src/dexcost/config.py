@@ -16,9 +16,7 @@ _log = logging.getLogger(__name__)
 _CATALOG_KEY_ID = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}")
 _CATALOG_TRUSTED_KEYS_ENV = "DEXCOST_CATALOG_TRUSTED_KEYS"
 _CATALOG_REQUIRE_SIGNATURE_ENV = "DEXCOST_CATALOG_REQUIRE_SIGNATURE"
-_CATALOG_PRODUCTION_TRUST_PATH = (
-    Path(__file__).parent / "data" / "catalog_production_trust.json"
-)
+_CATALOG_PRODUCTION_TRUST_PATH = Path(__file__).parent / "data" / "catalog_production_trust.json"
 
 
 class InvalidAPIKeyError(ValueError):
@@ -126,9 +124,7 @@ def resolve_catalog_trust_policy(
         env_requirement = _catalog_signature_requirement_from_environment(
             os.environ.get(_CATALOG_REQUIRE_SIGNATURE_ENV)
         )
-        resolved_requirement = (
-            bool(resolved_keys) if env_requirement is None else env_requirement
-        )
+        resolved_requirement = bool(resolved_keys) if env_requirement is None else env_requirement
     elif isinstance(require_signature, bool):
         resolved_requirement = require_signature
     else:
@@ -137,6 +133,25 @@ def resolve_catalog_trust_policy(
     if resolved_requirement and not resolved_keys:
         raise ValueError("catalog signature verification requires at least one trusted public key")
     return resolved_keys, resolved_requirement
+
+
+def catalog_unsigned_override_requested(require_signature: bool | None) -> bool:
+    """Return whether the operator explicitly enabled unsigned catalog refresh.
+
+    An empty packaged trust document is a pre-bootstrap state, not permission
+    to trust an unsigned network response. Only an explicit SDK option or
+    environment value may enable the temporary migration escape hatch.
+    """
+    if require_signature is not None:
+        if not isinstance(require_signature, bool):
+            raise TypeError("catalog_require_signature must be a bool or None")
+        return require_signature is False
+    return (
+        _catalog_signature_requirement_from_environment(
+            os.environ.get(_CATALOG_REQUIRE_SIGNATURE_ENV)
+        )
+        is False
+    )
 
 
 def validate_api_key(key: str | None) -> str | None:
@@ -236,7 +251,8 @@ class DexcostConfig:
             _log.warning(
                 "dexcost: endpoint=%r rejected — must start with http:// "
                 "or https://. Falling back to %s.",
-                override, _DEFAULT_ENDPOINT,
+                override,
+                _DEFAULT_ENDPOINT,
             )
             return _DEFAULT_ENDPOINT
         return override

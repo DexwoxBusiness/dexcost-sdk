@@ -6,12 +6,20 @@ import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import { applyEventCapability, getCapability } from "../core/capabilities.js";
 import type { CapabilityIdentity } from "../core/capabilities.js";
-import { applyEventIdempotency, getIdempotencyKey } from "../core/idempotency.js";
+import {
+  applyEventIdempotency,
+  captureIdempotencyKey,
+  type CapturedIdempotencyKey,
+} from "../core/idempotency.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerLlmCapture } from "../core/llm-dedup.js";
 import { finalizeTaskNetwork } from "../core/network-finalize.js";
 import type { ProviderJobRevisionOptions } from "../core/provider-jobs.js";
+import {
+  currentProviderCaptureOwner,
+  runWithProviderCapture,
+} from "./provider-capture.js";
 
 export type ProviderOperationStatus = "succeeded" | "failed" | "cancelled" | "unknown";
 
@@ -28,6 +36,8 @@ export interface OperationMeasurement {
   providerRecordId?: string;
   providerCostUsd?: string | number | Decimal;
   providerUpstreamCostUsd?: string | number | Decimal;
+  /** Gateway-computed cost (for example LiteLLM), never provider-authoritative. */
+  gatewayCalculatedCostUsd?: string | number | Decimal;
   responseModel?: string;
   modelCandidates?: string[];
   billingDimensions?: Array<readonly [string, string]>;
@@ -80,6 +90,7 @@ export function validateOperationMeasurement(measurement: OperationMeasurement):
   for (const [name, value] of [
     ["providerCostUsd", measurement.providerCostUsd],
     ["providerUpstreamCostUsd", measurement.providerUpstreamCostUsd],
+    ["gatewayCalculatedCostUsd", measurement.gatewayCalculatedCostUsd],
   ] as const) {
     if (value !== undefined) providerQuantity(name, value);
   }
@@ -255,7 +266,7 @@ function recordProviderOperation(
   status: ProviderOperationStatus,
   error: unknown,
   capability?: CapabilityIdentity,
-  idempotencyKey?: string,
+  idempotencyKey?: string | CapturedIdempotencyKey,
 ): CostEvent {
   validateOperationMeasurement(measurement);
   const model = measurement.responseModel ?? options.model ?? "unknown";
@@ -271,6 +282,11 @@ function recordProviderOperation(
     costUsd = toDecimal(measurement.providerCostUsd);
     costConfidence = "exact";
     pricingSource = "provider_response";
+    pricingVersion = undefined;
+  } else if (measurement.gatewayCalculatedCostUsd !== undefined) {
+    costUsd = toDecimal(measurement.gatewayCalculatedCostUsd);
+    costConfidence = "computed";
+    pricingSource = "litellm";
     pricingVersion = undefined;
   }
   const details: Record<string, unknown> = {
@@ -306,6 +322,9 @@ function recordProviderOperation(
   }
   if (measurement.providerUpstreamCostUsd !== undefined) {
     details["provider_upstream_cost_usd"] = canonicalDecimal(toDecimal(measurement.providerUpstreamCostUsd));
+  }
+  if (measurement.gatewayCalculatedCostUsd !== undefined) {
+    details["gateway_calculated_cost_usd"] = canonicalDecimal(toDecimal(measurement.gatewayCalculatedCostUsd));
   }
   if ((measurement.cacheWriteTokens ?? 0) > 0) details["cache_write_input_tokens"] = measurement.cacheWriteTokens;
   if ((measurement.reasoningTokens ?? 0) > 0) details["reasoning_output_tokens"] = measurement.reasoningTokens;
@@ -346,12 +365,14 @@ export function recordProviderFailure(
   options: ProviderOperationOptions,
   error: unknown,
   startedAt: number,
+  capability: CapabilityIdentity | undefined = getCapability(),
+  idempotencyKey: CapturedIdempotencyKey | undefined = captureIdempotencyKey(),
 ): CostEvent | undefined {
   try {
     return recordProviderOperation(
       pricing, buffer, task, options, { usageLines: [] },
       Math.max(0, Math.round(performance.now() - startedAt)), "failed", error,
-      getCapability(), getIdempotencyKey(),
+      capability, idempotencyKey,
     );
   } catch {
     return undefined;
@@ -362,8 +383,9 @@ export class ProviderOperationSession {
   readonly task: Task;
   readonly autoCreated: boolean;
   private readonly startedAt = performance.now();
-  private readonly capability = getCapability();
-  private readonly idempotencyKey = getIdempotencyKey();
+  readonly capability = getCapability();
+  private readonly captureClaimed = currentProviderCaptureOwner() === undefined;
+  private readonly idempotencyKey = this.captureClaimed ? captureIdempotencyKey() : undefined;
   private finalized = false;
 
   constructor(
@@ -379,7 +401,11 @@ export class ProviderOperationSession {
   }
 
   invoke<T>(fn: () => T): T {
-    return suppressNetworkEvent(() => runWithTask(this.task, fn));
+    if (!this.captureClaimed) return runWithTask(this.task, fn);
+    return suppressNetworkEvent(() => runWithProviderCapture(
+      this.options.provider,
+      () => runWithTask(this.task, fn),
+    ));
   }
 
   finish(
@@ -389,6 +415,7 @@ export class ProviderOperationSession {
   ): CostEvent | undefined {
     if (this.finalized) return undefined;
     this.finalized = true;
+    if (!this.captureClaimed) return undefined;
     try {
       const event = recordProviderOperation(
         this.pricing, this.buffer, this.task, this.options, measurement,
@@ -435,7 +462,36 @@ export function wrapProviderStream<T>(
   session: ProviderOperationSession,
   observe: (item: unknown) => void,
   measurement: () => OperationMeasurement,
+  completionStatus: () => ProviderOperationStatus = () => "succeeded",
 ): T {
+  const safeMeasurement = (): OperationMeasurement => {
+    try {
+      const extracted = measurement();
+      validateOperationMeasurement(extracted);
+      return extracted;
+    } catch {
+      // Provider response parsing is telemetry-only. Unknown or newly added
+      // response shapes must not replace valid provider results with SDK errors.
+      return { usageLines: [], pricingUsage: {} };
+    }
+  };
+  const safeCompletionStatus = (): ProviderOperationStatus => {
+    try {
+      const status = completionStatus();
+      return ["succeeded", "failed", "cancelled", "unknown"].includes(status)
+        ? status
+        : "unknown";
+    } catch {
+      return "unknown";
+    }
+  };
+  const safeObserve = (item: unknown): void => {
+    try {
+      observe(item);
+    } catch {
+      // Preserve the provider item even when usage extraction cannot parse it.
+    }
+  };
   const candidate = raw as unknown as Record<PropertyKey, unknown>;
   if (typeof candidate[Symbol.asyncIterator] === "function") {
     return new Proxy(candidate, {
@@ -445,39 +501,45 @@ export function wrapProviderStream<T>(
             const iterator = (target[Symbol.asyncIterator] as () => AsyncIterator<unknown>).call(target);
             return {
               async next(...args: [] | [unknown]): Promise<IteratorResult<unknown>> {
+                let result: IteratorResult<unknown>;
                 try {
-                  const result = await (iterator.next as (...values: unknown[]) => Promise<IteratorResult<unknown>>).apply(iterator, args);
-                  if (result.done) session.finish(measurement());
-                  else observe(result.value);
-                  return result;
+                  result = await (iterator.next as (...values: unknown[]) => Promise<IteratorResult<unknown>>).apply(iterator, args);
                 } catch (error) {
-                  session.fail(error);
+                  session.finish(safeMeasurement(), "failed", error);
                   throw error;
                 }
+                if (result.done) session.finish(safeMeasurement(), safeCompletionStatus());
+                else safeObserve(result.value);
+                return result;
               },
               async return(value?: unknown): Promise<IteratorResult<unknown>> {
+                let result: IteratorResult<unknown>;
                 try {
-                  const result = iterator.return === undefined
+                  result = iterator.return === undefined
                     ? { done: true, value }
                     : await iterator.return(value);
-                  session.cancel(measurement());
-                  return result;
                 } catch (error) {
-                  session.fail(error);
+                  session.finish(safeMeasurement(), "failed", error);
                   throw error;
                 }
+                session.cancel(safeMeasurement());
+                return result;
               },
               async throw(error?: unknown): Promise<IteratorResult<unknown>> {
+                if (iterator.throw === undefined) {
+                  session.finish(safeMeasurement(), "failed", error);
+                  throw error;
+                }
+                let result: IteratorResult<unknown>;
                 try {
-                  if (iterator.throw === undefined) throw error;
-                  const result = await iterator.throw(error);
-                  if (result.done) session.fail(error);
-                  else observe(result.value);
-                  return result;
+                  result = await iterator.throw(error);
                 } catch (raised) {
-                  session.fail(raised);
+                  session.finish(safeMeasurement(), "failed", raised);
                   throw raised;
                 }
+                if (result.done) session.finish(safeMeasurement(), "failed", error);
+                else safeObserve(result.value);
+                return result;
               },
               [Symbol.asyncIterator](): AsyncIterator<unknown> { return this; },
             };
@@ -496,37 +558,43 @@ export function wrapProviderStream<T>(
             const iterator = (target[Symbol.iterator] as () => Iterator<unknown>).call(target);
             return {
               next(...args: [] | [unknown]): IteratorResult<unknown> {
+                let result: IteratorResult<unknown>;
                 try {
-                  const result = (iterator.next as (...values: unknown[]) => IteratorResult<unknown>).apply(iterator, args);
-                  if (result.done) session.finish(measurement());
-                  else observe(result.value);
-                  return result;
+                  result = (iterator.next as (...values: unknown[]) => IteratorResult<unknown>).apply(iterator, args);
                 } catch (error) {
-                  session.fail(error);
+                  session.finish(safeMeasurement(), "failed", error);
                   throw error;
                 }
+                if (result.done) session.finish(safeMeasurement(), safeCompletionStatus());
+                else safeObserve(result.value);
+                return result;
               },
               return(value?: unknown): IteratorResult<unknown> {
+                let result: IteratorResult<unknown>;
                 try {
-                  const result = iterator.return === undefined ? { done: true, value } : iterator.return(value);
-                  session.cancel(measurement());
-                  return result;
+                  result = iterator.return === undefined ? { done: true, value } : iterator.return(value);
                 } catch (error) {
-                  session.fail(error);
+                  session.finish(safeMeasurement(), "failed", error);
                   throw error;
                 }
+                session.cancel(safeMeasurement());
+                return result;
               },
               throw(error?: unknown): IteratorResult<unknown> {
+                if (iterator.throw === undefined) {
+                  session.finish(safeMeasurement(), "failed", error);
+                  throw error;
+                }
+                let result: IteratorResult<unknown>;
                 try {
-                  if (iterator.throw === undefined) throw error;
-                  const result = iterator.throw(error);
-                  if (result.done) session.fail(error);
-                  else observe(result.value);
-                  return result;
+                  result = iterator.throw(error);
                 } catch (raised) {
-                  session.fail(raised);
+                  session.finish(safeMeasurement(), "failed", raised);
                   throw raised;
                 }
+                if (result.done) session.finish(safeMeasurement(), "failed", error);
+                else safeObserve(result.value);
+                return result;
               },
               [Symbol.iterator](): Iterator<unknown> { return this; },
             };
@@ -537,6 +605,6 @@ export function wrapProviderStream<T>(
       },
     }) as T;
   }
-  session.finish(measurement());
+  session.finish(safeMeasurement(), safeCompletionStatus());
   return raw;
 }

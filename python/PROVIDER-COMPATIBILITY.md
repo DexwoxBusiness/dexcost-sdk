@@ -1,7 +1,7 @@
 # Python provider and framework compatibility
 
 Status: Python-first parity completion gate
-Last verified: 2026-08-22
+Last verified: 2026-08-24
 
 This is the source of truth for the Python contract that TypeScript must copy.
 The comparison boundary is every provider and framework attribution path found
@@ -20,7 +20,7 @@ Every supported adapter must satisfy all applicable rows:
 | Capability | Snapshot the active capability identity at invocation, including streams and delayed jobs. |
 | Idempotency | Snapshot caller idempotency for immediate operations; persist only its SHA-256 digest. Provider job IDs are the durable delayed-work identity. |
 | Sync and async | Preserve native return types, awaitability, iteration, context managers, and exception identity. |
-| Streams | Succeed only on natural terminal completion. Early close is cancelled, a raised stream is failed, and an operation is recorded at most once. |
+| Streams | Succeed only on natural terminal completion. Early close is cancelled, a raised stream is failed, and an operation is recorded at most once. Unknown provider chunks or terminal usage shapes degrade to safe unpriced request evidence and never replace provider values with an instrumentation exception. |
 | Delayed work | Persist a revisioned submitted/running/terminal provider job and reconcile by opaque provider ID without double counting. |
 | Usage | Retain exact quantities, bounded opaque IDs, and safe billing dimensions only. Never retain prompts, messages, outputs, media, vectors, URLs, tool payloads, or error messages. |
 | Pricing | Prefer provider-reported cost when available; otherwise use the active server catalog release locally. Unknown evidence stays unknown. |
@@ -42,15 +42,15 @@ current compatibility evidence for that route.
 |---|---|---|---|
 | OpenAI | native OpenAI | Verified | Complete inference/multimodal usage, streams, realtime, delayed jobs, exact provider cost, privacy, outcomes linkage. |
 | Azure OpenAI | OpenAI-compatible Azure host routing | Verified | Both current Azure host forms, deployment dimension, canonical `azure/...` model identity. |
-| Anthropic | native Anthropic | Verified | Sync/async/stream attribution, cache usage, failures, private quantities-only storage. |
-| Amazon Bedrock | native botocore/Bedrock | Verified | Provider/model normalization, streamed usage, region-safe pricing candidates. |
+| Anthropic | current native Anthropic | Verified | Real-package sync/async/stream attribution, cache usage and pricing, tool calls, failures, private quantities-only storage. |
+| Amazon Bedrock | current boto3/botocore plus official Smithy Bedrock Runtime | Verified | Converse/streams; InvokeModel chat, embeddings, images, and rerank; ApplyGuardrail, CountTokens, durable async S3 media jobs, and Python 3.12+ Nova Sonic full-duplex speech; exact regional/profile identity, 5m/1h cache pricing, tools, retries, routing, tiers, latency modes, complete stream lifecycle, and account-safe ARN hashing. |
 | Google AI / Gemini | current `google-genai` | Verified | Sync/async, content, streams, embeddings, image operations, Interactions, multimodal meters, jobs. |
 | Vertex AI | `google-genai` Vertex mode | Verified | Current supported Vertex path with provider/service identity and the same lifecycle contract. |
 | Ollama | native Ollama | Verified | Module/client/async client, streams, embeddings, web search/fetch, local/hosted distinction, native duration meters. |
-| LiteLLM | native LiteLLM | Verified | Exact provider cost, cache/reasoning/tool meters, stream ownership, and canonical routed-provider identity. |
+| LiteLLM | native LiteLLM | Verified | Language/Responses, embeddings, images, audio, rerank, moderation, search, OCR, durable response/video/batch/fine-tuning jobs, exact gateway/provider cost, complete stream ownership, and canonical routed-provider identity. |
 | Perplexity | native and OpenAI-compatible | Verified | Agent Responses, background reconciliation, Sonar chat, Search, embeddings, exact provider cost, streams. |
 | fal.ai | native `fal-client` | Verified | Run/subscribe/stream plus durable queue submit/status/result/cancel, media quantities, no guessed duration. |
-| Cohere | native Cohere | Verified | Chat and chat stream sync/async attribution retained. |
+| Cohere | native Cohere | Verified | Current ClientV2 plus legacy Client chat/stream, embeddings, and rerank sync/async; V2 terminal usage and search-unit pricing. |
 | Hugging Face | LiteLLM routed provider | Verified | Canonical `huggingface/...` identity. |
 | Together AI | LiteLLM routed provider | Verified | Canonical `together_ai/...` identity. |
 | Mistral | LiteLLM routed provider | Verified | Canonical `mistral/...` identity. |
@@ -91,7 +91,8 @@ Official sources:
 - <https://openrouter.ai/docs/api/reference/overview>
 - <https://github.com/OpenRouterTeam/python-sdk>
 
-Verified against `openrouter==1.1.54`. The first-class adapter covers Chat,
+Verified against `openrouter==1.1.72` (the locked official package). The
+first-class adapter covers Chat,
 Responses, embeddings, images, STT, TTS, rerank, native sync/async streams,
 video jobs, and generation-cost reconciliation. Provider-reported total and
 upstream cost are authoritative. Routed provider, BYOK, cache, reasoning,
@@ -193,11 +194,28 @@ Evidence includes `tests/test_google_genai_current_compat.py`,
 Official sources:
 
 - <https://github.com/BerriAI/litellm>
+- <https://docs.litellm.ai/>
 - <https://docs.litellm.ai/docs/completion>
+- <https://docs.litellm.ai/docs/response_api>
 
-Verified against `litellm==1.81.13`. Completion/acompletion and their streams
-preserve exact provider cost, current cache/reasoning/tool usage variants, and
-request model identity. The Revenium Node provider mapper is fully represented:
+Verified in the locked full suite against `litellm==1.83.0` and in the Python
+3.10 compatibility gate through `litellm==1.96.2`, the last compatible line
+below the upstream Python-3.10 typing regression. DexCost patches the current
+module-level language and Responses operations, embeddings, image generation /
+edit / variation, transcription and speech, rerank, moderation, search, OCR,
+and their async variants when present. Background Responses, video, batch, and
+fine-tuning submission/retrieval/cancellation use the revisioned provider-job
+ledger rather than being charged at submission time.
+
+Terminal streams alone succeed; early close is cancelled and raised iteration
+is failed. Nested LiteLLM operations have one capture owner, so an async helper
+that internally invokes its sync peer cannot double count. Provider-reported
+cost remains exact; otherwise LiteLLM `completion_cost` is retained as explicit
+gateway-calculated evidence with the installed LiteLLM version. Prompts,
+messages, documents, URLs, media, vectors, transcripts, output, error text, and
+file identifiers are never persisted. The Revenium Node provider mapper is
+fully represented and DexCost preserves additional LiteLLM providers instead
+of collapsing them to `litellm`:
 
 | LiteLLM aliases | Canonical DexCost provider/model prefix |
 |---|---|
@@ -217,15 +235,52 @@ request model identity. The Revenium Node provider mapper is fully represented:
 | `openrouter` | `openrouter` / `openrouter/...` |
 | `perplexity`, `perplexity_ai` | `perplexity` / `perplexity/...` |
 | `fal`, `fal_ai` | `fal_ai` / `fal_ai/...` |
+| `xai`, `deepseek`, `fireworks_ai`, `nvidia_nim`, `nano-gpt`, and other routed providers | Normalized provider identity and the caller-visible provider/model prefix |
 
 Evidence: `tests/test_litellm_current_compat.py`.
 
+### Model Context Protocol (MCP)
+
+Official sources:
+
+- <https://modelcontextprotocol.io/specification/2025-06-18/server/tools>
+- <https://github.com/modelcontextprotocol/python-sdk>
+- <https://github.com/firecrawl/firecrawl-mcp-server>
+- <https://www.firecrawl.dev/pricing>
+- <https://github.com/tavily-ai/tavily-mcp>
+- <https://docs.tavily.com/documentation/api-credits>
+
+Verified against `mcp==1.28.1`. DexCost wraps the current async
+`ClientSession.call_tool` protocol without changing its request metadata,
+result validation, return value, or exception behavior. Arguments, result
+content, structured content, and server metadata are never persisted.
+
+MCP defines structured results and application metadata but no standard
+billing field. DexCost therefore always records one tool request and only
+adds provider credit usage for official Firecrawl/Tavily tool namespaces when
+the result contains an explicit, internally consistent `creditsUsed` or
+`usage.credits` quantity. A user rate declared per credit is multiplied by
+that quantity. Per-page and other rates remain visibly unpriced when their
+billable quantity is absent; they are never silently converted into a
+per-call charge. Explicit `mcp:<tool>` per-call rates remain supported, as do
+reviewed aliases carried by the active signed service catalog. The previous
+SDK-resident community-alias table was removed because it joined distinct
+billing operations without provider evidence; unpublished aliases remain
+usage-attributed and visibly unpriced.
+
+Evidence: `tests/test_mcp_current_compat.py` and
+`tests/test_mcp_instrument.py`.
+
 ### Existing direct providers and tools
 
-Anthropic, Amazon Bedrock Runtime, Cohere, and MCP remain supported and are part
-of the full Python regression suite. Their existing direct attribution is not
-replaced by LiteLLM mapping. Provider instrumentation remains the authoritative
-LLM cost path; MCP and `track_tool` remain the authoritative explicit tool path.
+Anthropic, Amazon Bedrock Runtime, and Cohere remain supported and are part of
+the full Python regression suite. Cohere's direct path covers the installed
+current `ClientV2`/`AsyncClientV2` APIs and the legacy client. Instrument before
+constructing `ClientV2`, because the official SDK snapshots decorated chat
+methods onto each client instance during construction. Direct attribution is
+not replaced by LiteLLM mapping. Provider instrumentation remains the
+authoritative LLM cost path; MCP and `track_tool` remain the authoritative
+explicit tool path.
 
 ## Framework closure
 

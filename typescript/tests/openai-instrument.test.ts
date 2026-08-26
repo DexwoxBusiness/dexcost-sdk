@@ -389,4 +389,68 @@ describe("OpenAI streaming instrumentation", () => {
       reasoning_output_tokens: 30,
     });
   });
+
+  it("retains partial usage and failure identity when the stream raises", async () => {
+    class FailingCompletions {
+      async create(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              id: "chatcmpl-partial",
+              model: "gpt-4o",
+              usage: { prompt_tokens: 37, completion_tokens: 11 },
+            };
+            throw new Error("openai stream failed");
+          },
+        };
+      }
+    }
+    _setCompletionsClass(FailingCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await expect(runWithTask(task, async () => {
+      const stream = await new FailingCompletions().create({ model: "gpt-4o", stream: true });
+      for await (const _chunk of stream as AsyncIterable<unknown>) { /* drain */ }
+    })).rejects.toThrow("openai stream failed");
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 37, outputTokens: 11 });
+    expect(buffer.getAllEvents()[0].details).toMatchObject({
+      attribution_operation_status: "failed",
+      attribution_error_type: "error",
+      provider_record_id: "chatcmpl-partial",
+    });
+  });
+
+  it("records early stream close as cancelled exactly once", async () => {
+    class CancelledCompletions {
+      async create(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              id: "chatcmpl-cancelled",
+              model: "gpt-4o",
+              usage: { prompt_tokens: 29, completion_tokens: 7 },
+            };
+            yield { choices: [] };
+          },
+        };
+      }
+    }
+    _setCompletionsClass(CancelledCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const stream = await new CancelledCompletions().create({ model: "gpt-4o", stream: true });
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.return?.();
+    });
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0].details.attribution_operation_status).toBe("cancelled");
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 29, outputTokens: 7 });
+  });
 });

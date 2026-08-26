@@ -76,8 +76,9 @@ function redactEventDetails(
  * Implements exponential backoff on failure, resetting on success.
  */
 export class EventPusher {
-  private _interval: ReturnType<typeof setInterval> | null = null;
+  private _interval: ReturnType<typeof setTimeout> | null = null;
   private _purgeInterval: ReturnType<typeof setInterval> | null = null;
+  private _running = false;
   private _backoffMs = 1000;
   private _buffer: EventBuffer;
   private _options: TrackerOptions;
@@ -94,6 +95,7 @@ export class EventPusher {
   private _lastPurgeMs = 0;
   private _lastConversionWarnMs = 0;
   private _lastConversionWarnFingerprint = "";
+  private _quarantineRecoveryAttempted = false;
   /** Set permanently when the ingestion API rejects the key with HTTP 401. */
   private _authFailed = false;
   private _workerState: DeliveryWorkerState = "stopped";
@@ -139,27 +141,19 @@ export class EventPusher {
    * Start the periodic background push loop.
    */
   start(): void {
-    if (this._interval) {
+    if (this._running) {
       return; // Already running
     }
+    this._running = true;
     this._workerState = "idle";
     const intervalMs = this._options.flushIntervalMs ?? 30000;
-    this._interval = setInterval(() => {
-      void this.push(false);
-    }, intervalMs);
+    this._schedulePush(intervalMs);
 
-    // Allow the process to exit even if the interval is running
-    if (this._interval.unref) {
-      this._interval.unref();
-    }
-
-    // Independent purge interval (runs even when pushes are failing).
-    // Purges old synced events AND stale pending events so a permanently
-    // failing sync can't grow the local buffer without bound.
+    // Independent acknowledged-data cleanup. Unsent financial attribution is
+    // never deleted automatically, including while authentication is broken.
     this._purgeInterval = setInterval(() => {
       try {
         this._buffer.purgeSynced();
-        this._buffer.purgeOldPending();
       } catch {
         // Non-fatal — purge will be retried next cycle
       }
@@ -173,8 +167,9 @@ export class EventPusher {
    * Stop the periodic background push loop.
    */
   stop(): void {
+    this._running = false;
     if (this._interval) {
-      clearInterval(this._interval);
+      clearTimeout(this._interval);
       this._interval = null;
     }
     if (this._purgeInterval) {
@@ -182,6 +177,21 @@ export class EventPusher {
       this._purgeInterval = null;
     }
     if (!this._authFailed) this._workerState = "stopped";
+  }
+
+  /** Schedule exactly one background cycle, then choose the next delay from its result. */
+  private _schedulePush(delayMs: number): void {
+    if (!this._running || this._authFailed) return;
+    if (this._interval !== null) clearTimeout(this._interval);
+    this._interval = setTimeout(() => {
+      this._interval = null;
+      void this.push(false).finally(() => {
+        if (!this._running || this._authFailed) return;
+        const regular = this._options.flushIntervalMs ?? 30000;
+        this._schedulePush(this._workerState === "backoff" ? this._backoffMs : regular);
+      });
+    }, Math.max(0, delayMs));
+    this._interval.unref?.();
   }
 
   private _recordAttempt(): void {
@@ -252,6 +262,14 @@ export class EventPusher {
     if (this._authFailed) {
       // API key was rejected — sync is permanently disabled.
       return;
+    }
+
+    // Converter failures are retained durably. Requeue them once for each
+    // pusher lifetime so a corrected SDK can deliver old rows without users
+    // editing SQLite; still-invalid rows return to quarantine in this flush.
+    if (!this._quarantineRecoveryAttempted) {
+      this._quarantineRecoveryAttempted = true;
+      try { this._buffer.requeueQuarantinedEvents(); } catch { /* retry requires restart */ }
     }
 
     const batchSize = Math.max(1, this._options.batchSize ?? 100);
@@ -358,14 +376,11 @@ export class EventPusher {
           outcomes.length + revenueRevisions.length,
         );
 
-        // Purge old synced events + stale pending events (throttled to
-        // once per hour). purgeOldPending is the safety net for events
-        // that can never be delivered (mirrors Python sync.py).
+        // Purge acknowledged events only (throttled to once per hour).
         const now = Date.now();
         if (now - this._lastPurgeMs >= PURGE_INTERVAL_MS) {
           try {
             this._buffer.purgeSynced();
-            this._buffer.purgeOldPending();
           } catch {
             // Non-fatal — purge will be retried next cycle
           }

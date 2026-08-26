@@ -106,6 +106,7 @@ def test_invalid_catalog_trust_fails_before_storage_or_global_mutation(
             buffer_path=str(tmp_path / "must-not-exist.db"),
             auto_instrument=[],
             track_http=False,
+            catalog_trusted_keys={},
         )
 
     sqlite_factory.assert_not_called()
@@ -199,6 +200,7 @@ def test_reinit_after_fork_restarts_atomic_catalog_refresh(
         "dexcost-test-rfc8032-1": "11qYAYdk9JNu81kOIyRUDn69brTa7WHqmX84xB6sSPA"
     }
     inherited_catalog_runtime._require_signature = True
+    inherited_catalog_runtime._remote_refresh_enabled = True
     child_catalog_runtime = MagicMock()
     catalog_runtime_factory = MagicMock(return_value=child_catalog_runtime)
     tracker = MagicMock()
@@ -248,6 +250,7 @@ def test_reinit_after_fork_restarts_atomic_catalog_refresh(
         api_key=config.api_key,
         trusted_keys=inherited_catalog_runtime._trusted_keys,
         require_signature=True,
+        remote_refresh_enabled=True,
     )
     child_catalog_runtime.load_cached.assert_called_once_with()
     child_catalog_runtime.start.assert_called_once_with()

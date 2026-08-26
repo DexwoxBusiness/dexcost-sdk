@@ -15,6 +15,7 @@ from typing import Any, cast
 import wrapt
 
 from dexcost.context import suppress_network_event
+from dexcost.instruments._capture import provider_capture_wrapper
 from dexcost.instruments._provider_metering import (
     AsyncProviderStream,
     OperationMeasurement,
@@ -225,9 +226,7 @@ def _add_quantity(values: dict[str, Decimal], name: str, quantity: int | Decimal
         values[name] = values.get(name, Decimal(0)) + parsed
 
 
-def _add_modal_counts(
-    values: dict[str, Decimal], phase: str, counts: Mapping[str, int]
-) -> None:
+def _add_modal_counts(values: dict[str, Decimal], phase: str, counts: Mapping[str, int]) -> None:
     metrics = _MODAL_METRICS[phase]
     for modality, count in counts.items():
         metric = metrics.get(modality, f"unallocated_{phase}_tokens")
@@ -302,9 +301,7 @@ def _measurement_from_usage(
     prompt_total, cache_total = _split_prompt_and_cache(usage, values)
 
     output_total = _count(_value(usage, "candidates_token_count"))
-    output_counts = _detail_counts(
-        _value(usage, "candidates_tokens_details"), output_total
-    )
+    output_counts = _detail_counts(_value(usage, "candidates_tokens_details"), output_total)
     _add_modal_counts(values, "output", output_counts)
 
     thoughts = _count(_value(usage, "thoughts_token_count"))
@@ -312,9 +309,7 @@ def _measurement_from_usage(
         _add_quantity(values, "reasoning_output_tokens", thoughts)
 
     tool_total = _count(_value(usage, "tool_use_prompt_token_count"))
-    tool_counts = _detail_counts(
-        _value(usage, "tool_use_prompt_tokens_details"), tool_total
-    )
+    tool_counts = _detail_counts(_value(usage, "tool_use_prompt_tokens_details"), tool_total)
     _add_modal_counts(values, "tool", tool_counts)
 
     task_output = None
@@ -454,9 +449,7 @@ def _interaction_measurement(
         "candidates_tokens_details": _value(usage, "output_tokens_by_modality"),
         "thoughts_token_count": _value(usage, "total_thought_tokens"),
         "tool_use_prompt_token_count": _value(usage, "total_tool_use_tokens"),
-        "tool_use_prompt_tokens_details": _value(
-            usage, "tool_use_tokens_by_modality"
-        ),
+        "tool_use_prompt_tokens_details": _value(usage, "tool_use_tokens_by_modality"),
     }
     provider_record_id = _value(response, "id")
     if not isinstance(provider_record_id, str):
@@ -480,9 +473,7 @@ def _interaction_status(response: object) -> OperationStatus:
     return "unknown"
 
 
-def _interaction_job_status(
-    response: object, *, submission: bool = False
-) -> ProviderJobStatus:
+def _interaction_job_status(response: object, *, submission: bool = False) -> ProviderJobStatus:
     status = _value(response, "status")
     if status == "completed":
         return "succeeded"
@@ -543,9 +534,7 @@ def _video_response(operation: object) -> object | None:
     return cast(object | None, _value(operation, "response") or _value(operation, "result"))
 
 
-def _video_operation_status(
-    operation: object, *, submission: bool = False
-) -> ProviderJobStatus:
+def _video_operation_status(operation: object, *, submission: bool = False) -> ProviderJobStatus:
     if _value(operation, "done") is not True:
         return "submitted" if submission else "running"
     error = _value(operation, "error")
@@ -554,9 +543,11 @@ def _video_operation_status(
         return "cancelled" if "cancel" in error_text else "failed"
     response = _video_response(operation)
     generated = _value(response, "generated_videos")
-    if isinstance(generated, Sequence) and not isinstance(
-        generated, (str, bytes, bytearray)
-    ) and any(_value(item, "video") is not None for item in generated):
+    if (
+        isinstance(generated, Sequence)
+        and not isinstance(generated, (str, bytes, bytearray))
+        and any(_value(item, "video") is not None for item in generated)
+    ):
         return "succeeded"
     return "unknown"
 
@@ -570,25 +561,19 @@ def _video_measurement(
 ) -> OperationMeasurement | None:
     response = _video_response(operation)
     generated = _value(response, "generated_videos")
-    if not isinstance(generated, Sequence) or isinstance(
-        generated, (str, bytes, bytearray)
-    ):
+    if not isinstance(generated, Sequence) or isinstance(generated, (str, bytes, bytearray)):
         return None
     count = sum(1 for item in generated if _value(item, "video") is not None)
     if count <= 0:
         return None
     pricing: dict[str, Decimal] = {"output_video_count": Decimal(count)}
-    lines: list[ProviderUsageLine] = [
-        ProviderUsageLine("output_video_count", count, "Videos")
-    ]
+    lines: list[ProviderUsageLine] = [ProviderUsageLine("output_video_count", count, "Videos")]
     context = dict(billing_dimensions)
     duration = _decimal_count(context.get("video_duration_seconds"))
     if duration is not None and duration > 0:
         output_seconds = duration * Decimal(count)
         pricing["output_video_seconds"] = output_seconds
-        lines.append(
-            ProviderUsageLine("output_video_seconds", output_seconds, "Seconds")
-        )
+        lines.append(ProviderUsageLine("output_video_seconds", output_seconds, "Seconds"))
     record_id = _value(operation, "name")
     return OperationMeasurement(
         pricing_usage=pricing,
@@ -613,18 +598,14 @@ def _operation_error_identity(operation: object) -> tuple[str | None, str | None
     return error_type, str(raw_code) if raw_code is not None else None
 
 
-def _resource_error_identity(
-    resource: object, *, namespace: str
-) -> tuple[str | None, str | None]:
+def _resource_error_identity(resource: object, *, namespace: str) -> tuple[str | None, str | None]:
     error = _value(resource, "error")
     if not error:
         return None, None
     raw_code = _value(error, "code")
     raw_status = _value(error, "status") or _value(error, "type")
     suffix = str(raw_status).lower() if raw_status is not None else "failed"
-    return f"google.{namespace}.{suffix}", (
-        str(raw_code) if raw_code is not None else None
-    )
+    return f"google.{namespace}.{suffix}", (str(raw_code) if raw_code is not None else None)
 
 
 def _job_name(
@@ -644,9 +625,7 @@ def _job_name(
 
 
 def _bounded_source_kind(value: object) -> str:
-    if isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return "inline"
     if isinstance(value, str):
         lowered = value.lower()
@@ -776,34 +755,22 @@ def _batch_measurement(
 
     destination = _value(resource, "dest")
     inlined = _value(destination, "inlined_responses")
-    if isinstance(inlined, Sequence) and not isinstance(
-        inlined, (str, bytes, bytearray)
-    ):
+    if isinstance(inlined, Sequence) and not isinstance(inlined, (str, bytes, bytearray)):
         for item in inlined:
             response = _value(item, "response")
             if response is not None:
                 derived_success += 1
-                add_measurement(
-                    _content_measurement(
-                        response, {"model": model}, vertex=vertex
-                    )
-                )
+                add_measurement(_content_measurement(response, {"model": model}, vertex=vertex))
             elif _value(item, "error") is not None:
                 derived_failed += 1
 
     embedded = _value(destination, "inlined_embed_content_responses")
-    if isinstance(embedded, Sequence) and not isinstance(
-        embedded, (str, bytes, bytearray)
-    ):
+    if isinstance(embedded, Sequence) and not isinstance(embedded, (str, bytes, bytearray)):
         for item in embedded:
             response = _value(item, "response")
             if response is not None:
                 derived_success += 1
-                add_measurement(
-                    _embedding_measurement(
-                        response, {"model": model}, vertex=vertex
-                    )
-                )
+                add_measurement(_embedding_measurement(response, {"model": model}, vertex=vertex))
             elif _value(item, "error") is not None:
                 derived_failed += 1
 
@@ -921,9 +888,7 @@ def _tuning_measurement(
 def _terminal_status_with_evidence(
     status: ProviderJobStatus, measurement: OperationMeasurement | None
 ) -> ProviderJobStatus:
-    if status == "succeeded" and (
-        measurement is None or not measurement.usage_lines
-    ):
+    if status == "succeeded" and (measurement is None or not measurement.usage_lines):
         return "unknown"
     return status
 
@@ -991,9 +956,7 @@ def _reconcile_batch_job(instance: object, resource: object) -> None:
     if record_id is None:
         return
     service = _service(instance)
-    previous = _active_tracker._storage.get_provider_job(
-        "google", service, record_id
-    )
+    previous = _active_tracker._storage.get_provider_job("google", service, record_id)
     if previous is None or previous.operation != "google.genai.batches.create":
         return
     raw_status = _batch_status(resource)
@@ -1030,9 +993,7 @@ def _reconcile_tuning_job(instance: object, resource: object) -> None:
     if record_id is None:
         return
     service = _service(instance)
-    previous = _active_tracker._storage.get_provider_job(
-        "google", service, record_id
-    )
+    previous = _active_tracker._storage.get_provider_job("google", service, record_id)
     if previous is None or previous.operation != "google.genai.tunings.tune":
         return
     raw_status = _tuning_status(resource)
@@ -1099,9 +1060,7 @@ def _reconcile_video_operation(instance: object, operation: object) -> None:
     if not isinstance(record_id, str) or not record_id:
         return
     service = _service(instance)
-    previous = _active_tracker._storage.get_provider_job(
-        "google", service, record_id
-    )
+    previous = _active_tracker._storage.get_provider_job("google", service, record_id)
     if previous is None or previous.operation != "google.genai.models.generate_videos":
         return
     status = _video_operation_status(operation)
@@ -1419,9 +1378,7 @@ def _sync_interaction_create(
 
                 def complete() -> None:
                     if meter.terminal is not None:
-                        _submit_background_interaction(
-                            job_session, meter.terminal, kwargs
-                        )
+                        _submit_background_interaction(job_session, meter.terminal, kwargs)
 
                 job_session.release_context()
                 return SyncProviderJobStream(
@@ -1502,9 +1459,7 @@ def _async_interaction_create(
 
                     def complete() -> None:
                         if meter.terminal is not None:
-                            _submit_background_interaction(
-                                job_session, meter.terminal, kwargs
-                            )
+                            _submit_background_interaction(job_session, meter.terminal, kwargs)
 
                     job_session.release_context()
                     return AsyncProviderJobStream(
@@ -1991,12 +1946,8 @@ def _embedding_extract(
 
 
 def _image_extract(operation: str) -> MeasurementExtractor:
-    def extract(
-        response: object, kwargs: dict[str, Any], vertex: bool
-    ) -> OperationMeasurement:
-        return _image_measurement(
-            response, kwargs, operation=operation, vertex=vertex
-        )
+    def extract(response: object, kwargs: dict[str, Any], vertex: bool) -> OperationMeasurement:
+        return _image_measurement(response, kwargs, operation=operation, vertex=vertex)
 
     return extract
 
@@ -2160,7 +2111,9 @@ def _patch_interactions() -> None:
             original = getattr(owner, method)
             _extra_originals.append((owner, method, original))
             wrapt.wrap_function_wrapper(
-                module_name, f"{class_name}.{method}", wrapper
+                module_name,
+                f"{class_name}.{method}",
+                provider_capture_wrapper("google_genai", wrapper),
             )
 
 
@@ -2180,7 +2133,9 @@ def _patch_operations() -> None:
         original = owner.get
         _extra_originals.append((owner, "get", original))
         wrapt.wrap_function_wrapper(
-            "google.genai.operations", f"{class_name}.get", wrapper
+            "google.genai.operations",
+            f"{class_name}.get",
+            provider_capture_wrapper("google_genai", wrapper),
         )
 
 
@@ -2190,9 +2145,7 @@ def _patch_durable_resources() -> None:
         from google.genai import batches, tunings
     except ImportError:
         return
-    resources: tuple[
-        tuple[str, Any, str, tuple[tuple[str, Callable[..., Any]], ...]], ...
-    ] = (
+    resources: tuple[tuple[str, Any, str, tuple[tuple[str, Callable[..., Any]], ...]], ...] = (
         (
             "google.genai.batches",
             batches,
@@ -2244,7 +2197,9 @@ def _patch_durable_resources() -> None:
             original = getattr(owner, method)
             _extra_originals.append((owner, method, original))
             wrapt.wrap_function_wrapper(
-                module_name, f"{class_name}.{method}", wrapper
+                module_name,
+                f"{class_name}.{method}",
+                provider_capture_wrapper("google_genai", wrapper),
             )
 
 
@@ -2277,7 +2232,10 @@ def instrument_gemini(tracker: Any) -> None:
                 wrapt.wrap_function_wrapper(
                     "google.genai.models",
                     video_key,
-                    _async_generate_videos if async_owner else _sync_generate_videos,
+                    provider_capture_wrapper(
+                        "google_genai",
+                        _async_generate_videos if async_owner else _sync_generate_videos,
+                    ),
                 )
             for method, operation, event_type, extract in _DIRECT_METHODS:
                 if not hasattr(owner, method):
@@ -2287,11 +2245,13 @@ def instrument_gemini(tracker: Any) -> None:
                 wrapper = (
                     _async_direct_wrapper(operation, event_type=event_type, extract=extract)
                     if async_owner
-                    else _sync_direct_wrapper(
-                        operation, event_type=event_type, extract=extract
-                    )
+                    else _sync_direct_wrapper(operation, event_type=event_type, extract=extract)
                 )
-                wrapt.wrap_function_wrapper("google.genai.models", key, wrapper)
+                wrapt.wrap_function_wrapper(
+                    "google.genai.models",
+                    key,
+                    provider_capture_wrapper("google_genai", wrapper),
+                )
 
             stream_method = "generate_content_stream"
             if hasattr(owner, stream_method):
@@ -2300,7 +2260,10 @@ def instrument_gemini(tracker: Any) -> None:
                 wrapt.wrap_function_wrapper(
                     "google.genai.models",
                     key,
-                    _async_stream_call if async_owner else _sync_stream_call,
+                    provider_capture_wrapper(
+                        "google_genai",
+                        _async_stream_call if async_owner else _sync_stream_call,
+                    ),
                 )
         _patch_interactions()
         _patch_operations()

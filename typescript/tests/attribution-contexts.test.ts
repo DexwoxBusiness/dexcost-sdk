@@ -134,4 +134,25 @@ describe("cross-SDK idempotency", () => {
     task.end();
     instance.close();
   });
+
+  it("distinguishes repeated operations inside one ambient scope and replays deterministically", () => {
+    const instance = tracker("occurrences");
+    const task = instance.startTask({ taskType: "workflow.run", taskId: randomUUID() });
+    const [first, second] = runWithIdempotencyKey("workflow-10", () => [
+      task.recordToolCall("search", { costUsd: "0.01" }),
+      task.recordToolCall("search", { costUsd: "0.01" }),
+    ]);
+    const [firstReplay, secondReplay] = runWithIdempotencyKey("workflow-10", () => [
+      task.recordToolCall("search", { costUsd: "0.01" }),
+      task.recordToolCall("search", { costUsd: "0.01" }),
+    ]);
+    expect(first.eventId).not.toBe(second.eventId);
+    expect(firstReplay.eventId).toBe(first.eventId);
+    expect(secondReplay.eventId).toBe(second.eventId);
+    expect(first.details._dexcost_idempotency_occurrence).toBe(0);
+    expect(second.details._dexcost_idempotency_occurrence).toBe(1);
+    expect(instance.buffer.queryEvents(task.task.taskId)).toHaveLength(2);
+    task.end();
+    instance.close();
+  });
 });

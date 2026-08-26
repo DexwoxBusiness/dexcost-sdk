@@ -21,7 +21,8 @@ The reproducible source pins and hashes live in
 
 - DexCost SDK base: `22e6921335cebe4637725dd5e5707d10b546a094`
 - DexCost control-plane base: `adbb9ad9e1739fb8bd69646485b61f1530dd513a`
-- Revenium Python 0.6.0: `8faa15010a598ed9e9deb93314595c41a6f20bc7`
+- Revenium Python 0.6.0 plus its CI-only gitleaks fix:
+  `24d979a60c9e761b8d87905694149258dad8bba6`
 - Revenium Node 1.1.10: `8988c68057b0241a232a669b120fc493aeb7b0eb`
 
 ## Competitive findings and DexCost decisions
@@ -46,6 +47,39 @@ The reproducible source pins and hashes live in
 - Local GPU/network hardware remains visibly unpriced unless the customer
   supplies a positive exact rate. Version-2 `rates.yaml` is deterministic and
   produces the same pricing-version hash in Python and TypeScript.
+
+### Revenium Node cross-check
+
+The pinned Revenium Node 1.1.10 source was re-audited before closing the
+TypeScript provider matrix. The useful implementation ideas are covered as
+follows:
+
+- Its LiteLLM implementation confirms that the production JavaScript contract
+  is the OpenAI-compatible Proxy, not a general LiteLLM inference npm package.
+  DexCost now attributes that real `openai`-client route across chat/Responses,
+  streams, embeddings, media, batches, video, and fine-tuning while preserving
+  upstream-provider and gateway-cost identity.
+- Its bounded in-memory store-and-forward, exit flush, stable retry identity,
+  and exponential backoff were checked against DexCost's durable SQLite
+  delivery ledger, split-leaf acknowledgement, quarantine recovery, exit and
+  freeze flushes, and idempotency scopes. The audit found and corrected a
+  TypeScript scheduler defect where the reported backoff value did not control
+  the next network attempt.
+- Its outcome amendment/history API is covered by the stronger DexCost outcome
+  and revenue revision ledgers: immutable ordered corrections, exact-decimal
+  money, currencies and source identity, outcome linkage, local durability, and
+  history queries exist in both finalized SDK contracts. TypeScript now also
+  enforces the Python ledger's optimistic amendment, task ownership, immutable
+  identity, lifecycle-transition, and currency invariants with dedicated
+  persistence and delivery tests.
+- Revenium prompt capture was not copied: DexCost's contract is quantities-only
+  provider attribution and intentionally does not retain prompt, completion,
+  document, query, media, S3, or ARN content by default.
+- Revenium client-side cost-control enforcement is a separate product behavior
+  that can reject customer inference calls. It is not an attribution-parity
+  feature and has no finalized Python/control-plane policy contract in this
+  release, so it is deliberately outside this locked SDK migration rather than
+  being silently invented in TypeScript alone.
 
 ## Frozen evidence
 

@@ -9,6 +9,8 @@ against our fakes.
 from __future__ import annotations
 
 import asyncio
+import gc
+import json
 import sys
 import types
 from collections.abc import Generator
@@ -76,6 +78,26 @@ def _make_stream_events(
         end_event.response = None
     events.append(end_event)
     return events
+
+
+class _FakeAsyncStream:
+    def __init__(self, items: list[Any]) -> None:
+        self._items = items
+        self._index = 0
+        self.closed = False
+
+    def __aiter__(self) -> _FakeAsyncStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._index >= len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._index]
+        self._index += 1
+        return item
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _install_fake_cohere() -> tuple[type, type]:
@@ -191,12 +213,10 @@ class TestSyncChat:
         assert ev.model == "command-r-plus"
         assert ev.input_tokens == 150
         assert ev.output_tokens == 75
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
         assert ev.cost_usd >= Decimal("0")
 
-    def test_tokens_from_billed_units(
-        self, tracker: CostTracker, storage: SQLiteStorage
-    ) -> None:
+    def test_tokens_from_billed_units(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """Token usage is extracted from response.meta.billed_units."""
         from cohere import Client
 
@@ -280,6 +300,57 @@ class TestSyncChat:
         events = storage.query_events(task_id=str(task.task_id))
         assert events[0].model == "command-r"
 
+    def test_response_id_tools_context_and_privacy_contract(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.cohere import instrument_cohere
+        from dexcost.models.capability import CapabilityIdentity
+
+        response = _make_response(input_tokens=19, output_tokens=6)
+        response.response_id = "cohere-response-123"
+        response.tool_calls = [
+            types.SimpleNamespace(
+                name="private_cohere_tool",
+                parameters={"query": "private-cohere-tool-input"},
+            )
+        ]
+        Client.chat = staticmethod(lambda **kwargs: response)  # type: ignore[assignment]
+        instrument_cohere(tracker)
+        capability = CapabilityIdentity(name="research.answer", kind="workflow")
+
+        with (
+            tracker.task(task_type="cohere_contract") as task,
+            capability_context(capability),
+            idempotency_key("private-cohere-idempotency"),
+        ):
+            Client.chat(
+                model="command-r-plus",
+                message="private-cohere-prompt",
+                tools=[{"name": "private_cohere_tool"}],
+            )
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.service_name == "chat"
+        assert event.details["provider_record_id"] == "cohere-response-123"
+        assert event.details["attribution_capability"] == capability.to_dict()
+        assert len(event.details["_dexcost_idempotency_sha256"]) == 64
+        usage = {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }
+        assert usage == {"input_tokens": "19", "output_tokens": "6", "tool_call_count": "1"}
+        persisted = json.dumps(event.to_dict())
+        for secret in (
+            "private-cohere-prompt",
+            "private_cohere_tool",
+            "private-cohere-tool-input",
+            "private-cohere-idempotency",
+        ):
+            assert secret not in persisted
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests (Fix 2)
@@ -318,7 +389,7 @@ class TestStreamingChat:
         assert ev.model == "command-r-plus"
         assert ev.input_tokens == 140
         assert ev.output_tokens == 70
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_streaming_without_usage_sets_estimated(
         self, tracker: CostTracker, storage: SQLiteStorage
@@ -344,6 +415,162 @@ class TestStreamingChat:
         assert ev.cost_confidence == "estimated"
         assert ev.input_tokens == 0
         assert ev.output_tokens == 0
+
+    def test_stream_snapshots_context_and_terminal_provider_metadata(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.cohere import instrument_cohere
+        from dexcost.models.capability import CapabilityIdentity
+
+        events_stream = _make_stream_events(input_tokens=13, output_tokens=4)
+        terminal = events_stream[-1].response
+        terminal.response_id = "cohere-stream-response-1"
+        terminal.tool_calls = [
+            types.SimpleNamespace(
+                name="private_stream_tool",
+                parameters={"query": "private-stream-tool-input"},
+            )
+        ]
+        Client.chat_stream = staticmethod(lambda **kwargs: iter(events_stream))  # type: ignore[assignment]
+        instrument_cohere(tracker)
+        capability = CapabilityIdentity(name="agent.tool_route", kind="workflow")
+
+        with tracker.task(task_type="cohere_stream_contract") as task:
+            with (
+                capability_context(capability),
+                idempotency_key("private-cohere-stream-idempotency"),
+            ):
+                stream = Client.chat_stream(
+                    model="command-r-plus",
+                    message="private-cohere-stream-prompt",
+                )
+            list(stream)
+
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.details["provider_record_id"] == "cohere-stream-response-1"
+        assert event.details["attribution_capability"] == capability.to_dict()
+        usage = {
+            line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
+        }
+        assert usage == {"input_tokens": "13", "output_tokens": "4", "tool_call_count": "1"}
+        persisted = json.dumps(event.to_dict())
+        for secret in (
+            "private_stream_tool",
+            "private-stream-tool-input",
+            "private-cohere-stream-prompt",
+            "private-cohere-stream-idempotency",
+        ):
+            assert secret not in persisted
+
+    def test_streaming_without_explicit_task_finishes_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        events_stream = _make_stream_events(input_tokens=40, output_tokens=12)
+        Client.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: iter(events_stream)
+        )
+        instrument_cohere(tracker)
+
+        assert len(list(Client.chat_stream(model="command-r-plus", message="Hi"))) == 2
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].task_id == tasks[0].task_id
+        assert events[0].input_tokens == 40
+        assert events[0].details["attribution_operation_status"] == "succeeded"
+        assert tasks[0].status == "success"
+
+    def test_close_records_cancelled_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        Client.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: iter(_make_stream_events())
+        )
+        instrument_cohere(tracker)
+
+        stream = Client.chat_stream(model="command-r-plus", message="Hi")
+        next(stream)
+        stream.close()
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
+    def test_mid_stream_failure_preserves_observed_billed_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        terminal = _make_stream_events(input_tokens=23, output_tokens=7)[-1]
+
+        def failing_stream() -> Generator[Any, None, None]:
+            yield terminal
+            raise RuntimeError("transport closed after usage")
+
+        Client.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: failing_stream()
+        )
+        instrument_cohere(tracker)
+
+        with (
+            tracker.task(task_type="stream_partial_failure") as task,
+            pytest.raises(RuntimeError, match="transport closed"),
+        ):
+            list(Client.chat_stream(model="command-r-plus", message="Hi"))
+
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 23
+        assert events[0].output_tokens == 7
+        assert events[0].cost_confidence == "computed"
+        assert events[0].details["attribution_operation_status"] == "failed"
+        assert events[0].details["error_type"] == "runtimeerror"
+
+    def test_garbage_collected_stream_records_cancelled_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import Client
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        Client.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: iter(_make_stream_events(input_tokens=17, output_tokens=5))
+        )
+        instrument_cohere(tracker)
+
+        stream = Client.chat_stream(model="command-r-plus", message="Hi")
+        next(stream)
+        next(stream)
+        del stream
+        gc.collect()
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 17
+        assert events[0].output_tokens == 5
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +644,7 @@ class TestAsyncChat:
         assert ev.model == "command-r-plus"
         assert ev.input_tokens == 200
         assert ev.output_tokens == 80
-        assert ev.cost_confidence == "exact"
+        assert ev.cost_confidence == "computed"
 
     def test_async_missing_usage(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         from cohere import AsyncClient
@@ -466,6 +693,129 @@ class TestAsyncChat:
         assert result is response
         # An auto-task event should be recorded (auto-task created when no explicit task)
         assert len(storage.query_events()) >= 1
+
+    def test_async_stream_without_explicit_task_finishes_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import AsyncClient
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        AsyncClient.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: _FakeAsyncStream(
+                _make_stream_events(input_tokens=55, output_tokens=21)
+            )
+        )
+        instrument_cohere(tracker)
+
+        async def run() -> None:
+            stream = AsyncClient.chat_stream(model="command-r-plus", message="Hi")
+            assert len([event async for event in stream]) == 2
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].task_id == tasks[0].task_id
+        assert events[0].input_tokens == 55
+        assert events[0].details["attribution_operation_status"] == "succeeded"
+
+    def test_aclose_records_cancelled_auto_task(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import AsyncClient
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        raw_stream = _FakeAsyncStream(_make_stream_events())
+        AsyncClient.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: raw_stream
+        )
+        instrument_cohere(tracker)
+
+        async def run() -> None:
+            stream = AsyncClient.chat_stream(model="command-r-plus", message="Hi")
+            await stream.__anext__()
+            await stream.aclose()
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert raw_stream.closed is True
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
+
+    def test_async_mid_stream_failure_preserves_observed_billed_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import AsyncClient
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        terminal = _make_stream_events(input_tokens=29, output_tokens=11)[-1]
+
+        async def failing_stream() -> Any:
+            yield terminal
+            raise RuntimeError("async transport closed after usage")
+
+        AsyncClient.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: failing_stream()
+        )
+        instrument_cohere(tracker)
+
+        async def run() -> None:
+            async with tracker.task(task_type="async_stream_partial_failure"):
+                with pytest.raises(RuntimeError, match="transport closed"):
+                    stream = AsyncClient.chat_stream(model="command-r-plus", message="Hi")
+                    _ = [event async for event in stream]
+
+        asyncio.run(run())
+
+        tasks = storage.query_tasks(task_type="async_stream_partial_failure")
+        events = storage.query_events(task_id=str(tasks[0].task_id))
+        assert len(events) == 1
+        assert events[0].input_tokens == 29
+        assert events[0].output_tokens == 11
+        assert events[0].cost_confidence == "computed"
+        assert events[0].details["attribution_operation_status"] == "failed"
+        assert events[0].details["error_type"] == "runtimeerror"
+
+    def test_garbage_collected_async_stream_records_cancelled_usage(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from cohere import AsyncClient
+
+        from dexcost.instruments.cohere import instrument_cohere
+
+        AsyncClient.chat_stream = staticmethod(  # type: ignore[assignment]
+            lambda **kwargs: _FakeAsyncStream(
+                _make_stream_events(input_tokens=13, output_tokens=6)
+            )
+        )
+        instrument_cohere(tracker)
+
+        async def run() -> None:
+            stream = AsyncClient.chat_stream(model="command-r-plus", message="Hi")
+            await stream.__anext__()
+            await stream.__anext__()
+            del stream
+            gc.collect()
+
+        asyncio.run(run())
+
+        events = storage.query_events()
+        tasks = storage.query_tasks(task_type="cohere.chat")
+        assert len(events) == 1
+        assert len(tasks) == 1
+        assert events[0].input_tokens == 13
+        assert events[0].output_tokens == 6
+        assert events[0].details["attribution_operation_status"] == "cancelled"
+        assert tasks[0].status == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -520,9 +870,8 @@ class TestInstrumentLifecycle:
         blocked = {k: None for k in list(sys.modules) if k == "cohere" or k.startswith("cohere.")}
         blocked.setdefault("cohere", None)
 
-        with patch.dict(sys.modules, blocked):
-            with pytest.raises(ImportError, match="cohere"):
-                instrument_cohere(tracker)
+        with patch.dict(sys.modules, blocked), pytest.raises(ImportError, match="cohere"):
+            instrument_cohere(tracker)
 
         # Re-install for cleanup
         _install_fake_cohere()

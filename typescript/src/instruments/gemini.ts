@@ -22,6 +22,8 @@ import type { PricingEngine, CostResult } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import { stampAmbientAttribution } from "../core/capabilities.js";
 import { recordProviderFailure } from "./provider-metering.js";
+import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
+import { debugLog } from "../core/debug.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -30,6 +32,7 @@ let _patched = false;
 let _originalGenerateContent: Function | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 let _originalGenerateContentStream: Function | null = null;
+let _patchedPrototype: any = null;
 let _generativeModelClass: any = null;
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
@@ -71,6 +74,7 @@ export async function instrumentGemini(
 
   _originalGenerateContent = GenerativeModelProto.generateContent;
   _originalGenerateContentStream = GenerativeModelProto.generateContentStream;
+  _patchedPrototype = GenerativeModelProto;
   _buffer = buffer;
   _pricing = pricing;
 
@@ -78,6 +82,9 @@ export async function instrumentGemini(
     this: any,
     ...args: any[]
   ): Promise<any> {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _originalGenerateContent!.apply(this, args);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -100,7 +107,8 @@ export async function instrumentGemini(
     const self = this;
     try {
       const response = await suppressNetworkEvent(() =>
-        runWithTask(task, () => _originalGenerateContent!.apply(self, args)),
+        runWithProviderCapture("google", () =>
+          runWithTask(task, () => _originalGenerateContent!.apply(self, args))),
       );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
@@ -130,6 +138,9 @@ export async function instrumentGemini(
     this: any,
     ...args: any[]
   ): Promise<any> {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _originalGenerateContentStream!.apply(this, args);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -151,7 +162,8 @@ export async function instrumentGemini(
     const model: string = self.model ?? self._modelParams?.model ?? "unknown";
     try {
       const streamResult = await suppressNetworkEvent(() =>
-        runWithTask(task, () => _originalGenerateContentStream!.apply(self, args)),
+        runWithProviderCapture("google", () =>
+          runWithTask(task, () => _originalGenerateContentStream!.apply(self, args))),
       );
       return wrapStream(streamResult, model, task, startTime, autoCreated);
     } catch (err) {
@@ -173,17 +185,21 @@ export async function instrumentGemini(
  * Remove the monkey-patches and restore the original methods.
  */
 export function uninstrumentGemini(): void {
-  if (!_patched || !_originalGenerateContent) return;
+  if (!_patched) return;
 
-  if (_generativeModelClass) {
-    _generativeModelClass.prototype.generateContent = _originalGenerateContent;
+  if (_patchedPrototype) {
+    if (_originalGenerateContent) _patchedPrototype.generateContent = _originalGenerateContent;
+    else delete _patchedPrototype.generateContent;
     if (_originalGenerateContentStream) {
-      _generativeModelClass.prototype.generateContentStream = _originalGenerateContentStream;
+      _patchedPrototype.generateContentStream = _originalGenerateContentStream;
+    } else {
+      delete _patchedPrototype.generateContentStream;
     }
   }
 
   _originalGenerateContent = null;
   _originalGenerateContentStream = null;
+  _patchedPrototype = null;
   _buffer = null;
   _pricing = null;
   _patched = false;
@@ -262,86 +278,69 @@ function wrapStream(
   let hasUsage = false;
   let finalized = false;
 
+  const finalize = (status: "succeeded" | "failed" | "cancelled", error?: unknown): void => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      const costResult = hasUsage && _pricing
+        ? _pricing.getCost(model, inputTokens, outputTokens, cachedTokens)
+        : { costUsd: new Decimal(0), costConfidence: "estimated" as const, pricingSource: "unknown" as const };
+      const usageLines = [
+        ...(inputTokens > 0 ? [{ metric: "input_tokens", quantity: String(inputTokens), unit: "Tokens" }] : []),
+        ...(outputTokens > 0 ? [{ metric: "output_tokens", quantity: String(outputTokens), unit: "Tokens" }] : []),
+        ...(cachedTokens > 0 ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }] : []),
+      ];
+      const event = createCostEvent({
+        eventId: randomUUID(), taskId: task.taskId, eventType: "llm_call",
+        costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
+        pricingSource: costResult.pricingSource, provider: "google", model,
+        inputTokens, outputTokens, cachedTokens,
+        latencyMs: Math.round(performance.now() - startTime), isRetry: false,
+        details: {
+          attribution_component: "llm",
+          attribution_operation_name: "google.generate_content_stream",
+          attribution_operation_status: status,
+          attribution_resource_type: "model",
+          attribution_resource_id: model,
+          attribution_usage_lines: usageLines.length > 0
+            ? usageLines
+            : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+          ...(error === undefined ? {} : {
+            attribution_error_type: error instanceof Error ? error.name.toLowerCase() : typeof error,
+          }),
+        },
+      });
+      stampAmbientAttribution(event);
+      if (_buffer?.addEvent(event) !== false) {
+        registerLlmCapture(task.taskId, inputTokens, outputTokens);
+        task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
+        task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
+        task.totalInputTokens += inputTokens;
+        task.totalOutputTokens += outputTokens;
+        task.totalCachedTokens += cachedTokens;
+        _buffer?.upsertTask(task);
+      }
+    } catch (error) {
+      // dexcost errors must never crash the provider stream
+      debugLog("gemini", `failed to finalize stream attribution: ${String(error)}`);
+    }
+    if (autoCreated) finalizeAutoTask(task, status === "succeeded" ? "success" : "failed", _buffer);
+  };
+
   const wrappedStream = {
     [Symbol.asyncIterator]() {
       const iter = stream[Symbol.asyncIterator]();
-      const finalizeTask = (status: "success" | "failed") => {
-        if (finalized) return;
-        finalized = true;
-        if (autoCreated) {
-          finalizeAutoTask(task, status, _buffer);
-        }
-      };
       return {
         async next(): Promise<IteratorResult<any>> {
           let result: IteratorResult<any>;
           try {
             result = await iter.next();
           } catch (err) {
-            if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-              taskType: "gemini.generate_content_stream", provider: "google", service: "gemini",
-              operation: "google.generate_content_stream", component: "llm", model, eventType: "llm_call",
-            }, err, startTime);
-            finalizeTask("failed");
+            finalize("failed", err);
             throw err;
           }
           if (result.done) {
-            if (finalized) return result;
-            finalized = true;
-            try {
-              const latencyMs = Math.round(performance.now() - startTime);
-              if (hasUsage && _pricing && _buffer) {
-                const costResult = _pricing.getCost(model, inputTokens, outputTokens, cachedTokens);
-                const event = createCostEvent({
-                  eventId: randomUUID(),
-                  taskId: task.taskId,
-                  eventType: "llm_call",
-                  costUsd: costResult.costUsd,
-                  costConfidence: costResult.costConfidence,
-                  pricingSource: costResult.pricingSource,
-                  provider: "google",
-                  model,
-                  inputTokens,
-                  outputTokens,
-                  cachedTokens,
-                  latencyMs,
-                  isRetry: false,
-                });
-                stampAmbientAttribution(event);
-                _buffer.addEvent(event);
-                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
-                task.llmCostUsd = task.llmCostUsd.plus(costResult.costUsd);
-                task.totalCostUsd = task.totalCostUsd.plus(costResult.costUsd);
-                task.totalInputTokens += inputTokens;
-                task.totalOutputTokens += outputTokens;
-                task.totalCachedTokens += cachedTokens;
-                _buffer.upsertTask(task);
-              } else if (_buffer) {
-                const event = createCostEvent({
-                  eventId: randomUUID(),
-                  taskId: task.taskId,
-                  eventType: "llm_call",
-                  costUsd: 0,
-                  costConfidence: "estimated",
-                  pricingSource: "unknown",
-                  provider: "google",
-                  model,
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  latencyMs,
-                  isRetry: false,
-                });
-                stampAmbientAttribution(event);
-                _buffer.addEvent(event);
-                registerLlmCapture(task.taskId, event.inputTokens ?? 0, event.outputTokens ?? 0);
-                _buffer.upsertTask(task);
-              }
-            } catch {
-              // dexcost errors must never crash user code
-            }
-            if (autoCreated) {
-              finalizeAutoTask(task, "success", _buffer);
-            }
+            finalize("succeeded");
             return result;
           }
 
@@ -355,13 +354,25 @@ function wrapStream(
           return result;
         },
         async return(value?: any): Promise<IteratorResult<any>> {
-          finalizeTask("success");
-          return iter.return ? await iter.return(value) : { done: true as const, value };
+          try {
+            const result = iter.return ? await iter.return(value) : { done: true as const, value };
+            finalize("cancelled");
+            return result;
+          } catch (error) {
+            finalize("failed", error);
+            throw error;
+          }
         },
         async throw(error?: any): Promise<IteratorResult<any>> {
-          finalizeTask("failed");
-          if (iter.throw) return await iter.throw(error);
-          throw error;
+          try {
+            if (!iter.throw) throw error;
+            const result = await iter.throw(error);
+            if (result.done) finalize("failed", error);
+            return result;
+          } catch (raised) {
+            finalize("failed", raised);
+            throw raised;
+          }
         },
       };
     },

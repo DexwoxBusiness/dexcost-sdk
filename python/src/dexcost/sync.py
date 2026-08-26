@@ -122,6 +122,8 @@ class SyncWorker:
         self._last_purge: float = 0.0
         self._last_conversion_warning_at: float = 0.0
         self._last_conversion_warning_key: tuple[str, ...] = ()
+        self._quarantine_recovery_attempted = False
+        self._quarantine_recovery_active = False
 
         self._thread: threading.Thread | None = None
 
@@ -199,9 +201,7 @@ class SyncWorker:
                 pending_revenues=_count(counts, "pending_revenues"),
                 quarantined_revenues=_count(counts, "quarantined_revenues"),
                 pending_provider_jobs=_count(counts, "pending_provider_jobs"),
-                quarantined_provider_jobs=_count(
-                    counts, "quarantined_provider_jobs"
-                ),
+                quarantined_provider_jobs=_count(counts, "quarantined_provider_jobs"),
                 oldest_pending_at=_oldest(counts),
                 last_attempt_at=self._last_attempt_at,
                 last_success_at=self._last_success_at,
@@ -212,9 +212,7 @@ class SyncWorker:
                 successful_batches=self._successful_batches,
                 failed_batches=self._failed_batches,
                 delivered_records=self._delivered_records,
-                backoff_seconds=(
-                    self._backoff if self._worker_state == "backoff" else 0
-                ),
+                backoff_seconds=(self._backoff if self._worker_state == "backoff" else 0),
             )
 
     def _set_worker_state(self, state: DeliveryWorkerState) -> None:
@@ -372,11 +370,10 @@ class SyncWorker:
             force_finalize_sessions = self._finalize_sessions_requested
             self._finalize_sessions_requested = False
         get_session_manager().finalize_idle_sessions(
-            idle_seconds=(
-                0.0 if force_finalize_sessions else _AUTO_SESSION_IDLE_SECONDS
-            ),
+            idle_seconds=(0.0 if force_finalize_sessions else _AUTO_SESSION_IDLE_SECONDS),
             storage=st,
         )
+        self._recover_quarantined_events(st)
         self._purge_if_due(st)
         batch_size = max(1, self._config.batch_size)
 
@@ -433,9 +430,7 @@ class SyncWorker:
         else:
             # Backend without task sync tracking — fall back to task IDs
             # referenced by this event batch.
-            tasks = st.query_tasks_for_sync(
-                list({str(event["task_id"]) for event in event_dicts})
-            )
+            tasks = st.query_tasks_for_sync(list({str(event["task_id"]) for event in event_dicts}))
         task_dicts: list[dict[str, Any]] = [self._prepare_task_dict(t) for t in tasks]
         business_identities = [
             identity
@@ -464,15 +459,14 @@ class SyncWorker:
         provider_job_dicts = [
             cast(
                 dict[str, Any],
-                job.to_attribution_observation(
-                    environment=self._config.environment
-                ),
+                job.to_attribution_observation(environment=self._config.environment),
             )
             for job in provider_jobs
         ]
         event_dicts.extend(provider_job_dicts)
 
         if not event_dicts and not task_dicts and not outcome_dicts and not revenue_dicts:
+            self._finish_quarantine_recovery_if_drained(st)
             self._raise_conversion_failure(failed_event_ids)
             return False
 
@@ -497,9 +491,7 @@ class SyncWorker:
         # safety net for any future path that returns success without a leaf.
         event_ids = [event["event_id"] for event in event_dicts]
         st.mark_synced(event_ids)
-        provider_job_revisions = [
-            (str(job.event_id), job.revision) for job in provider_jobs
-        ]
+        provider_job_revisions = [(str(job.event_id), job.revision) for job in provider_jobs]
         mark_provider_jobs = getattr(st, "mark_provider_jobs_synced", None)
         if provider_job_revisions and callable(mark_provider_jobs):
             mark_provider_jobs(provider_job_revisions)
@@ -545,11 +537,58 @@ class SyncWorker:
             + len(revenue_dicts)
         )
 
+        self._finish_quarantine_recovery_if_drained(st)
         self._raise_conversion_failure(failed_event_ids)
         return True
 
+    def _recover_quarantined_events(self, storage: StorageBackend) -> None:
+        """Requeue retained converter failures once per worker lifetime.
+
+        Converter defects are fixed by SDK upgrades. Replaying the durable
+        quarantine after startup lets corrected rows enter the ordinary,
+        idempotent delivery path without requiring users to edit SQLite files.
+        """
+        if self._quarantine_recovery_attempted:
+            return
+        self._quarantine_recovery_attempted = True
+        restored = 0
+        requeue = getattr(storage, "requeue_quarantined_events", None)
+        if callable(requeue):
+            try:
+                restored = int(requeue())
+            except Exception:
+                _log.warning("requeue_quarantined_events failed", exc_info=True)
+                return
+        else:
+            # Compatibility path for third-party storage backends released
+            # before the atomic requeue operation was added. Only rows that
+            # the current converter can represent are requeued.
+            query = getattr(storage, "query_quarantined_events", None)
+            if not callable(query):
+                return
+            for event in query(limit=_MAX_CONVERSION_SCAN):
+                if self._prepare_event_dict(event) is None:
+                    continue
+                storage.update_event(event)
+                restored += 1
+        if restored:
+            self._quarantine_recovery_active = True
+            _log.info(
+                "Requeued %d retained attribution event(s) after converter upgrade",
+                restored,
+            )
+
+    def _finish_quarantine_recovery_if_drained(self, storage: StorageBackend) -> None:
+        if not self._quarantine_recovery_active:
+            return
+        try:
+            if not storage.query_events_for_sync(limit=1):
+                self._quarantine_recovery_active = False
+        except Exception:
+            _log.debug("Could not inspect quarantine recovery progress", exc_info=True)
+
     def _purge_if_due(self, storage: StorageBackend) -> None:
-        """Run age-based cleanup even when there is nothing to upload."""
+        """Clean acknowledged events without deleting unsent attribution."""
         now = time.monotonic()
         if now - self._last_purge < _PURGE_INTERVAL:
             return
@@ -560,13 +599,6 @@ class SyncWorker:
                 _log.info("Purged %d old synced events", deleted)
         except Exception:
             _log.warning("purge_synced failed", exc_info=True)
-
-        try:
-            stale = storage.purge_old_pending(max_age_days=7)
-            if stale:
-                _log.info("Purged %d old pending/quarantined events (>7 days)", stale)
-        except Exception:
-            _log.warning("purge_old_pending failed", exc_info=True)
 
     def _warn_conversion_failure(self, exc: _AttributionConversionError) -> None:
         """Throttle duplicate background warnings for the same event set."""
@@ -629,9 +661,7 @@ class SyncWorker:
                 ]
         return cast(
             dict[str, Any] | None,
-            to_attribution_observation_v3(
-                sanitized, environment=self._config.environment
-            ),
+            to_attribution_observation_v3(sanitized, environment=self._config.environment),
         )
 
     def _prepare_task_dict(self, task: Any) -> dict[str, Any]:
@@ -744,9 +774,7 @@ class SyncWorker:
                 ]
                 if event_ids:
                     storage.mark_synced(event_ids)
-                    mark_provider_jobs = getattr(
-                        storage, "mark_provider_jobs_synced", None
-                    )
+                    mark_provider_jobs = getattr(storage, "mark_provider_jobs_synced", None)
                     if callable(mark_provider_jobs):
                         provider_job_ids = [
                             (
@@ -754,9 +782,7 @@ class SyncWorker:
                                 int(cast(dict[str, Any], lifecycle)["revision"]),
                             )
                             for event in events
-                            if isinstance(
-                                lifecycle := event.get("lifecycle"), dict
-                            )
+                            if isinstance(lifecycle := event.get("lifecycle"), dict)
                             and isinstance(lifecycle.get("revision"), int)
                         ]
                         if provider_job_ids:
@@ -788,17 +814,13 @@ class SyncWorker:
             )
             if not first_posted:
                 return False
-            return self._post_with_split(
-                events[mid:], [], [], depth + 1, storage, [], []
-            )
+            return self._post_with_split(events[mid:], [], [], depth + 1, storage, [], [])
 
         if len(tasks) > 1:
             mid = len(tasks) // 2
             first_task_ids = {str(task["task_id"]) for task in tasks[:mid]}
             first_identities = [
-                identity
-                for identity in identities
-                if str(identity["task_id"]) in first_task_ids
+                identity for identity in identities if str(identity["task_id"]) in first_task_ids
             ]
             second_identities = [
                 identity
@@ -871,15 +893,11 @@ class SyncWorker:
             )
             if not first_posted:
                 return False
-            return self._post_with_split(
-                [], [], [], depth + 1, storage, [], revenues[mid:]
-            )
+            return self._post_with_split([], [], [], depth + 1, storage, [], revenues[mid:])
 
         durable_count = len(events) + len(tasks) + len(outcome_revisions) + len(revenues)
         if durable_count > 1 and tasks:
-            task_posted = self._post_with_split(
-                [], tasks, identities, depth + 1, storage, [], []
-            )
+            task_posted = self._post_with_split([], tasks, identities, depth + 1, storage, [], [])
             if not task_posted:
                 return False
             return self._post_with_split(
@@ -898,19 +916,13 @@ class SyncWorker:
             )
             if not outcome_posted:
                 return False
-            return self._post_with_split(
-                events, [], [], depth + 1, storage, [], revenues
-            )
+            return self._post_with_split(events, [], [], depth + 1, storage, [], revenues)
 
         if durable_count > 1 and revenues:
-            revenue_posted = self._post_with_split(
-                [], [], [], depth + 1, storage, [], revenues
-            )
+            revenue_posted = self._post_with_split([], [], [], depth + 1, storage, [], revenues)
             if not revenue_posted:
                 return False
-            return self._post_with_split(
-                events, [], [], depth + 1, storage, [], []
-            )
+            return self._post_with_split(events, [], [], depth + 1, storage, [], [])
 
         if len(events) == 1:
             # A permanently oversized record cannot be delivered. Acknowledge
@@ -921,19 +933,13 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_synced([str(events[0]["event_id"])])
-                mark_provider_jobs = getattr(
-                    storage, "mark_provider_jobs_quarantined", None
-                )
+                mark_provider_jobs = getattr(storage, "mark_provider_jobs_quarantined", None)
                 if callable(mark_provider_jobs):
                     mark_provider_jobs(
                         [
                             (
                                 str(events[0]["event_id"]),
-                                int(
-                                    cast(dict[str, Any], events[0]["lifecycle"])[
-                                        "revision"
-                                    ]
-                                ),
+                                int(cast(dict[str, Any], events[0]["lifecycle"])["revision"]),
                             )
                         ]
                     )

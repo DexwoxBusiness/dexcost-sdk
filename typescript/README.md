@@ -112,16 +112,16 @@ dexcost ships **13 provider instruments** plus the **global fetch API**.
 | Provider | Package | Auto-Patched |
 |----------|---------|-------------|
 | OpenAI | `openai` | `chat.completions.create` |
-| Anthropic | `@anthropic-ai/sdk` | `messages.create` |
-| Vercel AI | `ai` | Vercel AI SDK functions |
+| Anthropic | `@anthropic-ai/sdk` | messages, streams, and Message Batches |
+| Vercel AI | `ai` | generate, stream, and rerank |
 | Google Gemini | `@google/generative-ai` | `generateContent` |
-| AWS Bedrock | `@aws-sdk/client-bedrock-runtime` | `invokeModel` |
-| Cohere | `cohere-ai` | `chat` / `generate` |
+| AWS Bedrock | `@aws-sdk/client-bedrock-runtime` | chat, embeddings, images, rerank, streams, async jobs |
+| Cohere | `cohere-ai` | V1/V2 chat, generate, embed, rerank, and streams |
 | Google Gen AI | `@google/genai` | generate, stream, live/realtime surfaces |
 | MCP | `@modelcontextprotocol/sdk` | tool calls with capability identity |
-| LiteLLM | `litellm`-compatible Node surfaces | completion and streaming usage |
+| LiteLLM | LiteLLM Proxy via `openai`; optional injected compatible module | inference/media/rerank usage and durable jobs with upstream identity |
 | Ollama | `ollama` | chat/generate and streaming |
-| OpenRouter | `@openrouter/sdk` and OpenAI-compatible HTTP | provider cost, upstream cost, tokens, generation ID |
+| OpenRouter | `@openrouter/sdk`, `@openrouter/agent`, and OpenAI-compatible HTTP | all current inference/media resources, streams, video jobs, generation reconciliation, provider/upstream cost, BYOK/tier/upstream identity |
 | Perplexity | `@perplexity-ai/perplexity_ai` and HTTP | chat/search usage and request IDs |
 | fal | `@fal-ai/client` | queue/subscribe/run lifecycle and provider jobs |
 
@@ -129,6 +129,24 @@ Provider packages are **peer dependencies** — install only the ones you use.
 dexcost detects them at runtime and patches automatically. See the
 [provider compatibility matrix](PROVIDER-COMPATIBILITY.md) for lifecycle,
 streaming, identity, cost, and privacy boundaries.
+
+> **LiteLLM Proxy:** LiteLLM's documented production TypeScript integration is
+> its OpenAI-compatible Proxy. Configure `DEXCOST_LITELLM_PROXY_URL` (or
+> `LITELLM_PROXY_URL`), use the official `openai` client with that base URL,
+> and leave the `openai` instrument enabled. DexCost separates the routed
+> upstream provider from the LiteLLM gateway and covers streaming chat,
+> Responses, embeddings, media, batches, video, and fine-tuning lifecycles.
+> `instrumentModules.litellm` is only for an application-supplied compatible
+> JavaScript module; no general LiteLLM inference npm package is required.
+
+> **OpenRouter Agent:** Current `@openrouter/agent` supports both the ESM-only
+> standalone `callModel(client, ...)` function and an `OpenRouter` instance
+> whose `callModel` is instance-owned. Standalone runs are metered through each
+> underlying `@openrouter/sdk` call—including intermediate tool-loop rounds.
+> To meter the Agent instance surface directly, pass that exact instance as
+> `instrumentModules.openrouter`. If a bundler duplicates the platform SDK,
+> pass the application’s actual `OpenRouter` SDK module/class instead. DexCost
+> never replaces the immutable Agent module export.
 
 > **Vercel AI SDK v5+:** the `ai` package ships ESM-only builds since v5, which
 > **cannot be monkey-patched** (you will see a one-line warning at init). Calls
@@ -236,6 +254,31 @@ all seven pricing/observer catalog families refresh as one signed, sequenced
 release from the control plane and fall back to a durable last-known-good
 release. The bundled catalogs remain a full bootstrap/offline fallback until
 production release telemetry proves that slimming is safe.
+Signed service releases may also declare exact MCP tool aliases;
+`ServiceCatalog.lookupMcpTool()` resolves them without fuzzy or
+case-insensitive matching and rejects duplicate alias ownership atomically.
+
+### Direct LLM pricing
+
+`CostTracker.getCost()` and `tracker.pricing.getCost()` expose the same
+catalog calculation as Python. Anthropic input, cache-read, ordinary
+cache-creation, and one-hour cache-creation quantities remain independent
+billable buckets:
+
+```typescript
+const priced = tracker.getCost(
+  'anthropic/claude-sonnet-4-5',
+  1_000, // input tokens
+  200,   // output tokens
+  500,   // cache-read tokens
+  100,   // cache-creation tokens
+  50,    // one-hour cache-creation tokens
+);
+```
+
+If a disjoint cache bucket is reported but its catalog rate is absent, the
+amount remains conservatively billable at the input rate and the result is
+marked with `costConfidence: 'unknown'` instead of silently dropping usage.
 
 Require signed authority with rotated raw Ed25519 public keys encoded as
 unpadded base64url. Supplying keys requires signatures by default; setting the
@@ -404,6 +447,20 @@ generic outcome value. Tool calls carry operation/attempt/idempotency and
 capability identity. Long-running provider work (for example queued media
 generation) is represented by `ProviderJobRevision` lifecycle snapshots and
 only the latest terminal revision rolls into task cost.
+
+```typescript
+import { amendOutcome, getOutcomeHistory } from '@dexcost/sdk';
+
+const corrected = amendOutcome(outcome.outcomeId, {
+  state: 'missed',
+  value: false,
+  expectedRevision: 1, // optimistic guard against a concurrent correction
+});
+const completeHistory = getOutcomeHistory(corrected.outcomeId);
+```
+
+The tracker and task-bound handles expose the same `amendOutcome` operation;
+the task-bound form additionally rejects outcomes owned by another task.
 
 ### Customer Attribution
 

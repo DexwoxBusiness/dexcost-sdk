@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { Decimal, eventToDict } from "../core/models.js";
 import type { CostEvent, Task } from "../core/models.js";
 import { equivalentIdempotentEvent } from "../core/idempotency.js";
-import type { OutcomeRevision, RevenueRevision } from "../core/business.js";
+import { OutcomeRevision, RevenueRevision } from "../core/business.js";
 import { providerJobFromDict, type ProviderJobRevision } from "../core/provider-jobs.js";
 import { applyEventPricingProvenance } from "../pricing/explain.js";
 
@@ -445,6 +445,17 @@ class MemoryBufferStore {
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  requeueQuarantinedEvents(): number {
+    let restored = 0;
+    for (const entry of this._events.values()) {
+      if (entry.syncStatus !== "quarantined") continue;
+      entry.syncStatus = "pending";
+      entry.syncedAt = null;
+      restored += 1;
+    }
+    return restored;
   }
 
   getTask(taskId: string): Task | undefined {
@@ -977,6 +988,19 @@ export class EventBuffer {
     return rows.map(rowToEvent);
   }
 
+  /** Requeue retained converter failures after an SDK upgrade. */
+  requeueQuarantinedEvents(): number {
+    if (this._mem) return this._mem.requeueQuarantinedEvents();
+    if (!this._db) return 0;
+    try {
+      return this._db
+        .prepare("UPDATE events SET sync_status = 'pending' WHERE sync_status = 'quarantined'")
+        .run().changes;
+    } catch {
+      return 0;
+    }
+  }
+
   /**
    * Retrieve a task by ID, or undefined if not found.
    */
@@ -1162,12 +1186,10 @@ export class EventBuffer {
   }
 
   /**
-   * Delete pending or quarantined events older than `maxAgeDays` and VACUUM.
-   *
-   * Safety net for events that can never be synced (rejected API key,
-   * permanently-down endpoint, etc.) so the local buffer cannot grow
-   * unbounded. Mirrors the Python SDK's `purge_old_pending` (default 7
-   * days). Returns the number of deleted rows.
+   * Explicitly delete pending or quarantined events older than `maxAgeDays`.
+   * Background delivery never calls this destructive maintenance operation:
+   * financial attribution waiting on credentials, transport recovery, or a
+   * converter upgrade remains durable until the operator chooses otherwise.
    */
   purgeOldPending(maxAgeDays: number = 7): number {
     if (this._mem) return this._mem.purgeOldPending(maxAgeDays);
@@ -1247,21 +1269,77 @@ export class EventBuffer {
   }
 
   insertOutcomeRevision(revision: OutcomeRevision): void {
-    this._insertLedger({
+    const row: LedgerRow = {
       kind: "outcome", entity_id: revision.outcomeId, revision: revision.revision,
       task_id: revision.taskId, provider: null, service: null, record_id: null,
       payload: JSON.stringify(revision.toDict()), sync_status: "pending",
       captured_at: revision.observedAt.toISOString(),
-    });
+    };
+    const history = this._ledgerRows("outcome", revision.outcomeId);
+    if (history.some((item) => item.revision === revision.revision)) {
+      this._insertLedger(row);
+      return;
+    }
+    const previousRow = history.at(-1);
+    if (previousRow !== undefined) {
+      const previous = OutcomeRevision.fromDict(
+        JSON.parse(previousRow.payload) as Record<string, unknown>,
+      );
+      if (previous.taskId !== revision.taskId || previous.name !== revision.name) {
+        throw new Error("an outcome cannot change taskId or name across revisions");
+      }
+      const allowed: Record<string, ReadonlySet<string>> = {
+        pending: new Set(["pending", "achieved", "missed", "voided"]),
+        achieved: new Set(["achieved", "missed", "voided"]),
+        missed: new Set(["missed", "achieved", "voided"]),
+        voided: new Set(),
+      };
+      if (!allowed[previous.state]?.has(revision.state)) {
+        throw new Error(`invalid outcome lifecycle transition ${previous.state} -> ${revision.state}`);
+      }
+    }
+    this._insertLedger(row);
   }
 
   insertRevenueRevision(revision: RevenueRevision): void {
-    this._insertLedger({
+    const row: LedgerRow = {
       kind: "revenue", entity_id: revision.revenueId, revision: revision.revision,
       task_id: revision.taskId, provider: null, service: null, record_id: null,
       payload: JSON.stringify(revision.toDict()), sync_status: "pending",
       captured_at: revision.observedAt.toISOString(),
-    });
+    };
+    const history = this._ledgerRows("revenue", revision.revenueId);
+    if (history.some((item) => item.revision === revision.revision)) {
+      this._insertLedger(row);
+      return;
+    }
+    const previousRow = history.at(-1);
+    if (previousRow !== undefined) {
+      const previous = RevenueRevision.fromDict(
+        JSON.parse(previousRow.payload) as Record<string, unknown>,
+      );
+      const immutableChanged = previous.taskId !== revision.taskId
+        || previous.outcomeId !== revision.outcomeId
+        || previous.source.type !== revision.source.type
+        || previous.source.recordId !== revision.source.recordId;
+      if (immutableChanged) {
+        throw new Error("revenue cannot change taskId, outcomeId, or source across revisions");
+      }
+      const allowed: Record<string, ReadonlySet<string>> = {
+        pending: new Set(["pending", "provisional", "recognized", "voided"]),
+        provisional: new Set(["provisional", "recognized", "voided"]),
+        recognized: new Set(["recognized", "voided"]),
+        voided: new Set(),
+      };
+      if (!allowed[previous.state]?.has(revision.state)) {
+        throw new Error(`invalid revenue lifecycle transition ${previous.state} -> ${revision.state}`);
+      }
+      if (previous.amount !== undefined && revision.amount !== undefined &&
+          previous.amount.currency !== revision.amount.currency) {
+        throw new Error("revenue currency cannot change across revisions; void it and create a new revenueId");
+      }
+    }
+    this._insertLedger(row);
   }
 
   insertProviderJobRevision(revision: ProviderJobRevision): void {

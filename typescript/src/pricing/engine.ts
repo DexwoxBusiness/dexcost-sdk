@@ -38,7 +38,9 @@ interface ModelPricing {
   output_cost_per_token?: number;
   cache_read_input_token_cost?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_1hr?: number;
   litellm_provider?: string;
+  mode?: string;
   [field: string]: unknown;
 }
 
@@ -127,6 +129,11 @@ const METERED_RATE_FIELDS: Record<string, ReadonlyArray<readonly [string, Decima
   batch_input_tokens: [["input_cost_per_token_batches", new Decimal(1)]],
   batch_output_tokens: [["output_cost_per_token_batches", new Decimal(1)]],
   batch_reasoning_output_tokens: [["output_cost_per_token_batches", new Decimal(1)]],
+  anthropic_batch_input_tokens: [["input_cost_per_token", new Decimal(2)]],
+  anthropic_batch_output_tokens: [["output_cost_per_token", new Decimal(2)]],
+  anthropic_batch_cache_read_input_tokens: [["cache_read_input_token_cost", new Decimal(2)]],
+  anthropic_batch_cache_write_input_tokens: [["cache_creation_input_token_cost", new Decimal(2)]],
+  anthropic_batch_cache_write_input_tokens_1h: [["cache_creation_input_token_cost_above_1hr", new Decimal(2)]],
 };
 
 function meteredQuantity(dimension: string, value: unknown): Decimal {
@@ -178,6 +185,16 @@ export class PricingEngine {
     return this._pricingVersion;
   }
 
+  /** Return the catalog-declared operation mode for provider routing. */
+  modelMode(model: string, modelCandidates: readonly string[] = []): string | undefined {
+    for (const candidate of [...modelCandidates, model]) {
+      const resolved = this._resolveModelEntry(candidate);
+      const mode = resolved?.[1].mode;
+      if (typeof mode === "string" && mode.length > 0) return mode;
+    }
+    return undefined;
+  }
+
   /**
    * Atomically replace the model catalog after a release has been fully
    * validated. The provider hot path only reads this in-memory snapshot.
@@ -207,7 +224,8 @@ export class PricingEngine {
     inputTokens: number,
     outputTokens: number,
     cachedTokens: number = 0,
-    cacheCreationTokens: number = 0
+    cacheCreationTokens: number = 0,
+    cacheCreationTokens1h: number = 0,
   ): CostResult {
     const custom = this._customPricing.get(model);
     if (custom) {
@@ -217,10 +235,11 @@ export class PricingEngine {
       const safeOutput = Math.max(0, outputTokens);
       const safeCached = Math.max(0, cachedTokens);
       const safeCreation = Math.max(0, cacheCreationTokens);
+      const safeCreation1h = Math.max(0, cacheCreationTokens1h);
       const hasUnpricedDisjointCache = usesDisjointCacheBuckets(model)
-        && (safeCached > 0 || safeCreation > 0);
+        && (safeCached > 0 || safeCreation > 0 || safeCreation1h > 0);
       const billableInput = safeInput
-        + (hasUnpricedDisjointCache ? safeCached + safeCreation : 0);
+        + (hasUnpricedDisjointCache ? safeCached + safeCreation + safeCreation1h : 0);
       const cost = dec(custom.inputPer1k)
         .times(billableInput)
         .dividedBy(1000)
@@ -247,28 +266,35 @@ export class PricingEngine {
     const outputRate = dec(info.output_cost_per_token ?? 0);
     const hasCacheReadRate = info.cache_read_input_token_cost !== undefined;
     const hasCacheCreationRate = info.cache_creation_input_token_cost !== undefined;
+    const hasCacheCreation1hRate = info.cache_creation_input_token_cost_above_1hr !== undefined;
     const cacheReadRate = dec(info.cache_read_input_token_cost ?? info.input_cost_per_token ?? 0);
     const cacheCreationRate = dec(
       info.cache_creation_input_token_cost ?? info.input_cost_per_token ?? 0,
+    );
+    const cacheCreation1hRate = dec(
+      info.cache_creation_input_token_cost_above_1hr ?? info.input_cost_per_token ?? 0,
     );
     const safeInput = Math.max(0, inputTokens);
     const safeOutput = Math.max(0, outputTokens);
     const safeCached = Math.max(0, cachedTokens);
     const safeCreation = Math.max(0, cacheCreationTokens);
+    const safeCreation1h = Math.max(0, cacheCreationTokens1h);
 
     let cost: Decimal;
     let costConfidence: "computed" | "unknown" = "computed";
     if (usesDisjointCacheBuckets(model, info.litellm_provider)) {
-      // Anthropic usage exposes three independent input buckets. Subtracting
+      // Anthropic usage exposes four independent input buckets. Subtracting
       // cache tokens from input_tokens drops most of the billable usage.
       cost = inputRate
         .times(safeInput)
         .plus(cacheReadRate.times(safeCached))
         .plus(cacheCreationRate.times(safeCreation))
+        .plus(cacheCreation1hRate.times(safeCreation1h))
         .plus(outputRate.times(safeOutput));
       if (
         (safeCached > 0 && !hasCacheReadRate)
         || (safeCreation > 0 && !hasCacheCreationRate)
+        || (safeCreation1h > 0 && !hasCacheCreation1hRate)
       ) {
         costConfidence = "unknown";
       }
@@ -282,11 +308,16 @@ export class PricingEngine {
       const effectiveCreation = hasCacheCreationRate
         ? Math.min(safeCreation, remaining)
         : 0;
-      const nonCachedInput = remaining - effectiveCreation;
+      const remainingAfterCreation = remaining - effectiveCreation;
+      const effectiveCreation1h = hasCacheCreation1hRate
+        ? Math.min(safeCreation1h, remainingAfterCreation)
+        : 0;
+      const nonCachedInput = remainingAfterCreation - effectiveCreation1h;
       cost = inputRate
         .times(nonCachedInput)
         .plus(cacheReadRate.times(effectiveCached))
         .plus(cacheCreationRate.times(effectiveCreation))
+        .plus(cacheCreation1hRate.times(effectiveCreation1h))
         .plus(outputRate.times(safeOutput));
     }
 

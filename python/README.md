@@ -10,7 +10,7 @@ dexcost attributes LLM calls, non-LLM service fees, and retry waste to customers
 pip install dexcost
 ```
 
-With all LLM provider SDKs:
+With every supported provider, framework, and GPU integration:
 
 ```bash
 pip install dexcost[all]
@@ -30,6 +30,7 @@ pip install "dexcost[ollama]"
 pip install "dexcost[openrouter]"
 pip install "dexcost[perplexity]"
 pip install "dexcost[fal]"
+pip install "dexcost[gpu]"  # NVIDIA NVML task-level GPU accounting
 ```
 
 The Gemini extra currently supports `google-genai` 1.x and 2.x and is bounded
@@ -251,11 +252,11 @@ dexcost auto-instruments **10 AI provider SDKs**, the MCP tool client, and **5 H
 | Provider | Package | Auto-Patched Method |
 |----------|---------|-------------------|
 | OpenAI / Azure / compatible gateways | `openai` | Chat/legacy Completions, structured `parse`, Responses, embeddings, image generation/edit/variation, audio transcription/translation/speech, Azure host/deployment routing, and OpenRouter/Perplexity-compatible routing (sync + async, including native streams) |
-| Anthropic | `anthropic` | `messages.create` (sync + async) |
-| LiteLLM | `litellm` | `completion` / `acompletion` |
+| Anthropic | `anthropic` | Current `messages.create` sync/async, native streams, cache buckets, and tool calls |
+| LiteLLM | `litellm` | Language/Responses, embeddings, image generation/edit/variation, transcription/speech, rerank, moderation, search, OCR, and background Responses/video/batch/fine-tuning jobs (sync + async where exposed, including terminal stream and job reconciliation) |
 | Google Gemini / Enterprise | `google-genai` | `Models` and `AsyncModels`: content generation/streaming, embeddings, image generation/upscale/edit/recontext/segmentation; foreground Interactions sync/async/SSE |
-| AWS Bedrock | `boto3` (botocore) | `invoke_model` |
-| Cohere | `cohere` | `chat` / `chat_stream` (sync + async) |
+| AWS Bedrock | `boto3`/botocore; official Smithy runtime on Python 3.12+ | Current Converse/streams; InvokeModel chat, embeddings, images, and rerank; guardrails, CountTokens, durable async media jobs, and Nova Sonic bidirectional speech; exact regional/profile identity, cache TTL buckets, tools, routing, service-tier/latency dimensions, and private ARN hashing |
+| Cohere | `cohere` | V1/V2 `chat`, `chat_stream`, `embed`, and `rerank` (sync + async) |
 | Ollama | `ollama` | Module singleton, `Client`, and `AsyncClient` chat/generate streams, current and legacy embeddings, web search, and web fetch |
 | OpenRouter | `openrouter` | Chat, Responses, embeddings, images, STT, TTS, rerank, video jobs, and generation-cost reconciliation (sync + async and native streams) |
 | Perplexity | `perplexityai` | Agent Responses and background jobs, Sonar chat, Search, embeddings/contextualized embeddings, and native streams (sync + async) |
@@ -264,8 +265,10 @@ dexcost auto-instruments **10 AI provider SDKs**, the MCP tool client, and **5 H
 Every supported AI call inside a tracked task is captured automatically.
 LiteLLM also preserves canonical routed-provider identity for OpenAI,
 Anthropic, Google/Vertex, Azure/Azure AI, Bedrock, Cohere, Hugging Face,
-Together, Ollama, Mistral, Groq, OpenRouter, Perplexity, and fal.ai. OpenAI and
-Google multimodal paths preserve native text/image/audio/video/cache,
+Together, Ollama, Mistral, Groq, OpenRouter, Perplexity, fal.ai, xAI,
+DeepSeek, Fireworks AI, Nvidia NIM, nano-gpt, and other explicit LiteLLM
+provider/model routes. OpenAI and Google multimodal paths preserve native
+text/image/audio/video/cache,
 reasoning, tool-input, character, and media-count quantities, calculate against
 the active catalog, and retain only quantities and opaque provider IDs. Prompts,
 media, transcripts, tool payloads, and generated output are not stored. Google
@@ -316,6 +319,12 @@ dexcost.import_catalog_bundle("dexcost-catalog-release.dcr.json")
 
 Import never bypasses signature, expiry, downgrade, size, hash, schema, or
 semantic checks. The previous release remains available if import fails.
+When the packaged production trust document has no keys, remote catalog refresh
+and bundle activation stay disabled and bundled pricing remains active. This
+state is exposed by `dexcost.catalog_status().signature_verification` as
+`"disabled_no_trust"`; an empty trust document is never treated as permission
+to accept unsigned catalogs. `catalog_require_signature=False` is an explicit,
+temporary migration override and enables unsigned refresh deliberately.
 
 ### Controlling Instrumentation
 
@@ -342,7 +351,7 @@ dexcost.init(track_http=False)
 | `batch_size` | `int` | `100` | Events per sync batch |
 | `flush_interval` | `float` | `5.0` | Seconds between sync pushes |
 | `catalog_trusted_keys` | `Mapping[str, str \| bytes]` | env or packaged production trust | Rotated Ed25519 public keys by manifest key ID |
-| `catalog_require_signature` | `bool \| None` | `True` with keys; otherwise `False` | Reject unsigned network releases and durable cache entries |
+| `catalog_require_signature` | `bool \| None` | `True` with keys; remote refresh disabled without keys | Reject unsigned network releases and durable cache entries; `False` is an explicit migration override |
 | `catalog_refresh_interval` | `float` | 24 hours | Background release refresh interval in seconds |
 | `catalog_refresh_jitter` | `float` | `0.1` | Random refresh spread from 0 through 0.5 |
 | `redact_fields` | `list[str]` | `None` | Field names to redact from event details |
@@ -359,7 +368,7 @@ dexcost.init(track_http=False)
 | `DEXCOST_API_KEY` | API key (if not passed to `init()`) |
 | `DEXCOST_ENV` | Deployment environment emitted on every observation. Set to `development` for dev console output |
 | `DEXCOST_CATALOG_TRUSTED_KEYS` | Strict JSON object mapping 1–8 key IDs to unpadded base64url Ed25519 public keys; ignored when `catalog_trusted_keys` is passed |
-| `DEXCOST_CATALOG_REQUIRE_SIGNATURE` | Strict `true` or `false`; used only when `catalog_require_signature` is omitted. Defaults to `true` whenever trusted keys exist |
+| `DEXCOST_CATALOG_REQUIRE_SIGNATURE` | Strict `true` or `false`; used only when `catalog_require_signature` is omitted. Defaults to `true` with trusted keys; without keys remote refresh remains disabled unless this is explicitly `false` |
 
 Catalog trust resolves from an explicit option, then the environment, then the
 public trust document shipped in the package. Private signing keys are never

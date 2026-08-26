@@ -11,6 +11,7 @@ from dexcost.config import (
     _DEFAULT_ENDPOINT,
     DexcostConfig,
     InvalidAPIKeyError,
+    catalog_unsigned_override_requested,
     resolve_catalog_trust_policy,
     validate_api_key,
 )
@@ -114,9 +115,25 @@ class TestDexcostConfig:
 
 
 class TestCatalogTrustPolicy:
-    def test_no_configuration_keeps_unsigned_bootstrap_compatibility(self) -> None:
+    def test_no_configuration_requires_signatures_from_bundled_production_trust(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
-            assert resolve_catalog_trust_policy(None, None) == ({}, False)
+            trusted_keys, require_signature = resolve_catalog_trust_policy(None, None)
+            assert set(trusted_keys) == {
+                "catalog-prod-2026-08-a",
+                "catalog-prod-2026-08-b",
+            }
+            assert require_signature is True
+            assert catalog_unsigned_override_requested(None) is False
+
+    def test_unsigned_catalog_refresh_requires_an_explicit_override(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            assert catalog_unsigned_override_requested(False) is True
+        with mock.patch.dict(
+            os.environ,
+            {"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "false"},
+            clear=True,
+        ):
+            assert catalog_unsigned_override_requested(None) is True
 
     def test_environment_keys_require_signatures_by_default(self) -> None:
         with mock.patch.dict(
@@ -172,7 +189,6 @@ class TestCatalogTrustPolicy:
                 "wrong byte length",
             ),
             ({"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "1"}, "must be true or false"),
-            ({"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "true"}, "requires at least one"),
         ],
     )
     def test_invalid_environment_fails_closed(
@@ -185,3 +201,14 @@ class TestCatalogTrustPolicy:
             pytest.raises(ValueError, match=message),
         ):
             resolve_catalog_trust_policy(None, None)
+
+    def test_signature_requirement_with_explicit_empty_trust_fails_closed(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"DEXCOST_CATALOG_REQUIRE_SIGNATURE": "true"},
+                clear=True,
+            ),
+            pytest.raises(ValueError, match="requires at least one"),
+        ):
+            resolve_catalog_trust_policy({}, None)

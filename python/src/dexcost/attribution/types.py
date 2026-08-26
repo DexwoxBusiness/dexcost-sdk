@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, TypeGuard
 
 ATTRIBUTION_V2_CONTRACT_VERSION = "2.0.0"
 
@@ -142,6 +142,11 @@ ATTRIBUTION_UNIT_BY_METRIC: dict[AttributionUsageMetric, AttributionUsageUnit] =
     "page_count": "Pages",
     "credit_count": "Credits",
 }
+
+
+def _is_attribution_usage_metric(value: object) -> TypeGuard[AttributionUsageMetric]:
+    """Narrow validated catalog keys consistently across supported type checkers."""
+    return isinstance(value, str) and value in ATTRIBUTION_UNIT_BY_METRIC
 
 
 class AttributionUsageLineV2(TypedDict):

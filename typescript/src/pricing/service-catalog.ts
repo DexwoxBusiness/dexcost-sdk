@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 export const SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2";
+const MCP_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/;
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -32,6 +33,8 @@ export interface ServiceEntry {
   display_name: string;
   domains: string[];
   endpoints?: string[];
+  /** Exact MCP tool aliases asserted by the signed service catalog. */
+  mcp_tools?: string[];
   category: string;
   pricing_model: string;
   cost_extraction: CostExtractionDef;
@@ -270,6 +273,11 @@ function isServiceEntry(value: unknown): value is ServiceEntry {
     (value.endpoints !== undefined &&
       (!Array.isArray(value.endpoints) ||
         !value.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.length > 0))) ||
+    (value.mcp_tools !== undefined &&
+      (!Array.isArray(value.mcp_tools) ||
+        value.mcp_tools.length === 0 ||
+        !value.mcp_tools.every((tool) => typeof tool === "string" && MCP_TOOL_NAME.test(tool)) ||
+        new Set(value.mcp_tools).size !== value.mcp_tools.length)) ||
     !isRecord(value.cost_extraction)
   ) {
     return false;
@@ -315,9 +323,15 @@ function parseCatalogEntries(raw: unknown): Map<string, ServiceEntry> | null {
   if (!isRecord(raw)) return null;
 
   const entries = new Map<string, ServiceEntry>();
+  const mcpOwners = new Map<string, string>();
   for (const [key, value] of Object.entries(raw)) {
     if (key === "_meta") continue;
     if (key.length === 0 || !isServiceEntry(value)) return null;
+    for (const tool of value.mcp_tools ?? []) {
+      const owner = mcpOwners.get(tool);
+      if (owner !== undefined && owner !== key) return null;
+      mcpOwners.set(tool, key);
+    }
     entries.set(key, value);
   }
   return entries.size > 0 ? entries : null;
@@ -377,6 +391,7 @@ function parseRemoteCatalogEnvelope(payload: unknown): RemoteCatalogEnvelope | n
 
 export class ServiceCatalog {
   private _entries: Map<string, ServiceEntry> = new Map();
+  private _mcpEntries: Map<string, ServiceEntry> = new Map();
   private _overrides: Map<string, { costPerUnit: number; per: string }> = new Map();
   private _workspaceOverrides: Map<string, { costPerUnit: number; per: string }> = new Map();
   private _version: string;
@@ -469,6 +484,11 @@ export class ServiceCatalog {
 
     // All candidates had endpoints but none matched
     return null;
+  }
+
+  /** Resolve an exact signed-catalog MCP tool alias to its service entry. */
+  lookupMcpTool(toolName: string): ServiceEntry | null {
+    return this._mcpEntries.get(toolName) ?? null;
   }
 
   /**
@@ -619,7 +639,7 @@ export class ServiceCatalog {
       const entries = parseCatalogEntries(envelope.data);
       if (!entries) return false;
 
-      this._entries = entries;
+      this._replaceEntries(entries);
       this._version = createHash("sha256")
         .update(JSON.stringify(envelope.data))
         .digest("hex")
@@ -636,7 +656,15 @@ export class ServiceCatalog {
 
   private _loadFromJson(raw: CatalogJson): void {
     const entries = parseCatalogEntries(raw);
-    if (entries) this._entries = entries;
+    if (entries) this._replaceEntries(entries);
+  }
+
+  private _replaceEntries(entries: Map<string, ServiceEntry>): void {
+    this._entries = entries;
+    this._mcpEntries = new Map(
+      [...entries.values()].flatMap((entry) =>
+        (entry.mcp_tools ?? []).map((tool) => [tool, entry] as const)),
+    );
   }
 
   private _entryKey(entry: ServiceEntry): string | undefined {

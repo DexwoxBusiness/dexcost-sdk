@@ -197,6 +197,8 @@ def _install_all_fakes() -> Generator[None, None, None]:
         for key, module in sys.modules.items()
         if any(key == prefix or key.startswith(f"{prefix}.") for prefix in prefixes)
     }
+    for key in installed_modules:
+        sys.modules.pop(key, None)
     _install_fake_openai()
     _install_fake_anthropic()
     _install_fake_litellm()
@@ -312,7 +314,7 @@ class TestDefaultPatchesAll:
                 elif name == "cohere":
                     import cohere as _
                 elif name == "mcp":
-                    import mcp as _
+                    __import__("mcp")
                 elif name == "ollama":
                     __import__("ollama")
                 elif name == "openrouter":

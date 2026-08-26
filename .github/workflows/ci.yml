@@ -20,7 +20,7 @@ name: CI
 #   - Rust  : clippy --deny warnings (catches B7 panic paths in clippy lints)
 #   - TS    : node 20 + node 22 matrix (catches B9 native-binding ABI drift
 #             and runtime-specific issues like B10 fork-safety surface)
-#   - Python: 3.10 + 3.11 + 3.12 matrix (catches version-specific regressions)
+#   - Python: 3.10 through 3.14 matrix (catches version-specific regressions)
 
 on:
   push:
@@ -36,10 +36,13 @@ jobs:
   python:
     name: python tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken-cache
+      CUSTOM_TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken-cache
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,18 +53,17 @@ jobs:
         working-directory: python
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[openai,gemini,ollama,openrouter,perplexity,fal]"
-          python -m pip install pytest pytest-asyncio
-      - name: Test (excluding shared conformance gate files)
+          python -m pip install -e ".[all]"
+          python -m pip install pytest pytest-asyncio mypy==2.3.1 ruff==0.16.4
+          python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+      - name: Lint and strictly type-check Python SDK source
         working-directory: python
-        run: >-
-          python -m pytest tests/
-          --ignore=tests/test_cross_sdk_parity.py
-          --ignore=tests/test_attribution_v2_conformance.py
-          --ignore=tests/test_attribution_v3_conformance.py
-          --ignore=tests/test_openai_usage_conformance.py
-          --ignore=tests/test_service_usage_observer_conformance.py
-          -v
+        run: |
+          python -m ruff check src
+          python -m mypy src
+      - name: Test complete Python SDK suite
+        working-directory: python
+        run: python -m pytest tests/ -v
       - name: Verify frozen Python reference contract
         working-directory: python
         run: python scripts/freeze_contract.py --check

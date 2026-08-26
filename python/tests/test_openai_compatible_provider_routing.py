@@ -139,6 +139,10 @@ def test_perplexity_openai_compatibility_is_exact_and_privacy_safe(
         assert chat.cached_tokens == 4
         assert chat.details["provider_cost_breakdown_usd"]["search_queries_cost"] == "0.01"
         assert {line["metric"] for line in chat.details["attribution_usage_lines"]} == {
+            "input_tokens",
+            "cache_read_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
             "citation_token_count",
             "search_query_count",
         }
@@ -148,6 +152,11 @@ def test_perplexity_openai_compatibility_is_exact_and_privacy_safe(
         assert agent.cached_tokens == 10
         assert agent.details["cache_write_input_tokens"] == 5
         assert {line["metric"] for line in agent.details["attribution_usage_lines"]} == {
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_write_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
             "tool_fetch_url_invocation_count",
             "tool_search_web_invocation_count",
         }

@@ -5,14 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any
 
 from dexcost.attribution.types import (
     ATTRIBUTION_COMPONENTS,
     ATTRIBUTION_UNIT_BY_METRIC,
     ATTRIBUTION_USAGE_METRICS,
     ATTRIBUTION_USAGE_UNITS,
-    AttributionUsageMetric,
+    _is_attribution_usage_metric,
 )
 
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -269,9 +269,8 @@ def validate_attribution_event_v2(value: object) -> AttributionV2ValidationResul
             else:
                 has_time_based_usage = has_time_based_usage or unit.endswith("Seconds")
                 if (
-                    isinstance(metric, str)
-                    and metric in ATTRIBUTION_UNIT_BY_METRIC
-                    and unit != ATTRIBUTION_UNIT_BY_METRIC[cast(AttributionUsageMetric, metric)]
+                    _is_attribution_usage_metric(metric)
+                    and unit != ATTRIBUTION_UNIT_BY_METRIC[metric]
                 ):
                     issues.append(
                         AttributionV2ValidationIssue(

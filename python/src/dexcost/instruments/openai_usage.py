@@ -30,9 +30,20 @@ def _field(value: object, key: str) -> Any:
     attributes = getattr(value, "__dict__", None)
     if isinstance(attributes, dict):
         # Pydantic models, dataclasses, SimpleNamespace, and the SDK
-        # compatibility mocks all expose assigned fields here. Returning None
-        # for an absent key avoids treating a dynamic mock child as usage.
-        return attributes.get(key)
+        # compatibility mocks all expose assigned fields here. Pydantic v2
+        # keeps provider extensions in ``__pydantic_extra__``/``model_extra``
+        # instead, so inspect those mappings before failing closed. This is
+        # required for gateway fields such as LiteLLM ``cache_write_tokens``
+        # and Perplexity ``cache_creation_input_tokens`` that are not declared
+        # by the base OpenAI model.
+        if key in attributes:
+            return attributes[key]
+        for extras_name in ("__pydantic_extra__", "model_extra"):
+            extras = getattr(value, extras_name, None)
+            if isinstance(extras, Mapping) and key in extras:
+                return extras[key]
+        # Avoid treating a dynamically-created mock child as real usage.
+        return None
     return getattr(value, key, None)
 
 

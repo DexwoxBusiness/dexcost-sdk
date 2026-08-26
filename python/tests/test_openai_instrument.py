@@ -12,6 +12,7 @@ import asyncio
 import sys
 import types
 from collections.abc import Generator
+from contextlib import ExitStack
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -721,6 +722,42 @@ class TestAsyncNonStreaming:
         assert result is response
         # An auto-task event should be recorded (auto-task created when no explicit task)
         assert len(storage.query_events()) >= 1
+
+    def test_async_snapshots_task_capability_and_idempotency_at_invocation(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        from openai.resources.chat.completions import AsyncCompletions
+
+        from dexcost.capabilities import capability_context
+        from dexcost.idempotency import idempotency_key
+        from dexcost.instruments.openai import instrument_openai
+        from dexcost.models.capability import CapabilityIdentity
+
+        response = _make_response()
+
+        async def fake_create(**kwargs: Any) -> Any:
+            return response
+
+        AsyncCompletions.create = staticmethod(fake_create)  # type: ignore[assignment]
+        instrument_openai(tracker)
+        capability = CapabilityIdentity(name="agent.answer", kind="workflow")
+
+        async def run() -> Any:
+            with ExitStack() as stack:
+                task = stack.enter_context(tracker.task(task_type="async_invocation_snapshot"))
+                stack.enter_context(capability_context(capability))
+                stack.enter_context(idempotency_key("private-openai-idempotency"))
+                pending = AsyncCompletions.create(model="gpt-4o", messages=[])
+            assert await pending is response
+            return task
+
+        task = asyncio.run(run())
+        event = storage.query_events(task_id=str(task.task_id))[0]
+        assert event.details["attribution_capability"] == capability.to_dict()
+        assert event.details["attribution_operation_name"] == "openai.chat.completions.create"
+        assert event.details["provider_usage_privacy"] == "quantities_only"
+        assert len(event.details["_dexcost_idempotency_sha256"]) == 64
+        assert "private-openai-idempotency" not in str(event.details)
 
 
 # ---------------------------------------------------------------------------

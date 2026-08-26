@@ -32,6 +32,7 @@ import wrapt
 from dexcost.adapters._netbytes import classify_destination, measure_bytes_from_headers
 from dexcost.config import DexcostConfig
 from dexcost.context import get_current_task, is_network_event_suppressed
+from dexcost.instruments._capture import current_provider_capture_owner
 from dexcost.models.event import Event
 from dexcost.redaction import scrub_url
 from dexcost.service_catalog import ServiceCatalog
@@ -46,11 +47,13 @@ _PROVIDER_OBSERVATION_NAMESPACE = uuid.UUID("5b3d21ce-1c75-5257-946d-967d7ba75ae
 def _provider_observation_event_id(observation: Any) -> uuid.UUID:
     if not observation.provider_record_id:
         return uuid.uuid4()
-    identity = "|".join((
-        observation.provider_name,
-        observation.service_key,
-        observation.provider_record_id,
-    ))
+    identity = "|".join(
+        (
+            observation.provider_name,
+            observation.service_key,
+            observation.provider_record_id,
+        )
+    )
     return uuid.uuid5(_PROVIDER_OBSERVATION_NAMESPACE, identity)
 
 
@@ -359,10 +362,15 @@ def _requests_wrapper(
         body = getattr(req, "body", None)
         body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
         headers = {str(k): str(v) for k, v in getattr(req, "headers", {}).items()}
-        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
-                          request_headers=headers, request_body_len=body_len,
-                          request_body=body,
-                          response=response, latency_ms=latency_ms)
+        _handle_http_call(
+            url,
+            method=str(getattr(req, "method", "GET")),
+            request_headers=headers,
+            request_body_len=body_len,
+            request_body=body,
+            response=response,
+            latency_ms=latency_ms,
+        )
     return response
 
 
@@ -395,10 +403,15 @@ def _httpx_wrapper(
                 body_len = max(0, int(headers.get("content-length", "0")))
             except (TypeError, ValueError):
                 body_len = 0
-        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
-                          request_headers=headers, request_body_len=body_len,
-                          request_body=content,
-                          response=response, latency_ms=latency_ms)
+        _handle_http_call(
+            url,
+            method=str(getattr(req, "method", "GET")),
+            request_headers=headers,
+            request_body_len=body_len,
+            request_body=content,
+            response=response,
+            latency_ms=latency_ms,
+        )
     return response
 
 
@@ -417,9 +430,15 @@ async def _aiohttp_wrapper(
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
-    _handle_http_call(url, method=method, request_headers={},
-                      request_body_len=0, request_body=request_body,
-                      response=response, latency_ms=latency_ms)
+    _handle_http_call(
+        url,
+        method=method,
+        request_headers={},
+        request_body_len=0,
+        request_body=request_body,
+        response=response,
+        latency_ms=latency_ms,
+    )
     return response
 
 
@@ -443,10 +462,15 @@ def _botocore_wrapper(
         url = str(getattr(req, "url", "") or "")
         body = getattr(req, "body", None)
         body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
-        _handle_http_call(url, method=str(getattr(req, "method", "GET")),
-                          request_headers={}, request_body_len=body_len,
-                          request_body=body,
-                          response=response, latency_ms=latency_ms)
+        _handle_http_call(
+            url,
+            method=str(getattr(req, "method", "GET")),
+            request_headers={},
+            request_body_len=body_len,
+            request_body=body,
+            response=response,
+            latency_ms=latency_ms,
+        )
     return response
 
 
@@ -479,9 +503,15 @@ def _urllib3_wrapper(
     else:
         full_url = f"{scheme}://{host}{url_path}"
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
-    _handle_http_call(full_url, method=req_method, request_headers={},
-                      request_body_len=0, request_body=kwargs.get("body"),
-                      response=response, latency_ms=latency_ms)
+    _handle_http_call(
+        full_url,
+        method=req_method,
+        request_headers={},
+        request_body_len=0,
+        request_body=kwargs.get("body"),
+        response=response,
+        latency_ms=latency_ms,
+    )
     return response
 
 
@@ -516,6 +546,7 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
     downloads) and breaking their `iter_content` / `iter_lines`.
     """
     headers = _get_response_headers(response)
+
     # Case-insensitive lookup helper.
     def _hdr(name: str) -> str:
         target = name.lower()
@@ -619,9 +650,7 @@ def _handle_http_call(
                 observer_request_body = request_body
             elif isinstance(request_body, (str, bytes, bytearray)):
                 raw = (
-                    request_body.encode()
-                    if isinstance(request_body, str)
-                    else bytes(request_body)
+                    request_body.encode() if isinstance(request_body, str) else bytes(request_body)
                 )
                 if len(raw) <= 1_048_576:
                     try:
@@ -631,8 +660,13 @@ def _handle_http_call(
                     if isinstance(decoded, dict):
                         observer_request_body = decoded
         _handle_http_call_inner(
-            url, method, request_headers or {}, request_body_len, observer_request_body,
-            response, latency_ms
+            url,
+            method,
+            request_headers or {},
+            request_body_len,
+            observer_request_body,
+            response,
+            latency_ms,
         )
     except Exception:  # broad catch intentional: must never break the caller's HTTP call
         global _network_error_count
@@ -680,8 +714,11 @@ def _measure_bytes(
 
 
 def _handle_domain_rate(
-    url: str, domain: str,
-    track_network: bool, bytes_in: int, bytes_out: int,
+    url: str,
+    domain: str,
+    track_network: bool,
+    bytes_in: int,
+    bytes_out: int,
     byte_details: dict[str, Any],
 ) -> bool:
     """Handle user-registered domain-rate path. Returns True if handled."""
@@ -696,13 +733,18 @@ def _handle_domain_rate(
         return True
     if track_network:
         task._network.record(
-            domain, bytes_in=bytes_in, bytes_out=bytes_out,
+            domain,
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
             is_internal=byte_details.get("is_internal_traffic"),
         )
     event = Event(
-        task_id=task.task_id, event_type="external_cost",
-        cost_usd=rate["cost_usd"], cost_confidence="computed",
-        pricing_source="manual", service_name=domain,
+        task_id=task.task_id,
+        event_type="external_cost",
+        cost_usd=rate["cost_usd"],
+        cost_confidence="computed",
+        pricing_source="manual",
+        service_name=domain,
         details={
             "url": url,
             "attribution_usage_quantity": 1,
@@ -715,9 +757,13 @@ def _handle_domain_rate(
 
 
 def _handle_catalog_entry(
-    url: str, domain: str,
-    track_network: bool, bytes_in: int, bytes_out: int,
-    response_headers: dict[str, str], response: Any,
+    url: str,
+    domain: str,
+    track_network: bool,
+    bytes_in: int,
+    bytes_out: int,
+    response_headers: dict[str, str],
+    response: Any,
     byte_details: dict[str, Any],
 ) -> bool:
     """Handle service-catalog path. Returns True if handled."""
@@ -733,7 +779,9 @@ def _handle_catalog_entry(
         return True
     if track_network:
         task._network.record(
-            domain, bytes_in=bytes_in, bytes_out=bytes_out,
+            domain,
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
             is_internal=byte_details.get("is_internal_traffic"),
         )
     result = catalog.extract_cost(
@@ -741,8 +789,10 @@ def _handle_catalog_entry(
     )
     if result is not None:
         event = Event(
-            task_id=task.task_id, event_type="external_cost",
-            cost_usd=result.amount, cost_confidence=result.confidence,
+            task_id=task.task_id,
+            event_type="external_cost",
+            cost_usd=result.amount,
+            cost_confidence=result.confidence,
             pricing_source=result.pricing_source,
             pricing_version=catalog.catalog_version,
             service_name=result.service_name,
@@ -750,9 +800,12 @@ def _handle_catalog_entry(
         )
     else:
         event = Event(
-            task_id=task.task_id, event_type="external_cost",
-            cost_usd=Decimal("0"), cost_confidence="unknown",
-            pricing_source="service_catalog", service_name=entry.display_name,
+            task_id=task.task_id,
+            event_type="external_cost",
+            cost_usd=Decimal("0"),
+            cost_confidence="unknown",
+            pricing_source="service_catalog",
+            service_name=entry.display_name,
             details={"url": url, **byte_details},
         )
     _persist_event(event)
@@ -825,9 +878,15 @@ def _handle_usage_observer(
 
 
 def _handle_uncataloged(
-    url: str, method: str, domain: str,
-    bytes_in: int, bytes_out: int, status_code: int, latency_ms: int,
-    byte_details: dict[str, Any], cfg: DexcostConfig,
+    url: str,
+    method: str,
+    domain: str,
+    bytes_in: int,
+    bytes_out: int,
+    status_code: int,
+    latency_ms: int,
+    byte_details: dict[str, Any],
+    cfg: DexcostConfig,
 ) -> None:
     """Handle un-cataloged path: record bytes and emit network event if notable.
 
@@ -840,11 +899,11 @@ def _handle_uncataloged(
     if task is None:
         return  # anonymous traffic — never create orphan rows
     task._network.record(
-        domain, bytes_in=bytes_in, bytes_out=bytes_out,
+        domain,
+        bytes_in=bytes_in,
+        bytes_out=bytes_out,
         is_internal=byte_details.get("is_internal_traffic"),
     )
-    if is_network_event_suppressed():
-        return  # the `llm_call` event already represents this call
     notable = (
         (bytes_in + bytes_out) > cfg.network_event_threshold_bytes
         or (cfg.network_event_on_error and status_code >= 400)
@@ -856,11 +915,16 @@ def _handle_uncataloged(
     # v2 §6.4 — emission stamps cost_usd=0 and a cost_pending marker; the real
     # egress cost is back-filled by _aggregate_costs at task finalize.
     event = Event(
-        task_id=task.task_id, event_type="network",
-        cost_usd=Decimal("0"), cost_confidence="unknown",
-        pricing_source=None, service_name=domain,
+        task_id=task.task_id,
+        event_type="network",
+        cost_usd=Decimal("0"),
+        cost_confidence="unknown",
+        pricing_source=None,
+        service_name=domain,
         details={
-            "url": url, "method": method, "status_code": status_code,
+            "url": url,
+            "method": method,
+            "status_code": status_code,
             "cost_pending": True,
             **byte_details,
         },
@@ -885,14 +949,35 @@ def _handle_http_call_inner(
     track_network = cfg.track_network
 
     bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
-        method, url, domain, protocol,
-        request_headers, request_body_len, response, track_network,
+        method,
+        url,
+        domain,
+        protocol,
+        request_headers,
+        request_body_len,
+        response,
+        track_network,
     )
     status_code = int(
-        getattr(response, "status_code", None)
-        or getattr(response, "status", 0)
-        or 0
+        getattr(response, "status_code", None) or getattr(response, "status", 0) or 0
     )
+
+    # Provider instruments wrap their underlying transport call in this
+    # context because the provider event already owns its cost and usage.
+    # Suppression must precede every HTTP pricing/observer path; otherwise a
+    # known endpoint can emit a second billable event before the uncatalogued
+    # network guard is reached. Network byte counters remain available on the
+    # owning task without creating a second attribution row.
+    if is_network_event_suppressed() or current_provider_capture_owner() is not None:
+        task = get_current_task()
+        if task is not None and track_network:
+            task._network.record(
+                domain,
+                bytes_in=bytes_in,
+                bytes_out=bytes_out,
+                is_internal=byte_details.get("is_internal_traffic"),
+            )
+        return
 
     # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
     if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
@@ -900,16 +985,29 @@ def _handle_http_call_inner(
 
     # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
     if _handle_catalog_entry(
-        url, domain, track_network, bytes_in, bytes_out,
-        response_headers, response, byte_details,
+        url,
+        domain,
+        track_network,
+        bytes_in,
+        bytes_out,
+        response_headers,
+        response,
+        byte_details,
     ):
         return
 
     # Usage-only observers contain no rates and remain active even when
     # notable-network event emission is disabled.
     if _handle_usage_observer(
-        url, domain, track_network, bytes_in, bytes_out,
-        response_headers, response, status_code, byte_details,
+        url,
+        domain,
+        track_network,
+        bytes_in,
+        bytes_out,
+        response_headers,
+        response,
+        status_code,
+        byte_details,
         request_body,
     ):
         return
@@ -919,7 +1017,15 @@ def _handle_http_call_inner(
         return
 
     _handle_uncataloged(
-        url, method, domain, bytes_in, bytes_out, status_code, latency_ms, byte_details, cfg,
+        url,
+        method,
+        domain,
+        bytes_in,
+        bytes_out,
+        status_code,
+        latency_ms,
+        byte_details,
+        cfg,
     )
 
 

@@ -8,7 +8,8 @@
     { "id": "provider_stream_error", "terminal_signal": "provider iterator raises", "operation_status": "failed", "usage": "provider-observed partial snapshot only", "error": "canonical type/code only", "records": 1 },
     { "id": "transport_error_before_stream", "terminal_signal": "request raises", "operation_status": "failed", "usage": [], "error": "canonical type/code only", "records": 1 },
     { "id": "duplicate_terminal", "terminal_signal": "two terminal notifications", "operation_status": "succeeded", "usage": "first complete provider snapshot", "records": 1 },
-    { "id": "garbage_collection", "terminal_signal": "unconsumed stream finalized", "operation_status": "cancelled", "usage": "provider-observed partial snapshot only", "records": 1 }
+    { "id": "garbage_collection", "terminal_signal": "unconsumed stream finalized", "operation_status": "cancelled", "usage": "provider-observed partial snapshot only", "records": 1 },
+    { "id": "telemetry_extraction_failure", "terminal_signal": "provider completes but terminal usage/status extraction raises", "operation_status": "unknown", "usage": [{ "metric": "request_count", "quantity": "1", "unit": "Requests" }], "provider_result": "returned unchanged", "records": 1 }
   ],
   "privacy": "No prompt, message, output, tool payload, URL, media, vector, or error message is retained."
 }

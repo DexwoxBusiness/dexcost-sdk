@@ -107,7 +107,19 @@ def test_public_api_and_migration_snapshots_cover_the_reference() -> None:
     assert [entry["name"] for entry in public["exports"]] == list(dexcost.__all__)
     assert public["package_version"] == dexcost.__version__
     public_by_name = {entry["name"]: entry for entry in public["exports"]}
-    for alias in ("AttributionUsageMetricV3", "AttributionUsageUnitV3"):
+    assert "_IdempotencyScope" not in json.dumps(public, sort_keys=True)
+    assert "contextvars.Token[Any]" in public_by_name["set_idempotency_key"]["signature"]
+    for alias in (
+        "AttributionUsageMetricV3",
+        "AttributionUsageUnitV3",
+        "AttributionBillingDimensionValue",
+        "OutcomeInput",
+        "RevenueInput",
+        "ToolDimensionInput",
+        "ToolQuantityInput",
+        "WebhookHeader",
+        "WebhookSecret",
+    ):
         assert public_by_name[alias]["kind"] == "type_alias"
         assert "members" not in public_by_name[alias]
 
@@ -132,9 +144,10 @@ def test_capability_matrices_are_exhaustive_and_resolved() -> None:
         assert set(row["cells"]) == implementations
         for implementation, cell in row["cells"].items():
             assert cell["status"] in allowed
-            assert cell["status"] != "required", (
-                f"unresolved freeze row {row['id']} for {implementation}"
-            )
+            if implementation != "dexcost_typescript":
+                assert cell["status"] != "required", (
+                    f"unresolved Python freeze row {row['id']} for {implementation}"
+                )
             if cell["status"] == "implemented":
                 assert cell["evidence"]
             else:
@@ -162,9 +175,12 @@ def test_capability_matrices_are_exhaustive_and_resolved() -> None:
         for dimension, languages in provider["coverage"].items():
             assert set(languages) == {"dexcost_python", "dexcost_typescript"}
             for language, cell in languages.items():
-                assert cell["status"] in allowed - {"required"}, (
-                    f"unresolved {provider['id']}.{dimension}.{language}"
-                )
+                assert cell["status"] in allowed
+                if language == "dexcost_python":
+                    assert cell["status"] != "required", (
+                        f"unresolved Python provider capability "
+                        f"{provider['id']}.{dimension}.{language}"
+                    )
                 if cell["status"] == "implemented":
                     assert cell["evidence"]
                     for evidence in cell["evidence"]:
@@ -405,7 +421,7 @@ def test_stream_and_slimming_decision_registers_are_closed() -> None:
     stream = _load(GOLDEN_ROOT / "stream-lifecycles.v1.json")
     assert len(stream["cases"]) >= 8
     assert {case["operation_status"] for case in stream["cases"]} == {
-        "succeeded", "failed", "cancelled",
+        "succeeded", "failed", "cancelled", "unknown",
     }
     assert all(case["records"] == 1 for case in stream["cases"])
 

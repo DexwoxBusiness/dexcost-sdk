@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from dexcost.heuristics import RetryHeuristicEngine
+    from dexcost.service_catalog import ServiceCatalog
 
 from dexcost.auto_task import create_auto_task, finalize_auto_task
 from dexcost.capabilities import (
@@ -213,9 +214,7 @@ def _build_task(
 
     if resolved_root_id is not None:
         if _BUSINESS_CANONICAL_NAME.fullmatch(task_type) is None:
-            raise ValueError(
-                "business-attributed task_type must be a canonical identifier"
-            )
+            raise ValueError("business-attributed task_type must be a canonical identifier")
         if variant is not None and experiment_id is None:
             raise ValueError("variant requires experiment_id")
         for name, value in (
@@ -234,13 +233,8 @@ def _build_task(
                 raise ValueError(f"{name} must contain between 1 and 256 characters")
         if resolved_parent_id is None:
             if resolved_root_id != resolved_task_id:
-                raise ValueError(
-                    "a root task must use its own task_id as root_task_id"
-                )
-        elif (
-            resolved_parent_id == resolved_task_id
-            or resolved_root_id == resolved_task_id
-        ):
+                raise ValueError("a root task must use its own task_id as root_task_id")
+        elif resolved_parent_id == resolved_task_id or resolved_root_id == resolved_task_id:
             raise ValueError("a child task cannot be its own root or parent")
 
     return Task(
@@ -332,8 +326,8 @@ class TrackedTask:
             visited.add(prior.event_id)
             stored_operation_id = prior.details.get("attribution_operation_id")
             stored_attempt_number = prior.details.get("attribution_attempt_number")
-            has_stored_operation_id = (
-                isinstance(stored_operation_id, str) and bool(stored_operation_id)
+            has_stored_operation_id = isinstance(stored_operation_id, str) and bool(
+                stored_operation_id
             )
             if isinstance(stored_operation_id, str) and stored_operation_id:
                 operation_id = stored_operation_id
@@ -358,9 +352,7 @@ class TrackedTask:
         event.details = {
             **event.details,
             "attribution_operation_id": (
-                explicit_operation_id
-                if isinstance(explicit_operation_id, str)
-                else operation_id
+                explicit_operation_id if isinstance(explicit_operation_id, str) else operation_id
             ),
             "attribution_attempt_number": (
                 explicit_attempt_number
@@ -609,11 +601,7 @@ class TrackedTask:
 
         def decorator(function: F) -> F:
             def begin() -> object:
-                token = (
-                    None
-                    if get_current_task() is self._task
-                    else set_current_task(self._task)
-                )
+                token = None if get_current_task() is self._task else set_current_task(self._task)
                 return token, capability or get_capability()
 
             def finish(
@@ -671,6 +659,35 @@ class TrackedTask:
             value=value,
             outcome_id=outcome_id,
             revision=revision,
+            effective_at=effective_at,
+            observed_at=observed_at,
+        )
+
+    def amend_outcome(
+        self,
+        outcome_id: uuid.UUID | str,
+        *,
+        state: OutcomeState,
+        value: OutcomeInput | OutcomeValue | None = None,
+        expected_revision: int | None = None,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> OutcomeRevision:
+        """Append the next revision of an outcome owned by this task.
+
+        ``expected_revision`` is an optional optimistic-lock guard against two
+        local workers amending the same outcome from the same ledger snapshot.
+        """
+        history = self._tracker.get_outcome_history(outcome_id)
+        if not history:
+            raise ValueError(f"outcome {outcome_id} was not found in the local ledger")
+        if history[-1].task_id != self._task.task_id:
+            raise ValueError("outcome belongs to a different task")
+        return self._tracker.amend_outcome(
+            outcome_id,
+            state=state,
+            value=value,
+            expected_revision=expected_revision,
             effective_at=effective_at,
             observed_at=observed_at,
         )
@@ -1227,6 +1244,10 @@ class CostTracker:
             storage = SQLiteStorage()
         self._storage: StorageBackend = storage
         self._rate_registry = RateRegistry()
+        # CatalogRuntime atomically installs the active signed service
+        # artifact here. Provider adapters may consult it for reviewed aliases
+        # without depending on the process-global raw HTTP catalog.
+        self._service_catalog: ServiceCatalog | None = None
 
         # Retry detection configuration (US-017)
         # PRD: v1.0 supports manual tagging + explicit exceptions only.
@@ -1266,20 +1287,21 @@ class CostTracker:
 
         # Egress pricing engine (network-cost v2) — bundled catalog.
         from dexcost.egress_pricing import EgressPricingEngine
+
         self._egress_pricing = EgressPricingEngine()
 
         # Compute pricing engine (Phase 1 — bundled compute_prices.json).
         # `_compute_billing_overrides` is the Decision #1 sharpening —
         # general override channel from day one (cloud_run, future cases).
         from dexcost.compute_pricing import ComputePricingEngine
+
         self._compute_pricing = ComputePricingEngine()
-        self._compute_billing_overrides: dict[str, str] = (
-            compute_billing_overrides or {}
-        )
+        self._compute_billing_overrides: dict[str, str] = compute_billing_overrides or {}
         self._k8s_node_aware: bool = k8s_node_aware
 
         # GPU pricing engine (Phase 2 — bundled gpu_prices.json).
         from dexcost.gpu_pricing import GpuPricingEngine
+
         self._gpu_pricing = GpuPricingEngine()
 
         # Configurable auto-instrumentation (US-015)
@@ -1328,7 +1350,7 @@ class CostTracker:
         """
         if name not in ALL_SUPPORTED_INSTRUMENTS:
             raise ValueError(
-                f"Unsupported instrument name {name!r}. " f"Supported: {ALL_SUPPORTED_INSTRUMENTS}"
+                f"Unsupported instrument name {name!r}. Supported: {ALL_SUPPORTED_INSTRUMENTS}"
             )
 
         if name in self._instrumented:
@@ -1397,7 +1419,7 @@ class CostTracker:
         """
         if name not in ALL_SUPPORTED_INSTRUMENTS:
             raise ValueError(
-                f"Unsupported instrument name {name!r}. " f"Supported: {ALL_SUPPORTED_INSTRUMENTS}"
+                f"Unsupported instrument name {name!r}. Supported: {ALL_SUPPORTED_INSTRUMENTS}"
             )
 
         if name not in self._instrumented:
@@ -1465,12 +1487,21 @@ class CostTracker:
         input_tokens: int,
         output_tokens: int,
         cached_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        cache_creation_tokens_1h: int = 0,
     ) -> CostResult:
         """Calculate the cost for an LLM call.
 
         Convenience wrapper around :meth:`PricingEngine.get_cost`.
         """
-        return self._pricing.get_cost(model, input_tokens, output_tokens, cached_tokens)
+        return self._pricing.get_cost(
+            model,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+            cache_creation_tokens,
+            cache_creation_tokens_1h,
+        )
 
     def set_custom_pricing(
         self,
@@ -1558,9 +1589,7 @@ class CostTracker:
                 ("parent_task_id", resolved_parent, existing.parent_task_id),
             ):
                 if supplied is not None and supplied != actual:
-                    raise ValueError(
-                        f"attached {name} does not match the locally stored task"
-                    )
+                    raise ValueError(f"attached {name} does not match the locally stored task")
             task_model = existing
         else:
             if not isinstance(task_type, str) or not task_type.strip():
@@ -1687,14 +1716,59 @@ class CostTracker:
         self._storage.insert_outcome(outcome)
         return outcome
 
-    def get_outcome_history(
-        self, outcome_id: uuid.UUID | str
-    ) -> list[OutcomeRevision]:
+    def get_outcome_history(self, outcome_id: uuid.UUID | str) -> list[OutcomeRevision]:
         """Return every locally retained revision for one outcome."""
         resolved = _coerce_task_uuid("outcome_id", outcome_id)
         if resolved is None:  # pragma: no cover - non-optional public input
             raise ValueError("outcome_id must be a valid UUID")
         return self._storage.query_outcome_history(str(resolved))
+
+    def amend_outcome(
+        self,
+        outcome_id: uuid.UUID | str,
+        *,
+        state: OutcomeState,
+        value: OutcomeInput | OutcomeValue | None = None,
+        expected_revision: int | None = None,
+        effective_at: datetime | None = None,
+        observed_at: datetime | None = None,
+    ) -> OutcomeRevision:
+        """Append the next locally validated revision of an existing outcome.
+
+        The original task and canonical outcome name are immutable. The
+        optional ``expected_revision`` guard makes local read/modify/write
+        races explicit instead of silently overwriting business history.
+        """
+        resolved = _coerce_task_uuid("outcome_id", outcome_id)
+        if resolved is None:  # pragma: no cover - non-optional public input
+            raise ValueError("outcome_id must be a valid UUID")
+        history = self._storage.query_outcome_history(str(resolved))
+        if not history:
+            raise ValueError(f"outcome {resolved} was not found in the local ledger")
+        latest = history[-1]
+        if latest.state == "voided":
+            raise ValueError("voided outcomes cannot be amended")
+        if expected_revision is not None:
+            if isinstance(expected_revision, bool) or expected_revision < 1:
+                raise ValueError("expected_revision must be a positive integer")
+            if latest.revision != expected_revision:
+                raise ValueError(
+                    f"outcome {resolved} revision conflict: expected "
+                    f"{expected_revision}, found {latest.revision}"
+                )
+        now = datetime.now(timezone.utc)
+        amended = OutcomeRevision(
+            task_id=latest.task_id,
+            name=latest.name,
+            state=state,
+            value=(OutcomeValue.from_input(value) if value is not None else None),
+            outcome_id=latest.outcome_id,
+            revision=latest.revision + 1,
+            effective_at=effective_at or now,
+            observed_at=observed_at or now,
+        )
+        self._storage.insert_outcome(amended)
+        return amended
 
     def record_revenue(
         self,
@@ -1718,9 +1792,7 @@ class CostTracker:
             raise ValueError("task_id must be a valid UUID")
         if isinstance(source, RevenueSource):
             if source_record_id is not None:
-                raise ValueError(
-                    "source_record_id cannot be combined with a RevenueSource object"
-                )
+                raise ValueError("source_record_id cannot be combined with a RevenueSource object")
             resolved_source = source
         else:
             resolved_source = RevenueSource(type=source, record_id=source_record_id)
@@ -1728,9 +1800,7 @@ class CostTracker:
             task_id=resolved_task_id,
             state=state,
             source=resolved_source,
-            amount=(
-                RevenueAmount.from_input(amount, currency) if amount is not None else None
-            ),
+            amount=(RevenueAmount.from_input(amount, currency) if amount is not None else None),
             outcome_id=_coerce_task_uuid("outcome_id", outcome_id),
             revenue_id=_coerce_task_uuid("revenue_id", revenue_id) or uuid.uuid4(),
             revision=revision,
@@ -1740,9 +1810,7 @@ class CostTracker:
         self._storage.insert_revenue(revenue)
         return revenue
 
-    def get_revenue_history(
-        self, revenue_id: uuid.UUID | str
-    ) -> list[RevenueRevision]:
+    def get_revenue_history(self, revenue_id: uuid.UUID | str) -> list[RevenueRevision]:
         """Return every locally retained revision for one revenue record."""
         resolved = _coerce_task_uuid("revenue_id", revenue_id)
         if resolved is None:  # pragma: no cover - non-optional public input
@@ -2066,13 +2134,9 @@ class CostTracker:
         # than a one-shot Event row.  Roll up only each stream's latest
         # terminal snapshot so repeated polling and provider corrections
         # replace prior values instead of accumulating them.
-        query_provider_jobs = getattr(
-            self._storage, "query_current_provider_jobs_for_task", None
-        )
+        query_provider_jobs = getattr(self._storage, "query_current_provider_jobs_for_task", None)
         provider_jobs = (
-            query_provider_jobs(str(task.task_id))
-            if callable(query_provider_jobs)
-            else []
+            query_provider_jobs(str(task.task_id)) if callable(query_provider_jobs) else []
         )
         for job in provider_jobs:
             if not job.terminal:
@@ -2100,6 +2164,7 @@ class CostTracker:
         # network events (deferred per spec §6.4).
         try:
             from dexcost import cloud_detect
+
             env = cloud_detect.get_cloud_env()
             custom_rate = None
             network_keys = (
@@ -2144,22 +2209,16 @@ class CostTracker:
                 if billing_unit == "gb_transferred"
                 else net["external_bytes_out"]
             )
-            task.network_cost_usd = (
-                Decimal(billable_bytes) / Decimal("1000000000") * rate_per_gb
-            )
+            task.network_cost_usd = Decimal(billable_bytes) / Decimal("1000000000") * rate_per_gb
 
             # Stamp per-host egress_cost_usd into the by_host blob.
             for host in net["by_host"]["hosts"]:
                 host_billable = (
-                    int(host.get("bytes_in", 0) or 0)
-                    + int(host.get("bytes_out", 0) or 0)
+                    int(host.get("bytes_in", 0) or 0) + int(host.get("bytes_out", 0) or 0)
                     if billing_unit == "gb_transferred"
                     else int(host.get("external_bytes_out", 0) or 0)
                 )
-                host_cost = (
-                    Decimal(host_billable) / Decimal("1000000000")
-                    * rate_per_gb
-                )
+                host_cost = Decimal(host_billable) / Decimal("1000000000") * rate_per_gb
                 host["egress_cost_usd"] = str(host_cost)
             task.network_by_host = net["by_host"]
 
@@ -2175,9 +2234,7 @@ class CostTracker:
                     if billing_unit == "gb_transferred"
                     else (0 if is_internal is True else req_bytes)
                 )
-                ev_cost = (
-                    Decimal(billable) / Decimal("1000000000") * rate_per_gb
-                )
+                ev_cost = Decimal(billable) / Decimal("1000000000") * rate_per_gb
                 ev.cost_usd = ev_cost
                 ev.cost_confidence = (
                     "exact"
@@ -2190,16 +2247,15 @@ class CostTracker:
                     else pricing_source
                 )
                 ev.pricing_version = pricing_version
-                ev.details = {
-                    k: v for k, v in ev.details.items() if k != "cost_pending"
-                }
+                ev.details = {k: v for k, v in ev.details.items() if k != "cost_pending"}
                 self._storage.update_event(ev)
 
             task.total_cost_usd += task.network_cost_usd
         except Exception:
             _log.warning(
                 "egress cost computation failed for task %s",
-                task.task_id, exc_info=True,
+                task.task_id,
+                exc_info=True,
             )
             task.network_cost_usd = Decimal("0")
             task.network_by_host = net["by_host"]
@@ -2214,7 +2270,8 @@ class CostTracker:
         except Exception:
             _log.warning(
                 "compute cost computation failed for task %s",
-                task.task_id, exc_info=True,
+                task.task_id,
+                exc_info=True,
             )
 
         # ── GPU capture (Phase 2 v1 + v2) ────────────────────────────────
@@ -2227,7 +2284,8 @@ class CostTracker:
         except Exception:
             _log.warning(
                 "gpu cost computation failed for task %s",
-                task.task_id, exc_info=True,
+                task.task_id,
+                exc_info=True,
             )
 
     def _finalize_gpu(self, task: Task) -> None:
@@ -2273,10 +2331,7 @@ class CostTracker:
             GpuRuntimeKind.LOCAL_GPU,
         }
         new_event_ids: set[uuid.UUID] = set()
-        if (
-            accountant is not None
-            and accountant.runtime in long_running_gpu
-        ):
+        if accountant is not None and accountant.runtime in long_running_gpu:
             cost_details, signal_events = accountant.snapshot_end_and_build(
                 duration_ms=duration_ms,
             )
@@ -2339,7 +2394,9 @@ class CostTracker:
                 ev.pricing_version = self._rate_registry.pricing_version
             else:
                 priced = engine.resolve_gpu_cost(
-                    details, cloud_env, window_s=window_s,
+                    details,
+                    cloud_env,
+                    window_s=window_s,
                 )
                 ev.cost_usd = priced.cost_usd
                 ev.pricing_source = priced.pricing_source
@@ -2350,9 +2407,9 @@ class CostTracker:
                     else f"gpu:{engine.catalog_version}"
                 )
             ev.details = {
-                k: v for k, v in details.items()
-                if k not in ("cost_pending", "_cgroup_scope_fallback",
-                              "_nvml_product_name_lower")
+                k: v
+                for k, v in details.items()
+                if k not in ("cost_pending", "_cgroup_scope_fallback", "_nvml_product_name_lower")
             }
             self._storage.update_event(ev)
 
@@ -2415,14 +2472,14 @@ class CostTracker:
         #    task.compute_cost_usd / task.total_cost_usd; both get delta
         #    bumps below.
         long_running = {
-            RuntimeKind.FARGATE, RuntimeKind.EC2, RuntimeKind.GCE,
-            RuntimeKind.AZURE_VM, RuntimeKind.K8S_POD,
+            RuntimeKind.FARGATE,
+            RuntimeKind.EC2,
+            RuntimeKind.GCE,
+            RuntimeKind.AZURE_VM,
+            RuntimeKind.K8S_POD,
         }
         new_event_ids: set[uuid.UUID] = set()
-        if (
-            accountant is not None
-            and accountant.runtime in long_running
-        ):
+        if accountant is not None and accountant.runtime in long_running:
             details = accountant.snapshot_end_and_build(duration_ms=duration_ms)
             if details is not None:
                 ev = Event(
@@ -2449,15 +2506,16 @@ class CostTracker:
                 continue
             old_cost = ev.cost_usd  # always Decimal("0") at emission time
             priced = engine.resolve_compute_cost(
-                details, cloud_env, overrides, window_s=window_s,
+                details,
+                cloud_env,
+                overrides,
+                window_s=window_s,
             )
             ev.cost_usd = priced.cost_usd
             ev.pricing_source = priced.pricing_source
             ev.cost_confidence = priced.cost_confidence
             ev.pricing_version = f"compute:{engine.catalog_version}"
-            ev.details = {
-                k: v for k, v in details.items() if k != "cost_pending"
-            }
+            ev.details = {k: v for k, v in details.items() if k != "cost_pending"}
             self._storage.update_event(ev)
 
             # Delta = new - old. For newly-inserted long-running events the

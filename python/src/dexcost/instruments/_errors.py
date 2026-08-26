@@ -27,7 +27,7 @@ from decimal import Decimal
 from typing import Any
 
 from dexcost.capabilities import apply_event_capability
-from dexcost.idempotency import apply_event_idempotency
+from dexcost.idempotency import IdempotencyKey, apply_event_idempotency
 from dexcost.models.event import Event
 
 _log = logging.getLogger(__name__)
@@ -133,10 +133,13 @@ def record_call_failure(
     latency_ms: int | None = None,
     event_type: str = "llm_call",
     service_name: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cached_tokens: int | None = None,
     details: dict[str, Any] | None = None,
     task: Any = None,
     capability: Any = None,
-    idempotency_key: str | None = None,
+    idempotency_key: IdempotencyKey | None = None,
 ) -> Event | None:
     """Persist a failed-operation event for a provider call that raised.
 
@@ -174,6 +177,9 @@ def record_call_failure(
             service_name=service_name,
             provider=provider,
             model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
             latency_ms=latency_ms if latency_ms is not None and latency_ms >= 0 else None,
             details=event_details,
         )
@@ -197,9 +203,12 @@ def record_stream_failure(
     auto_task_obj: Any = None,
     event_type: str = "llm_call",
     service_name: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cached_tokens: int | None = None,
     details: dict[str, Any] | None = None,
     capability: Any = None,
-    idempotency_key: str | None = None,
+    idempotency_key: IdempotencyKey | None = None,
 ) -> Event | None:
     """Record a provider error raised *while a stream was being consumed*.
 
@@ -233,6 +242,9 @@ def record_stream_failure(
         latency_ms=latency_ms,
         event_type=event_type,
         service_name=service_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached_tokens=cached_tokens,
         details=details,
         task=task if task is not None else auto_task_obj,
         capability=capability,

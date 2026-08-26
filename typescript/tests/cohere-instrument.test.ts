@@ -65,6 +65,22 @@ class FakeCohereClient {
       },
     };
   }
+
+  async embed(_body: unknown, _options?: unknown): Promise<unknown> {
+    return {
+      id: "embed-123",
+      embeddings: { float: [[0.1, 0.2]] },
+      meta: { billedUnits: { inputTokens: 42 } },
+    };
+  }
+
+  async rerank(_body: unknown, _options?: unknown): Promise<unknown> {
+    return {
+      id: "rerank-123",
+      results: [{ index: 0, relevanceScore: 0.99 }],
+      meta: { billedUnits: { searchUnits: 1 } },
+    };
+  }
 }
 
 describe("Cohere instrumentation", () => {
@@ -200,6 +216,49 @@ describe("Cohere instrumentation", () => {
     expect(events[0].latencyMs).toBeDefined();
     expect(typeof events[0].latencyMs).toBe("number");
   });
+
+  it("meters ClientV2 embeddings from billed input tokens", async () => {
+    await instrumentCohere(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+    const client = new FakeCohereClient();
+    await runWithTask(task, () => client.embed({
+      model: "embed-v4.0",
+      texts: ["private input"],
+      inputType: "search_document",
+      embeddingTypes: ["float"],
+    }));
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("external_cost");
+    expect(events[0].serviceName).toBe("embeddings");
+    expect(events[0].model).toBe("cohere/embed-v4.0");
+    expect(events[0].inputTokens).toBe(42);
+    expect(events[0].details.provider_record_id).toBe("embed-123");
+    expect(JSON.stringify(events[0].details)).not.toContain("private input");
+  });
+
+  it("meters V1/V2 rerank from provider search units", async () => {
+    await instrumentCohere(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+    const client = new FakeCohereClient();
+    await runWithTask(task, () => client.rerank({
+      model: "rerank-v4.0-pro",
+      query: "private query",
+      documents: ["private document"],
+    }));
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe("external_cost");
+    expect(events[0].serviceName).toBe("rerank");
+    expect(events[0].model).toBe("rerank-v4.0-pro");
+    expect(events[0].details.provider_record_id).toBe("rerank-123");
+    expect(events[0].details.attribution_usage_lines).toEqual([
+      { metric: "search_units", quantity: "1", unit: "SearchUnits" },
+    ]);
+    expect(JSON.stringify(events[0].details)).not.toContain("private");
+  });
 });
 
 describe("Cohere streaming instrumentation", () => {
@@ -242,5 +301,60 @@ describe("Cohere streaming instrumentation", () => {
     expect(events[0].model).toBe("command-r-plus");
     expect(events[0].inputTokens).toBe(100);
     expect(events[0].outputTokens).toBe(50);
+  });
+
+  it("retains partial usage and failure identity when the stream raises", async () => {
+    class FailingCohereClient {
+      async chatStream(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { meta: { billedUnits: { inputTokens: 31, outputTokens: 8 } } };
+            throw new Error("cohere stream failed");
+          },
+        };
+      }
+    }
+    _setClientClass(FailingCohereClient);
+    await instrumentCohere(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await expect(runWithTask(task, async () => {
+      const stream = await new FailingCohereClient().chatStream();
+      for await (const _chunk of stream as AsyncIterable<unknown>) { /* drain */ }
+    })).rejects.toThrow("cohere stream failed");
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 31, outputTokens: 8 });
+    expect(buffer.getAllEvents()[0].details).toMatchObject({
+      attribution_operation_status: "failed",
+      attribution_error_type: "error",
+    });
+  });
+
+  it("records early stream close as cancelled exactly once", async () => {
+    class CancelledCohereClient {
+      async chatStream(_body?: unknown): Promise<unknown> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { meta: { billedUnits: { inputTokens: 23, outputTokens: 5 } } };
+            yield { eventType: "text-generation", text: "unused" };
+          },
+        };
+      }
+    }
+    _setClientClass(CancelledCohereClient);
+    await instrumentCohere(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const stream = await new CancelledCohereClient().chatStream({ model: "command-r-plus" });
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.return?.();
+    });
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0].details.attribution_operation_status).toBe("cancelled");
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 23, outputTokens: 5 });
   });
 });

@@ -1,25 +1,26 @@
 {
   "schema_version": "1",
-  "audited_at": "2026-08-22",
+  "audited_at": "2026-08-25",
   "sources": [
     {
       "name": "dexcost-sdk",
       "repository": "https://github.com/DexwoxBusiness/dexcost-sdk",
-      "base_commit": "22e6921335cebe4637725dd5e5707d10b546a094",
-      "version": "python 0.18.0 / typescript 0.22.0",
+      "base_commit": "87e3e2bcc098eb35dc27c1e98ddd525808ab6c66",
+      "version": "python 0.19.0 / typescript 0.23.0",
       "note": "The freeze manifest hashes the reviewed vNext worktree layered on this base commit."
     },
     {
       "name": "dexcost-control-plane",
       "repository": "https://github.com/DexwoxBusiness/dexcost-control-plane",
-      "base_commit": "adbb9ad9e1739fb8bd69646485b61f1530dd513a",
+      "base_commit": "2050f4de2a9b9eba58ff0f963c91ef6470d007c1",
       "note": "The catalog release service, attribution 3.2, and business attribution 1.1 worktree is validated by control-plane tests."
     },
     {
       "name": "revenium-python-sdk",
       "repository": "https://github.com/revenium/revenium-python-sdk",
-      "commit": "8faa15010a598ed9e9deb93314595c41a6f20bc7",
-      "version": "0.6.0"
+      "commit": "24d979a60c9e761b8d87905694149258dad8bba6",
+      "version": "0.6.0",
+      "note": "The two commits after the 0.6.0 tag modify only the gitleaks merge-base CI helper and tests; the audited SDK behavior is unchanged."
     },
     {
       "name": "revenium-node-sdk",

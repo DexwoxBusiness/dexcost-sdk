@@ -10,6 +10,7 @@ from decimal import Decimal
 from importlib import import_module
 from typing import Any, Literal
 
+from dexcost.instruments._capture import provider_capture_callable
 from dexcost.instruments._provider_metering import (
     AsyncProviderStream,
     OperationMeasurement,
@@ -184,8 +185,7 @@ def _search_measurement(response: Any) -> OperationMeasurement:
     results = _value(response, "results")
     result_count = (
         len(results)
-        if isinstance(results, Sequence)
-        and not isinstance(results, (str, bytes, bytearray))
+        if isinstance(results, Sequence) and not isinstance(results, (str, bytes, bytearray))
         else None
     )
     lines = tuple(
@@ -212,8 +212,7 @@ def _embedding_measurement(response: Any, requested: str) -> OperationMeasuremen
     data = _value(response, "data")
     data_items = (
         data
-        if isinstance(data, Sequence)
-        and not isinstance(data, (str, bytes, bytearray))
+        if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray))
         else None
     )
     count = len(data_items) if data_items is not None else None
@@ -463,16 +462,12 @@ def _reconcile_response(result: Any, response_id: str, *, cancelled: bool = Fals
     tracker = _active_tracker
     if tracker is None:
         return
-    previous = tracker._storage.get_provider_job(
-        "perplexity", "responses", response_id
-    )
+    previous = tracker._storage.get_provider_job("perplexity", "responses", response_id)
     if previous is None:
         return
     status = "cancelled" if cancelled else _job_status(result)
     measurement = (
-        _measurement("responses", result, previous.resource_id)
-        if status == "succeeded"
-        else None
+        _measurement("responses", result, previous.resource_id) if status == "succeeded" else None
     )
     reconcile_provider_job(
         tracker=tracker,
@@ -512,7 +507,11 @@ def _patch(owner: Any, name: str, replacement: Any, key: str) -> None:
     original = getattr(owner, name, None)
     if callable(original):
         _originals[key] = (owner, name, original)
-        setattr(owner, name, replacement)
+        setattr(
+            owner,
+            name,
+            provider_capture_callable("perplexity", replacement, original),
+        )
 
 
 def _restore_all() -> None:
@@ -531,8 +530,7 @@ def instrument_perplexity(tracker: Any) -> None:
         api = import_module("perplexity.generated.api")
     except ImportError as exc:
         raise ImportError(
-            "Perplexity instrumentation requires 'perplexityai'; "
-            "install dexcost[perplexity]"
+            "Perplexity instrumentation requires 'perplexityai'; " "install dexcost[perplexity]"
         ) from exc
     _active_tracker = tracker
     try:

@@ -21,6 +21,11 @@ __pycache__/
 python/build/
 python/dist/
 .pytest_cache/
+# Workspace-owned pytest roots used by the supported-version and release
+# matrices. They can retain restrictive Windows ACLs after an interrupted run
+# and are always disposable test output, never SDK source.
+python/.pytest-*/
+python/.test-tmp*/
 .mypy_cache/
 .ruff_cache/
 .coverage

@@ -120,6 +120,7 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
 
   it.skipIf(!shouldRun())(
     "ships LLM and external cost events to local control layer",
+    { timeout: 30_000 },
     async () => {
       // Use a unique customer each run to avoid collisions
       const customerId = `e2e-ts-${randomUUID()}`;
@@ -178,11 +179,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       // decisions separately; unsupported custom rates must remain visibly
       // unpriced instead of being synthesized as zero cost.
     },
-    { timeout: 30_000 },
   );
 
   it.skipIf(!shouldRun())(
     "records both llm_call and external_cost event types",
+    { timeout: 15_000 },
     async () => {
       const customerId = `e2e-ts-events-${randomUUID()}`;
 
@@ -229,11 +230,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(extEvent.costUsd.toNumber()).toBeCloseTo(0.003, 4);
 
     },
-    { timeout: 15_000 },
   );
 
   it.skipIf(!shouldRun())(
     "Standard Event Schema v1 compliance",
+    { timeout: 15_000 },
     async () => {
       const customerId = `e2e-ts-schema-${randomUUID()}`;
 
@@ -284,11 +285,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(tasks[0].customerId).toBe(customerId);
 
     },
-    { timeout: 15_000 },
   );
 
   it.skipIf(!shouldRun())(
     "retry semantics: is_retry, retry_reason, retry_of fields",
+    { timeout: 15_000 },
     async () => {
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "retry-semantics.db");
@@ -322,11 +323,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(task[0].retryCount).toBeGreaterThanOrEqual(1);
 
     },
-    { timeout: 15_000 },
   );
 
   it.skipIf(!shouldRun())(
     "SDK gracefully handles unreachable server",
+    { timeout: 15_000 },
     async () => {
       const { CostTracker } = await import("../src/index.js");
       const dbPath = join(tmpDir, "graceful.db");
@@ -350,11 +351,11 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(events.length).toBeGreaterThanOrEqual(1);
 
     },
-    { timeout: 15_000 },
   );
 
   it.skipIf(!shouldRun())(
     "experiment_id and variant propagate through to the server",
+    { timeout: 15_000 },
     async () => {
       const customerId = `e2e-ts-exp-${randomUUID()}`;
 
@@ -382,6 +383,5 @@ describe("E2E: TypeScript SDK vs Local Control Layer", () => {
       expect(task.customerId).toBe(customerId);
 
     },
-    { timeout: 15_000 },
   );
 });

@@ -46,11 +46,22 @@ const overrides = new Map(Object.entries({
   task_context: ["runWithTask"],
   to_business_identity_revision_v1: ["toBusinessIdentityRevision"],
   instrument_litellm: ["instrumentLiteLLM"],
+  instrument_gemini: ["instrumentGoogleGenAI"],
   instrument_openai: ["instrumentOpenAI"],
   instrument_openrouter: ["instrumentOpenRouter"],
   uninstrument_litellm: ["uninstrumentLiteLLM"],
+  uninstrument_gemini: ["uninstrumentGoogleGenAI"],
   uninstrument_openai: ["uninstrumentOpenAI"],
   uninstrument_openrouter: ["uninstrumentOpenRouter"],
+}));
+
+const equivalenceNotes = new Map(Object.entries({
+  ALL_SUPPORTED_INSTRUMENTS:
+    "Equivalent supported-instrument registry; TypeScript additionally exposes its Vercel AI and legacy @google/generative-ai adapters, while Python's gemini entry maps to the current google.genai adapter.",
+  instrument_gemini:
+    "Python google.genai maps to TypeScript @google/genai; instrumentGemini is the separate legacy @google/generative-ai adapter.",
+  uninstrument_gemini:
+    "Python google.genai maps to TypeScript @google/genai; uninstrumentGemini is the separate legacy @google/generative-ai adapter.",
 }));
 
 const languageSpecific = new Map(Object.entries({
@@ -84,7 +95,8 @@ const mappings = pythonApi.exports.map((entry) => {
     python_kind: entry.kind,
     classification: "equivalent",
     typescript_exports: candidates,
-    notes: overrides.has(name) ? "Intentional TypeScript naming/API-shape equivalent." : null,
+    notes: equivalenceNotes.get(name)
+      ?? (overrides.has(name) ? "Intentional TypeScript naming/API-shape equivalent." : null),
   };
 });
 

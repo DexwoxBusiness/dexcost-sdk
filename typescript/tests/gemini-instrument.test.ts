@@ -291,4 +291,87 @@ describe("Gemini streaming instrumentation", () => {
     expect(events[0].outputTokens).toBe(50);
     expect(events[0].cachedTokens).toBe(10);
   });
+
+  it("retains partial usage and failure identity when the stream raises", async () => {
+    class FailingGenerativeModel {
+      model = "gemini-1.5-pro";
+
+      async generateContentStream(): Promise<unknown> {
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield {
+                usageMetadata: {
+                  promptTokenCount: 44,
+                  candidatesTokenCount: 12,
+                  cachedContentTokenCount: 6,
+                },
+              };
+              throw new Error("gemini stream failed");
+            },
+          },
+          response: Promise.resolve(undefined),
+        };
+      }
+    }
+    _setGenerativeModelClass(FailingGenerativeModel);
+    await instrumentGemini(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await expect(runWithTask(task, async () => {
+      const result = await new FailingGenerativeModel().generateContentStream() as {
+        stream: AsyncIterable<unknown>;
+      };
+      for await (const _chunk of result.stream) { /* drain */ }
+    })).rejects.toThrow("gemini stream failed");
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0]).toMatchObject({
+      inputTokens: 44, outputTokens: 12, cachedTokens: 6,
+    });
+    expect(buffer.getAllEvents()[0].details).toMatchObject({
+      attribution_operation_status: "failed",
+      attribution_error_type: "error",
+    });
+  });
+
+  it("records early stream close as cancelled exactly once", async () => {
+    class CancelledGenerativeModel {
+      model = "gemini-1.5-pro";
+
+      async generateContentStream(): Promise<unknown> {
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield {
+                usageMetadata: {
+                  promptTokenCount: 19,
+                  candidatesTokenCount: 4,
+                  cachedContentTokenCount: 2,
+                },
+              };
+              yield { candidates: [] };
+            },
+          },
+          response: Promise.resolve(undefined),
+        };
+      }
+    }
+    _setGenerativeModelClass(CancelledGenerativeModel);
+    await instrumentGemini(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "test" });
+
+    await runWithTask(task, async () => {
+      const result = await new CancelledGenerativeModel().generateContentStream() as {
+        stream: AsyncIterable<unknown>;
+      };
+      const iterator = result.stream[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.return?.();
+    });
+
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    expect(buffer.getAllEvents()[0].details.attribution_operation_status).toBe("cancelled");
+    expect(buffer.getAllEvents()[0]).toMatchObject({ inputTokens: 19, outputTokens: 4 });
+  });
 });

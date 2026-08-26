@@ -189,6 +189,26 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     expect(getRecordedEvents()).toHaveLength(0);
   });
 
+  it("suppression precedes domain-rate and catalog pricing paths", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    registerDomainRate("127.0.0.1", 0.01, "request");
+    const task = createTask({ taskId: "t-suppressed-rate" });
+    const accountant = new NetworkAccountant();
+    registerAccountant(task.taskId, accountant);
+    await runWithTask(task, async () => {
+      await suppressNetworkEvent(async () => {
+        const response = await fetch(`${server.url}/rated`);
+        await response.text();
+      });
+    });
+    await server.close();
+    expect(getRecordedEvents()).toHaveLength(0);
+    expect(accountant.finalize().callCount).toBe(1);
+  });
+
   it("domain-rate call emits external_cost with byte_details (request side)", async () => {
     const server = await startServer((req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });

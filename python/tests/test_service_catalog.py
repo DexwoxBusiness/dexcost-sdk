@@ -46,6 +46,46 @@ class TestCatalogLoading:
             assert entry.pricing_model
             assert entry.cost_extraction
 
+    def test_signed_mcp_alias_lookup_is_exact(self) -> None:
+        data = {
+            "_meta": {"version": "test", "service_count": 1},
+            "example_api": {
+                "display_name": "Example API",
+                "domains": ["api.example.test"],
+                "mcp_tools": ["example_search", "example-search"],
+                "category": "test",
+                "pricing_model": "per_request",
+                "cost_per_request_usd": "0.001",
+                "cost_extraction": {"type": "fixed"},
+                "source": "https://example.test/pricing",
+                "last_verified": "2026-08-24",
+            },
+        }
+        instance = ServiceCatalog(data=data, catalog_version="signed-test")
+        assert instance.lookup_mcp_tool("example_search") is instance.entries["example_api"]
+        assert instance.lookup_mcp_tool("example-search") is instance.entries["example_api"]
+        assert instance.lookup_mcp_tool("Example_Search") is None
+
+    def test_mcp_alias_cannot_have_multiple_service_owners(self) -> None:
+        entry = {
+            "display_name": "Example API",
+            "domains": ["api.example.test"],
+            "mcp_tools": ["shared_tool"],
+            "category": "test",
+            "pricing_model": "per_request",
+            "cost_per_request_usd": "0.001",
+            "cost_extraction": {"type": "fixed"},
+            "source": "https://example.test/pricing",
+            "last_verified": "2026-08-24",
+        }
+        with pytest.raises(ValueError, match="belongs to both first and second"):
+            ServiceCatalog._parse_catalog_entries(
+                {
+                    "first": entry,
+                    "second": {**entry, "domains": ["second.example.test"]},
+                }
+            )
+
 
 # ---------------------------------------------------------------------------
 # Domain matching tests

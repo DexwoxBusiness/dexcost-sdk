@@ -15,6 +15,8 @@ import re
 import sqlite3
 import sys
 import tempfile
+import types
+import typing
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
@@ -57,7 +59,7 @@ def _stable_signature(value: object) -> str | None:
 
 
 def _kind(value: object) -> str:
-    if getattr(value, "__origin__", None) is not None:
+    if typing.get_origin(value) is not None:
         return "type_alias"
     if inspect.isclass(value):
         # Public aliases such as AttributionUsageMetricV3 = str are contract
@@ -68,6 +70,19 @@ def _kind(value: object) -> str:
     if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         return "function"
     return "constant"
+
+
+def _module(value: object, kind: str) -> str:
+    """Return a stable module label for version-sensitive typing objects."""
+
+    if kind == "type_alias" and typing.get_origin(value) in (
+        types.UnionType,
+        typing.Union,
+    ):
+        # CPython 3.10-3.13 expose ``X | Y`` through ``types.UnionType``;
+        # CPython 3.14 normalizes the same public alias through ``typing.Union``.
+        return "types"
+    return getattr(value, "__module__", type(value).__module__)
 
 
 def _public_members(cls: type[object]) -> list[dict[str, object]]:
@@ -104,10 +119,11 @@ def public_api_snapshot() -> dict[str, object]:
     exports: list[dict[str, object]] = []
     for name in dexcost.__all__:
         value = getattr(dexcost, name)
+        kind = _kind(value)
         entry: dict[str, object] = {
             "name": name,
-            "kind": _kind(value),
-            "module": getattr(value, "__module__", type(value).__module__),
+            "kind": kind,
+            "module": _module(value, kind),
         }
         signature = None if entry["kind"] == "type_alias" else _stable_signature(value)
         if signature is not None:
@@ -297,7 +313,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)
-        print("run python scripts/freeze_contract.py --write after reviewed changes", file=sys.stderr)
+        print(
+            "run python scripts/freeze_contract.py --write after reviewed changes",
+            file=sys.stderr,
+        )
         return 1
     print(f"contract freeze verified: {CONTRACT_ROOT}")
     return 0

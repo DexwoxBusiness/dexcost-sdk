@@ -12,6 +12,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const typescriptRoot = resolve(here, "..");
 const freezeRoot = resolve(typescriptRoot, "..", "contracts", "python-vnext", "v1");
 
+type ContractCell = {
+  status: "implemented" | "intentionally_excluded" | "required";
+};
+
 describe("frozen Python-to-TypeScript public contract", () => {
   it("has no generated TypeScript API drift", () => {
     expect(() => execFileSync(
@@ -19,7 +23,7 @@ describe("frozen Python-to-TypeScript public contract", () => {
       [join(typescriptRoot, "scripts", "freeze-contract.mjs")],
       { cwd: typescriptRoot, stdio: "pipe" },
     )).not.toThrow();
-  });
+  }, 30_000);
 
   it("classifies every Python root export with no unresolved names", () => {
     const parity = JSON.parse(readFileSync(
@@ -29,7 +33,12 @@ describe("frozen Python-to-TypeScript public contract", () => {
       equivalent_count: number;
       language_specific_count: number;
       unresolved_count: number;
-      mappings: Array<{ python_name: string; classification: string }>;
+      mappings: Array<{
+        python_name: string;
+        classification: string;
+        typescript_exports: string[];
+        notes: string | null;
+      }>;
     };
     expect(parity.python_export_count).toBe(parity.mappings.length);
     expect(parity.equivalent_count + parity.language_specific_count)
@@ -39,6 +48,45 @@ describe("frozen Python-to-TypeScript public contract", () => {
       ?.classification).toBe("equivalent");
     expect(parity.mappings.find((item) => item.python_name === "AttributionOperationErrorV3")
       ?.classification).toBe("equivalent");
+    expect(parity.mappings.find((item) => item.python_name === "instrument_gemini")
+      ?.typescript_exports).toEqual(["instrumentGoogleGenAI"]);
+    expect(parity.mappings.find((item) => item.python_name === "uninstrument_gemini")
+      ?.typescript_exports).toEqual(["uninstrumentGoogleGenAI"]);
+    expect(parity.mappings.find((item) => item.python_name === "ALL_SUPPORTED_INSTRUMENTS")
+      ?.notes).toMatch(/additionally exposes/u);
+  });
+
+  it("has no unresolved TypeScript capability requirements", () => {
+    const capabilities = JSON.parse(readFileSync(
+      join(freezeRoot, "capability-matrix.json"), "utf-8",
+    )) as {
+      rows: Array<{
+        id: string;
+        cells: { dexcost_typescript: ContractCell };
+      }>;
+    };
+    const providers = JSON.parse(readFileSync(
+      join(freezeRoot, "provider-capabilities.json"), "utf-8",
+    )) as {
+      providers: Array<{
+        id: string;
+        coverage: Record<string, { dexcost_typescript: ContractCell }>;
+      }>;
+    };
+
+    const unresolved = capabilities.rows
+      .filter((row) => row.cells.dexcost_typescript.status === "required")
+      .map((row) => row.id);
+    for (const provider of providers.providers) {
+      for (const [dimension, languages] of Object.entries(provider.coverage)) {
+        if (languages.dexcost_typescript.status === "required") {
+          unresolved.push(`${provider.id}.${dimension}`);
+        }
+      }
+    }
+
+    expect(unresolved, `unresolved TypeScript contract requirements:\n${unresolved.join("\n")}`)
+      .toEqual([]);
   });
 
   it("verifies the shared signed catalog golden with the frozen test key", () => {

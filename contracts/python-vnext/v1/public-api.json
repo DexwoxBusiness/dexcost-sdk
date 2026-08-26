@@ -61,7 +61,7 @@
       "name": "AttributionBillingDimension"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "AttributionBillingDimensionValue"
     },
@@ -305,7 +305,7 @@
       "members": [],
       "module": "dexcost.catalog_runtime",
       "name": "CatalogRuntimeStatus",
-      "signature": "(release_id: 'str | None', release_sequence: 'int | None', source: 'str', stale: 'bool', last_refresh_status: 'str | None', last_error: 'str | None', overlay_active: 'bool' = False, overlay_override_count: 'int' = 0, overlay_last_refresh_status: 'str | None' = None, overlay_last_error: 'str | None' = None) -> None"
+      "signature": "(release_id: 'str | None', release_sequence: 'int | None', source: 'str', stale: 'bool', last_refresh_status: 'str | None', last_error: 'str | None', overlay_active: 'bool' = False, overlay_override_count: 'int' = 0, overlay_last_refresh_status: 'str | None' = None, overlay_last_error: 'str | None' = None, signature_verification: \"Literal['verified', 'unsigned_override', 'disabled_no_trust', 'unavailable']\" = 'unavailable', trusted_key_ids: 'tuple[str, ...]' = (), remote_refresh_enabled: 'bool' = False) -> None"
     },
     {
       "kind": "class",
@@ -326,6 +326,11 @@
       "members": [
         {
           "kind": "method",
+          "name": "amend_outcome",
+          "signature": "(self, outcome_id: 'uuid.UUID | str', *, state: 'OutcomeState', value: 'OutcomeInput | OutcomeValue | None' = None, expected_revision: 'int | None' = None, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
+        },
+        {
+          "kind": "method",
           "name": "attach_task",
           "signature": "(self, task_id: 'uuid.UUID | str', *, task_type: 'str' = 'attached', root_task_id: 'uuid.UUID | str | None' = None, parent_task_id: 'uuid.UUID | str | None' = None) -> 'AttachedTask'"
         },
@@ -342,7 +347,7 @@
         {
           "kind": "method",
           "name": "get_cost",
-          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0) -> 'CostResult'"
+          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0, cache_creation_tokens: 'int' = 0, cache_creation_tokens_1h: 'int' = 0) -> 'CostResult'"
         },
         {
           "kind": "method",
@@ -563,7 +568,7 @@
       "name": "InvalidAPIKeyError"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "OutcomeInput"
     },
@@ -629,7 +634,7 @@
         {
           "kind": "method",
           "name": "get_cost",
-          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0, cache_creation_tokens: 'int' = 0) -> 'CostResult'"
+          "signature": "(self, model: 'str', input_tokens: 'int', output_tokens: 'int', cached_tokens: 'int' = 0, cache_creation_tokens: 'int' = 0, cache_creation_tokens_1h: 'int' = 0) -> 'CostResult'"
         },
         {
           "kind": "method",
@@ -640,6 +645,11 @@
           "kind": "property",
           "name": "model_count",
           "signature": "(self) -> 'int'"
+        },
+        {
+          "kind": "method",
+          "name": "model_mode",
+          "signature": "(self, model: 'str') -> 'str | None'"
         },
         {
           "kind": "property",
@@ -803,7 +813,7 @@
       "signature": "(value: 'Decimal', currency: 'str') -> None"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "RevenueInput"
     },
@@ -881,6 +891,11 @@
           "kind": "method",
           "name": "lookup",
           "signature": "(self, url: 'str') -> 'ServiceEntry | None'"
+        },
+        {
+          "kind": "method",
+          "name": "lookup_mcp_tool",
+          "signature": "(self, tool_name: 'str') -> 'ServiceEntry | None'"
         },
         {
           "kind": "method",
@@ -984,7 +999,7 @@
       "signature": "(value)"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "ToolDimensionInput"
     },
@@ -994,7 +1009,7 @@
       "name": "ToolOperationStatus"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "ToolQuantityInput"
     },
@@ -1028,6 +1043,11 @@
     {
       "kind": "class",
       "members": [
+        {
+          "kind": "method",
+          "name": "amend_outcome",
+          "signature": "(self, outcome_id: 'uuid.UUID | str', *, state: 'OutcomeState', value: 'OutcomeInput | OutcomeValue | None' = None, expected_revision: 'int | None' = None, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
+        },
         {
           "kind": "method",
           "name": "end",
@@ -1109,12 +1129,12 @@
       "signature": "(task: 'Task', storage: 'StorageBackend', tracker: 'CostTracker', *, ctx_token: 'contextvars.Token[Task | None] | None' = None) -> 'None'"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "WebhookHeader"
     },
     {
-      "kind": "constant",
+      "kind": "type_alias",
       "module": "types",
       "name": "WebhookSecret"
     },
@@ -1128,6 +1148,12 @@
       "kind": "constant",
       "module": "builtins",
       "name": "__version__"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost",
+      "name": "amend_outcome",
+      "signature": "(outcome_id: 'uuid.UUID | str', *, state: 'OutcomeState', value: 'OutcomeInput | OutcomeValue | None' = None, expected_revision: 'int | None' = None, effective_at: 'datetime | None' = None, observed_at: 'datetime | None' = None) -> 'OutcomeRevision'"
     },
     {
       "kind": "function",
@@ -1403,7 +1429,7 @@
       "kind": "function",
       "module": "dexcost.idempotency",
       "name": "set_idempotency_key",
-      "signature": "(key: 'str | None') -> 'contextvars.Token[str | None]'"
+      "signature": "(key: 'str | None') -> 'contextvars.Token[Any]'"
     },
     {
       "kind": "function",

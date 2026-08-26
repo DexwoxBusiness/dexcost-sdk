@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { createCostEvent } from "../core/models.js";
 import type { Task, CostConfidence, PricingSource } from "../core/models.js";
-import { getCurrentTask } from "../core/context.js";
+import { getCurrentTask, runWithTask, suppressNetworkEvent } from "../core/context.js";
 import { createAutoTask, finalizeAutoTask } from "../core/auto-task.js";
 import { getAmbientSessionTask } from "../core/session.js";
 import type { EventBuffer } from "../transport/buffer.js";
@@ -16,12 +16,14 @@ import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import { applyEventCapability, defaultToolCapability } from "../core/capabilities.js";
 import { applyEventIdempotency } from "../core/idempotency.js";
+import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _patched = false;
 // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 let _original: Function | null = null;
+let _patchedPrototype: any = null;
 let _clientClass: any = null;
 let _buffer: EventBuffer | null = null;
 
@@ -380,6 +382,7 @@ export async function instrumentMcp(
   }
 
   _original = ClientProto.callTool;
+  _patchedPrototype = ClientProto;
   _buffer = buffer;
   void pricing;
 
@@ -388,6 +391,9 @@ export async function instrumentMcp(
     params: any,
     ...rest: any[]
   ): Promise<any> {
+    if (currentProviderCaptureOwner() !== undefined) {
+      return _original!.call(this, params, ...rest);
+    }
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -409,7 +415,10 @@ export async function instrumentMcp(
     let isError = false;
 
     try {
-      const result = await _original!.call(this, params, ...rest);
+      const result = await suppressNetworkEvent(() => runWithProviderCapture(
+        "mcp",
+        () => runWithTask(task, () => _original!.call(this, params, ...rest)),
+      ));
       const latencyMs = Math.round(performance.now() - startTime);
 
       // Check if MCP result itself signals an error
@@ -448,13 +457,15 @@ export async function instrumentMcp(
  * Remove the monkey-patch and restore the original `callTool` method.
  */
 export function uninstrumentMcp(): void {
-  if (!_patched || !_original) return;
+  if (!_patched) return;
 
-  if (_clientClass) {
-    _clientClass.prototype.callTool = _original;
+  if (_patchedPrototype) {
+    if (_original) _patchedPrototype.callTool = _original;
+    else delete _patchedPrototype.callTool;
   }
 
   _original = null;
+  _patchedPrototype = null;
   _buffer = null;
   _patched = false;
 }

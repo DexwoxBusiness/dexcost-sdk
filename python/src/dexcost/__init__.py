@@ -97,6 +97,7 @@ from dexcost.compute_wrap import (
 from dexcost.config import (
     DexcostConfig,
     InvalidAPIKeyError,
+    catalog_unsigned_override_requested,
     resolve_catalog_trust_policy,
     validate_api_key,
 )
@@ -291,10 +292,12 @@ def _reinit_after_fork() -> None:
         with suppress(Exception):
             _global_tracker._storage.close()
         from dexcost.storage.sqlite import SQLiteStorage
+
         _global_tracker._storage = SQLiteStorage(db_path=_global_config.buffer_path)
 
         # Re-wire any adapter modules that hold their own reference.
         from dexcost.adapters.browser import set_storage as _set_browser_storage
+
         _set_browser_storage(_global_tracker._storage)
 
         # Restart the sync worker on a fresh thread + fresh connection if
@@ -332,6 +335,11 @@ def _reinit_after_fork() -> None:
                         False
                         if previous_catalog_runtime is None
                         else previous_catalog_runtime._require_signature
+                    ),
+                    remote_refresh_enabled=(
+                        False
+                        if previous_catalog_runtime is None
+                        else previous_catalog_runtime._remote_refresh_enabled
                     ),
                 )
                 _catalog_runtime.load_cached()
@@ -492,12 +500,13 @@ def init(
     # or starting background work. Malformed or incomplete trust settings are
     # operator errors and must stop startup instead of silently disabling
     # signature enforcement.
-    resolved_catalog_keys, resolved_catalog_signature_requirement = (
-        resolve_catalog_trust_policy(
-            catalog_trusted_keys,
-            catalog_require_signature,
-        )
+    resolved_catalog_keys, resolved_catalog_signature_requirement = resolve_catalog_trust_policy(
+        catalog_trusted_keys,
+        catalog_require_signature,
     )
+    catalog_remote_refresh_enabled = bool(
+        resolved_catalog_keys
+    ) or catalog_unsigned_override_requested(catalog_require_signature)
 
     # Refresh configuration belongs to one accepted init lifecycle. Clear it
     # before applying the new config so track_http=False cannot inherit a URL
@@ -525,17 +534,20 @@ def init(
     # track_network is off.  Phase 1a/1b run synchronously here (sub-ms);
     # Phase 2 runs on a daemon thread that never blocks init().
     from dexcost.cloud_detect import start_background_detection as _start_detect
+
     _start_detect(track_network=_global_config.track_network)
 
     # Dev mode — console output, no cloud push
     if _global_config.is_dev:
         from dexcost.dev_console import enable_dev_mode
+
         enable_dev_mode()
 
     # Patch ThreadPoolExecutor to propagate contextvars to child threads.
     # Libraries like LangExtract, OpenAI, etc. use ThreadPoolExecutor for
     # parallel work — without this, child threads can't find the active task.
     from dexcost.context import patch_thread_context
+
     patch_thread_context()
 
     # Create the global tracker with auto-instrumentation.
@@ -579,6 +591,7 @@ def init(
             refresh_jitter_ratio=catalog_refresh_jitter,
             trusted_keys=resolved_catalog_keys,
             require_signature=resolved_catalog_signature_requirement,
+            remote_refresh_enabled=catalog_remote_refresh_enabled,
         )
         _catalog_runtime.load_cached()
     except Exception:
@@ -828,9 +841,7 @@ def report_tool_call(
     current = get_current_task()
     resolved_task_id = task_id or (current.task_id if current is not None else None)
     if resolved_task_id is None:
-        raise RuntimeError(
-            "No active task — use dexcost.task() or provide task_id explicitly"
-        )
+        raise RuntimeError("No active task — use dexcost.task() or provide task_id explicitly")
     try:
         resolved_uuid = (
             resolved_task_id
@@ -981,9 +992,7 @@ def record_outcome(
     current = get_current_task()
     resolved_task_id = task_id or (current.task_id if current is not None else None)
     if resolved_task_id is None:
-        raise RuntimeError(
-            "No active task — use dexcost.task() or provide task_id explicitly"
-        )
+        raise RuntimeError("No active task — use dexcost.task() or provide task_id explicitly")
     return _global_tracker.record_outcome(
         name,
         task_id=resolved_task_id,
@@ -1001,6 +1010,28 @@ def get_outcome_history(outcome_id: uuid.UUID | str) -> list[OutcomeRevision]:
     if _global_tracker is None:
         raise RuntimeError("dexcost not initialized — call dexcost.init() first")
     return _global_tracker.get_outcome_history(outcome_id)
+
+
+def amend_outcome(
+    outcome_id: uuid.UUID | str,
+    *,
+    state: OutcomeState,
+    value: OutcomeInput | OutcomeValue | None = None,
+    expected_revision: int | None = None,
+    effective_at: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> OutcomeRevision:
+    """Append the next revision of an outcome in the local durable ledger."""
+    if _global_tracker is None:
+        raise RuntimeError("dexcost not initialized — call dexcost.init() first")
+    return _global_tracker.amend_outcome(
+        outcome_id,
+        state=state,
+        value=value,
+        expected_revision=expected_revision,
+        effective_at=effective_at,
+        observed_at=observed_at,
+    )
 
 
 def record_revenue(
@@ -1028,9 +1059,7 @@ def record_revenue(
     current = get_current_task()
     resolved_task_id = task_id or (current.task_id if current is not None else None)
     if resolved_task_id is None:
-        raise RuntimeError(
-            "No active task — use dexcost.task() or provide task_id explicitly"
-        )
+        raise RuntimeError("No active task — use dexcost.task() or provide task_id explicitly")
     return _global_tracker.record_revenue(
         amount,
         task_id=resolved_task_id,
@@ -1090,6 +1119,7 @@ def set_api_key(new_key: str) -> bool:
     # transition.
     if _sync_worker._thread is None or not _sync_worker._thread.is_alive():
         from dexcost.storage.sqlite import SQLiteStorage
+
         sync_storage = SQLiteStorage(db_path=_global_config.buffer_path)
         _sync_worker = SyncWorker(
             config=_global_config,
@@ -1154,6 +1184,9 @@ def catalog_status() -> CatalogRuntimeStatus:
             stale=False,
             last_refresh_status=None,
             last_error=None,
+            signature_verification="unavailable",
+            trusted_key_ids=(),
+            remote_refresh_enabled=False,
         )
     return _catalog_runtime.status()
 
@@ -1307,6 +1340,7 @@ __all__ = [
     "WebhookSecret",
     "WebhookVerificationError",
     "__version__",
+    "amend_outcome",
     "assert_attribution_event_v2",
     "assert_attribution_observation_v3",
     "assert_webhook_signature",

@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeGuard
 
 from dexcost.models._serde import canonical_decimal, iso_canonical, parse_canonical
 
@@ -19,6 +19,10 @@ _CANONICAL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _INTEGER = re.compile(r"^-?(?:0|[1-9]\d{0,25})$")
 _DECIMAL = re.compile(r"^-?(?:0|[1-9]\d{0,25})(?:\.\d{1,12})?$")
 _OUTCOME_STATES = frozenset({"pending", "achieved", "missed", "voided"})
+
+
+def _is_outcome_value_type(value: object) -> TypeGuard[OutcomeValueType]:
+    return isinstance(value, str) and value in {"string", "boolean", "integer", "decimal"}
 
 
 def _aware(value: datetime, field_name: str) -> datetime:
@@ -80,12 +84,12 @@ class OutcomeValue:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> OutcomeValue:
         value_type = data.get("type")
-        if value_type not in {"string", "boolean", "integer", "decimal"}:
+        if not _is_outcome_value_type(value_type):
             raise ValueError("invalid outcome value type")
         value = data.get("value")
         if not isinstance(value, (str, bool)):
             raise ValueError("invalid outcome value")
-        return cls(type=value_type, value=value)  # type: ignore[arg-type]
+        return cls(type=value_type, value=value)
 
 
 @dataclass(frozen=True)

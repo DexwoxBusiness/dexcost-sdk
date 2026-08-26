@@ -12,6 +12,7 @@ import {
 const paths: string[] = [];
 const buffers: EventBuffer[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   for (const buffer of buffers.splice(0)) buffer.close();
   for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -84,5 +85,34 @@ describe("delivery health", () => {
     await pusher.flush();
     expect(pusher.authFailed).toBe(false);
     expect(pusher.status()).toMatchObject({ workerState: "backoff", consecutiveFailures: 1 });
+  });
+
+  it("uses delivery backoff as the actual next-attempt delay", async () => {
+    vi.useFakeTimers();
+    const buffer = storage(); populate(buffer);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("temporary", { status: 503 }))
+      .mockResolvedValueOnce(new Response('{"accepted":2,"rejected":0}', { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pusher = new EventPusher(
+      buffer,
+      { apiKey: "dx_test_delivery", batchSize: 10, flushIntervalMs: 100 },
+      "https://api.dexcost.io",
+    );
+    try {
+      pusher.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(pusher.status()).toMatchObject({ workerState: "backoff", backoffSeconds: 2 });
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(pusher.status()).toMatchObject({ workerState: "idle", consecutiveFailures: 0 });
+      expect(buffer.deliveryCounts().pendingEvents).toBe(0);
+    } finally {
+      pusher.stop();
+    }
   });
 });

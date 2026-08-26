@@ -24,6 +24,7 @@ from dexcost.attribution.types import (
     ATTRIBUTION_COMPONENTS,
     ATTRIBUTION_UNIT_BY_METRIC,
     AttributionComponent,
+    AttributionUsageLineV2,
 )
 from dexcost.attribution.v3_types import (
     AttributionBillingDimension,
@@ -377,43 +378,47 @@ def _capability_for_v3(event: Event) -> AttributionCapabilityIdentityV3 | None:
     return cast("AttributionCapabilityIdentityV3", capability.to_dict())
 
 
+def _explicit_usage_lines(event: Event) -> list[dict[str, str]] | None:
+    """Parse provider-native multiline usage independently of event type.
+
+    Provider integrations may persist an ``llm_call`` or another known event
+    type while retaining the provider's richer native meters.  Those explicit
+    meters override the lossy legacy projection, but the legacy mapping still
+    supplies the component and duration defaults.
+    """
+    explicit_lines = event.details.get("attribution_usage_lines")
+    if not isinstance(explicit_lines, list) or not 1 <= len(explicit_lines) <= 32:
+        return None
+    parsed_lines: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_line in explicit_lines:
+        if not isinstance(raw_line, dict):
+            return None
+        metric = raw_line.get("metric")
+        unit = raw_line.get("unit")
+        quantity = _positive_quantity(raw_line.get("quantity"))
+        if (
+            not isinstance(metric, str)
+            or _CANONICAL_NAME.fullmatch(metric) is None
+            or not isinstance(unit, str)
+            or _UNIT.fullmatch(unit) is None
+            or quantity is None
+        ):
+            return None
+        identity = (metric, unit)
+        if identity in seen:
+            return None
+        seen.add(identity)
+        parsed_lines.append({"metric": metric, "quantity": quantity, "unit": unit})
+    return parsed_lines
+
+
 def _unknown_explicit_usage(
     event: Event,
 ) -> tuple[AttributionComponent, list[dict[str, str]], Decimal | None] | None:
+    """Parse the single-meter extension used by unknown external services."""
     if event.event_type != "external_cost":
         return None
-    explicit_lines = event.details.get("attribution_usage_lines")
-    if explicit_lines is not None:
-        if not isinstance(explicit_lines, list) or not 1 <= len(explicit_lines) <= 32:
-            return None
-        parsed_lines: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for raw_line in explicit_lines:
-            if not isinstance(raw_line, dict):
-                return None
-            metric = raw_line.get("metric")
-            unit = raw_line.get("unit")
-            quantity = _positive_quantity(raw_line.get("quantity"))
-            if (
-                not isinstance(metric, str)
-                or _CANONICAL_NAME.fullmatch(metric) is None
-                or not isinstance(unit, str)
-                or _UNIT.fullmatch(unit) is None
-                or quantity is None
-            ):
-                return None
-            identity = (metric, unit)
-            if identity in seen:
-                return None
-            seen.add(identity)
-            parsed_lines.append(
-                {"metric": metric, "quantity": quantity, "unit": unit}
-            )
-        return (
-            "external",
-            parsed_lines,
-            _decimal_detail(event.details, "attribution_usage_duration_seconds"),
-        )
     metric = _string_detail(event.details, "attribution_usage_metric")
     if (
         metric is None
@@ -445,17 +450,31 @@ def to_attribution_observation_v3(
     server charset.
     """
     has_multiline_usage = "attribution_usage_lines" in event.details
-    explicit = _unknown_explicit_usage(event)
-    if has_multiline_usage and explicit is None:
+    explicit_lines = _explicit_usage_lines(event) if has_multiline_usage else None
+    if has_multiline_usage and explicit_lines is None:
         _log.warning("Event %s has invalid attribution_usage_lines", event.event_id)
         return None
     gpu_signal = _gpu_signal_usage(event) if event.event_type == "gpu_utilization_signal" else None
-    legacy = _component_and_usage(event) if explicit is None and gpu_signal is None else None
-    mapped = explicit or gpu_signal or legacy
-    if mapped is None:
+    legacy = _component_and_usage(event) if gpu_signal is None else None
+    unknown_explicit = (
+        _unknown_explicit_usage(event) if explicit_lines is None and gpu_signal is None else None
+    )
+    mapped_usage: list[dict[str, str]] | list[AttributionUsageLineV2]
+    if explicit_lines is not None:
+        component: AttributionComponent = legacy[0] if legacy is not None else "external"
+        legacy_duration = legacy[2] if legacy is not None else None
+        mapped_usage = explicit_lines
+        duration_seconds = (
+            _decimal_detail(event.details, "attribution_usage_duration_seconds") or legacy_duration
+        )
+    elif gpu_signal is not None:
+        component, mapped_usage, duration_seconds, _ = gpu_signal
+    elif unknown_explicit is not None:
+        component, mapped_usage, duration_seconds = unknown_explicit
+    elif legacy is not None:
+        component, mapped_usage, duration_seconds = legacy
+    else:
         return None
-
-    component, mapped_usage, duration_seconds = mapped[:3]
     explicit_dimensions = _explicit_dimensions(event.details)
     if explicit_dimensions is None:
         _log.warning("Event %s has invalid attribution_dimensions", event.event_id)

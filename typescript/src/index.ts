@@ -19,7 +19,7 @@
 // Core
 export { CostTracker, TrackedTask } from "./core/tracker.js";
 export type {
-  TrackerOptions, TaskOptions, ToolCallOptions, TrackToolOptions,
+  TrackerOptions, TaskOptions, ToolCallOptions, TrackToolOptions, AmendOutcomeOptions,
 } from "./core/tracker.js";
 
 // Singleton / init pattern
@@ -34,6 +34,7 @@ export {
   globalTrackTool as trackTool,
   globalRecordOutcome as recordOutcome,
   globalGetOutcomeHistory as getOutcomeHistory,
+  globalAmendOutcome as amendOutcome,
   globalRecordRevenue as recordRevenue,
   globalGetRevenueHistory as getRevenueHistory,
   globalExplainPricing as explainPricing,
