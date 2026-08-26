@@ -1,7 +1,7 @@
 {
   "freeze_version": 1,
   "package": "@dexcost/sdk",
-  "package_version": "0.23.0",
+  "package_version": "0.24.0",
   "root_entrypoint": "src/index.ts",
   "exports": [
     "ALL_SUPPORTED_INSTRUMENTS",
