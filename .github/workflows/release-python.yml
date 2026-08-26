@@ -27,8 +27,8 @@ jobs:
     name: Verify Python release (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     env:
-      TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken-cache
-      CUSTOM_TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken-cache
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/tiktoken
+      CUSTOM_TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/tiktoken
     strategy:
       fail-fast: false
       matrix:
