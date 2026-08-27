@@ -15,6 +15,8 @@ import pytest
 from dexcost.config import DexcostConfig
 from dexcost.models.event import Event
 from dexcost.models.outcome import OutcomeRevision, OutcomeValue
+from dexcost.models.task import Task
+from dexcost.storage.protocol import StorageBackend
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.sync import SyncWorker
 
@@ -36,11 +38,12 @@ def _success_response() -> MagicMock:
     return response
 
 
-class _LegacyStorageBackend:
-    """Pre-outcome custom backend used to verify upgrade compatibility."""
+class _LegacyStorageBackend(StorageBackend):
+    """Older explicit Protocol subclass with none of the later capabilities."""
 
-    def __init__(self, event: Event) -> None:
+    def __init__(self, event: Event, task: Task | None = None) -> None:
         self.pending_events = [event]
+        self.pending_tasks = [] if task is None else [task]
 
     def query_events_for_sync(self, limit: int = 1000) -> list[Event]:
         return self.pending_events[:limit]
@@ -50,8 +53,12 @@ class _LegacyStorageBackend:
             event for event in self.pending_events if str(event.event_id) not in event_ids
         ]
 
-    def query_tasks_for_sync(self, task_ids: list[str]) -> list[object]:
-        return []
+    def query_tasks_for_sync(self, task_ids: list[str]) -> list[Task]:
+        selected = set(task_ids)
+        return [task for task in self.pending_tasks if str(task.task_id) in selected]
+
+    def query_pending_tasks_for_sync(self, limit: int = 1000) -> list[Task]:
+        return self.pending_tasks[:limit]
 
     def mark_synced(self, event_ids: list[str]) -> None:
         self.pending_events = [
@@ -59,7 +66,10 @@ class _LegacyStorageBackend:
         ]
 
     def mark_tasks_synced(self, task_ids: list[str]) -> None:
-        return None
+        selected = set(task_ids)
+        self.pending_tasks = [
+            task for task in self.pending_tasks if str(task.task_id) not in selected
+        ]
 
     def purge_synced(self, retention_hours: int = 48) -> int:
         return 0
@@ -111,8 +121,8 @@ def test_legacy_backend_without_outcome_methods_still_uploads_events(
         input_tokens=10,
         output_tokens=5,
     )
-    storage = _LegacyStorageBackend(event)
-    worker = SyncWorker(config=_config(), storage=storage)  # type: ignore[arg-type]
+    storage = _LegacyStorageBackend(event)  # type: ignore[abstract]
+    worker = SyncWorker(config=_config(), storage=storage)
 
     assert worker._sync_batch() is True
     request = mock_urlopen.call_args.args[0]
@@ -120,6 +130,39 @@ def test_legacy_backend_without_outcome_methods_still_uploads_events(
     assert [item["event_id"] for item in payload["events"]] == [str(event.event_id)]
     assert payload["outcomes"] == []
     assert storage.pending_events == []
+
+
+@patch("dexcost.sync.urllib.request.urlopen")
+def test_legacy_protocol_subclass_ignores_inherited_delivery_stubs(
+    mock_urlopen: MagicMock,
+) -> None:
+    """New optional Protocol stubs must not replace legacy event/task methods."""
+    mock_urlopen.return_value = _success_response()
+    task = Task(task_type="legacy.workflow")
+    event = Event(
+        task_id=task.task_id,
+        event_type="llm_call",
+        occurred_at=datetime.now(timezone.utc),
+        cost_usd=Decimal("0.001"),
+        cost_confidence="exact",
+        pricing_source="manual",
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=10,
+        output_tokens=5,
+    )
+    storage = _LegacyStorageBackend(event, task)  # type: ignore[abstract]
+    worker = SyncWorker(config=_config(), storage=storage)
+
+    assert worker._sync_batch() is True
+    request = mock_urlopen.call_args.args[0]
+    payload = json.loads(request.data)
+    assert [item["event_id"] for item in payload["events"]] == [str(event.event_id)]
+    assert [item["task_id"] for item in payload["tasks"]] == [str(task.task_id)]
+    assert payload["outcomes"] == []
+    assert payload["revenue_revisions"] == []
+    assert storage.pending_events == []
+    assert storage.pending_tasks == []
 
 
 @patch("dexcost.sync.urllib.request.urlopen")

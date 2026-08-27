@@ -39,10 +39,10 @@ from dexcost.delivery import (
 )
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.session import get_session_manager
+from dexcost.storage.protocol import StorageBackend
 
 if TYPE_CHECKING:
     from dexcost.config import DexcostConfig
-    from dexcost.storage.protocol import StorageBackend
 
 _log = logging.getLogger(__name__)
 
@@ -72,14 +72,31 @@ class _AttributionConversionError(RuntimeError):
         )
 
 
+def _optional_storage_method(storage: StorageBackend, name: str) -> Any | None:
+    """Return an implemented optional capability, excluding Protocol stubs.
+
+    A concrete class may explicitly inherit ``StorageBackend`` while only
+    implementing an older version of the protocol. Python then exposes later
+    Protocol methods as bound, callable ellipsis stubs that return ``None``.
+    Treat only a real override (or an instance-supplied callable) as support.
+    """
+    method = getattr(storage, name, None)
+    if not callable(method):
+        return None
+    protocol_stub = getattr(StorageBackend, name, None)
+    if getattr(method, "__func__", None) is protocol_stub:
+        return None
+    return method
+
+
 def _mark_event_snapshots_synced(
     storage: StorageBackend,
     event_ids: list[str],
     sync_versions: dict[str, int] | None,
 ) -> None:
     """Acknowledge posted event snapshots without consuming newer mutations."""
-    marker = getattr(storage, "mark_event_deliveries_synced", None)
-    if sync_versions is not None and callable(marker):
+    marker = _optional_storage_method(storage, "mark_event_deliveries_synced")
+    if sync_versions is not None and marker is not None:
         versioned = [
             (event_id, sync_versions[event_id])
             for event_id in event_ids
@@ -96,8 +113,8 @@ def _mark_event_snapshots_quarantined(
     sync_versions: dict[str, int] | None,
 ) -> None:
     """Quarantine converter failures without hiding a corrected revision."""
-    marker = getattr(storage, "mark_event_deliveries_quarantined", None)
-    if sync_versions is not None and callable(marker):
+    marker = _optional_storage_method(storage, "mark_event_deliveries_quarantined")
+    if sync_versions is not None and marker is not None:
         versioned = [
             (event_id, sync_versions[event_id])
             for event_id in event_ids
@@ -114,8 +131,8 @@ def _mark_task_snapshots_synced(
     sync_versions: dict[str, int] | None,
 ) -> None:
     """Acknowledge posted task snapshots without consuming newer rollups."""
-    marker = getattr(storage, "mark_task_deliveries_synced", None)
-    if sync_versions is not None and callable(marker):
+    marker = _optional_storage_method(storage, "mark_task_deliveries_synced")
+    if sync_versions is not None and marker is not None:
         versioned = [
             (task_id, sync_versions[task_id])
             for task_id in task_ids
@@ -445,8 +462,10 @@ class SyncWorker:
 
         while len(event_dicts) < batch_size and scanned < scan_limit:
             page_limit = min(batch_size - len(event_dicts), scan_limit - scanned)
-            query_event_deliveries = getattr(st, "query_event_deliveries_for_sync", None)
-            if callable(query_event_deliveries):
+            query_event_deliveries = _optional_storage_method(
+                st, "query_event_deliveries_for_sync"
+            )
+            if query_event_deliveries is not None:
                 if event_sync_versions is None:
                     event_sync_versions = {}
                 event_deliveries = query_event_deliveries(limit=page_limit)
@@ -491,16 +510,20 @@ class SyncWorker:
         # events went to auto-tasks in threads.
         tasks: list[Any] = []
         task_sync_versions: dict[str, int] | None = None
-        query_task_deliveries = getattr(st, "query_task_deliveries_for_sync", None)
-        if callable(query_task_deliveries):
+        query_task_deliveries = _optional_storage_method(st, "query_task_deliveries_for_sync")
+        if query_task_deliveries is not None:
             task_sync_versions = {}
             task_deliveries = query_task_deliveries()
             tasks = [task for task, _version in task_deliveries]
             task_sync_versions.update(
                 (str(task.task_id), version) for task, version in task_deliveries
             )
-        elif hasattr(st, "query_pending_tasks_for_sync"):
-            tasks = st.query_pending_tasks_for_sync()
+        elif (
+            query_pending_tasks := _optional_storage_method(
+                st, "query_pending_tasks_for_sync"
+            )
+        ) is not None:
+            tasks = query_pending_tasks()
         else:
             # Backend without task sync tracking — fall back to task IDs
             # referenced by this event batch.
@@ -515,19 +538,19 @@ class SyncWorker:
         # protocol had already been adopted by custom backends. Keep outcome
         # sync capability-based so upgrading dexcost cannot block their
         # existing event/task delivery when no outcomes are recorded.
-        query_outcomes = getattr(st, "query_outcomes_for_sync", None)
-        outcomes = query_outcomes(limit=batch_size) if callable(query_outcomes) else []
+        query_outcomes = _optional_storage_method(st, "query_outcomes_for_sync")
+        outcomes = query_outcomes(limit=batch_size) if query_outcomes is not None else []
         outcome_dicts = [outcome.to_dict() for outcome in outcomes]
-        query_revenues = getattr(st, "query_revenues_for_sync", None)
-        revenues = query_revenues(limit=batch_size) if callable(query_revenues) else []
+        query_revenues = _optional_storage_method(st, "query_revenues_for_sync")
+        revenues = query_revenues(limit=batch_size) if query_revenues is not None else []
         revenue_dicts = [revenue.to_dict() for revenue in revenues]
 
         # Provider jobs already are strict attribution-v3 revision streams.
         # Keep this capability-based for existing custom storage backends.
-        query_provider_jobs = getattr(st, "query_provider_jobs_for_sync", None)
+        query_provider_jobs = _optional_storage_method(st, "query_provider_jobs_for_sync")
         provider_jobs = (
             query_provider_jobs(limit=max(1, batch_size - len(event_dicts)))
-            if callable(query_provider_jobs) and len(event_dicts) < batch_size
+            if query_provider_jobs is not None and len(event_dicts) < batch_size
             else []
         )
         provider_job_dicts = [
@@ -568,8 +591,8 @@ class SyncWorker:
         event_ids = [event["event_id"] for event in event_dicts]
         _mark_event_snapshots_synced(st, event_ids, event_sync_versions)
         provider_job_revisions = [(str(job.event_id), job.revision) for job in provider_jobs]
-        mark_provider_jobs = getattr(st, "mark_provider_jobs_synced", None)
-        if provider_job_revisions and callable(mark_provider_jobs):
+        mark_provider_jobs = _optional_storage_method(st, "mark_provider_jobs_synced")
+        if provider_job_revisions and mark_provider_jobs is not None:
             mark_provider_jobs(provider_job_revisions)
         task_ids = [task["task_id"] for task in task_dicts]
         if task_ids:
@@ -590,8 +613,8 @@ class SyncWorker:
             )
             for revenue in revenue_dicts
         ]
-        mark_revenues = getattr(st, "mark_revenues_synced", None)
-        if revenue_ids and callable(mark_revenues):
+        mark_revenues = _optional_storage_method(st, "mark_revenues_synced")
+        if revenue_ids and mark_revenues is not None:
             mark_revenues(revenue_ids)
 
         _log.info(
@@ -628,8 +651,8 @@ class SyncWorker:
             return
         self._quarantine_recovery_attempted = True
         restored = 0
-        requeue = getattr(storage, "requeue_quarantined_events", None)
-        if callable(requeue):
+        requeue = _optional_storage_method(storage, "requeue_quarantined_events")
+        if requeue is not None:
             try:
                 restored = int(requeue())
             except Exception:
@@ -639,8 +662,8 @@ class SyncWorker:
             # Compatibility path for third-party storage backends released
             # before the atomic requeue operation was added. Only rows that
             # the current converter can represent are requeued.
-            query = getattr(storage, "query_quarantined_events", None)
-            if not callable(query):
+            query = _optional_storage_method(storage, "query_quarantined_events")
+            if query is None:
                 return
             for event in query(limit=_MAX_CONVERSION_SCAN):
                 if self._prepare_event_dict(event) is None:
@@ -854,8 +877,10 @@ class SyncWorker:
                 ]
                 if event_ids:
                     _mark_event_snapshots_synced(storage, event_ids, event_versions)
-                    mark_provider_jobs = getattr(storage, "mark_provider_jobs_synced", None)
-                    if callable(mark_provider_jobs):
+                    mark_provider_jobs = _optional_storage_method(
+                        storage, "mark_provider_jobs_synced"
+                    )
+                    if mark_provider_jobs is not None:
                         provider_job_ids = [
                             (
                                 str(event["event_id"]),
@@ -871,8 +896,8 @@ class SyncWorker:
                     _mark_task_snapshots_synced(storage, task_ids, task_versions)
                 if outcome_ids:
                     storage.mark_outcomes_synced(outcome_ids)
-                mark_revenues = getattr(storage, "mark_revenues_synced", None)
-                if revenue_ids and callable(mark_revenues):
+                mark_revenues = _optional_storage_method(storage, "mark_revenues_synced")
+                if revenue_ids and mark_revenues is not None:
                     mark_revenues(revenue_ids)
             return posted
 
@@ -1085,8 +1110,10 @@ class SyncWorker:
             )
             if storage is not None:
                 _mark_event_snapshots_synced(storage, [str(events[0]["event_id"])], event_versions)
-                mark_provider_jobs = getattr(storage, "mark_provider_jobs_quarantined", None)
-                if callable(mark_provider_jobs):
+                mark_provider_jobs = _optional_storage_method(
+                    storage, "mark_provider_jobs_quarantined"
+                )
+                if mark_provider_jobs is not None:
                     mark_provider_jobs(
                         [
                             (
@@ -1131,8 +1158,10 @@ class SyncWorker:
                 len(body),
             )
             if storage is not None:
-                mark_quarantined = getattr(storage, "mark_revenues_quarantined", None)
-                if callable(mark_quarantined):
+                mark_quarantined = _optional_storage_method(
+                    storage, "mark_revenues_quarantined"
+                )
+                if mark_quarantined is not None:
                     mark_quarantined([revision])
         return True
 
