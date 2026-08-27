@@ -134,7 +134,6 @@ def public_api_snapshot() -> dict[str, object]:
     return {
         "freeze_version": "python-vnext-v1",
         "package": "dexcost",
-        "package_version": dexcost.__version__,
         "python_requires": ">=3.10",
         "exports": exports,
     }

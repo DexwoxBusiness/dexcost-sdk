@@ -25,6 +25,17 @@ describe("frozen Python-to-TypeScript public contract", () => {
     )).not.toThrow();
   }, 30_000);
 
+  it("keeps volatile package versions outside the semantic contract", () => {
+    const pythonPublic = JSON.parse(readFileSync(
+      join(freezeRoot, "public-api.json"), "utf-8",
+    )) as Record<string, unknown>;
+    const typescriptPublic = JSON.parse(readFileSync(
+      join(freezeRoot, "typescript-public-api.json"), "utf-8",
+    )) as Record<string, unknown>;
+    expect(pythonPublic).not.toHaveProperty("package_version");
+    expect(typescriptPublic).not.toHaveProperty("package_version");
+  });
+
   it("classifies every Python root export with no unresolved names", () => {
     const parity = JSON.parse(readFileSync(
       join(freezeRoot, "typescript-api-map.json"), "utf-8",

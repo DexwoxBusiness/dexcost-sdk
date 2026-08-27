@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 14
+TARGET_SCHEMA_VERSION = 15
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -370,3 +370,42 @@ def _sqlite_v13_to_v14(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_PROVIDER_JOB_REVISIONS)
     for index_sql in _CREATE_PROVIDER_JOB_INDEXES:
         conn.execute(index_sql)
+
+
+@register_sqlite_migration(14, 15)
+def _sqlite_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """Add optimistic delivery versions for mutable events and tasks."""
+    for table in ("events", "tasks"):
+        existing = {
+            row[1]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if existing and "sync_version" not in existing:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN "
+                "sync_version INTEGER NOT NULL DEFAULT 1"
+            )
+
+
+@register_pg_migration(14, 15)
+async def _pg_v14_to_v15(conn: Any) -> None:
+    """Add optimistic delivery versions to PostgreSQL events and tasks.
+
+    The separate add/backfill/default/not-null steps also repair a safely
+    retryable partial schema in which the column exists but is still nullable.
+    The runner encloses all statements and the version-ledger insert in one
+    PostgreSQL transaction.
+    """
+    for table in ("events", "tasks"):
+        await conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sync_version BIGINT"
+        )
+        await conn.execute(
+            f"UPDATE {table} SET sync_version = 1 WHERE sync_version IS NULL"
+        )
+        await conn.execute(
+            f"ALTER TABLE {table} ALTER COLUMN sync_version SET DEFAULT 1"
+        )
+        await conn.execute(
+            f"ALTER TABLE {table} ALTER COLUMN sync_version SET NOT NULL"
+        )

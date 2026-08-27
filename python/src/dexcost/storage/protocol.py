@@ -74,6 +74,18 @@ class StorageBackend(Protocol):
         """Return pending events ready for sync, oldest first."""
         ...
 
+    def query_event_deliveries_for_sync(self, limit: int = 1000) -> list[tuple[Event, int]]:
+        """Return pending event snapshots with optimistic delivery versions."""
+        ...
+
+    def mark_event_deliveries_synced(self, deliveries: list[tuple[str, int]]) -> None:
+        """Acknowledge only the exact event revisions accepted by ingestion."""
+        ...
+
+    def mark_event_deliveries_quarantined(self, deliveries: list[tuple[str, int]]) -> None:
+        """Quarantine only exact event snapshots that failed conversion."""
+        ...
+
     def mark_synced(self, event_ids: list[str]) -> None:
         """Transition events from pending to synced."""
         ...
@@ -100,6 +112,14 @@ class StorageBackend(Protocol):
 
     def query_pending_tasks_for_sync(self, limit: int = 1000) -> list[Task]:
         """Return tasks not yet synced, oldest first."""
+        ...
+
+    def query_task_deliveries_for_sync(self, limit: int = 1000) -> list[tuple[Task, int]]:
+        """Return pending task snapshots with optimistic delivery versions."""
+        ...
+
+    def mark_task_deliveries_synced(self, deliveries: list[tuple[str, int]]) -> None:
+        """Acknowledge only the exact task revisions accepted by ingestion."""
         ...
 
     def mark_tasks_synced(self, task_ids: list[str]) -> None:

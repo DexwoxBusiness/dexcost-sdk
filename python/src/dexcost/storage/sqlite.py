@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     experiment_id       TEXT,
     variant             TEXT,
     sync_status         TEXT NOT NULL DEFAULT 'pending',
+    sync_version        INTEGER NOT NULL DEFAULT 1,
     network_bytes_in    INTEGER NOT NULL DEFAULT 0,
     network_bytes_out   INTEGER NOT NULL DEFAULT 0,
     network_call_count  INTEGER NOT NULL DEFAULT 0,
@@ -98,7 +99,8 @@ CREATE TABLE IF NOT EXISTS events (
     retry_of        TEXT,
     details         TEXT,
     timestamp       TEXT NOT NULL,
-    sync_status     TEXT NOT NULL DEFAULT 'pending'
+    sync_status     TEXT NOT NULL DEFAULT 'pending',
+    sync_version    INTEGER NOT NULL DEFAULT 1
 );
 """
 
@@ -537,7 +539,7 @@ class SQLiteStorage:
                     experiment_id=?, variant=?,
                     network_bytes_in=?, network_bytes_out=?, network_call_count=?,
                     network_by_host=?,
-                    sync_status='pending'
+                    sync_status='pending', sync_version=sync_version + 1
                 WHERE task_id=?""",
                 (
                     task.task_type,
@@ -695,7 +697,7 @@ class SQLiteStorage:
                     cost_confidence=?, pricing_source=?, pricing_version=?,
                     is_retry=?, retry_reason=?, retry_of=?,
                     details=?, timestamp=?,
-                    sync_status='pending'
+                    sync_status='pending', sync_version=sync_version + 1
                 WHERE event_id=?""",
                 (
                     event.event_type,
@@ -767,13 +769,29 @@ class SQLiteStorage:
 
     def query_events_for_sync(self, limit: int = 1000) -> list[Event]:
         """Return pending events ready for sync, oldest first."""
+        return [event for event, _version in self.query_event_deliveries_for_sync(limit)]
+
+    def query_event_deliveries_for_sync(self, limit: int = 1000) -> list[tuple[Event, int]]:
+        """Return pending event snapshots with optimistic delivery versions."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM events WHERE sync_status = 'pending' "
                 "ORDER BY timestamp ASC, rowid ASC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return [self._row_to_event(r) for r in rows]
+        return [(self._row_to_event(row), int(row["sync_version"])) for row in rows]
+
+    def mark_event_deliveries_synced(self, deliveries: list[tuple[str, int]]) -> None:
+        """Acknowledge only the exact event revisions accepted by ingestion."""
+        if not deliveries:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE events SET sync_status='synced' "
+                "WHERE event_id=? AND sync_version=? AND sync_status='pending'",
+                deliveries,
+            )
+            self._conn.commit()
 
     def mark_synced(self, event_ids: list[str]) -> None:
         """Transition events from pending to synced."""
@@ -803,6 +821,18 @@ class SQLiteStorage:
         )
         with self._lock:
             self._conn.execute(sql, event_ids)
+            self._conn.commit()
+
+    def mark_event_deliveries_quarantined(self, deliveries: list[tuple[str, int]]) -> None:
+        """Quarantine only the exact event snapshots that failed conversion."""
+        if not deliveries:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE events SET sync_status='quarantined' "
+                "WHERE event_id=? AND sync_version=? AND sync_status='pending'",
+                deliveries,
+            )
             self._conn.commit()
 
     def requeue_quarantined_events(self) -> int:
@@ -847,13 +877,29 @@ class SQLiteStorage:
         Used by the :class:`~dexcost.sync.SyncWorker` so already-synced tasks
         are not re-POSTed on every cycle.
         """
+        return [task for task, _version in self.query_task_deliveries_for_sync(limit)]
+
+    def query_task_deliveries_for_sync(self, limit: int = 1000) -> list[tuple[Task, int]]:
+        """Return pending task snapshots with optimistic delivery versions."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM tasks WHERE sync_status = 'pending' "
                 "ORDER BY started_at ASC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return [self._row_to_task(r) for r in rows]
+        return [(self._row_to_task(row), int(row["sync_version"])) for row in rows]
+
+    def mark_task_deliveries_synced(self, deliveries: list[tuple[str, int]]) -> None:
+        """Acknowledge only the exact task revisions accepted by ingestion."""
+        if not deliveries:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE tasks SET sync_status='synced' "
+                "WHERE task_id=? AND sync_version=? AND sync_status='pending'",
+                deliveries,
+            )
+            self._conn.commit()
 
     def mark_tasks_synced(self, task_ids: list[str]) -> None:
         """Transition tasks from pending to synced."""

@@ -107,7 +107,6 @@ if (unresolved.length > 0) {
 const tsApi = {
   freeze_version: 1,
   package: packageJson.name,
-  package_version: packageJson.version,
   root_entrypoint: "src/index.ts",
   exports: exportedSymbols,
 };

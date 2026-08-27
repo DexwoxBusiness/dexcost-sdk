@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -209,6 +210,46 @@ class TestSyncBatch:
         # No pending events left
         pending = storage.query_events_for_sync()
         assert len(pending) == 0
+
+    @patch("dexcost.sync.urllib.request.urlopen")
+    def test_inflight_ack_does_not_consume_a_newer_event_revision(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
+        request_started = threading.Event()
+        release_response = threading.Event()
+
+        def blocking_urlopen(*_args: Any, **_kwargs: Any) -> MagicMock:
+            request_started.set()
+            assert release_response.wait(timeout=5)
+            return _mock_urlopen_success()
+
+        mock_urlopen.side_effect = blocking_urlopen
+        storage = _make_storage(tmp_path)
+        [event] = _insert_events(storage)
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        results: list[bool] = []
+        failures: list[BaseException] = []
+
+        def push() -> None:
+            try:
+                results.append(worker._sync_batch())
+            except BaseException as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        thread = threading.Thread(target=push)
+        thread.start()
+        assert request_started.wait(timeout=5)
+        event.cost_usd = Decimal("0.013")
+        storage.update_event(event)
+        release_response.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert failures == []
+        assert results == [True]
+        [pending] = storage.query_events_for_sync()
+        assert pending.event_id == event.event_id
+        assert pending.cost_usd == Decimal("0.013")
 
     @patch("dexcost.sync.urllib.request.urlopen")
     def test_events_stay_pending_on_failure(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:

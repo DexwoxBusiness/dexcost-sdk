@@ -86,9 +86,9 @@
       "sha256": "cd2a9b0b22f68b06d7bd15050659c15257c52acc3c9e74030af9b31133b5187e"
     },
     {
-      "byte_size": 60669,
+      "byte_size": 60638,
       "path": "public-api.json",
-      "sha256": "a95ac8cecacb04a01b15e78fab78c81cb019fa112a9fb43ae99836e27e22c4c7"
+      "sha256": "3da17c1656fef9458a1d1f172e011b16000b8d67b9f4b2dccad287902aba1356"
     },
     {
       "byte_size": 2375,
@@ -151,19 +151,19 @@
       "sha256": "89f1eda7794e0b0ad7f045c8f474e35e29bf415a05b36b0bac00064204cd1291"
     },
     {
-      "byte_size": 43213,
+      "byte_size": 43955,
       "path": "storage-migrations.json",
-      "sha256": "91a5d362f6b3a7840c7cd1db442d81a06b4e712f0b63962d0fff0faa51c165ff"
+      "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
       "byte_size": 38346,
       "path": "typescript-api-map.json",
-      "sha256": "e58aff71fd4a32351c5376a84c3e67dda120a0bf83da70806570d7f4a699bb6b"
+      "sha256": "b77fcb4d984922d6a8c717690cb813d827da2b602415fbf9533b3aab37c90385"
     },
     {
-      "byte_size": 8526,
+      "byte_size": 8522,
       "path": "typescript-public-api.json",
-      "sha256": "072018f5d5ef15e616be450cad2c693aa5f4a0e8bc916a73a44ef0d848629f6a"
+      "sha256": "3f120776eaf9984885a7ac3a6e528ff61a7180c4b413feb084215966aaad421f"
     },
     {
       "byte_size": 2460,

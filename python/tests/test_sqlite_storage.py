@@ -129,6 +129,21 @@ class TestTaskCrud:
         assert got.total_cost_usd == Decimal("1.23")
         assert got.retry_count == 2
 
+    def test_stale_task_delivery_ack_preserves_a_newer_rollup(
+        self, storage: SQLiteStorage
+    ) -> None:
+        task = Task(task_type="reconcile")
+        storage.insert_task(task)
+        [(_snapshot, version)] = storage.query_task_deliveries_for_sync()
+
+        task.total_cost_usd = Decimal("0.25")
+        storage.update_task(task)
+        storage.mark_task_deliveries_synced([(str(task.task_id), version)])
+
+        [pending] = storage.query_pending_tasks_for_sync()
+        assert pending.task_id == task.task_id
+        assert pending.total_cost_usd == Decimal("0.25")
+
     def test_query_by_customer_id(self, storage: SQLiteStorage) -> None:
         for cid in ["acme", "acme", "beta"]:
             storage.insert_task(Task(task_type="t", customer_id=cid))
@@ -302,6 +317,7 @@ class TestSyncLifecycle:
         """events table must have a sync_status column."""
         cols = [r[1] for r in storage._conn.execute("PRAGMA table_info(events)").fetchall()]
         assert "sync_status" in cols
+        assert "sync_version" in cols
 
     def test_sync_status_defaults_to_pending(self, storage: SQLiteStorage) -> None:
         """Newly inserted events should have sync_status='pending'."""
@@ -449,6 +465,21 @@ class TestSyncLifecycle:
         ).fetchone()
         assert after["sync_status"] == "pending"
         assert Decimal(after["cost_usd"]) == Decimal("0.0042")
+
+    def test_stale_event_delivery_ack_preserves_a_newer_reconciliation(
+        self, storage: SQLiteStorage
+    ) -> None:
+        event = Event(event_type="llm_call", cost_usd=Decimal("0.01"))
+        storage.insert_event(event)
+        [(_snapshot, version)] = storage.query_event_deliveries_for_sync()
+
+        event.cost_usd = Decimal("0.013")
+        storage.update_event(event)
+        storage.mark_event_deliveries_synced([(str(event.event_id), version)])
+
+        [pending] = storage.query_events_for_sync()
+        assert pending.event_id == event.event_id
+        assert pending.cost_usd == Decimal("0.013")
 
 
 # ── Default DB path tests (US-004) ───────────────────────────────────

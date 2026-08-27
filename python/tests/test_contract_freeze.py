@@ -105,7 +105,7 @@ def test_catalog_production_trust_is_identical_in_both_sdk_packages() -> None:
 def test_public_api_and_migration_snapshots_cover_the_reference() -> None:
     public = _load(CONTRACT_ROOT / "public-api.json")
     assert [entry["name"] for entry in public["exports"]] == list(dexcost.__all__)
-    assert public["package_version"] == dexcost.__version__
+    assert "package_version" not in public
     public_by_name = {entry["name"]: entry for entry in public["exports"]}
     assert "_IdempotencyScope" not in json.dumps(public, sort_keys=True)
     assert "contextvars.Token[Any]" in public_by_name["set_idempotency_key"]["signature"]

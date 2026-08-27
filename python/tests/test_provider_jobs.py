@@ -145,7 +145,7 @@ def test_storage_enforces_revision_identity_and_terminal_monotonicity(
     task = _task()
     first = _submission(task)
     try:
-        assert storage.get_schema_version() == TARGET_SCHEMA_VERSION == 14
+        assert storage.get_schema_version() == TARGET_SCHEMA_VERSION == 15
         storage.insert_provider_job_revision(first)
         storage.insert_provider_job_revision(first)
         assert storage.query_provider_job_history(str(first.event_id)) == [first]
