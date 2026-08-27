@@ -75,14 +75,16 @@ class _AttributionConversionError(RuntimeError):
 def _mark_event_snapshots_synced(
     storage: StorageBackend,
     event_ids: list[str],
-    sync_versions: dict[str, int],
+    sync_versions: dict[str, int] | None,
 ) -> None:
     """Acknowledge posted event snapshots without consuming newer mutations."""
-    versioned = [
-        (event_id, sync_versions[event_id]) for event_id in event_ids if event_id in sync_versions
-    ]
     marker = getattr(storage, "mark_event_deliveries_synced", None)
-    if callable(marker):
+    if sync_versions is not None and callable(marker):
+        versioned = [
+            (event_id, sync_versions[event_id])
+            for event_id in event_ids
+            if event_id in sync_versions
+        ]
         marker(versioned)
         return
     storage.mark_synced(event_ids)
@@ -91,14 +93,16 @@ def _mark_event_snapshots_synced(
 def _mark_event_snapshots_quarantined(
     storage: StorageBackend,
     event_ids: list[str],
-    sync_versions: dict[str, int],
+    sync_versions: dict[str, int] | None,
 ) -> None:
     """Quarantine converter failures without hiding a corrected revision."""
-    versioned = [
-        (event_id, sync_versions[event_id]) for event_id in event_ids if event_id in sync_versions
-    ]
     marker = getattr(storage, "mark_event_deliveries_quarantined", None)
-    if callable(marker):
+    if sync_versions is not None and callable(marker):
+        versioned = [
+            (event_id, sync_versions[event_id])
+            for event_id in event_ids
+            if event_id in sync_versions
+        ]
         marker(versioned)
         return
     storage.mark_quarantined(event_ids)
@@ -107,14 +111,16 @@ def _mark_event_snapshots_quarantined(
 def _mark_task_snapshots_synced(
     storage: StorageBackend,
     task_ids: list[str],
-    sync_versions: dict[str, int],
+    sync_versions: dict[str, int] | None,
 ) -> None:
     """Acknowledge posted task snapshots without consuming newer rollups."""
-    versioned = [
-        (task_id, sync_versions[task_id]) for task_id in task_ids if task_id in sync_versions
-    ]
     marker = getattr(storage, "mark_task_deliveries_synced", None)
-    if callable(marker):
+    if sync_versions is not None and callable(marker):
+        versioned = [
+            (task_id, sync_versions[task_id])
+            for task_id in task_ids
+            if task_id in sync_versions
+        ]
         marker(versioned)
         return
     storage.mark_tasks_synced(task_ids)
@@ -428,7 +434,7 @@ class SyncWorker:
         # Quarantine failed conversion pages before reading the next page, so
         # malformed legacy rows cannot block newer valid attribution data.
         event_dicts: list[dict[str, Any]] = []
-        event_sync_versions: dict[str, int] = {}
+        event_sync_versions: dict[str, int] | None = None
         failed_event_ids: list[str] = []
         seen_event_ids: set[str] = set()
         scan_limit = max(
@@ -441,6 +447,8 @@ class SyncWorker:
             page_limit = min(batch_size - len(event_dicts), scan_limit - scanned)
             query_event_deliveries = getattr(st, "query_event_deliveries_for_sync", None)
             if callable(query_event_deliveries):
+                if event_sync_versions is None:
+                    event_sync_versions = {}
                 event_deliveries = query_event_deliveries(limit=page_limit)
                 events = [event for event, _version in event_deliveries]
                 event_sync_versions.update(
@@ -482,9 +490,10 @@ class SyncWorker:
         # tasks — e.g. explicit dexcost.task() with customer_id where LLM
         # events went to auto-tasks in threads.
         tasks: list[Any] = []
-        task_sync_versions: dict[str, int] = {}
+        task_sync_versions: dict[str, int] | None = None
         query_task_deliveries = getattr(st, "query_task_deliveries_for_sync", None)
         if callable(query_task_deliveries):
+            task_sync_versions = {}
             task_deliveries = query_task_deliveries()
             tasks = [task for task, _version in task_deliveries]
             task_sync_versions.update(
@@ -813,8 +822,8 @@ class SyncWorker:
         identities = business_identities or []
         outcome_revisions = outcomes or []
         revenues = revenue_revisions or []
-        event_versions = event_sync_versions or {}
-        task_versions = task_sync_versions or {}
+        event_versions = event_sync_versions
+        task_versions = task_sync_versions
         payload: dict[str, Any] = {
             "events": events,
             "tasks": tasks,
