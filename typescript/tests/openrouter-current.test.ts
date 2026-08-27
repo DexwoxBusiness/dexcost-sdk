@@ -319,6 +319,11 @@ describe("current official OpenRouter attribution", () => {
     await instrumentOpenRouter(new PricingEngine(), buffer);
     const client = new FakeOpenRouter();
     await client.chat.send({ chatRequest: { model: "openai/gpt-4o", messages: ["private"] } });
+    const [initial] = buffer.getAllEvents();
+    buffer.markSynced([initial.eventId]);
+    buffer.markTasksSynced([initial.taskId]);
+    expect(buffer.pendingCount).toBe(0);
+    expect(buffer.pendingTaskCount).toBe(0);
     await client.generations.getGeneration({ id: "gen-or-chat" });
 
     expect(buffer.getAllEvents()).toHaveLength(1);
@@ -340,6 +345,10 @@ describe("current official OpenRouter attribution", () => {
       totalInputTokens: 10, totalOutputTokens: 5, totalCachedTokens: 2,
     });
     expect(buffer.getTask(event.taskId)?.totalCostUsd.toString()).toBe("0.013");
+    expect(buffer.getPendingEvents()).toHaveLength(1);
+    expect(buffer.getPendingEvents()[0]?.costUsd.toString()).toBe("0.013");
+    const reconciledTask = buffer.getPendingTasks().find((task) => task.taskId === event.taskId);
+    expect(reconciledTask?.totalCostUsd.toString()).toBe("0.013");
   });
 
   it("retains compatibility with a mutable high-level callModel client", async () => {

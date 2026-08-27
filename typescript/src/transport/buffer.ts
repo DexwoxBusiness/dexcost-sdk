@@ -390,12 +390,18 @@ class MemoryBufferStore {
     const existing = this._events.get(event.eventId);
     if (existing == null) return;
     existing.event = { ...event };
+    // Any mutation must be delivered again even if an earlier revision was
+    // already synced. This mirrors the durable SQLite/Python contract.
+    existing.syncStatus = "pending";
+    existing.syncedAt = null;
   }
 
   upsertTask(task: Task): void {
     const existing = this._tasks.get(task.taskId);
     if (existing != null) {
       existing.task = { ...task };
+      existing.syncStatus = "pending";
+      existing.syncedAt = null;
       return;
     }
     this._evict(this._tasks, MEM_BUFFER_MAX_TASKS);
@@ -1091,7 +1097,11 @@ export class EventBuffer {
   }
 
   /**
-   * Update all columns of an existing event in-place.
+   * Update all columns of an existing event in-place and requeue it.
+   *
+   * Reconciliation and deferred pricing may mutate an event after an earlier
+   * version was synced. Marking the row pending ensures the corrected facts
+   * are delivered on the next push, matching Python's storage contract.
    */
   updateEvent(event: CostEvent): void {
     if (this._mem) { this._mem.updateEvent(event); return; }
@@ -1117,7 +1127,8 @@ export class EventBuffer {
             retry_reason = ?,
             retry_of = ?,
             details = ?,
-            timestamp = ?
+            timestamp = ?,
+            sync_status = 'pending'
           WHERE event_id = ?`
         )
         .run(

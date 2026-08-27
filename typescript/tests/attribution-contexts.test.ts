@@ -15,6 +15,7 @@ import {
   idempotencyKey,
   runWithCapability,
   runWithIdempotencyKey,
+  setIdempotencyKey,
   validateCapability,
 } from "../src/index.js";
 import { canonicalToolCapabilityName } from "../src/core/capabilities.js";
@@ -154,5 +155,30 @@ describe("cross-SDK idempotency", () => {
     expect(instance.buffer.queryEvents(task.task.taskId)).toHaveLength(2);
     task.end();
     instance.close();
+  });
+
+  it("restores the exact outer occurrence counter through the setter token", () => {
+    const instance = tracker("idempotency-restore");
+    const task = instance.startTask({ taskType: "workflow.run", taskId: randomUUID() });
+    const clearOuter = setIdempotencyKey("workflow-restore");
+    try {
+      const first = task.recordToolCall("search", { costUsd: "0.01" });
+      const restoreOuter = setIdempotencyKey("workflow-inner");
+      try {
+        const inner = task.recordToolCall("search", { costUsd: "0.01" });
+        expect(inner.details._dexcost_idempotency_occurrence).toBe(0);
+      } finally {
+        setIdempotencyKey(restoreOuter);
+      }
+      const second = task.recordToolCall("search", { costUsd: "0.01" });
+      expect(first.details._dexcost_idempotency_occurrence).toBe(0);
+      expect(second.details._dexcost_idempotency_occurrence).toBe(1);
+      expect(second.eventId).not.toBe(first.eventId);
+    } finally {
+      clearOuter.reset();
+      task.end();
+      instance.close();
+    }
+    expect(getIdempotencyKey()).toBeUndefined();
   });
 });

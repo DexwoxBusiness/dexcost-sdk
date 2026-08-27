@@ -181,6 +181,25 @@ describe("EventBuffer — in-memory store round-trips events and tasks", () => {
     expect(buf.pendingTaskCount).toBe(0);
     expect(buf.getPendingTasks()).toHaveLength(0);
     expect(buf.getAllTasks()).toHaveLength(1);
+
+    buf.upsertTask({ ...makeTask("t1"), taskType: "reconciled" });
+    expect(buf.pendingTaskCount).toBe(1);
+    expect(buf.getPendingTasks()[0]?.taskType).toBe("reconciled");
+  });
+
+  test("updateEvent requeues a previously synced event", () => {
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const buf = new EventBuffer();
+    const event = makeEvent("e1", "t1");
+
+    buf.addEvent(event);
+    buf.markSynced([event.eventId]);
+    expect(buf.pendingCount).toBe(0);
+
+    buf.updateEvent({ ...event, model: "openrouter/reconciled" });
+    expect(buf.pendingCount).toBe(1);
+    expect(buf.getPendingEvents()[0]?.model).toBe("openrouter/reconciled");
   });
 
   test("hard 10k cap evicts oldest events FIFO", () => {

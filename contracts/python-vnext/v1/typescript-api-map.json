@@ -2,7 +2,7 @@
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
   "python_export_count": 171,
-  "typescript_export_count": 324,
+  "typescript_export_count": 325,
   "equivalent_count": 168,
   "language_specific_count": 3,
   "unresolved_count": 0,

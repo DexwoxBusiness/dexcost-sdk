@@ -220,7 +220,7 @@ describe("EventBuffer (SQLite)", () => {
     buffer.close();
   });
 
-  it("updateEvent modifies an existing event (is_retry flag)", () => {
+  it("updateEvent modifies and requeues a previously synced event", () => {
     const buffer = new EventBuffer(dbPath);
     const taskId = randomUUID();
 
@@ -232,6 +232,8 @@ describe("EventBuffer (SQLite)", () => {
     });
 
     buffer.addEvent(event);
+    buffer.markSynced([event.eventId]);
+    expect(buffer.pendingCount).toBe(0);
 
     const updated = { ...event, isRetry: true, retryReason: "timeout" };
     buffer.updateEvent(updated);
@@ -240,6 +242,8 @@ describe("EventBuffer (SQLite)", () => {
     expect(all).toHaveLength(1);
     expect(all[0].isRetry).toBe(true);
     expect(all[0].retryReason).toBe("timeout");
+    expect(buffer.getPendingEvents()).toHaveLength(1);
+    expect(buffer.pendingCount).toBe(1);
 
     buffer.close();
   });

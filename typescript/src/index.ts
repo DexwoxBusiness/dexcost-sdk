@@ -79,6 +79,7 @@ export {
   runWithIdempotencyKey, runWithIdempotencyKey as idempotencyKey,
   idempotencyHash, equivalentIdempotentEvent,
 } from "./core/idempotency.js";
+export type { IdempotencyKeyToken } from "./core/idempotency.js";
 export {
   OutcomeRevision, RevenueRevision, outcomeValue, revenueAmount,
 } from "./core/business.js";

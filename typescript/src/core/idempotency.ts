@@ -7,6 +7,10 @@ interface IdempotencyScope {
   nextOccurrence: number;
 }
 
+interface IdempotencyContext {
+  readonly scope?: IdempotencyScope;
+}
+
 export interface CapturedIdempotencyKey {
   readonly key: string;
   readonly occurrence: number;
@@ -14,7 +18,25 @@ export interface CapturedIdempotencyKey {
 
 export type IdempotencyKey = string | CapturedIdempotencyKey;
 
-const keyStore = new AsyncLocalStorage<IdempotencyScope | undefined>();
+/**
+ * One-shot token returned by {@link setIdempotencyKey}.
+ *
+ * Call `reset()` (or pass the token back to `setIdempotencyKey`) to restore
+ * the exact previous scope, including its next occurrence counter.
+ */
+export interface IdempotencyKeyToken {
+  readonly previousKey: string | undefined;
+  reset(): void;
+}
+
+interface IdempotencyTokenState {
+  readonly previous: IdempotencyContext | undefined;
+  readonly installed: IdempotencyContext | undefined;
+  used: boolean;
+}
+
+const keyStore = new AsyncLocalStorage<IdempotencyContext | undefined>();
+const tokenStates = new WeakMap<object, IdempotencyTokenState>();
 const EVENT_NAMESPACE = "ee9858ce-fc4e-5c97-a803-2ea9df316d5c";
 
 function validateKey(key: string): string {
@@ -31,27 +53,69 @@ function validateKey(key: string): string {
 }
 
 export function getIdempotencyKey(): string | undefined {
-  return keyStore.getStore()?.key;
+  return keyStore.getStore()?.scope?.key;
 }
 
 /** Reserve one deterministic operation occurrence from the active scope. */
 export function captureIdempotencyKey(): CapturedIdempotencyKey | undefined {
-  const scope = keyStore.getStore();
+  const scope = keyStore.getStore()?.scope;
   if (scope === undefined) return undefined;
   const occurrence = scope.nextOccurrence;
   scope.nextOccurrence += 1;
   return { key: scope.key, occurrence };
 }
 
-/** Set or clear the caller key for the remaining async context. */
-export function setIdempotencyKey(key?: string): string | undefined {
-  const previous = keyStore.getStore()?.key;
-  keyStore.enterWith(key === undefined ? undefined : { key: validateKey(key), nextOccurrence: 0 });
-  return previous;
+function createToken(
+  previous: IdempotencyContext | undefined,
+  installed: IdempotencyContext | undefined,
+): IdempotencyKeyToken {
+  const token: IdempotencyKeyToken = {
+    previousKey: previous?.scope?.key,
+    reset(): void {
+      restoreToken(token);
+    },
+  };
+  tokenStates.set(token, { previous, installed, used: false });
+  return Object.freeze(token);
+}
+
+function restoreToken(token: IdempotencyKeyToken): IdempotencyKeyToken {
+  const state = tokenStates.get(token);
+  if (state === undefined) throw new Error("invalid idempotency key token");
+  if (state.used) throw new Error("idempotency key token has already been reset");
+  if (keyStore.getStore() !== state.installed) {
+    throw new Error("idempotency key tokens must be reset in LIFO order in their originating async context");
+  }
+  state.used = true;
+  keyStore.enterWith(state.previous);
+  return createToken(state.installed, state.previous);
+}
+
+/**
+ * Set or clear the caller key for the remaining async context.
+ *
+ * The returned token restores the exact prior scope and occurrence counter.
+ * It may be reset directly or passed back to this function. Tokens are
+ * single-use and must be restored in LIFO order.
+ */
+export function setIdempotencyKey(
+  keyOrToken?: string | IdempotencyKeyToken,
+): IdempotencyKeyToken {
+  if (typeof keyOrToken === "object" && keyOrToken !== null) {
+    return restoreToken(keyOrToken);
+  }
+  const previous = keyStore.getStore();
+  const installed: IdempotencyContext = {
+    scope: keyOrToken === undefined
+      ? undefined
+      : { key: validateKey(keyOrToken), nextOccurrence: 0 },
+  };
+  keyStore.enterWith(installed);
+  return createToken(previous, installed);
 }
 
 export function runWithIdempotencyKey<T>(key: string, fn: () => T): T {
-  return keyStore.run({ key: validateKey(key), nextOccurrence: 0 }, fn);
+  return keyStore.run({ scope: { key: validateKey(key), nextOccurrence: 0 } }, fn);
 }
 
 export function idempotencyHash(key: string): string;
