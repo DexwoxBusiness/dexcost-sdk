@@ -9,8 +9,6 @@ interface IdempotencyScope {
 
 interface IdempotencyContext {
   readonly scope?: IdempotencyScope;
-  restored: boolean;
-  restoredTo: IdempotencyContext | undefined;
 }
 
 export interface CapturedIdempotencyKey {
@@ -24,7 +22,10 @@ export type IdempotencyKey = string | CapturedIdempotencyKey;
  * One-shot token returned by {@link setIdempotencyKey}.
  *
  * Call `reset()` to restore the exact previous scope, including its next
- * occurrence counter.
+ * occurrence counter. Reset the token before yielding to another async
+ * continuation. For scopes that cross `await`, use
+ * {@link runWithIdempotencyKey}; Node's callback-scoped AsyncLocalStorage API
+ * is what preserves already-created child contexts while restoring callers.
  */
 export interface IdempotencyKeyToken {
   readonly previousKey: string | undefined;
@@ -55,9 +56,7 @@ function validateKey(key: string): string {
 }
 
 function activeContext(): IdempotencyContext | undefined {
-  let context = keyStore.getStore();
-  while (context?.restored === true) context = context.restoredTo;
-  return context;
+  return keyStore.getStore();
 }
 
 export function getIdempotencyKey(): string | undefined {
@@ -95,19 +94,17 @@ function restoreToken(token: IdempotencyKeyToken): void {
     throw new Error("idempotency key tokens must be reset in LIFO order in their originating async context");
   }
   state.used = true;
-  // `enterWith()` state is captured when an awaiting continuation is created.
-  // Redirecting the installed context lets that continuation observe the
-  // restoration even when it retained the inner context across an `await`,
-  // without mutating parallel sibling contexts.
-  state.installed.restored = true;
-  state.installed.restoredTo = state.previous;
+  // Restore only this execution context. Async resources created while the
+  // installed context was active have already captured it and must retain it.
+  keyStore.enterWith(state.previous);
 }
 
 /**
  * Set or clear the caller key for the remaining async context.
  *
  * The returned token restores the exact prior scope and occurrence counter.
- * Tokens are single-use and must be restored in LIFO order.
+ * Tokens are single-use, synchronous, and must be restored in LIFO order.
+ * Use {@link runWithIdempotencyKey} for a scope that crosses `await`.
  */
 export function setIdempotencyKey(key?: string): IdempotencyKeyToken {
   const previous = activeContext();
@@ -115,8 +112,6 @@ export function setIdempotencyKey(key?: string): IdempotencyKeyToken {
     scope: key === undefined
       ? undefined
       : { key: validateKey(key), nextOccurrence: 0 },
-    restored: false,
-    restoredTo: undefined,
   };
   keyStore.enterWith(installed);
   return createToken(previous, installed);
@@ -125,8 +120,6 @@ export function setIdempotencyKey(key?: string): IdempotencyKeyToken {
 export function runWithIdempotencyKey<T>(key: string, fn: () => T): T {
   return keyStore.run({
     scope: { key: validateKey(key), nextOccurrence: 0 },
-    restored: false,
-    restoredTo: undefined,
   }, fn);
 }
 

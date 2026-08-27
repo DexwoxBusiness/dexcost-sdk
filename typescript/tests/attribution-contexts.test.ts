@@ -157,22 +157,21 @@ describe("cross-SDK idempotency", () => {
     instance.close();
   });
 
-  it("restores the exact outer occurrence counter across an awaited inner scope", async () => {
+  it("restores the exact outer occurrence counter and scopes awaited work safely", async () => {
     const instance = tracker("idempotency-restore");
     const task = instance.startTask({ taskType: "workflow.run", taskId: randomUUID() });
     const clearOuter = setIdempotencyKey("workflow-restore");
     try {
       const first = task.recordToolCall("search", { costUsd: "0.01" });
-      await (async () => {
-        const restoreOuter = setIdempotencyKey("workflow-inner");
-        try {
-          await Promise.resolve();
-          const inner = task.recordToolCall("search", { costUsd: "0.01" });
-          expect(inner.details._dexcost_idempotency_occurrence).toBe(0);
-        } finally {
-          restoreOuter.reset();
-        }
-      })();
+      const restoreOuter = setIdempotencyKey("workflow-inner-sync");
+      const synchronousInner = task.recordToolCall("search", { costUsd: "0.01" });
+      expect(synchronousInner.details._dexcost_idempotency_occurrence).toBe(0);
+      restoreOuter.reset();
+      await runWithIdempotencyKey("workflow-inner-async", async () => {
+        await Promise.resolve();
+        const asyncInner = task.recordToolCall("search", { costUsd: "0.01" });
+        expect(asyncInner.details._dexcost_idempotency_occurrence).toBe(0);
+      });
       expect(getIdempotencyKey()).toBe("workflow-restore");
       const second = task.recordToolCall("search", { costUsd: "0.01" });
       expect(first.details._dexcost_idempotency_occurrence).toBe(0);
@@ -183,6 +182,25 @@ describe("cross-SDK idempotency", () => {
       task.end();
       instance.close();
     }
+    expect(getIdempotencyKey()).toBeUndefined();
+  });
+
+  it("does not rewrite the idempotency scope captured by an existing child", async () => {
+    let releaseChild!: () => void;
+    const childGate = new Promise<void>((resolve) => { releaseChild = resolve; });
+    const restoreParent = setIdempotencyKey("parent-scope");
+    const restoreInner = setIdempotencyKey("captured-child-scope");
+    const child = (async () => {
+      await childGate;
+      return getIdempotencyKey();
+    })();
+
+    restoreInner.reset();
+    expect(getIdempotencyKey()).toBe("parent-scope");
+    releaseChild();
+    expect(await child).toBe("captured-child-scope");
+    expect(getIdempotencyKey()).toBe("parent-scope");
+    restoreParent.reset();
     expect(getIdempotencyKey()).toBeUndefined();
   });
 });
