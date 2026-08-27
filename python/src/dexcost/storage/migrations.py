@@ -385,3 +385,27 @@ def _sqlite_v14_to_v15(conn: sqlite3.Connection) -> None:
                 f"ALTER TABLE {table} ADD COLUMN "
                 "sync_version INTEGER NOT NULL DEFAULT 1"
             )
+
+
+@register_pg_migration(14, 15)
+async def _pg_v14_to_v15(conn: Any) -> None:
+    """Add optimistic delivery versions to PostgreSQL events and tasks.
+
+    The separate add/backfill/default/not-null steps also repair a safely
+    retryable partial schema in which the column exists but is still nullable.
+    The runner encloses all statements and the version-ledger insert in one
+    PostgreSQL transaction.
+    """
+    for table in ("events", "tasks"):
+        await conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sync_version BIGINT"
+        )
+        await conn.execute(
+            f"UPDATE {table} SET sync_version = 1 WHERE sync_version IS NULL"
+        )
+        await conn.execute(
+            f"ALTER TABLE {table} ALTER COLUMN sync_version SET DEFAULT 1"
+        )
+        await conn.execute(
+            f"ALTER TABLE {table} ALTER COLUMN sync_version SET NOT NULL"
+        )
