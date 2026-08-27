@@ -202,6 +202,35 @@ describe("EventBuffer — in-memory store round-trips events and tasks", () => {
     expect(buf.getPendingEvents()[0]?.model).toBe("openrouter/reconciled");
   });
 
+  test("stale delivery acknowledgements preserve newer in-memory revisions", () => {
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const buf = new EventBuffer();
+    const event = makeEvent("e1", "t1");
+    const task = makeTask("t1");
+
+    buf.addEvent(event);
+    buf.upsertTask(task);
+    const [eventDelivery] = buf.getPendingEventDeliveries();
+    const [taskDelivery] = buf.getPendingTaskDeliveries();
+    expect(eventDelivery).toBeDefined();
+    expect(taskDelivery).toBeDefined();
+
+    buf.updateEvent({ ...event, model: "openrouter/reconciled" });
+    buf.upsertTask({ ...task, taskType: "reconciled" });
+    buf.markSynced(
+      [event.eventId],
+      new Map([[event.eventId, eventDelivery?.syncVersion ?? -1]]),
+    );
+    buf.markTasksSynced(
+      [task.taskId],
+      new Map([[task.taskId, taskDelivery?.syncVersion ?? -1]]),
+    );
+
+    expect(buf.getPendingEvents()[0]?.model).toBe("openrouter/reconciled");
+    expect(buf.getPendingTasks()[0]?.taskType).toBe("reconciled");
+  });
+
   test("hard 10k cap evicts oldest events FIFO", () => {
     EventBuffer._forceFallbackForTest = true;
     vi.spyOn(console, "warn").mockImplementation(() => {});

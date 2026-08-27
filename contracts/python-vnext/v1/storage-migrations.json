@@ -92,6 +92,13 @@
       "source_sha256": "d7bca148870f99ba05a8e9e0fea6728afad55685cb81b391160af68d0896a273",
       "summary": "Add immutable asynchronous-provider-job revision storage.",
       "to": 14
+    },
+    {
+      "from": 14,
+      "function": "_sqlite_v14_to_v15",
+      "source_sha256": "be7f10a06ee86168328326e91c4a23478e4dd3a2db17b3e4fddb12b2aa05e7c8",
+      "summary": "Add optimistic delivery versions for mutable events and tasks.",
+      "to": 15
     }
   ],
   "schema": [
@@ -346,10 +353,18 @@
           "position": 19,
           "primary_key_position": 0,
           "type": "TEXT"
+        },
+        {
+          "default": "1",
+          "name": "sync_version",
+          "not_null": true,
+          "position": 20,
+          "primary_key_position": 0,
+          "type": "INTEGER"
         }
       ],
       "name": "events",
-      "sql": "CREATE TABLE events ( event_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, event_type TEXT NOT NULL, provider TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, service_name TEXT, cost_usd TEXT NOT NULL, latency_ms INTEGER, cost_confidence TEXT NOT NULL DEFAULT 'exact', pricing_source TEXT, pricing_version TEXT, is_retry INTEGER DEFAULT 0, retry_reason TEXT, retry_of TEXT, details TEXT, timestamp TEXT NOT NULL, sync_status TEXT NOT NULL DEFAULT 'pending' )",
+      "sql": "CREATE TABLE events ( event_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, event_type TEXT NOT NULL, provider TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, service_name TEXT, cost_usd TEXT NOT NULL, latency_ms INTEGER, cost_confidence TEXT NOT NULL DEFAULT 'exact', pricing_source TEXT, pricing_version TEXT, is_retry INTEGER DEFAULT 0, retry_reason TEXT, retry_of TEXT, details TEXT, timestamp TEXT NOT NULL, sync_status TEXT NOT NULL DEFAULT 'pending', sync_version INTEGER NOT NULL DEFAULT 1 )",
       "table": "events",
       "type": "table"
     },
@@ -1396,8 +1411,8 @@
           "type": "TEXT"
         },
         {
-          "default": "0",
-          "name": "network_bytes_in",
+          "default": "1",
+          "name": "sync_version",
           "not_null": true,
           "position": 31,
           "primary_key_position": 0,
@@ -1405,7 +1420,7 @@
         },
         {
           "default": "0",
-          "name": "network_bytes_out",
+          "name": "network_bytes_in",
           "not_null": true,
           "position": 32,
           "primary_key_position": 0,
@@ -1413,9 +1428,17 @@
         },
         {
           "default": "0",
-          "name": "network_call_count",
+          "name": "network_bytes_out",
           "not_null": true,
           "position": 33,
+          "primary_key_position": 0,
+          "type": "INTEGER"
+        },
+        {
+          "default": "0",
+          "name": "network_call_count",
+          "not_null": true,
+          "position": 34,
           "primary_key_position": 0,
           "type": "INTEGER"
         },
@@ -1423,16 +1446,16 @@
           "default": "'{\"hosts\": []}'",
           "name": "network_by_host",
           "not_null": true,
-          "position": 34,
+          "position": 35,
           "primary_key_position": 0,
           "type": "TEXT"
         }
       ],
       "name": "tasks",
-      "sql": "CREATE TABLE tasks ( task_id TEXT PRIMARY KEY, task_type TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, metadata TEXT, llm_cost_usd TEXT, external_cost_usd TEXT, compute_cost_usd TEXT, network_cost_usd TEXT NOT NULL DEFAULT '0', gpu_cost_usd TEXT NOT NULL DEFAULT '0', total_cost_usd TEXT, total_input_tokens INTEGER, total_output_tokens INTEGER, total_cached_tokens INTEGER, retry_count INTEGER DEFAULT 0, retry_cost_usd TEXT DEFAULT '0', failure_count INTEGER DEFAULT 0, customer_id TEXT, project_id TEXT, parent_task_id TEXT, root_task_id TEXT, agent_id TEXT, agent_version TEXT, workflow_id TEXT, workflow_session_id TEXT, user_id TEXT, product_id TEXT, experiment_id TEXT, variant TEXT, sync_status TEXT NOT NULL DEFAULT 'pending', network_bytes_in INTEGER NOT NULL DEFAULT 0, network_bytes_out INTEGER NOT NULL DEFAULT 0, network_call_count INTEGER NOT NULL DEFAULT 0, network_by_host TEXT NOT NULL DEFAULT '{\"hosts\": []}' )",
+      "sql": "CREATE TABLE tasks ( task_id TEXT PRIMARY KEY, task_type TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, metadata TEXT, llm_cost_usd TEXT, external_cost_usd TEXT, compute_cost_usd TEXT, network_cost_usd TEXT NOT NULL DEFAULT '0', gpu_cost_usd TEXT NOT NULL DEFAULT '0', total_cost_usd TEXT, total_input_tokens INTEGER, total_output_tokens INTEGER, total_cached_tokens INTEGER, retry_count INTEGER DEFAULT 0, retry_cost_usd TEXT DEFAULT '0', failure_count INTEGER DEFAULT 0, customer_id TEXT, project_id TEXT, parent_task_id TEXT, root_task_id TEXT, agent_id TEXT, agent_version TEXT, workflow_id TEXT, workflow_session_id TEXT, user_id TEXT, product_id TEXT, experiment_id TEXT, variant TEXT, sync_status TEXT NOT NULL DEFAULT 'pending', sync_version INTEGER NOT NULL DEFAULT 1, network_bytes_in INTEGER NOT NULL DEFAULT 0, network_bytes_out INTEGER NOT NULL DEFAULT 0, network_call_count INTEGER NOT NULL DEFAULT 0, network_by_host TEXT NOT NULL DEFAULT '{\"hosts\": []}' )",
       "table": "tasks",
       "type": "table"
     }
   ],
-  "target_schema_version": 14
+  "target_schema_version": 15
 }

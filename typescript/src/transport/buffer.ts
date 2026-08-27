@@ -52,6 +52,7 @@ interface EventRow {
   details: string | null;
   timestamp: string;
   sync_status: string;
+  sync_version: number;
 }
 
 interface TaskRow {
@@ -90,6 +91,7 @@ interface TaskRow {
   network_cost_usd: string | null;
   gpu_cost_usd: string | null;
   sync_status: string;
+  sync_version: number;
 }
 
 interface CountRow {
@@ -120,6 +122,16 @@ export interface DeliveryCounts {
   pendingProviderJobs: number;
   quarantinedProviderJobs: number;
   oldestPendingAt?: Date;
+}
+
+export interface PendingEventDelivery {
+  readonly event: CostEvent;
+  readonly syncVersion: number;
+}
+
+export interface PendingTaskDelivery {
+  readonly task: Task;
+  readonly syncVersion: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +288,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     network_by_host     TEXT,
     network_cost_usd    TEXT DEFAULT '0',
     gpu_cost_usd        TEXT DEFAULT '0',
-    sync_status         TEXT NOT NULL DEFAULT 'pending'
+    sync_status         TEXT NOT NULL DEFAULT 'pending',
+    sync_version        INTEGER NOT NULL DEFAULT 1
 )`;
 
 const CREATE_EVENTS = `
@@ -300,7 +313,8 @@ CREATE TABLE IF NOT EXISTS events (
     retry_of        TEXT,
     details         TEXT,
     timestamp       TEXT NOT NULL,
-    sync_status     TEXT NOT NULL DEFAULT 'pending'
+    sync_status     TEXT NOT NULL DEFAULT 'pending',
+    sync_version    INTEGER NOT NULL DEFAULT 1
 )`;
 
 const CREATE_SCHEMA_VERSION = `
@@ -360,6 +374,7 @@ interface MemEventEntry {
   syncStatus: "pending" | "quarantined" | "synced";
   capturedAt: Date;
   syncedAt: Date | null;
+  syncVersion: number;
 }
 
 interface MemTaskEntry {
@@ -367,6 +382,7 @@ interface MemTaskEntry {
   syncStatus: "pending" | "synced";
   capturedAt: Date;
   syncedAt: Date | null;
+  syncVersion: number;
 }
 
 class MemoryBufferStore {
@@ -381,6 +397,7 @@ class MemoryBufferStore {
       syncStatus: "pending",
       capturedAt: new Date(),
       syncedAt: null,
+      syncVersion: 1,
     });
   }
 
@@ -394,6 +411,7 @@ class MemoryBufferStore {
     // already synced. This mirrors the durable SQLite/Python contract.
     existing.syncStatus = "pending";
     existing.syncedAt = null;
+    existing.syncVersion += 1;
   }
 
   upsertTask(task: Task): void {
@@ -402,6 +420,7 @@ class MemoryBufferStore {
       existing.task = { ...task };
       existing.syncStatus = "pending";
       existing.syncedAt = null;
+      existing.syncVersion += 1;
       return;
     }
     this._evict(this._tasks, MEM_BUFFER_MAX_TASKS);
@@ -410,34 +429,44 @@ class MemoryBufferStore {
       syncStatus: "pending",
       capturedAt: new Date(),
       syncedAt: null,
+      syncVersion: 1,
     });
   }
 
   getPendingEvents(limit: number): CostEvent[] {
-    const out: CostEvent[] = [];
+    return this.getPendingEventDeliveries(limit).map((delivery) => delivery.event);
+  }
+
+  getPendingEventDeliveries(limit: number): PendingEventDelivery[] {
+    const out: PendingEventDelivery[] = [];
     for (const entry of this._events.values()) {
       if (entry.syncStatus !== "pending") continue;
-      out.push(entry.event);
+      out.push({ event: entry.event, syncVersion: entry.syncVersion });
       if (out.length >= limit) break;
     }
     return out;
   }
 
-  markSynced(eventIds: string[]): void {
+  markSynced(eventIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
     const now = new Date();
     for (const id of eventIds) {
       const entry = this._events.get(id);
-      if (entry != null) {
+      const expected = expectedVersions?.get(id);
+      if (entry != null && (expectedVersions === undefined || expected === entry.syncVersion)) {
         entry.syncStatus = "synced";
         entry.syncedAt = now;
       }
     }
   }
 
-  markQuarantined(eventIds: string[]): void {
+  markQuarantined(eventIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
     for (const id of eventIds) {
       const entry = this._events.get(id);
-      if (entry != null && entry.syncStatus === "pending") {
+      const expected = expectedVersions?.get(id);
+      if (
+        entry != null && entry.syncStatus === "pending" &&
+        (expectedVersions === undefined || expected === entry.syncVersion)
+      ) {
         entry.syncStatus = "quarantined";
       }
     }
@@ -473,18 +502,25 @@ class MemoryBufferStore {
   }
 
   getPendingTasks(): Task[] {
-    const out: Task[] = [];
+    return this.getPendingTaskDeliveries().map((delivery) => delivery.task);
+  }
+
+  getPendingTaskDeliveries(): PendingTaskDelivery[] {
+    const out: PendingTaskDelivery[] = [];
     for (const entry of this._tasks.values()) {
-      if (entry.syncStatus === "pending") out.push(entry.task);
+      if (entry.syncStatus === "pending") {
+        out.push({ task: entry.task, syncVersion: entry.syncVersion });
+      }
     }
     return out;
   }
 
-  markTasksSynced(taskIds: string[]): void {
+  markTasksSynced(taskIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
     const now = new Date();
     for (const id of taskIds) {
       const entry = this._tasks.get(id);
-      if (entry != null) {
+      const expected = expectedVersions?.get(id);
+      if (entry != null && (expectedVersions === undefined || expected === entry.syncVersion)) {
         entry.syncStatus = "synced";
         entry.syncedAt = now;
       }
@@ -747,6 +783,8 @@ export class EventBuffer {
       this._migrateAddColumn("tasks", "workflow_session_id", "TEXT");
       this._migrateAddColumn("tasks", "user_id", "TEXT");
       this._migrateAddColumn("tasks", "product_id", "TEXT");
+      this._migrateAddColumn("tasks", "sync_version", "INTEGER NOT NULL DEFAULT 1");
+      this._migrateAddColumn("events", "sync_version", "INTEGER NOT NULL DEFAULT 1");
       for (const idx of INDEXES) {
         this._db.exec(idx);
       }
@@ -871,7 +909,7 @@ export class EventBuffer {
             user_id, product_id, experiment_id, variant,
             network_bytes_in, network_bytes_out, network_call_count,
             network_by_host, network_cost_usd, gpu_cost_usd,
-            sync_status
+            sync_status, sync_version
           ) VALUES (
             ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
@@ -882,7 +920,7 @@ export class EventBuffer {
             ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?,
-            'pending'
+            'pending', COALESCE((SELECT sync_version + 1 FROM tasks WHERE task_id = ?), 1)
           )`
         )
         .run(
@@ -919,7 +957,8 @@ export class EventBuffer {
           task.networkCallCount,
           JSON.stringify(task.networkByHost ?? { hosts: [] }),
           task.networkCostUsd.toString(),
-          task.gpuCostUsd.toString()
+          task.gpuCostUsd.toString(),
+          task.taskId
         );
     } catch {
       // SQLite error (disk full, locked) — skip this upsert, don't crash
@@ -930,24 +969,40 @@ export class EventBuffer {
    * Return up to `limit` pending events, ordered by timestamp ASC.
    */
   getPendingEvents(limit: number = 100): CostEvent[] {
-    if (this._mem) return this._mem.getPendingEvents(limit);
+    return this.getPendingEventDeliveries(limit).map((delivery) => delivery.event);
+  }
+
+  /** Return pending event snapshots with optimistic delivery versions. */
+  getPendingEventDeliveries(limit: number = 100): PendingEventDelivery[] {
+    if (this._mem) return this._mem.getPendingEventDeliveries(limit);
     if (!this._db) return [];
     const rows = this._db
       .prepare(
         `SELECT * FROM events WHERE sync_status = 'pending' ORDER BY timestamp ASC LIMIT ?`
       )
       .all(limit) as EventRow[];
-    return rows.map(rowToEvent);
+    return rows.map((row) => ({ event: rowToEvent(row), syncVersion: row.sync_version }));
   }
 
   /**
    * Mark the given event IDs as synced.
    */
-  markSynced(eventIds: string[]): void {
-    if (this._mem) { this._mem.markSynced(eventIds); return; }
+  markSynced(eventIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
+    if (this._mem) { this._mem.markSynced(eventIds, expectedVersions); return; }
     if (!this._db) return;
     if (eventIds.length === 0) return;
     try {
+      if (expectedVersions !== undefined) {
+        const statement = this._db.prepare(
+          "UPDATE events SET sync_status = 'synced' " +
+          "WHERE event_id = ? AND sync_version = ? AND sync_status = 'pending'",
+        );
+        for (const eventId of eventIds) {
+          const expected = expectedVersions.get(eventId);
+          if (expected !== undefined) statement.run(eventId, expected);
+        }
+        return;
+      }
       const placeholders = eventIds.map(() => "?").join(", ");
       this._db
         .prepare(`UPDATE events SET sync_status = 'synced' WHERE event_id IN (${placeholders})`)
@@ -966,10 +1021,21 @@ export class EventBuffer {
    * records. Keeping it out of `getPendingEvents` prevents head-of-line
    * blocking without pretending ingestion succeeded.
    */
-  markQuarantined(eventIds: string[]): void {
-    if (this._mem) { this._mem.markQuarantined(eventIds); return; }
+  markQuarantined(eventIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
+    if (this._mem) { this._mem.markQuarantined(eventIds, expectedVersions); return; }
     if (!this._db || eventIds.length === 0) return;
     try {
+      if (expectedVersions !== undefined) {
+        const statement = this._db.prepare(
+          "UPDATE events SET sync_status = 'quarantined' " +
+          "WHERE event_id = ? AND sync_version = ? AND sync_status = 'pending'",
+        );
+        for (const eventId of eventIds) {
+          const expected = expectedVersions.get(eventId);
+          if (expected !== undefined) statement.run(eventId, expected);
+        }
+        return;
+      }
       const placeholders = eventIds.map(() => "?").join(", ");
       this._db
         .prepare(
@@ -1036,12 +1102,17 @@ export class EventBuffer {
    * every push cycle.
    */
   getPendingTasks(): Task[] {
-    if (this._mem) return this._mem.getPendingTasks();
+    return this.getPendingTaskDeliveries().map((delivery) => delivery.task);
+  }
+
+  /** Return pending task snapshots with optimistic delivery versions. */
+  getPendingTaskDeliveries(): PendingTaskDelivery[] {
+    if (this._mem) return this._mem.getPendingTaskDeliveries();
     if (!this._db) return [];
     const rows = this._db
       .prepare("SELECT * FROM tasks WHERE sync_status = 'pending'")
       .all() as TaskRow[];
-    return rows.map(rowToTask);
+    return rows.map((row) => ({ task: rowToTask(row), syncVersion: row.sync_version }));
   }
 
   /**
@@ -1050,11 +1121,22 @@ export class EventBuffer {
    * Called by the pusher after a successful POST so the tasks are excluded
    * from subsequent pushes until they are upserted again.
    */
-  markTasksSynced(taskIds: string[]): void {
-    if (this._mem) { this._mem.markTasksSynced(taskIds); return; }
+  markTasksSynced(taskIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
+    if (this._mem) { this._mem.markTasksSynced(taskIds, expectedVersions); return; }
     if (!this._db) return;
     if (taskIds.length === 0) return;
     try {
+      if (expectedVersions !== undefined) {
+        const statement = this._db.prepare(
+          "UPDATE tasks SET sync_status = 'synced' " +
+          "WHERE task_id = ? AND sync_version = ? AND sync_status = 'pending'",
+        );
+        for (const taskId of taskIds) {
+          const expected = expectedVersions.get(taskId);
+          if (expected !== undefined) statement.run(taskId, expected);
+        }
+        return;
+      }
       const placeholders = taskIds.map(() => "?").join(", ");
       this._db
         .prepare(`UPDATE tasks SET sync_status = 'synced' WHERE task_id IN (${placeholders})`)
@@ -1128,7 +1210,8 @@ export class EventBuffer {
             retry_of = ?,
             details = ?,
             timestamp = ?,
-            sync_status = 'pending'
+            sync_status = 'pending',
+            sync_version = sync_version + 1
           WHERE event_id = ?`
         )
         .run(

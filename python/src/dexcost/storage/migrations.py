@@ -17,7 +17,7 @@ from typing import Any
 
 # The target schema version that the *code* expects.  Bump this whenever a new
 # migration is added and register the migration below.
-TARGET_SCHEMA_VERSION = 14
+TARGET_SCHEMA_VERSION = 15
 
 # ── Migration registry ────────────────────────────────────────────────
 
@@ -370,3 +370,18 @@ def _sqlite_v13_to_v14(conn: sqlite3.Connection) -> None:
     conn.execute(_CREATE_PROVIDER_JOB_REVISIONS)
     for index_sql in _CREATE_PROVIDER_JOB_INDEXES:
         conn.execute(index_sql)
+
+
+@register_sqlite_migration(14, 15)
+def _sqlite_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """Add optimistic delivery versions for mutable events and tasks."""
+    for table in ("events", "tasks"):
+        existing = {
+            row[1]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if existing and "sync_version" not in existing:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN "
+                "sync_version INTEGER NOT NULL DEFAULT 1"
+            )

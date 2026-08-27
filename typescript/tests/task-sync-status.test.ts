@@ -112,6 +112,65 @@ describe("Fix 2 — task sync_status", () => {
     buffer.close();
   });
 
+  it("does not acknowledge event or task revisions changed during an in-flight push", async () => {
+    const buffer = new EventBuffer(join(tmpDir, "inflight.db"));
+    const taskId = randomUUID();
+    const eventId = randomUUID();
+    const initialTask = createTask({
+      taskId,
+      taskType: "reconcile",
+      totalCostUsd: "0.01",
+    });
+    const initialEvent = createCostEvent({
+      eventId,
+      taskId,
+      eventType: "llm_call",
+      provider: "openrouter",
+      model: "openai/gpt-4o",
+      costUsd: "0.01",
+    });
+    buffer.upsertTask(initialTask);
+    buffer.addEvent(initialEvent);
+
+    let signalRequestStarted: (() => void) | undefined;
+    let releaseResponse: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => { signalRequestStarted = resolve; });
+    const responseReleased = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      signalRequestStarted?.();
+      await responseReleased;
+      return new Response("{}", { status: 202 });
+    });
+
+    const pusher = new EventPusher(buffer, { apiKey: "dx_live_x" });
+    const firstFlush = pusher.flush();
+    await requestStarted;
+
+    buffer.updateEvent(createCostEvent({
+      ...initialEvent,
+      model: "anthropic/claude-sonnet-4",
+      costUsd: "0.013",
+    }));
+    buffer.upsertTask(createTask({
+      ...initialTask,
+      totalCostUsd: "0.013",
+    }));
+    releaseResponse?.();
+    await firstFlush;
+
+    expect(buffer.pendingCount).toBe(1);
+    expect(buffer.pendingTaskCount).toBe(1);
+    expect(buffer.getPendingEvents()[0]?.model).toBe("anthropic/claude-sonnet-4");
+    expect(buffer.getPendingEvents()[0]?.costUsd.toString()).toBe("0.013");
+    expect(buffer.getPendingTasks()[0]?.totalCostUsd.toString()).toBe("0.013");
+
+    await pusher.flush();
+    expect(buffer.pendingCount).toBe(0);
+    expect(buffer.pendingTaskCount).toBe(0);
+    pusher.stop();
+    buffer.close();
+  });
+
   it("purgeOldPending deletes stale pending events but keeps fresh ones", () => {
     const buffer = new EventBuffer(join(tmpDir, "p.db"));
     const taskId = randomUUID();

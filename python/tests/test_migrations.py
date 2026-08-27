@@ -149,7 +149,7 @@ class TestStartupVersionCheck:
         )
         conn.commit()
 
-        assert run_sqlite_migrations(conn, 12) == TARGET_SCHEMA_VERSION == 14
+        assert run_sqlite_migrations(conn, 12) == TARGET_SCHEMA_VERSION == 15
         assert conn.execute(
             "SELECT COUNT(*) FROM sqlite_master "
             "WHERE type='table' AND name='revenues'"
@@ -180,7 +180,7 @@ class TestStartupVersionCheck:
         )
         conn.commit()
 
-        assert run_sqlite_migrations(conn, 13) == TARGET_SCHEMA_VERSION == 14
+        assert run_sqlite_migrations(conn, 13) == TARGET_SCHEMA_VERSION == 15
         assert conn.execute(
             "SELECT COUNT(*) FROM sqlite_master "
             "WHERE type='table' AND name='provider_job_revisions'"
@@ -197,6 +197,39 @@ class TestStartupVersionCheck:
             "idx_provider_jobs_identity",
             "idx_provider_jobs_task",
         } <= indexes
+        conn.close()
+
+    def test_v14_database_adds_delivery_versions_without_losing_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """The v14→v15 migration versions existing mutable queue rows."""
+        db_path = tmp_path / "v14.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE schema_version (version_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "version_number INTEGER NOT NULL, migration_name TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, sync_status TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE events (event_id TEXT PRIMARY KEY, sync_status TEXT NOT NULL)"
+        )
+        conn.execute("INSERT INTO tasks VALUES ('task-1', 'pending')")
+        conn.execute("INSERT INTO events VALUES ('event-1', 'pending')")
+        conn.execute(
+            "INSERT INTO schema_version (version_number, migration_name) "
+            "VALUES (14, 'provider_job_revisions')"
+        )
+        conn.commit()
+
+        assert run_sqlite_migrations(conn, 14) == TARGET_SCHEMA_VERSION == 15
+        assert conn.execute(
+            "SELECT sync_version FROM tasks WHERE task_id='task-1'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT sync_version FROM events WHERE event_id='event-1'"
+        ).fetchone()[0] == 1
         conn.close()
 
 

@@ -151,9 +151,9 @@
       "sha256": "89f1eda7794e0b0ad7f045c8f474e35e29bf415a05b36b0bac00064204cd1291"
     },
     {
-      "byte_size": 43213,
+      "byte_size": 43955,
       "path": "storage-migrations.json",
-      "sha256": "91a5d362f6b3a7840c7cd1db442d81a06b4e712f0b63962d0fff0faa51c165ff"
+      "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
       "byte_size": 38346,

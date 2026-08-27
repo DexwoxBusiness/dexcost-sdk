@@ -157,19 +157,23 @@ describe("cross-SDK idempotency", () => {
     instance.close();
   });
 
-  it("restores the exact outer occurrence counter through the setter token", () => {
+  it("restores the exact outer occurrence counter across an awaited inner scope", async () => {
     const instance = tracker("idempotency-restore");
     const task = instance.startTask({ taskType: "workflow.run", taskId: randomUUID() });
     const clearOuter = setIdempotencyKey("workflow-restore");
     try {
       const first = task.recordToolCall("search", { costUsd: "0.01" });
-      const restoreOuter = setIdempotencyKey("workflow-inner");
-      try {
-        const inner = task.recordToolCall("search", { costUsd: "0.01" });
-        expect(inner.details._dexcost_idempotency_occurrence).toBe(0);
-      } finally {
-        setIdempotencyKey(restoreOuter);
-      }
+      await (async () => {
+        const restoreOuter = setIdempotencyKey("workflow-inner");
+        try {
+          await Promise.resolve();
+          const inner = task.recordToolCall("search", { costUsd: "0.01" });
+          expect(inner.details._dexcost_idempotency_occurrence).toBe(0);
+        } finally {
+          restoreOuter.reset();
+        }
+      })();
+      expect(getIdempotencyKey()).toBe("workflow-restore");
       const second = task.recordToolCall("search", { costUsd: "0.01" });
       expect(first.details._dexcost_idempotency_occurrence).toBe(0);
       expect(second.details._dexcost_idempotency_occurrence).toBe(1);

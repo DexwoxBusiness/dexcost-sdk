@@ -208,7 +208,7 @@ def _overlay(
     )
 
 
-def test_schema_v14_creates_catalog_revenue_and_provider_job_tables(
+def test_schema_v15_creates_catalog_revenue_provider_job_and_delivery_state(
     tmp_path: Path,
 ) -> None:
     storage = SQLiteStorage(tmp_path / "catalog.db")
@@ -219,7 +219,7 @@ def test_schema_v14_creates_catalog_revenue_and_provider_job_tables(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        assert storage.get_schema_version() == TARGET_SCHEMA_VERSION == 14
+        assert storage.get_schema_version() == TARGET_SCHEMA_VERSION == 15
         assert {
             "sdk_catalog_artifacts",
             "sdk_catalog_releases",
@@ -229,6 +229,11 @@ def test_schema_v14_creates_catalog_revenue_and_provider_job_tables(
             "revenues",
             "provider_job_revisions",
         } <= tables
+        for table in ("events", "tasks"):
+            columns = {
+                row[1] for row in storage._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            assert "sync_version" in columns
     finally:
         storage.close()
 

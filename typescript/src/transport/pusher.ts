@@ -273,8 +273,13 @@ export class EventPusher {
     }
 
     const batchSize = Math.max(1, this._options.batchSize ?? 100);
-    const tasks = this._buffer.getPendingTasks();
+    const taskDeliveries = this._buffer.getPendingTaskDeliveries();
+    const tasks = taskDeliveries.map((delivery) => delivery.task);
+    const taskSyncVersions = new Map(
+      taskDeliveries.map((delivery) => [delivery.task.taskId, delivery.syncVersion]),
+    );
     const wireEvents: AttributionEventV3[] = [];
+    const eventSyncVersions = new Map<string, number>();
     const failedEventIds: string[] = [];
     const seenEventIds = new Set<string>();
     const scanLimit = Math.max(
@@ -287,14 +292,16 @@ export class EventPusher {
     // page. This lets one flush reach valid events behind a malformed prefix.
     while (wireEvents.length < batchSize && scanned < scanLimit) {
       const pageLimit = Math.min(batchSize - wireEvents.length, scanLimit - scanned);
-      const pending = this._buffer.getPendingEvents(pageLimit);
+      const pending = this._buffer.getPendingEventDeliveries(pageLimit);
       if (pending.length === 0) break;
 
       const pageFailedEventIds: string[] = [];
       let newlyScanned = 0;
-      for (const event of pending) {
+      for (const delivery of pending) {
+        const { event, syncVersion } = delivery;
         if (seenEventIds.has(event.eventId)) continue;
         seenEventIds.add(event.eventId);
+        eventSyncVersions.set(event.eventId, syncVersion);
         newlyScanned++;
         scanned++;
         const converted = this._serializeEvent(event);
@@ -303,7 +310,7 @@ export class EventPusher {
       }
 
       if (pageFailedEventIds.length > 0) {
-        this._buffer.markQuarantined(pageFailedEventIds);
+        this._buffer.markQuarantined(pageFailedEventIds, eventSyncVersions);
         failedEventIds.push(...pageFailedEventIds);
       }
 
@@ -352,13 +359,14 @@ export class EventPusher {
     try {
       const ok = await this.pushWithSplit(
         wireEvents, tasks, businessIdentities, outcomes, revenueRevisions, providerJobKeys,
+        eventSyncVersions, taskSyncVersions,
       );
       if (ok) {
         // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
         // POST; these calls are kept as a defensive idempotent safety
         // net for any future path that returns true without splitting.
-        this._buffer.markSynced(wireEvents.map((e) => e.event_id));
-        this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
+        this._buffer.markSynced(wireEvents.map((e) => e.event_id), eventSyncVersions);
+        this._buffer.markTasksSynced(tasks.map((t) => t.taskId), taskSyncVersions);
         this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
           String(item["outcome_id"]),
           Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
@@ -507,6 +515,8 @@ export class EventPusher {
     outcomes: Array<Record<string, unknown>> = [],
     revenueRevisions: Array<Record<string, unknown>> = [],
     providerJobKeys: ProviderJobKey[] = [],
+    eventSyncVersions: ReadonlyMap<string, number> = new Map(),
+    taskSyncVersions: ReadonlyMap<string, number> = new Map(),
   ): Promise<boolean> {
     let payload: string;
     try {
@@ -531,9 +541,9 @@ export class EventPusher {
         // Pre-fix the outer caller marked synced ONLY when both halves
         // returned true; first-half-OK + second-half-fail re-sent the
         // first half on the next tick → duplicates at the control plane.
-        this._buffer.markSynced(events.map((e) => e.event_id));
+        this._buffer.markSynced(events.map((e) => e.event_id), eventSyncVersions);
         if (tasks.length > 0) {
-          this._buffer.markTasksSynced(tasks.map((t) => t.taskId));
+          this._buffer.markTasksSynced(tasks.map((t) => t.taskId), taskSyncVersions);
         }
         this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
           String(item["outcome_id"]),
@@ -557,9 +567,12 @@ export class EventPusher {
       const secondJobs = providerJobKeys.filter((job) => !firstIds.has(job.eventId));
       const firstOk = await this.pushWithSplit(
         events.slice(0, mid), tasks, businessIdentities, outcomes, revenueRevisions, firstJobs,
+        eventSyncVersions, taskSyncVersions,
       );
       if (!firstOk) return false;
-      return this.pushWithSplit(events.slice(mid), [], [], [], [], secondJobs);
+      return this.pushWithSplit(
+        events.slice(mid), [], [], [], [], secondJobs, eventSyncVersions, taskSyncVersions,
+      );
     }
 
     if (tasks.length > 1) {
@@ -569,35 +582,48 @@ export class EventPusher {
       const secondIdentities = businessIdentities.filter((item) => !firstTaskIds.has(String(item["task_id"])));
       const firstOk = await this.pushWithSplit(
         [], tasks.slice(0, mid), firstIdentities, outcomes, revenueRevisions, [],
+        eventSyncVersions, taskSyncVersions,
       );
       if (!firstOk) return false;
-      return this.pushWithSplit(events, tasks.slice(mid), secondIdentities, [], [], providerJobKeys);
+      return this.pushWithSplit(
+        events, tasks.slice(mid), secondIdentities, [], [], providerJobKeys,
+        eventSyncVersions, taskSyncVersions,
+      );
     }
 
     if (outcomes.length > 1) {
       const mid = Math.floor(outcomes.length / 2);
       const firstOk = await this.pushWithSplit(
         events, tasks, businessIdentities, outcomes.slice(0, mid), revenueRevisions, providerJobKeys,
+        eventSyncVersions, taskSyncVersions,
       );
       if (!firstOk) return false;
-      return this.pushWithSplit([], [], [], outcomes.slice(mid), [], []);
+      return this.pushWithSplit(
+        [], [], [], outcomes.slice(mid), [], [], eventSyncVersions, taskSyncVersions,
+      );
     }
 
     if (revenueRevisions.length > 1) {
       const mid = Math.floor(revenueRevisions.length / 2);
       const firstOk = await this.pushWithSplit(
         events, tasks, businessIdentities, outcomes, revenueRevisions.slice(0, mid), providerJobKeys,
+        eventSyncVersions, taskSyncVersions,
       );
       if (!firstOk) return false;
-      return this.pushWithSplit([], [], [], [], revenueRevisions.slice(mid), []);
+      return this.pushWithSplit(
+        [], [], [], [], revenueRevisions.slice(mid), [], eventSyncVersions, taskSyncVersions,
+      );
     }
 
     if (events.length === 1 && tasks.length === 1) {
       const taskOk = await this.pushWithSplit(
         [], tasks, businessIdentities, outcomes, revenueRevisions, [],
+        eventSyncVersions, taskSyncVersions,
       );
       if (!taskOk) return false;
-      return this.pushWithSplit(events, [], [], [], [], providerJobKeys);
+      return this.pushWithSplit(
+        events, [], [], [], [], providerJobKeys, eventSyncVersions, taskSyncVersions,
+      );
     }
 
     if (events.length === 1) {
@@ -609,7 +635,7 @@ export class EventPusher {
         this._buffer.markLedgerQuarantined(
           "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
         );
-      } else this._buffer.markSynced([events[0].event_id]);
+      } else this._buffer.markSynced([events[0].event_id], eventSyncVersions);
       return true;
     }
 
@@ -617,7 +643,7 @@ export class EventPusher {
       console.warn(
         `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), skipping`,
       );
-      this._buffer.markTasksSynced([tasks[0].taskId]);
+      this._buffer.markTasksSynced([tasks[0].taskId], taskSyncVersions);
       return true;
     }
 
