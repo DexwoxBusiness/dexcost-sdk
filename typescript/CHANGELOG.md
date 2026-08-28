@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.0...typescript/v0.24.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **sdk:** preserve reconciled delivery and contract stability ([#167](https://github.com/DexwoxBusiness/dexcost-sdk/issues/167)) ([e14238d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/e14238dfe4d0c3b9ba381cf09460bc9174803689))
+
 ## [0.24.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.23.0...typescript/v0.24.0) (2026-08-26)
 
 
