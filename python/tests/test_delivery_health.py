@@ -10,6 +10,8 @@ from email.message import Message
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import dexcost
 from dexcost.config import DexcostConfig
 from dexcost.delivery import (
@@ -127,6 +129,38 @@ def test_success_status_joins_worker_counters_with_durable_depth(
         assert status.last_success_at is not None
         assert status.consecutive_failures == 0
         assert status.healthy
+    finally:
+        storage.close()
+
+
+def test_partial_split_success_is_visible_when_a_later_leaf_fails(
+    tmp_path: Path,
+) -> None:
+    storage = SQLiteStorage(tmp_path / "delivery.db")
+    events = [_event(), _event()]
+    for event in events:
+        storage.insert_event(event)
+    worker = SyncWorker(_config(), storage)
+
+    def oversized_pair(event: Event) -> dict[str, object]:
+        return {
+            "event_id": str(event.event_id),
+            "padding": "x" * 70_000,
+        }
+
+    try:
+        with (
+            patch.object(worker, "_prepare_event_dict", side_effect=oversized_pair),
+            patch.object(worker, "_post_raw", side_effect=[True, False]),
+            pytest.raises(RuntimeError, match="did not accept the complete"),
+        ):
+            worker._sync_batch()
+
+        status = worker.status()
+        assert status.pending_events == 1
+        assert status.successful_batches == 1
+        assert status.delivered_records == 1
+        assert status.last_success_at is not None
     finally:
         storage.close()
 

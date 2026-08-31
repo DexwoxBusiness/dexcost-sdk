@@ -317,13 +317,22 @@ class SyncWorker:
             self._last_attempt_at = _utcnow()
             self._worker_state = "syncing"
 
+    def _record_delivery_progress_locked(self, delivered_records: int) -> None:
+        """Record accepted leaves while ``_health_lock`` is held."""
+        if delivered_records > 0:
+            self._last_success_at = _utcnow()
+            self._successful_batches += 1
+            self._delivered_records += delivered_records
+
+    def _record_delivery_progress(self, delivered_records: int) -> None:
+        """Preserve accepted-leaf counters without masking a sibling failure."""
+        with self._health_lock:
+            self._record_delivery_progress_locked(delivered_records)
+
     def _record_success(self, delivered_records: int) -> None:
         with self._health_lock:
             self._consecutive_failures = 0
-            if delivered_records > 0:
-                self._last_success_at = _utcnow()
-                self._successful_batches += 1
-                self._delivered_records += delivered_records
+            self._record_delivery_progress_locked(delivered_records)
             self._worker_state = "idle"
 
     def _record_error(
@@ -608,9 +617,13 @@ class SyncWorker:
                 task_sync_versions=task_sync_versions,
                 provider_job_revisions=provider_job_revisions,
             )
+        except Exception:
+            self._record_delivery_progress(post_stats["delivered_records"])
+            raise
         finally:
             self._active_post_stats = None
         if not posted:
+            self._record_delivery_progress(post_stats["delivered_records"])
             if self._stop_event.is_set():
                 return False
             raise _AttributionBatchRejectedError(

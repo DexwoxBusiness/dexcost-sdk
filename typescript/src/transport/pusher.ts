@@ -200,13 +200,17 @@ export class EventPusher {
     this._workerState = "syncing";
   }
 
-  private _recordSuccess(deliveredRecords: number): void {
-    this._consecutiveFailures = 0;
+  private _recordDeliveryProgress(deliveredRecords: number): void {
     if (deliveredRecords > 0) {
       this._lastSuccessAt = new Date();
       this._successfulBatches += 1;
       this._deliveredRecords += deliveredRecords;
     }
+  }
+
+  private _recordSuccess(deliveredRecords: number): void {
+    this._consecutiveFailures = 0;
+    this._recordDeliveryProgress(deliveredRecords);
     this._workerState = "idle";
   }
 
@@ -358,10 +362,10 @@ export class EventPusher {
 
     this._pushing = true;
     this._recordAttempt();
+    const pushStats = { deliveredRecords: 0, quarantinedRecords: 0 };
+    this._activePushStats = pushStats;
 
     try {
-      const pushStats = { deliveredRecords: 0, quarantinedRecords: 0 };
-      this._activePushStats = pushStats;
       const ok = await this.pushWithSplit(
         wireEvents, tasks, businessIdentities, outcomes, revenueRevisions, providerJobKeys,
         eventSyncVersions, taskSyncVersions,
@@ -383,6 +387,7 @@ export class EventPusher {
           this._lastPurgeMs = now;
         }
       } else {
+        this._recordDeliveryProgress(pushStats.deliveredRecords);
         this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
         if (!this._authFailed) {
           this._recordError(
@@ -392,6 +397,7 @@ export class EventPusher {
         }
       }
     } catch (error) {
+      this._recordDeliveryProgress(pushStats.deliveredRecords);
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
       this._recordError(error, "transport", true, "backoff");
     } finally {
