@@ -43,6 +43,22 @@ describe("delivery health", () => {
     expect(status.oldestPendingAt).toBeInstanceOf(Date);
   });
 
+  it("keeps quarantine visible even after a broad acknowledgement", () => {
+    const buffer = storage(); populate(buffer);
+    const eventId = "55555555-5555-4555-8555-555555555555";
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    buffer.markQuarantined([eventId]);
+    buffer.markTasksQuarantined([taskId]);
+    buffer.markSynced([eventId]);
+    buffer.markTasksSynced([taskId]);
+
+    const status = localDeliveryStatus(buffer);
+    expect(status.pendingRecords).toBe(0);
+    expect(status.quarantinedRecords).toBe(2);
+    expect(status.quarantinedTasks).toBe(1);
+    expect(status.healthy).toBe(false);
+  });
+
   it("joins successful worker counters with durable depth", async () => {
     const buffer = storage(); populate(buffer);
     vi.stubGlobal("fetch", vi.fn(async () => new Response('{"accepted":2,"rejected":0}', { status: 202 })));

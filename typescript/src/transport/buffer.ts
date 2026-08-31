@@ -115,6 +115,7 @@ export interface DeliveryCounts {
   pendingEvents: number;
   quarantinedEvents: number;
   pendingTasks: number;
+  quarantinedTasks: number;
   pendingOutcomes: number;
   quarantinedOutcomes: number;
   pendingRevenues: number;
@@ -379,7 +380,7 @@ interface MemEventEntry {
 
 interface MemTaskEntry {
   task: Task;
-  syncStatus: "pending" | "synced";
+  syncStatus: "pending" | "quarantined" | "synced";
   capturedAt: Date;
   syncedAt: Date | null;
   syncVersion: number;
@@ -452,7 +453,10 @@ class MemoryBufferStore {
     for (const id of eventIds) {
       const entry = this._events.get(id);
       const expected = expectedVersions?.get(id);
-      if (entry != null && (expectedVersions === undefined || expected === entry.syncVersion)) {
+      if (
+        entry != null && entry.syncStatus === "pending" &&
+        (expectedVersions === undefined || expected === entry.syncVersion)
+      ) {
         entry.syncStatus = "synced";
         entry.syncedAt = now;
       }
@@ -520,9 +524,25 @@ class MemoryBufferStore {
     for (const id of taskIds) {
       const entry = this._tasks.get(id);
       const expected = expectedVersions?.get(id);
-      if (entry != null && (expectedVersions === undefined || expected === entry.syncVersion)) {
+      if (
+        entry != null && entry.syncStatus === "pending" &&
+        (expectedVersions === undefined || expected === entry.syncVersion)
+      ) {
         entry.syncStatus = "synced";
         entry.syncedAt = now;
+      }
+    }
+  }
+
+  markTasksQuarantined(taskIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
+    for (const id of taskIds) {
+      const entry = this._tasks.get(id);
+      const expected = expectedVersions?.get(id);
+      if (
+        entry != null && entry.syncStatus === "pending" &&
+        (expectedVersions === undefined || expected === entry.syncVersion)
+      ) {
+        entry.syncStatus = "quarantined";
       }
     }
   }
@@ -548,8 +568,9 @@ class MemoryBufferStore {
   }
 
   deliveryCounts(): Pick<DeliveryCounts,
-    "pendingEvents" | "quarantinedEvents" | "pendingTasks" | "oldestPendingAt"> {
-    let pendingEvents = 0; let quarantinedEvents = 0; let pendingTasks = 0;
+    "pendingEvents" | "quarantinedEvents" | "pendingTasks" | "quarantinedTasks" | "oldestPendingAt"> {
+    let pendingEvents = 0; let quarantinedEvents = 0;
+    let pendingTasks = 0; let quarantinedTasks = 0;
     const pendingDates: Date[] = [];
     for (const item of this._events.values()) {
       if (item.syncStatus === "pending") { pendingEvents++; pendingDates.push(item.capturedAt); }
@@ -557,9 +578,10 @@ class MemoryBufferStore {
     }
     for (const item of this._tasks.values()) {
       if (item.syncStatus === "pending") { pendingTasks++; pendingDates.push(item.capturedAt); }
+      else if (item.syncStatus === "quarantined") quarantinedTasks++;
     }
     const oldestPendingAt = pendingDates.sort((a, b) => a.getTime() - b.getTime())[0];
-    return { pendingEvents, quarantinedEvents, pendingTasks, oldestPendingAt };
+    return { pendingEvents, quarantinedEvents, pendingTasks, quarantinedTasks, oldestPendingAt };
   }
 
   queryEvents(taskId: string): CostEvent[] {
@@ -1005,7 +1027,10 @@ export class EventBuffer {
       }
       const placeholders = eventIds.map(() => "?").join(", ");
       this._db
-        .prepare(`UPDATE events SET sync_status = 'synced' WHERE event_id IN (${placeholders})`)
+        .prepare(
+          `UPDATE events SET sync_status = 'synced'
+           WHERE sync_status = 'pending' AND event_id IN (${placeholders})`,
+        )
         .run(...eventIds);
     } catch {
       // SQLite error (disk full, locked) — skip marking, don't crash
@@ -1139,10 +1164,41 @@ export class EventBuffer {
       }
       const placeholders = taskIds.map(() => "?").join(", ");
       this._db
-        .prepare(`UPDATE tasks SET sync_status = 'synced' WHERE task_id IN (${placeholders})`)
+        .prepare(
+          `UPDATE tasks SET sync_status = 'synced'
+           WHERE sync_status = 'pending' AND task_id IN (${placeholders})`,
+        )
         .run(...taskIds);
     } catch {
       // SQLite error (disk full, locked) — skip marking, don't crash
+    }
+  }
+
+  /** Retain an undeliverable task without treating it as successfully sent. */
+  markTasksQuarantined(taskIds: string[], expectedVersions?: ReadonlyMap<string, number>): void {
+    if (this._mem) { this._mem.markTasksQuarantined(taskIds, expectedVersions); return; }
+    if (!this._db || taskIds.length === 0) return;
+    try {
+      if (expectedVersions !== undefined) {
+        const statement = this._db.prepare(
+          "UPDATE tasks SET sync_status = 'quarantined' " +
+          "WHERE task_id = ? AND sync_version = ? AND sync_status = 'pending'",
+        );
+        for (const taskId of taskIds) {
+          const expected = expectedVersions.get(taskId);
+          if (expected !== undefined) statement.run(taskId, expected);
+        }
+        return;
+      }
+      const placeholders = taskIds.map(() => "?").join(", ");
+      this._db
+        .prepare(
+          `UPDATE tasks SET sync_status = 'quarantined'
+           WHERE sync_status = 'pending' AND task_id IN (${placeholders})`,
+        )
+        .run(...taskIds);
+    } catch {
+      // SQLite error (disk full, locked) — keep rows pending and retry later.
     }
   }
 
@@ -1535,12 +1591,12 @@ export class EventBuffer {
     if (this._mem || !this._db) {
       for (const [entityId, revision] of identities) {
         const row = this._ledgerMemory.get(this._ledgerKey(kind, entityId, revision));
-        if (row !== undefined) row.sync_status = "synced";
+        if (row?.sync_status === "pending") row.sync_status = "synced";
       }
       return;
     }
     const statement = this._db.prepare(
-      "UPDATE ledger_revisions SET sync_status = 'synced' WHERE kind = ? AND entity_id = ? AND revision = ?",
+      "UPDATE ledger_revisions SET sync_status = 'synced' WHERE kind = ? AND entity_id = ? AND revision = ? AND sync_status = 'pending'",
     );
     const transaction = this._db.transaction((items: ReadonlyArray<readonly [string, number]>) => {
       for (const [entityId, revision] of items) statement.run(kind, entityId, revision);
@@ -1568,14 +1624,15 @@ export class EventBuffer {
 
   deliveryCounts(): DeliveryCounts {
     const empty = {
-      pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0,
+      pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0, quarantinedTasks: 0,
       pendingOutcomes: 0, quarantinedOutcomes: 0,
       pendingRevenues: 0, quarantinedRevenues: 0,
       pendingProviderJobs: 0, quarantinedProviderJobs: 0,
     };
     if (this._mem || !this._db) {
       const base = this._mem?.deliveryCounts() ?? {
-        pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0, oldestPendingAt: undefined,
+        pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0, quarantinedTasks: 0,
+        oldestPendingAt: undefined,
       };
       const counts: DeliveryCounts = { ...empty, ...base };
       const dates: Date[] = base.oldestPendingAt === undefined ? [] : [base.oldestPendingAt];
@@ -1600,6 +1657,7 @@ export class EventBuffer {
         (SELECT COUNT(*) FROM events WHERE sync_status='pending') AS pending_events,
         (SELECT COUNT(*) FROM events WHERE sync_status='quarantined') AS quarantined_events,
         (SELECT COUNT(*) FROM tasks WHERE sync_status='pending') AS pending_tasks,
+        (SELECT COUNT(*) FROM tasks WHERE sync_status='quarantined') AS quarantined_tasks,
         (SELECT COUNT(*) FROM ledger_revisions WHERE kind='outcome' AND sync_status='pending') AS pending_outcomes,
         (SELECT COUNT(*) FROM ledger_revisions WHERE kind='outcome' AND sync_status='quarantined') AS quarantined_outcomes,
         (SELECT COUNT(*) FROM ledger_revisions WHERE kind='revenue' AND sync_status='pending') AS pending_revenues,
@@ -1615,7 +1673,8 @@ export class EventBuffer {
     const oldest = typeof row.oldest_pending_at === "string" ? new Date(row.oldest_pending_at) : undefined;
     return {
       pendingEvents: Number(row.pending_events), quarantinedEvents: Number(row.quarantined_events),
-      pendingTasks: Number(row.pending_tasks), pendingOutcomes: Number(row.pending_outcomes),
+      pendingTasks: Number(row.pending_tasks), quarantinedTasks: Number(row.quarantined_tasks),
+      pendingOutcomes: Number(row.pending_outcomes),
       quarantinedOutcomes: Number(row.quarantined_outcomes), pendingRevenues: Number(row.pending_revenues),
       quarantinedRevenues: Number(row.quarantined_revenues), pendingProviderJobs: Number(row.pending_provider_jobs),
       quarantinedProviderJobs: Number(row.quarantined_provider_jobs),

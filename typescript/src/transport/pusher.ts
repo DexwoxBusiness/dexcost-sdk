@@ -108,6 +108,8 @@ export class EventPusher {
   private _successfulBatches = 0;
   private _failedBatches = 0;
   private _deliveredRecords = 0;
+  private _activePushStats?: { deliveredRecords: number; quarantinedRecords: number };
+  private _activeRequestController: AbortController | null = null;
 
   constructor(
     buffer: EventBuffer,
@@ -199,11 +201,17 @@ export class EventPusher {
     this._workerState = "syncing";
   }
 
+  private _recordDeliveryProgress(deliveredRecords: number): void {
+    if (deliveredRecords > 0) {
+      this._lastSuccessAt = new Date();
+      this._successfulBatches += 1;
+      this._deliveredRecords += deliveredRecords;
+    }
+  }
+
   private _recordSuccess(deliveredRecords: number): void {
-    this._lastSuccessAt = new Date();
     this._consecutiveFailures = 0;
-    this._successfulBatches += 1;
-    this._deliveredRecords += deliveredRecords;
+    this._recordDeliveryProgress(deliveredRecords);
     this._workerState = "idle";
   }
 
@@ -247,6 +255,11 @@ export class EventPusher {
    */
   async flush(): Promise<void> {
     await this.push(true);
+  }
+
+  /** @internal Abort the current ingest request when bounded shutdown expires. */
+  abortActiveRequest(): void {
+    this._activeRequestController?.abort();
   }
 
   /**
@@ -355,6 +368,8 @@ export class EventPusher {
 
     this._pushing = true;
     this._recordAttempt();
+    const pushStats = { deliveredRecords: 0, quarantinedRecords: 0 };
+    this._activePushStats = pushStats;
 
     try {
       const ok = await this.pushWithSplit(
@@ -362,27 +377,10 @@ export class EventPusher {
         eventSyncVersions, taskSyncVersions,
       );
       if (ok) {
-        // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
-        // POST; these calls are kept as a defensive idempotent safety
-        // net for any future path that returns true without splitting.
-        this._buffer.markSynced(wireEvents.map((e) => e.event_id), eventSyncVersions);
-        this._buffer.markTasksSynced(tasks.map((t) => t.taskId), taskSyncVersions);
-        this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
-          String(item["outcome_id"]),
-          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
-        ] as const));
-        this._buffer.markLedgerSynced("revenue", revenueRevisions.map((item) => [
-          String(item["revenue_id"]),
-          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
-        ] as const));
-        this._buffer.markLedgerSynced(
-          "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
-        );
         this._backoffMs = 1000; // Reset backoff on success
-        this._recordSuccess(
-          wireEvents.length + tasks.length + businessIdentities.length +
-          outcomes.length + revenueRevisions.length,
-        );
+        // Only a successful leaf POST may acknowledge a record. Terminally
+        // oversized records are quarantined and intentionally excluded here.
+        this._recordSuccess(pushStats.deliveredRecords);
 
         // Purge acknowledged events only (throttled to once per hour).
         const now = Date.now();
@@ -395,6 +393,7 @@ export class EventPusher {
           this._lastPurgeMs = now;
         }
       } else {
+        this._recordDeliveryProgress(pushStats.deliveredRecords);
         this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
         if (!this._authFailed) {
           this._recordError(
@@ -404,9 +403,11 @@ export class EventPusher {
         }
       }
     } catch (error) {
+      this._recordDeliveryProgress(pushStats.deliveredRecords);
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
       this._recordError(error, "transport", true, "backoff");
     } finally {
+      this._activePushStats = undefined;
       this._pushing = false;
     }
 
@@ -556,6 +557,10 @@ export class EventPusher {
         this._buffer.markLedgerSynced(
           "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
         );
+        if (this._activePushStats !== undefined) {
+          this._activePushStats.deliveredRecords += events.length + tasks.length +
+            businessIdentities.length + outcomes.length + revenueRevisions.length;
+        }
       }
       return ok;
     }
@@ -627,23 +632,24 @@ export class EventPusher {
     }
 
     if (events.length === 1) {
-      // Single event too large — skip it with warning
       console.warn(
-        `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), skipping`,
+        `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), quarantining`,
       );
       if (providerJobKeys.length > 0) {
         this._buffer.markLedgerQuarantined(
           "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
         );
-      } else this._buffer.markSynced([events[0].event_id], eventSyncVersions);
+      } else this._buffer.markQuarantined([events[0].event_id], eventSyncVersions);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
 
     if (tasks.length === 1) {
       console.warn(
-        `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), skipping`,
+        `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), quarantining`,
       );
-      this._buffer.markTasksSynced([tasks[0].taskId], taskSyncVersions);
+      this._buffer.markTasksQuarantined([tasks[0].taskId], taskSyncVersions);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
 
@@ -653,6 +659,7 @@ export class EventPusher {
         String(item["outcome_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
       ]]);
       console.warn(`[dexcost] Single outcome exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
     if (revenueRevisions.length === 1) {
@@ -661,6 +668,7 @@ export class EventPusher {
         String(item["revenue_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
       ]]);
       console.warn(`[dexcost] Single revenue revision exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
     return true;
@@ -684,59 +692,65 @@ export class EventPusher {
 
     const url = `${this._endpoint}/v1/ingest`;
     const controller = new AbortController();
+    this._activeRequestController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let response: Response;
+    timeoutId.unref?.();
     try {
-      response = await fetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers,
         body,
         signal: controller.signal,
       });
+
+      if (response.ok) {
+        try {
+          const result = await response.json() as { rejected?: number };
+          if ((result.rejected ?? 0) > 0) {
+            console.warn(
+              `[dexcost] Control plane rejected ${result.rejected} item(s) from an attribution-v2 batch`,
+            );
+            return false;
+          }
+        } catch (error) {
+          // Some compatible/private endpoints return an empty 2xx body. An
+          // aborted body read is different: it must remain pending for retry.
+          if (controller.signal.aborted) throw error;
+        }
+        return true;
+      }
+
+      if (response.status === 413) {
+        // Permanent error — batch too large, don't retry
+        // This shouldn't happen with pre-split but handle gracefully
+        console.warn("[dexcost] Server returned 413 despite pre-split check");
+        return false;
+      }
+
+      if (response.status === 401) {
+        // The ingestion contract uses 401 for invalid/revoked keys.
+        console.error(
+          `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
+        );
+        this._authFailed = true;
+        const error = new Error(`API key rejected (HTTP ${response.status})`);
+        error.name = "HTTPError";
+        this._recordError(error, "authentication", false, "auth_failed");
+        this.stop();
+        return false;
+      }
+
+      if (response.status === 403) {
+        throw new Error("control plane request was forbidden (HTTP 403)");
+      }
+
+      return false;
     } finally {
       clearTimeout(timeoutId);
-    }
-
-    if (response.ok) {
-      try {
-        const result = await response.json() as { rejected?: number };
-        if ((result.rejected ?? 0) > 0) {
-          console.warn(
-            `[dexcost] Control plane rejected ${result.rejected} item(s) from an attribution-v2 batch`,
-          );
-          return false;
-        }
-      } catch {
-        // Some compatible/private endpoints return an empty 2xx body.
+      if (this._activeRequestController === controller) {
+        this._activeRequestController = null;
       }
-      return true;
     }
-
-    if (response.status === 413) {
-      // Permanent error — batch too large, don't retry
-      // This shouldn't happen with pre-split but handle gracefully
-      console.warn("[dexcost] Server returned 413 despite pre-split check");
-      return false;
-    }
-
-    if (response.status === 401) {
-      // The ingestion contract uses 401 for invalid/revoked keys.
-      console.error(
-        `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
-      );
-      this._authFailed = true;
-      const error = new Error(`API key rejected (HTTP ${response.status})`);
-      error.name = "HTTPError";
-      this._recordError(error, "authentication", false, "auth_failed");
-      this.stop();
-      return false;
-    }
-
-    if (response.status === 403) {
-      throw new Error("control plane request was forbidden (HTTP 403)");
-    }
-
-    return false;
   }
 
   /** Whether sync has been permanently disabled due to a rejected API key. */

@@ -17,7 +17,7 @@ from dexcost.context import (
     task_context,
 )
 from dexcost.models.task import Task
-from dexcost.session import SessionManager, get_session_manager, reset_session_manager
+from dexcost.session import SessionManager, reset_session_manager
 from dexcost.storage.sqlite import SQLiteStorage
 
 # ---------------------------------------------------------------------------
@@ -194,6 +194,53 @@ class TestThreadIsolation:
         t.join(timeout=10)
 
         assert results[0].task_id == results[1].task_id
+
+
+class TestAsyncIsolation:
+    """Concurrent requests on one event-loop thread get separate sessions."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_customers_get_separate_sessions(self) -> None:
+        mgr = SessionManager()
+        ready = asyncio.Event()
+        started = 0
+
+        async def request(customer_id: str) -> tuple[Task, Task]:
+            nonlocal started
+            set_context(customer_id=customer_id)
+            first = mgr.get_or_create_session("llm_call")
+            started += 1
+            if started == 2:
+                ready.set()
+            await ready.wait()
+            second = mgr.get_or_create_session("http_call")
+            return first, second
+
+        (first_a, second_a), (first_b, second_b) = await asyncio.gather(
+            request("customer-a"),
+            request("customer-b"),
+        )
+
+        assert first_a is second_a
+        assert first_b is second_b
+        assert first_a.task_id != first_b.task_id
+        assert first_a.customer_id == "customer-a"
+        assert first_b.customer_id == "customer-b"
+
+    @pytest.mark.asyncio
+    async def test_child_does_not_inherit_parent_auto_session(self) -> None:
+        mgr = SessionManager()
+        set_context(customer_id="parent")
+        parent = mgr.get_or_create_session("llm_call")
+
+        async def child_request() -> Task:
+            set_context(customer_id="child")
+            return mgr.get_or_create_session("llm_call")
+
+        child = await asyncio.create_task(child_request())
+
+        assert child.task_id != parent.task_id
+        assert child.customer_id == "child"
 
 
 # ---------------------------------------------------------------------------

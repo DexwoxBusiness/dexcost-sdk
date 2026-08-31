@@ -90,5 +90,13 @@ describe("Pusher partial-success accounting (B12)", () => {
     // (the successful first-leaf POST) is marked synced.
     expect(stillPending).not.toBe(200);
     expect(stillPending).toBeGreaterThan(0);
+    expect(pusher.status()).toMatchObject({
+      workerState: "backoff",
+      successfulBatches: 1,
+      failedBatches: 1,
+      consecutiveFailures: 1,
+      deliveredRecords: totalPending - stillPending,
+    });
+    expect(pusher.status().lastSuccessAt).toBeInstanceOf(Date);
   });
 });

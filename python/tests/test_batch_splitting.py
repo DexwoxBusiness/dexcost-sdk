@@ -80,20 +80,98 @@ class TestBatchSplitting:
             worker._post_with_split(events, tasks)
             assert mock_post.call_count >= 2, f"Expected >=2 calls, got {mock_post.call_count}"
 
-    def test_single_oversized_event_is_skipped(self, tmp_path: Path) -> None:
-        """A single event exceeding the limit is skipped, not retried forever."""
+    def test_single_oversized_event_is_quarantined(self, tmp_path: Path) -> None:
+        """An oversized event stays visible as undelivered without blocking the queue."""
         config = _make_config()
-        storage = SQLiteStorage(db_path=tmp_path / "test.db")
-        worker = SyncWorker(config=config, storage=storage)
+        worker = SyncWorker(
+            config=config,
+            storage=SQLiteStorage(db_path=tmp_path / "test.db"),
+        )
+        storage = MagicMock()
 
         # Single event larger than MAX_PAYLOAD_BYTES
         huge_event = _make_large_event(size_bytes=250000).to_dict()
 
         with patch.object(worker, "_post_raw") as mock_post:
-            # Should not raise, should not call _post_raw (event skipped)
-            worker._post_with_split([huge_event], [])
-            # Skipped: 0 calls because the single event is too large
+            worker._post_with_split([huge_event], [], storage=storage)
             assert mock_post.call_count == 0
+        storage.mark_quarantined.assert_called_once_with([huge_event["event_id"]])
+
+    def test_oversized_v3_observation_quarantines_the_ordinary_event_row(
+        self, tmp_path: Path
+    ) -> None:
+        """A lifecycle revision alone must not classify an event as a provider job."""
+        storage = SQLiteStorage(db_path=tmp_path / "test.db")
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        event = _make_event(
+            details={
+                "attribution_usage_lines": [
+                    {
+                        "metric": f"custom.metric_{index}",
+                        "quantity": "1",
+                        "unit": "Items",
+                    }
+                    for index in range(32)
+                ],
+                "attribution_dimensions": [
+                    {
+                        "key": f"dimension_{index}",
+                        "value": {"type": "string", "value": "x" * 256},
+                    }
+                    for index in range(24)
+                ],
+            }
+        )
+        event_id = str(event.event_id)
+        try:
+            storage.insert_event(event)
+            [(stored, sync_version)] = storage.query_event_deliveries_for_sync()
+            converted = worker._prepare_event_dict(stored)
+            assert converted is not None
+            assert converted["lifecycle"]["revision"] == 1
+
+            with patch.object(worker, "_post_raw") as mock_post:
+                assert worker._post_with_split(
+                    [converted],
+                    [],
+                    storage=storage,
+                    event_sync_versions={event_id: sync_version},
+                    provider_job_revisions=set(),
+                ) is True
+
+            mock_post.assert_not_called()
+            counts = storage.delivery_counts()
+            assert counts["pending_events"] == 0
+            assert counts["quarantined_events"] == 1
+            assert counts["quarantined_provider_jobs"] == 0
+        finally:
+            storage.close()
+
+    def test_successful_leaf_acknowledges_only_explicit_provider_job_keys(self) -> None:
+        storage = MagicMock()
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        ordinary_id = str(uuid.uuid4())
+        provider_job_id = str(uuid.uuid4())
+        events = [
+            {"event_id": ordinary_id, "lifecycle": {"state": "final", "revision": 1}},
+            {
+                "event_id": provider_job_id,
+                "lifecycle": {"state": "final", "revision": 2},
+            },
+        ]
+
+        with patch.object(worker, "_post_raw", return_value=True):
+            assert worker._post_with_split(
+                events,
+                [],
+                storage=storage,
+                event_sync_versions={ordinary_id: 7},
+                provider_job_revisions={(provider_job_id, 2)},
+            ) is True
+
+        storage.mark_event_deliveries_synced.assert_called_once_with([(ordinary_id, 7)])
+        storage.mark_provider_jobs_synced.assert_called_once_with([(provider_job_id, 2)])
+        storage.mark_synced.assert_not_called()
 
     def test_tasks_only_sent_with_first_chunk(self, tmp_path: Path) -> None:
         """Tasks are sent with the first chunk only, not duplicated."""
@@ -292,8 +370,8 @@ class TestBatchSplitting:
 
         storage.mark_synced.assert_called_once_with([events[0]["event_id"]])
 
-    def test_single_oversized_task_is_acknowledged(self, tmp_path: Path) -> None:
-        """An undeliverable task cannot poison every later task-only batch."""
+    def test_single_oversized_task_is_quarantined(self, tmp_path: Path) -> None:
+        """An undeliverable task is retained without poisoning later batches."""
         storage = MagicMock()
         worker = SyncWorker(
             config=_make_config(),
@@ -309,4 +387,5 @@ class TestBatchSplitting:
             assert worker._post_with_split([], [task], storage=storage) is True
 
         mock_post.assert_not_called()
-        storage.mark_tasks_synced.assert_called_once_with([task["task_id"]])
+        storage.mark_tasks_quarantined.assert_called_once_with([task["task_id"]])
+        storage.mark_tasks_synced.assert_not_called()

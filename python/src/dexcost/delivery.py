@@ -43,6 +43,7 @@ class DeliveryStatus:
     pending_events: int
     quarantined_events: int
     pending_tasks: int
+    quarantined_tasks: int
     pending_outcomes: int
     quarantined_outcomes: int
     pending_revenues: int
@@ -75,6 +76,7 @@ class DeliveryStatus:
     def quarantined_records(self) -> int:
         return (
             self.quarantined_events
+            + self.quarantined_tasks
             + self.quarantined_outcomes
             + self.quarantined_revenues
             + self.quarantined_provider_jobs
@@ -82,7 +84,10 @@ class DeliveryStatus:
 
     @property
     def healthy(self) -> bool:
-        return self.worker_state not in {"auth_failed", "backoff"}
+        return (
+            self.worker_state not in {"auth_failed", "backoff"}
+            and self.quarantined_records == 0
+        )
 
 
 DeliveryErrorCallback = Callable[[DeliveryErrorEvent], None]
@@ -164,6 +169,7 @@ def local_delivery_status(storage: Any | None = None) -> DeliveryStatus:
         pending_events=_count(counts, "pending_events"),
         quarantined_events=_count(counts, "quarantined_events"),
         pending_tasks=_count(counts, "pending_tasks"),
+        quarantined_tasks=_count(counts, "quarantined_tasks"),
         pending_outcomes=_count(counts, "pending_outcomes"),
         quarantined_outcomes=_count(counts, "quarantined_outcomes"),
         pending_revenues=_count(counts, "pending_revenues"),

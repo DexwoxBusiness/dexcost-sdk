@@ -165,6 +165,36 @@ def test_legacy_protocol_subclass_ignores_inherited_delivery_stubs(
     assert storage.pending_tasks == []
 
 
+def test_oversized_task_advances_on_legacy_storage_backend() -> None:
+    """A backend without quarantine support must not retry forever."""
+    task = Task(task_type="legacy.oversized")
+    event = Event(
+        task_id=task.task_id,
+        event_type="llm_call",
+        occurred_at=datetime.now(timezone.utc),
+        cost_usd=Decimal("0.001"),
+        cost_confidence="exact",
+        pricing_source="manual",
+        provider="openai",
+        model="gpt-4o",
+        input_tokens=10,
+        output_tokens=5,
+    )
+    storage = _LegacyStorageBackend(event, task)  # type: ignore[abstract]
+    worker = SyncWorker(config=_config(), storage=storage)
+    oversized = {
+        "task_id": str(task.task_id),
+        "task_type": task.task_type,
+        "metadata": {"padding": "x" * 130_000},
+    }
+
+    with patch.object(worker, "_post_raw") as mock_post:
+        assert worker._post_with_split([], [oversized], storage=storage) is True
+
+    mock_post.assert_not_called()
+    assert storage.pending_tasks == []
+
+
 @patch("dexcost.sync.urllib.request.urlopen")
 def test_transport_failure_keeps_outcome_pending(
     mock_urlopen: MagicMock,

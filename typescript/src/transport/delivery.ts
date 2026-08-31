@@ -35,6 +35,7 @@ export class DeliveryStatus implements DeliveryStatusOptions {
   readonly pendingEvents: number;
   readonly quarantinedEvents: number;
   readonly pendingTasks: number;
+  readonly quarantinedTasks: number;
   readonly pendingOutcomes: number;
   readonly quarantinedOutcomes: number;
   readonly pendingRevenues: number;
@@ -57,7 +58,8 @@ export class DeliveryStatus implements DeliveryStatusOptions {
     Object.assign(this, options);
     this.enabled = options.enabled; this.workerState = options.workerState;
     this.pendingEvents = options.pendingEvents; this.quarantinedEvents = options.quarantinedEvents;
-    this.pendingTasks = options.pendingTasks; this.pendingOutcomes = options.pendingOutcomes;
+    this.pendingTasks = options.pendingTasks; this.quarantinedTasks = options.quarantinedTasks;
+    this.pendingOutcomes = options.pendingOutcomes;
     this.quarantinedOutcomes = options.quarantinedOutcomes; this.pendingRevenues = options.pendingRevenues;
     this.quarantinedRevenues = options.quarantinedRevenues;
     this.pendingProviderJobs = options.pendingProviderJobs;
@@ -75,11 +77,14 @@ export class DeliveryStatus implements DeliveryStatusOptions {
   }
 
   get quarantinedRecords(): number {
-    return this.quarantinedEvents + this.quarantinedOutcomes +
+    return this.quarantinedEvents + this.quarantinedTasks + this.quarantinedOutcomes +
       this.quarantinedRevenues + this.quarantinedProviderJobs;
   }
 
-  get healthy(): boolean { return this.workerState !== "auth_failed" && this.workerState !== "backoff"; }
+  get healthy(): boolean {
+    return this.workerState !== "auth_failed" && this.workerState !== "backoff" &&
+      this.quarantinedRecords === 0;
+  }
 }
 
 const callbacks = new Set<DeliveryErrorCallback>();
@@ -101,7 +106,7 @@ export function emitDeliveryError(event: DeliveryErrorEvent): void {
 }
 
 const emptyCounts = (): DeliveryCounts => ({
-  pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0,
+  pendingEvents: 0, quarantinedEvents: 0, pendingTasks: 0, quarantinedTasks: 0,
   pendingOutcomes: 0, quarantinedOutcomes: 0, pendingRevenues: 0,
   quarantinedRevenues: 0, pendingProviderJobs: 0, quarantinedProviderJobs: 0,
 });

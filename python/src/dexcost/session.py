@@ -7,6 +7,7 @@ for thread/async safety.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -20,6 +21,15 @@ from dexcost.storage.protocol import StorageBackend
 _log = logging.getLogger(__name__)
 
 
+def _execution_key() -> object:
+    """Return the current logical caller, separating asyncio tasks on one thread."""
+    try:
+        async_task = asyncio.current_task()
+    except RuntimeError:
+        async_task = None
+    return async_task if async_task is not None else threading.current_thread()
+
+
 class SessionManager:
     """Manages auto-created session tasks for grouping cost events.
 
@@ -29,8 +39,9 @@ class SessionManager:
     """
 
     def __init__(self) -> None:
-        self._sessions: dict[int, Task] = {}  # context id -> task
-        self._last_activity: dict[int, float] = {}  # context id -> timestamp
+        self._sessions: dict[object, Task] = {}  # logical execution -> task
+        self._session_owners: dict[uuid.UUID, object] = {}  # auto-task id -> execution
+        self._last_activity: dict[object, float] = {}  # logical execution -> timestamp
         self._lock = threading.Lock()
 
     def get_or_create_session(
@@ -50,22 +61,26 @@ class SessionManager:
         Returns:
             The active or newly-created session task.
         """
-        ctx_id = threading.get_ident()
+        execution = _execution_key()
 
         # If an explicit task is already active, use it. Automatic sessions
         # also live in the task ContextVar, so distinguish the managed session
-        # for this thread from an explicit task before updating activity.
+        # for this logical execution from an explicit task before updating activity.
         existing = get_current_task()
         if existing is not None:
             with self._lock:
-                managed = self._sessions.get(ctx_id)
+                managed = self._sessions.get(execution)
                 if existing is managed and existing.ended_at is None:
-                    self._last_activity[ctx_id] = time.monotonic()
+                    self._last_activity[execution] = time.monotonic()
                     return existing
                 if existing is managed:
-                    self._sessions.pop(ctx_id, None)
-                    self._last_activity.pop(ctx_id, None)
-                elif existing.ended_at is None:
+                    self._sessions.pop(execution, None)
+                    self._session_owners.pop(existing.task_id, None)
+                    self._last_activity.pop(execution, None)
+                elif (
+                    existing.task_id not in self._session_owners
+                    and existing.ended_at is None
+                ):
                     return existing
 
             # An automatic session can be finalized by the background sync
@@ -73,17 +88,18 @@ class SessionManager:
             # the stale local reference before creating the next session.
             set_current_task(None)
 
-        # Check if we already have a session for this thread/async context
+        # Check if this thread or asyncio Task already owns a session.
         with self._lock:
-            session = self._sessions.get(ctx_id)
+            session = self._sessions.get(execution)
             if session is not None and session.ended_at is None:
-                self._last_activity[ctx_id] = time.monotonic()
+                self._last_activity[execution] = time.monotonic()
                 # Ensure it's set as current task
                 set_current_task(session)
                 return session
             if session is not None:
-                self._sessions.pop(ctx_id, None)
-                self._last_activity.pop(ctx_id, None)
+                self._sessions.pop(execution, None)
+                self._session_owners.pop(session.task_id, None)
+                self._last_activity.pop(execution, None)
 
         # Create a new session task
         ctx = get_context()
@@ -122,8 +138,9 @@ class SessionManager:
                 _log.debug("Failed to persist session task", exc_info=True)
 
         with self._lock:
-            self._sessions[ctx_id] = session
-            self._last_activity[ctx_id] = time.monotonic()
+            self._sessions[execution] = session
+            self._session_owners[session.task_id] = execution
+            self._last_activity[execution] = time.monotonic()
 
         set_current_task(session)
         return session
@@ -148,14 +165,14 @@ class SessionManager:
 
         with self._lock:
             idle_ids = [
-                ctx_id
-                for ctx_id, last in self._last_activity.items()
+                execution
+                for execution, last in self._last_activity.items()
                 if (now - last) >= idle_seconds
             ]
-            for ctx_id in idle_ids:
-                session = self._sessions.get(ctx_id)
+            for execution in idle_ids:
+                session = self._sessions.get(execution)
                 if session is None:
-                    self._last_activity.pop(ctx_id, None)
+                    self._last_activity.pop(execution, None)
                     continue
 
                 previous_status = session.status
@@ -177,8 +194,9 @@ class SessionManager:
                         )
                         continue
 
-                self._sessions.pop(ctx_id, None)
-                self._last_activity.pop(ctx_id, None)
+                self._sessions.pop(execution, None)
+                self._session_owners.pop(session.task_id, None)
+                self._last_activity.pop(execution, None)
                 finalized.append(session)
 
         return finalized
@@ -187,6 +205,7 @@ class SessionManager:
         """Remove all tracked sessions (for testing)."""
         with self._lock:
             self._sessions.clear()
+            self._session_owners.clear()
             self._last_activity.clear()
 
 

@@ -122,8 +122,16 @@ class StorageBackend(Protocol):
         """Acknowledge only the exact task revisions accepted by ingestion."""
         ...
 
+    def mark_task_deliveries_quarantined(self, deliveries: list[tuple[str, int]]) -> None:
+        """Quarantine only the exact undeliverable task snapshots."""
+        ...
+
     def mark_tasks_synced(self, task_ids: list[str]) -> None:
         """Transition tasks from pending to synced."""
+        ...
+
+    def mark_tasks_quarantined(self, task_ids: list[str]) -> None:
+        """Retain undeliverable tasks outside the pending queue."""
         ...
 
     # ── Outcome revision CRUD ────────────────────────────────────────

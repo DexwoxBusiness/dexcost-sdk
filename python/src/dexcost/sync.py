@@ -143,6 +143,33 @@ def _mark_task_snapshots_synced(
     storage.mark_tasks_synced(task_ids)
 
 
+def _mark_task_snapshots_quarantined(
+    storage: StorageBackend,
+    task_ids: list[str],
+    sync_versions: dict[str, int] | None,
+) -> None:
+    """Quarantine oversized task snapshots without hiding a newer rollup."""
+    marker = _optional_storage_method(storage, "mark_task_deliveries_quarantined")
+    if sync_versions is not None and marker is not None:
+        versioned = [
+            (task_id, sync_versions[task_id])
+            for task_id in task_ids
+            if task_id in sync_versions
+        ]
+        marker(versioned)
+        return
+    marker = _optional_storage_method(storage, "mark_tasks_quarantined")
+    if marker is not None:
+        marker(task_ids)
+        return
+
+    # StorageBackend implementations from before task quarantine was added
+    # cannot retain a terminal-failure marker.  Advance the legacy snapshot
+    # through its guaranteed acknowledgement method so one oversized task
+    # cannot remain pending and drive the worker into a tight retry loop.
+    storage.mark_tasks_synced(task_ids)
+
+
 class SyncWorker:
     """Background worker that pushes events to the Control Layer.
 
@@ -211,6 +238,7 @@ class SyncWorker:
         self._successful_batches = 0
         self._failed_batches = 0
         self._delivered_records = 0
+        self._active_post_stats: dict[str, int] | None = None
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -267,6 +295,7 @@ class SyncWorker:
                 pending_events=_count(counts, "pending_events"),
                 quarantined_events=_count(counts, "quarantined_events"),
                 pending_tasks=_count(counts, "pending_tasks"),
+                quarantined_tasks=_count(counts, "quarantined_tasks"),
                 pending_outcomes=_count(counts, "pending_outcomes"),
                 quarantined_outcomes=_count(counts, "quarantined_outcomes"),
                 pending_revenues=_count(counts, "pending_revenues"),
@@ -295,12 +324,22 @@ class SyncWorker:
             self._last_attempt_at = _utcnow()
             self._worker_state = "syncing"
 
-    def _record_success(self, delivered_records: int) -> None:
-        with self._health_lock:
+    def _record_delivery_progress_locked(self, delivered_records: int) -> None:
+        """Record accepted leaves while ``_health_lock`` is held."""
+        if delivered_records > 0:
             self._last_success_at = _utcnow()
-            self._consecutive_failures = 0
             self._successful_batches += 1
             self._delivered_records += delivered_records
+
+    def _record_delivery_progress(self, delivered_records: int) -> None:
+        """Preserve accepted-leaf counters without masking a sibling failure."""
+        with self._health_lock:
+            self._record_delivery_progress_locked(delivered_records)
+
+    def _record_success(self, delivered_records: int) -> None:
+        with self._health_lock:
+            self._consecutive_failures = 0
+            self._record_delivery_progress_locked(delivered_records)
             self._worker_state = "idle"
 
     def _record_error(
@@ -560,6 +599,9 @@ class SyncWorker:
             )
             for job in provider_jobs
         ]
+        provider_job_revisions = {
+            (str(job.event_id), job.revision) for job in provider_jobs
+        }
         event_dicts.extend(provider_job_dicts)
 
         if not event_dicts and not task_dicts and not outcome_dicts and not revenue_dicts:
@@ -568,73 +610,41 @@ class SyncWorker:
             return False
 
         self._record_attempt()
-        posted = self._post_with_split(
-            event_dicts,
-            task_dicts,
-            business_identities,
-            storage=st,
-            outcomes=outcome_dicts,
-            revenue_revisions=revenue_dicts,
-            event_sync_versions=event_sync_versions,
-            task_sync_versions=task_sync_versions,
-        )
+        post_stats = {"delivered_records": 0, "quarantined_records": 0}
+        self._active_post_stats = post_stats
+        try:
+            posted = self._post_with_split(
+                event_dicts,
+                task_dicts,
+                business_identities,
+                storage=st,
+                outcomes=outcome_dicts,
+                revenue_revisions=revenue_dicts,
+                event_sync_versions=event_sync_versions,
+                task_sync_versions=task_sync_versions,
+                provider_job_revisions=provider_job_revisions,
+            )
+        except Exception:
+            self._record_delivery_progress(post_stats["delivered_records"])
+            raise
+        finally:
+            self._active_post_stats = None
         if not posted:
+            self._record_delivery_progress(post_stats["delivered_records"])
             if self._stop_event.is_set():
                 return False
             raise _AttributionBatchRejectedError(
                 "control plane did not accept the complete attribution batch"
             )
 
-        # Leaf POSTs mark their own rows so a successful half is not replayed
-        # when a later sibling fails. These calls are a defensive idempotent
-        # safety net for any future path that returns success without a leaf.
-        event_ids = [event["event_id"] for event in event_dicts]
-        _mark_event_snapshots_synced(st, event_ids, event_sync_versions)
-        provider_job_revisions = [(str(job.event_id), job.revision) for job in provider_jobs]
-        mark_provider_jobs = _optional_storage_method(st, "mark_provider_jobs_synced")
-        if provider_job_revisions and mark_provider_jobs is not None:
-            mark_provider_jobs(provider_job_revisions)
-        task_ids = [task["task_id"] for task in task_dicts]
-        if task_ids:
-            _mark_task_snapshots_synced(st, task_ids, task_sync_versions)
-        outcome_revisions = [
-            (
-                str(outcome["outcome_id"]),
-                int(cast(dict[str, Any], outcome["lifecycle"])["revision"]),
-            )
-            for outcome in outcome_dicts
-        ]
-        if outcome_revisions:
-            st.mark_outcomes_synced(outcome_revisions)
-        revenue_ids = [
-            (
-                str(revenue["revenue_id"]),
-                int(cast(dict[str, Any], revenue["lifecycle"])["revision"]),
-            )
-            for revenue in revenue_dicts
-        ]
-        mark_revenues = _optional_storage_method(st, "mark_revenues_synced")
-        if revenue_ids and mark_revenues is not None:
-            mark_revenues(revenue_ids)
-
         _log.info(
-            "Synced %d events (%d provider-job revisions), %d tasks, %d outcomes, "
-            "and %d revenue revisions to %s",
-            len(event_ids) - len(provider_job_revisions),
-            len(provider_job_revisions),
-            len(task_dicts),
-            len(outcome_revisions),
-            len(revenue_ids),
+            "Delivered %d records and quarantined %d undeliverable records to %s",
+            post_stats["delivered_records"],
+            post_stats["quarantined_records"],
             self._config.endpoint,
         )
 
-        self._record_success(
-            len(event_dicts)
-            + len(task_dicts)
-            + len(business_identities)
-            + len(outcome_dicts)
-            + len(revenue_dicts)
-        )
+        self._record_success(post_stats["delivered_records"])
 
         self._finish_quarantine_recovery_if_drained(st)
         self._raise_conversion_failure(failed_event_ids)
@@ -835,6 +845,7 @@ class SyncWorker:
         revenue_revisions: list[dict[str, Any]] | None = None,
         event_sync_versions: dict[str, int] | None = None,
         task_sync_versions: dict[str, int] | None = None,
+        provider_job_revisions: set[tuple[str, int]] | None = None,
     ) -> bool:
         """POST records, splitting every durable stream below the queue limit.
 
@@ -847,6 +858,7 @@ class SyncWorker:
         revenues = revenue_revisions or []
         event_versions = event_sync_versions
         task_versions = task_sync_versions
+        provider_job_keys = provider_job_revisions or set()
         payload: dict[str, Any] = {
             "events": events,
             "tasks": tasks,
@@ -859,7 +871,21 @@ class SyncWorker:
         if len(body) <= _MAX_PAYLOAD_BYTES:
             posted = self._post_raw(body)
             if posted and storage is not None:
-                event_ids = [str(event["event_id"]) for event in events]
+                event_ids: list[str] = []
+                provider_job_ids: list[tuple[str, int]] = []
+                for event in events:
+                    event_id = str(event["event_id"])
+                    lifecycle = event.get("lifecycle")
+                    revision = (
+                        lifecycle.get("revision") if isinstance(lifecycle, dict) else None
+                    )
+                    candidate = (
+                        (event_id, revision) if isinstance(revision, int) else None
+                    )
+                    if candidate is not None and candidate in provider_job_keys:
+                        provider_job_ids.append(candidate)
+                    else:
+                        event_ids.append(event_id)
                 task_ids = [str(task["task_id"]) for task in tasks]
                 outcome_ids = [
                     (
@@ -877,21 +903,12 @@ class SyncWorker:
                 ]
                 if event_ids:
                     _mark_event_snapshots_synced(storage, event_ids, event_versions)
+                if provider_job_ids:
                     mark_provider_jobs = _optional_storage_method(
                         storage, "mark_provider_jobs_synced"
                     )
                     if mark_provider_jobs is not None:
-                        provider_job_ids = [
-                            (
-                                str(event["event_id"]),
-                                int(cast(dict[str, Any], lifecycle)["revision"]),
-                            )
-                            for event in events
-                            if isinstance(lifecycle := event.get("lifecycle"), dict)
-                            and isinstance(lifecycle.get("revision"), int)
-                        ]
-                        if provider_job_ids:
-                            mark_provider_jobs(provider_job_ids)
+                        mark_provider_jobs(provider_job_ids)
                 if task_ids:
                     _mark_task_snapshots_synced(storage, task_ids, task_versions)
                 if outcome_ids:
@@ -899,6 +916,14 @@ class SyncWorker:
                 mark_revenues = _optional_storage_method(storage, "mark_revenues_synced")
                 if revenue_ids and mark_revenues is not None:
                     mark_revenues(revenue_ids)
+            if posted and self._active_post_stats is not None:
+                self._active_post_stats["delivered_records"] += (
+                    len(events)
+                    + len(tasks)
+                    + len(identities)
+                    + len(outcome_revisions)
+                    + len(revenues)
+                )
             return posted
 
         if len(events) > 1:
@@ -918,11 +943,21 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
             return self._post_with_split(
-                events[mid:], [], [], depth + 1, storage, [], [], event_versions, task_versions
+                events[mid:],
+                [],
+                [],
+                depth + 1,
+                storage,
+                [],
+                [],
+                event_versions,
+                task_versions,
+                provider_job_keys,
             )
 
         if len(tasks) > 1:
@@ -951,6 +986,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -964,6 +1000,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if len(outcome_revisions) > 1:
@@ -983,6 +1020,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -996,6 +1034,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if len(revenues) > 1:
@@ -1015,6 +1054,7 @@ class SyncWorker:
                 revenues[:mid],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -1028,6 +1068,7 @@ class SyncWorker:
                 revenues[mid:],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         durable_count = len(events) + len(tasks) + len(outcome_revisions) + len(revenues)
@@ -1042,6 +1083,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not task_posted:
                 return False
@@ -1055,6 +1097,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if durable_count > 1 and outcome_revisions:
@@ -1068,6 +1111,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not outcome_posted:
                 return False
@@ -1081,6 +1125,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if durable_count > 1 and revenues:
@@ -1094,43 +1139,58 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not revenue_posted:
                 return False
             return self._post_with_split(
-                events, [], [], depth + 1, storage, [], [], event_versions, task_versions
+                events,
+                [],
+                [],
+                depth + 1,
+                storage,
+                [],
+                [],
+                event_versions,
+                task_versions,
+                provider_job_keys,
             )
 
         if len(events) == 1:
-            # A permanently oversized record cannot be delivered. Acknowledge
-            # it locally so it does not poison every future batch.
             _log.warning(
-                "Single event exceeds payload limit (%d bytes), skipping",
+                "Single event exceeds payload limit (%d bytes), quarantining",
                 len(body),
             )
             if storage is not None:
-                _mark_event_snapshots_synced(storage, [str(events[0]["event_id"])], event_versions)
-                mark_provider_jobs = _optional_storage_method(
-                    storage, "mark_provider_jobs_quarantined"
+                event_id = str(events[0]["event_id"])
+                lifecycle = events[0].get("lifecycle")
+                revision = lifecycle.get("revision") if isinstance(lifecycle, dict) else None
+                provider_job_key = (
+                    (event_id, revision) if isinstance(revision, int) else None
                 )
-                if mark_provider_jobs is not None:
-                    mark_provider_jobs(
-                        [
-                            (
-                                str(events[0]["event_id"]),
-                                int(cast(dict[str, Any], events[0]["lifecycle"])["revision"]),
-                            )
-                        ]
+                if provider_job_key is not None and provider_job_key in provider_job_keys:
+                    marker = _optional_storage_method(storage, "mark_provider_jobs_quarantined")
+                    if marker is not None:
+                        marker([provider_job_key])
+                else:
+                    _mark_event_snapshots_quarantined(
+                        storage, [event_id], event_versions
                     )
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(tasks) == 1:
             _log.warning(
-                "Single task exceeds payload limit (%d bytes), skipping",
+                "Single task exceeds payload limit (%d bytes), quarantining",
                 len(body),
             )
             if storage is not None:
-                _mark_task_snapshots_synced(storage, [str(tasks[0]["task_id"])], task_versions)
+                _mark_task_snapshots_quarantined(
+                    storage, [str(tasks[0]["task_id"])], task_versions
+                )
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(outcome_revisions) == 1:
@@ -1145,6 +1205,8 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_outcomes_quarantined([revision])
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(revenues) == 1:
@@ -1163,6 +1225,8 @@ class SyncWorker:
                 )
                 if mark_quarantined is not None:
                     mark_quarantined([revision])
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
         return True
 
     def _post_raw(self, body: bytes) -> bool:
