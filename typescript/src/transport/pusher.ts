@@ -109,6 +109,7 @@ export class EventPusher {
   private _failedBatches = 0;
   private _deliveredRecords = 0;
   private _activePushStats?: { deliveredRecords: number; quarantinedRecords: number };
+  private _activeRequestController: AbortController | null = null;
 
   constructor(
     buffer: EventBuffer,
@@ -254,6 +255,11 @@ export class EventPusher {
    */
   async flush(): Promise<void> {
     await this.push(true);
+  }
+
+  /** @internal Abort the current ingest request when bounded shutdown expires. */
+  abortActiveRequest(): void {
+    this._activeRequestController?.abort();
   }
 
   /**
@@ -686,7 +692,9 @@ export class EventPusher {
 
     const url = `${this._endpoint}/v1/ingest`;
     const controller = new AbortController();
+    this._activeRequestController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    timeoutId.unref?.();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -697,6 +705,9 @@ export class EventPusher {
       });
     } finally {
       clearTimeout(timeoutId);
+      if (this._activeRequestController === controller) {
+        this._activeRequestController = null;
+      }
     }
 
     if (response.ok) {

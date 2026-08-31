@@ -156,6 +156,7 @@ let _exitHandlers: {
   sigint?: NodeJS.SignalsListener;
 } | null = null;
 let _shutdownPromise: Promise<void> | null = null;
+let _cancelShutdownFlush: (() => void) | null = null;
 let _handlingSignal: NodeJS.Signals | null = null;
 const EXIT_FLUSH_TIMEOUT_MS = 5_000;
 
@@ -164,6 +165,7 @@ function _boundedCloseAsync(): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<void>((resolve) => {
     timeout = setTimeout(() => {
+      _cancelShutdownFlush?.();
       console.warn(`[dexcost] exit-time flush exceeded ${EXIT_FLUSH_TIMEOUT_MS}ms; continuing shutdown`);
       resolve();
     }, EXIT_FLUSH_TIMEOUT_MS);
@@ -2351,8 +2353,14 @@ export class CostTracker {
       this._sessionTimer = null;
     }
     if (this._pusher) {
-      await this._pusher.flush();
-      this._pusher.stop();
+      const cancelFlush = (): void => this._pusher?.abortActiveRequest();
+      if (this === _instance) _cancelShutdownFlush = cancelFlush;
+      try {
+        await this._pusher.flush();
+      } finally {
+        if (_cancelShutdownFlush === cancelFlush) _cancelShutdownFlush = null;
+        this._pusher.stop();
+      }
     }
     this._pricing.stopBackgroundRefresh();
     this._catalogRuntime?.stop();

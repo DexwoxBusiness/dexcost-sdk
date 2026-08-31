@@ -161,6 +161,13 @@ def _mark_task_snapshots_quarantined(
     marker = _optional_storage_method(storage, "mark_tasks_quarantined")
     if marker is not None:
         marker(task_ids)
+        return
+
+    # StorageBackend implementations from before task quarantine was added
+    # cannot retain a terminal-failure marker.  Advance the legacy snapshot
+    # through its guaranteed acknowledgement method so one oversized task
+    # cannot remain pending and drive the worker into a tight retry loop.
+    storage.mark_tasks_synced(task_ids)
 
 
 class SyncWorker:

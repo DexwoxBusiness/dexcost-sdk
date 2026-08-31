@@ -33,6 +33,7 @@ describe("flush on exit (B9)", () => {
       // already closed
     }
     EventBuffer._forceFallbackForTest = false;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -88,7 +89,7 @@ describe("flush on exit (B9)", () => {
     const tracker = init({ apiKey: "dx_test_x" });
     const sdkListener = process.listeners("SIGTERM").find((listener) => !before.has(listener));
     expect(sdkListener).toBeDefined();
-    const closeAsync = vi.spyOn(tracker, "closeAsync");
+    const closeAsync = vi.spyOn(tracker, "closeAsync").mockResolvedValue();
     const originalListeners = process.listeners.bind(process);
     vi.spyOn(process, "listeners").mockImplementation(((event: string | symbol) => (
       event === "SIGTERM" ? [sdkListener as NodeJS.SignalsListener] : originalListeners(event)
@@ -123,5 +124,47 @@ describe("flush on exit (B9)", () => {
 
     await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBe(before.size));
     expect(kill).not.toHaveBeenCalled();
+  });
+
+  test("beforeExit timeout aborts a stalled ingest request", async () => {
+    vi.useFakeTimers();
+    EventBuffer._forceFallbackForTest = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = new Set(process.listeners("beforeExit"));
+    const tracker = init({
+      apiKey: "dx_test_x",
+      autoInstrument: [],
+      trackHttp: false,
+    });
+    const sdkListener = process.listeners("beforeExit").find((listener) => !before.has(listener));
+    expect(sdkListener).toBeDefined();
+
+    await tracker.track({ taskType: "stalled-shutdown" }, async (task) => {
+      task.recordCost("test", 0.001);
+    });
+
+    let aborted = false;
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          const error = new Error("request aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    (sdkListener as (code: number) => void)(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(aborted).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      "[dexcost] exit-time flush exceeded 5000ms; continuing shutdown",
+    );
   });
 });
