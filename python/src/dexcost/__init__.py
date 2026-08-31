@@ -216,7 +216,7 @@ from dexcost.webhooks import (
     verify_webhook_signature,
 )
 
-__version__ = "0.20.1"
+__version__ = "0.20.2"
 _log = logging.getLogger(__name__)
 
 _global_config: DexcostConfig | None = None
