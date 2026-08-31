@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.1...typescript/v0.24.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **sdk:** harden delivery and lifecycle reliability ([#170](https://github.com/DexwoxBusiness/dexcost-sdk/issues/170)) ([349ba70](https://github.com/DexwoxBusiness/dexcost-sdk/commit/349ba705e91a1a574e18442bde91c01a08177412))
+
 ## [0.24.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.0...typescript/v0.24.1) (2026-08-28)
 
 
