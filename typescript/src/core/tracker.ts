@@ -155,25 +155,60 @@ let _exitHandlers: {
   sigterm?: NodeJS.SignalsListener;
   sigint?: NodeJS.SignalsListener;
 } | null = null;
+let _shutdownPromise: Promise<void> | null = null;
+let _handlingSignal: NodeJS.Signals | null = null;
+const EXIT_FLUSH_TIMEOUT_MS = 5_000;
+
+function _boundedCloseAsync(): Promise<void> {
+  if (_shutdownPromise !== null) return _shutdownPromise;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<void>((resolve) => {
+    timeout = setTimeout(() => {
+      console.warn(`[dexcost] exit-time flush exceeded ${EXIT_FLUSH_TIMEOUT_MS}ms; continuing shutdown`);
+      resolve();
+    }, EXIT_FLUSH_TIMEOUT_MS);
+  });
+  const closing = globalCloseAsync().catch((error: unknown) => {
+    console.warn(`[dexcost] exit-time flush failed; continuing shutdown: ${String(error)}`);
+  });
+  _shutdownPromise = Promise.race([closing, timedOut]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+    _shutdownPromise = null;
+  });
+  return _shutdownPromise;
+}
+
+function _handleTerminationSignal(
+  signal: NodeJS.Signals,
+  sdkListener: NodeJS.SignalsListener,
+): void {
+  if (_handlingSignal !== null) return;
+  _handlingSignal = signal;
+  // A host-installed signal listener owns its own lifecycle policy. Only
+  // restore Node's default termination when this SDK listener was the sole
+  // reason the default handler was disabled.
+  const sdkOwnsTermination = process.listeners(signal).every((listener) => listener === sdkListener);
+  void _boundedCloseAsync().finally(() => {
+    _unregisterExitHandlers();
+    _handlingSignal = null;
+    if (!sdkOwnsTermination) return;
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      process.exitCode = signal === "SIGINT" ? 130 : 143;
+    }
+  });
+}
 
 function _registerExitHandlers(): void {
   if (_exitHandlers !== null) return;
   const beforeExit = (_code: number): void => {
-    // Synchronous best-effort flush on graceful exit. Node will wait
-    // for any returned promise from `beforeExit` (unlike `exit`), so
-    // closeAsync's in-flight push has a chance to land.
-    void globalCloseAsync();
+    // The flush's active I/O keeps the event loop alive; EventEmitter itself
+    // does not await a listener's returned Promise.
+    void _boundedCloseAsync();
   };
-  const sigterm: NodeJS.SignalsListener = () => {
-    // SIGTERM: containerized environments (k8s, docker stop) deliver
-    // this 30s before SIGKILL. Run closeAsync to flush, then let the
-    // default handler take over (re-emit so other listeners run).
-    void globalCloseAsync();
-  };
-  const sigint: NodeJS.SignalsListener = () => {
-    // SIGINT (Ctrl+C in dev): same flush guarantee.
-    void globalCloseAsync();
-  };
+  const sigterm: NodeJS.SignalsListener = () => _handleTerminationSignal("SIGTERM", sigterm);
+  const sigint: NodeJS.SignalsListener = () => _handleTerminationSignal("SIGINT", sigint);
   process.on("beforeExit", beforeExit);
   process.on("SIGTERM", sigterm);
   process.on("SIGINT", sigint);

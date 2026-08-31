@@ -143,6 +143,26 @@ def _mark_task_snapshots_synced(
     storage.mark_tasks_synced(task_ids)
 
 
+def _mark_task_snapshots_quarantined(
+    storage: StorageBackend,
+    task_ids: list[str],
+    sync_versions: dict[str, int] | None,
+) -> None:
+    """Quarantine oversized task snapshots without hiding a newer rollup."""
+    marker = _optional_storage_method(storage, "mark_task_deliveries_quarantined")
+    if sync_versions is not None and marker is not None:
+        versioned = [
+            (task_id, sync_versions[task_id])
+            for task_id in task_ids
+            if task_id in sync_versions
+        ]
+        marker(versioned)
+        return
+    marker = _optional_storage_method(storage, "mark_tasks_quarantined")
+    if marker is not None:
+        marker(task_ids)
+
+
 class SyncWorker:
     """Background worker that pushes events to the Control Layer.
 
@@ -211,6 +231,7 @@ class SyncWorker:
         self._successful_batches = 0
         self._failed_batches = 0
         self._delivered_records = 0
+        self._active_post_stats: dict[str, int] | None = None
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -267,6 +288,7 @@ class SyncWorker:
                 pending_events=_count(counts, "pending_events"),
                 quarantined_events=_count(counts, "quarantined_events"),
                 pending_tasks=_count(counts, "pending_tasks"),
+                quarantined_tasks=_count(counts, "quarantined_tasks"),
                 pending_outcomes=_count(counts, "pending_outcomes"),
                 quarantined_outcomes=_count(counts, "quarantined_outcomes"),
                 pending_revenues=_count(counts, "pending_revenues"),
@@ -297,10 +319,11 @@ class SyncWorker:
 
     def _record_success(self, delivered_records: int) -> None:
         with self._health_lock:
-            self._last_success_at = _utcnow()
             self._consecutive_failures = 0
-            self._successful_batches += 1
-            self._delivered_records += delivered_records
+            if delivered_records > 0:
+                self._last_success_at = _utcnow()
+                self._successful_batches += 1
+                self._delivered_records += delivered_records
             self._worker_state = "idle"
 
     def _record_error(
@@ -568,16 +591,21 @@ class SyncWorker:
             return False
 
         self._record_attempt()
-        posted = self._post_with_split(
-            event_dicts,
-            task_dicts,
-            business_identities,
-            storage=st,
-            outcomes=outcome_dicts,
-            revenue_revisions=revenue_dicts,
-            event_sync_versions=event_sync_versions,
-            task_sync_versions=task_sync_versions,
-        )
+        post_stats = {"delivered_records": 0, "quarantined_records": 0}
+        self._active_post_stats = post_stats
+        try:
+            posted = self._post_with_split(
+                event_dicts,
+                task_dicts,
+                business_identities,
+                storage=st,
+                outcomes=outcome_dicts,
+                revenue_revisions=revenue_dicts,
+                event_sync_versions=event_sync_versions,
+                task_sync_versions=task_sync_versions,
+            )
+        finally:
+            self._active_post_stats = None
         if not posted:
             if self._stop_event.is_set():
                 return False
@@ -585,56 +613,14 @@ class SyncWorker:
                 "control plane did not accept the complete attribution batch"
             )
 
-        # Leaf POSTs mark their own rows so a successful half is not replayed
-        # when a later sibling fails. These calls are a defensive idempotent
-        # safety net for any future path that returns success without a leaf.
-        event_ids = [event["event_id"] for event in event_dicts]
-        _mark_event_snapshots_synced(st, event_ids, event_sync_versions)
-        provider_job_revisions = [(str(job.event_id), job.revision) for job in provider_jobs]
-        mark_provider_jobs = _optional_storage_method(st, "mark_provider_jobs_synced")
-        if provider_job_revisions and mark_provider_jobs is not None:
-            mark_provider_jobs(provider_job_revisions)
-        task_ids = [task["task_id"] for task in task_dicts]
-        if task_ids:
-            _mark_task_snapshots_synced(st, task_ids, task_sync_versions)
-        outcome_revisions = [
-            (
-                str(outcome["outcome_id"]),
-                int(cast(dict[str, Any], outcome["lifecycle"])["revision"]),
-            )
-            for outcome in outcome_dicts
-        ]
-        if outcome_revisions:
-            st.mark_outcomes_synced(outcome_revisions)
-        revenue_ids = [
-            (
-                str(revenue["revenue_id"]),
-                int(cast(dict[str, Any], revenue["lifecycle"])["revision"]),
-            )
-            for revenue in revenue_dicts
-        ]
-        mark_revenues = _optional_storage_method(st, "mark_revenues_synced")
-        if revenue_ids and mark_revenues is not None:
-            mark_revenues(revenue_ids)
-
         _log.info(
-            "Synced %d events (%d provider-job revisions), %d tasks, %d outcomes, "
-            "and %d revenue revisions to %s",
-            len(event_ids) - len(provider_job_revisions),
-            len(provider_job_revisions),
-            len(task_dicts),
-            len(outcome_revisions),
-            len(revenue_ids),
+            "Delivered %d records and quarantined %d undeliverable records to %s",
+            post_stats["delivered_records"],
+            post_stats["quarantined_records"],
             self._config.endpoint,
         )
 
-        self._record_success(
-            len(event_dicts)
-            + len(task_dicts)
-            + len(business_identities)
-            + len(outcome_dicts)
-            + len(revenue_dicts)
-        )
+        self._record_success(post_stats["delivered_records"])
 
         self._finish_quarantine_recovery_if_drained(st)
         self._raise_conversion_failure(failed_event_ids)
@@ -899,6 +885,14 @@ class SyncWorker:
                 mark_revenues = _optional_storage_method(storage, "mark_revenues_synced")
                 if revenue_ids and mark_revenues is not None:
                     mark_revenues(revenue_ids)
+            if posted and self._active_post_stats is not None:
+                self._active_post_stats["delivered_records"] += (
+                    len(events)
+                    + len(tasks)
+                    + len(identities)
+                    + len(outcome_revisions)
+                    + len(revenues)
+                )
             return posted
 
         if len(events) > 1:
@@ -1102,35 +1096,35 @@ class SyncWorker:
             )
 
         if len(events) == 1:
-            # A permanently oversized record cannot be delivered. Acknowledge
-            # it locally so it does not poison every future batch.
             _log.warning(
-                "Single event exceeds payload limit (%d bytes), skipping",
+                "Single event exceeds payload limit (%d bytes), quarantining",
                 len(body),
             )
             if storage is not None:
-                _mark_event_snapshots_synced(storage, [str(events[0]["event_id"])], event_versions)
-                mark_provider_jobs = _optional_storage_method(
-                    storage, "mark_provider_jobs_quarantined"
-                )
-                if mark_provider_jobs is not None:
-                    mark_provider_jobs(
-                        [
-                            (
-                                str(events[0]["event_id"]),
-                                int(cast(dict[str, Any], events[0]["lifecycle"])["revision"]),
-                            )
-                        ]
+                lifecycle = events[0].get("lifecycle")
+                if isinstance(lifecycle, dict) and isinstance(lifecycle.get("revision"), int):
+                    marker = _optional_storage_method(storage, "mark_provider_jobs_quarantined")
+                    if marker is not None:
+                        marker([(str(events[0]["event_id"]), int(lifecycle["revision"]))])
+                else:
+                    _mark_event_snapshots_quarantined(
+                        storage, [str(events[0]["event_id"])], event_versions
                     )
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(tasks) == 1:
             _log.warning(
-                "Single task exceeds payload limit (%d bytes), skipping",
+                "Single task exceeds payload limit (%d bytes), quarantining",
                 len(body),
             )
             if storage is not None:
-                _mark_task_snapshots_synced(storage, [str(tasks[0]["task_id"])], task_versions)
+                _mark_task_snapshots_quarantined(
+                    storage, [str(tasks[0]["task_id"])], task_versions
+                )
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(outcome_revisions) == 1:
@@ -1145,6 +1139,8 @@ class SyncWorker:
             )
             if storage is not None:
                 storage.mark_outcomes_quarantined([revision])
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
             return True
 
         if len(revenues) == 1:
@@ -1163,6 +1159,8 @@ class SyncWorker:
                 )
                 if mark_quarantined is not None:
                     mark_quarantined([revision])
+            if self._active_post_stats is not None:
+                self._active_post_stats["quarantined_records"] += 1
         return True
 
     def _post_raw(self, body: bytes) -> bool:

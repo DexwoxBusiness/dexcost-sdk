@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { EventPusher } from "../src/transport/pusher.js";
-import { createCostEvent } from "../src/core/models.js";
+import { createCostEvent, createTask } from "../src/core/models.js";
 import type { TrackerOptions } from "../src/core/tracker.js";
 
 /** Maximum payload size from the pusher module. */
@@ -241,6 +241,45 @@ describe("Adaptive batch splitting", () => {
     await pusher.flush();
 
     expect(fetchCallCount).toBe(0);
+  });
+
+  it("quarantines a single oversized event instead of acknowledging it", async () => {
+    const event = makeEvent();
+    buffer.addEvent(event);
+    const pusher = new EventPusher(buffer, makeOptions());
+    const internal = pusher as unknown as {
+      _serializeEvent(value: typeof event): Record<string, unknown> | null;
+      pushWithSplit(events: Array<Record<string, unknown>>, tasks: unknown[], ...rest: unknown[]): Promise<boolean>;
+    };
+    const wire = internal._serializeEvent(event);
+    expect(wire).not.toBeNull();
+    const oversized = { ...wire, diagnostic_padding: "x".repeat(MAX_PAYLOAD_BYTES + 1) };
+    globalThis.fetch = vi.fn();
+
+    await internal.pushWithSplit(
+      [oversized], [], [], [], [], [], new Map([[event.eventId, 1]]), new Map(),
+    );
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(buffer.deliveryCounts()).toMatchObject({ pendingEvents: 0, quarantinedEvents: 1 });
+  });
+
+  it("quarantines a single oversized task instead of acknowledging it", async () => {
+    const task = createTask({ taskId: randomUUID(), taskType: "agent" });
+    buffer.upsertTask(task);
+    const pusher = new EventPusher(buffer, makeOptions());
+    const internal = pusher as unknown as {
+      pushWithSplit(events: unknown[], tasks: unknown[], ...rest: unknown[]): Promise<boolean>;
+    };
+    const oversized = { ...task, taskType: "x".repeat(MAX_PAYLOAD_BYTES + 1) };
+    globalThis.fetch = vi.fn();
+
+    await internal.pushWithSplit(
+      [], [oversized], [], [], [], [], new Map(), new Map([[task.taskId, 1]]),
+    );
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(buffer.deliveryCounts()).toMatchObject({ pendingTasks: 0, quarantinedTasks: 1 });
   });
 
 });

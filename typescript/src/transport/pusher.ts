@@ -108,6 +108,7 @@ export class EventPusher {
   private _successfulBatches = 0;
   private _failedBatches = 0;
   private _deliveredRecords = 0;
+  private _activePushStats?: { deliveredRecords: number; quarantinedRecords: number };
 
   constructor(
     buffer: EventBuffer,
@@ -200,10 +201,12 @@ export class EventPusher {
   }
 
   private _recordSuccess(deliveredRecords: number): void {
-    this._lastSuccessAt = new Date();
     this._consecutiveFailures = 0;
-    this._successfulBatches += 1;
-    this._deliveredRecords += deliveredRecords;
+    if (deliveredRecords > 0) {
+      this._lastSuccessAt = new Date();
+      this._successfulBatches += 1;
+      this._deliveredRecords += deliveredRecords;
+    }
     this._workerState = "idle";
   }
 
@@ -357,32 +360,17 @@ export class EventPusher {
     this._recordAttempt();
 
     try {
+      const pushStats = { deliveredRecords: 0, quarantinedRecords: 0 };
+      this._activePushStats = pushStats;
       const ok = await this.pushWithSplit(
         wireEvents, tasks, businessIdentities, outcomes, revenueRevisions, providerJobKeys,
         eventSyncVersions, taskSyncVersions,
       );
       if (ok) {
-        // §3.2.1 (B12): pushWithSplit now marks synced at each leaf
-        // POST; these calls are kept as a defensive idempotent safety
-        // net for any future path that returns true without splitting.
-        this._buffer.markSynced(wireEvents.map((e) => e.event_id), eventSyncVersions);
-        this._buffer.markTasksSynced(tasks.map((t) => t.taskId), taskSyncVersions);
-        this._buffer.markLedgerSynced("outcome", outcomes.map((item) => [
-          String(item["outcome_id"]),
-          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
-        ] as const));
-        this._buffer.markLedgerSynced("revenue", revenueRevisions.map((item) => [
-          String(item["revenue_id"]),
-          Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
-        ] as const));
-        this._buffer.markLedgerSynced(
-          "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
-        );
         this._backoffMs = 1000; // Reset backoff on success
-        this._recordSuccess(
-          wireEvents.length + tasks.length + businessIdentities.length +
-          outcomes.length + revenueRevisions.length,
-        );
+        // Only a successful leaf POST may acknowledge a record. Terminally
+        // oversized records are quarantined and intentionally excluded here.
+        this._recordSuccess(pushStats.deliveredRecords);
 
         // Purge acknowledged events only (throttled to once per hour).
         const now = Date.now();
@@ -407,6 +395,7 @@ export class EventPusher {
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
       this._recordError(error, "transport", true, "backoff");
     } finally {
+      this._activePushStats = undefined;
       this._pushing = false;
     }
 
@@ -556,6 +545,10 @@ export class EventPusher {
         this._buffer.markLedgerSynced(
           "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
         );
+        if (this._activePushStats !== undefined) {
+          this._activePushStats.deliveredRecords += events.length + tasks.length +
+            businessIdentities.length + outcomes.length + revenueRevisions.length;
+        }
       }
       return ok;
     }
@@ -627,23 +620,24 @@ export class EventPusher {
     }
 
     if (events.length === 1) {
-      // Single event too large — skip it with warning
       console.warn(
-        `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), skipping`,
+        `[dexcost] Single event exceeds payload limit (${payloadBytes} bytes), quarantining`,
       );
       if (providerJobKeys.length > 0) {
         this._buffer.markLedgerQuarantined(
           "provider_job", providerJobKeys.map((item) => [item.eventId, item.revision] as const),
         );
-      } else this._buffer.markSynced([events[0].event_id], eventSyncVersions);
+      } else this._buffer.markQuarantined([events[0].event_id], eventSyncVersions);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
 
     if (tasks.length === 1) {
       console.warn(
-        `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), skipping`,
+        `[dexcost] Single task exceeds payload limit (${payloadBytes} bytes), quarantining`,
       );
-      this._buffer.markTasksSynced([tasks[0].taskId], taskSyncVersions);
+      this._buffer.markTasksQuarantined([tasks[0].taskId], taskSyncVersions);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
 
@@ -653,6 +647,7 @@ export class EventPusher {
         String(item["outcome_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
       ]]);
       console.warn(`[dexcost] Single outcome exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
     if (revenueRevisions.length === 1) {
@@ -661,6 +656,7 @@ export class EventPusher {
         String(item["revenue_id"]), Number((item["lifecycle"] as Record<string, unknown>)["revision"]),
       ]]);
       console.warn(`[dexcost] Single revenue revision exceeds payload limit (${payloadBytes} bytes), quarantining`);
+      if (this._activePushStats !== undefined) this._activePushStats.quarantinedRecords += 1;
       return true;
     }
     return true;

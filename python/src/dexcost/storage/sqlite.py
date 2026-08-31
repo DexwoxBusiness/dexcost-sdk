@@ -799,7 +799,8 @@ class SQLiteStorage:
             return
         placeholders = ",".join("?" for _ in event_ids)
         sql = (
-            "UPDATE events SET sync_status = 'synced' " "WHERE event_id IN (" + placeholders + ")"
+            "UPDATE events SET sync_status = 'synced' "
+            "WHERE sync_status = 'pending' AND event_id IN (" + placeholders + ")"
         )
         with self._lock:
             self._conn.execute(sql, event_ids)
@@ -906,7 +907,35 @@ class SQLiteStorage:
         if not task_ids:
             return
         placeholders = ",".join("?" for _ in task_ids)
-        sql = "UPDATE tasks SET sync_status = 'synced' " "WHERE task_id IN (" + placeholders + ")"
+        sql = (
+            "UPDATE tasks SET sync_status = 'synced' "
+            "WHERE sync_status = 'pending' AND task_id IN (" + placeholders + ")"
+        )
+        with self._lock:
+            self._conn.execute(sql, task_ids)
+            self._conn.commit()
+
+    def mark_task_deliveries_quarantined(self, deliveries: list[tuple[str, int]]) -> None:
+        """Quarantine only the exact task snapshots that cannot be delivered."""
+        if not deliveries:
+            return
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE tasks SET sync_status='quarantined' "
+                "WHERE task_id=? AND sync_version=? AND sync_status='pending'",
+                deliveries,
+            )
+            self._conn.commit()
+
+    def mark_tasks_quarantined(self, task_ids: list[str]) -> None:
+        """Retain undeliverable tasks outside the pending queue."""
+        if not task_ids:
+            return
+        placeholders = ",".join("?" for _ in task_ids)
+        sql = (
+            "UPDATE tasks SET sync_status = 'quarantined' "
+            "WHERE sync_status = 'pending' AND task_id IN (" + placeholders + ")"
+        )
         with self._lock:
             self._conn.execute(sql, task_ids)
             self._conn.commit()
@@ -1004,7 +1033,8 @@ class SQLiteStorage:
             return
         with self._lock:
             self._conn.executemany(
-                "UPDATE outcomes SET sync_status='synced' " "WHERE outcome_id=? AND revision=?",
+                "UPDATE outcomes SET sync_status='synced' "
+                "WHERE sync_status='pending' AND outcome_id=? AND revision=?",
                 revisions,
             )
             self._conn.commit()
@@ -1140,7 +1170,8 @@ class SQLiteStorage:
             return
         with self._lock:
             self._conn.executemany(
-                "UPDATE revenues SET sync_status='synced' " "WHERE revenue_id=? AND revision=?",
+                "UPDATE revenues SET sync_status='synced' "
+                "WHERE sync_status='pending' AND revenue_id=? AND revision=?",
                 revisions,
             )
             self._conn.commit()
@@ -1342,7 +1373,7 @@ class SQLiteStorage:
         with self._lock:
             self._conn.executemany(
                 "UPDATE provider_job_revisions SET sync_status='synced' "
-                "WHERE event_id=? AND revision=?",
+                "WHERE sync_status='pending' AND event_id=? AND revision=?",
                 revisions,
             )
             self._conn.commit()
@@ -1369,6 +1400,8 @@ class SQLiteStorage:
                        WHERE sync_status='quarantined') AS quarantined_events,
                      (SELECT COUNT(*) FROM tasks
                        WHERE sync_status='pending') AS pending_tasks,
+                     (SELECT COUNT(*) FROM tasks
+                       WHERE sync_status='quarantined') AS quarantined_tasks,
                      (SELECT COUNT(*) FROM outcomes
                        WHERE sync_status='pending') AS pending_outcomes,
                      (SELECT COUNT(*) FROM outcomes
@@ -1403,6 +1436,7 @@ class SQLiteStorage:
             "pending_events": int(row["pending_events"]),
             "quarantined_events": int(row["quarantined_events"]),
             "pending_tasks": int(row["pending_tasks"]),
+            "quarantined_tasks": int(row["quarantined_tasks"]),
             "pending_outcomes": int(row["pending_outcomes"]),
             "quarantined_outcomes": int(row["quarantined_outcomes"]),
             "pending_revenues": int(row["pending_revenues"]),

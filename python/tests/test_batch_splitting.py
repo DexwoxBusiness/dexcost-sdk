@@ -80,20 +80,22 @@ class TestBatchSplitting:
             worker._post_with_split(events, tasks)
             assert mock_post.call_count >= 2, f"Expected >=2 calls, got {mock_post.call_count}"
 
-    def test_single_oversized_event_is_skipped(self, tmp_path: Path) -> None:
-        """A single event exceeding the limit is skipped, not retried forever."""
+    def test_single_oversized_event_is_quarantined(self, tmp_path: Path) -> None:
+        """An oversized event stays visible as undelivered without blocking the queue."""
         config = _make_config()
-        storage = SQLiteStorage(db_path=tmp_path / "test.db")
-        worker = SyncWorker(config=config, storage=storage)
+        worker = SyncWorker(
+            config=config,
+            storage=SQLiteStorage(db_path=tmp_path / "test.db"),
+        )
+        storage = MagicMock()
 
         # Single event larger than MAX_PAYLOAD_BYTES
         huge_event = _make_large_event(size_bytes=250000).to_dict()
 
         with patch.object(worker, "_post_raw") as mock_post:
-            # Should not raise, should not call _post_raw (event skipped)
-            worker._post_with_split([huge_event], [])
-            # Skipped: 0 calls because the single event is too large
+            worker._post_with_split([huge_event], [], storage=storage)
             assert mock_post.call_count == 0
+        storage.mark_quarantined.assert_called_once_with([huge_event["event_id"]])
 
     def test_tasks_only_sent_with_first_chunk(self, tmp_path: Path) -> None:
         """Tasks are sent with the first chunk only, not duplicated."""
@@ -292,8 +294,8 @@ class TestBatchSplitting:
 
         storage.mark_synced.assert_called_once_with([events[0]["event_id"]])
 
-    def test_single_oversized_task_is_acknowledged(self, tmp_path: Path) -> None:
-        """An undeliverable task cannot poison every later task-only batch."""
+    def test_single_oversized_task_is_quarantined(self, tmp_path: Path) -> None:
+        """An undeliverable task is retained without poisoning later batches."""
         storage = MagicMock()
         worker = SyncWorker(
             config=_make_config(),
@@ -309,4 +311,5 @@ class TestBatchSplitting:
             assert worker._post_with_split([], [task], storage=storage) is True
 
         mock_post.assert_not_called()
-        storage.mark_tasks_synced.assert_called_once_with([task["task_id"]])
+        storage.mark_tasks_quarantined.assert_called_once_with([task["task_id"]])
+        storage.mark_tasks_synced.assert_not_called()

@@ -80,4 +80,48 @@ describe("flush on exit (B9)", () => {
 
     expect(after).toEqual(baseline);
   });
+
+  test("sole SDK SIGTERM listener flushes once then restores default termination", async () => {
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = new Set(process.listeners("SIGTERM"));
+    const tracker = init({ apiKey: "dx_test_x" });
+    const sdkListener = process.listeners("SIGTERM").find((listener) => !before.has(listener));
+    expect(sdkListener).toBeDefined();
+    const closeAsync = vi.spyOn(tracker, "closeAsync");
+    const originalListeners = process.listeners.bind(process);
+    vi.spyOn(process, "listeners").mockImplementation(((event: string | symbol) => (
+      event === "SIGTERM" ? [sdkListener as NodeJS.SignalsListener] : originalListeners(event)
+    )) as typeof process.listeners);
+    const kill = vi.spyOn(process, "kill").mockImplementation((() => true) as typeof process.kill);
+
+    (sdkListener as NodeJS.SignalsListener)("SIGTERM");
+    (sdkListener as NodeJS.SignalsListener)("SIGTERM");
+
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledOnce());
+    expect(closeAsync).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
+  });
+
+  test("host SIGTERM listener retains lifecycle ownership", async () => {
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = new Set(process.listeners("SIGTERM"));
+    init({ apiKey: "dx_test_x" });
+    const sdkListener = process.listeners("SIGTERM").find((listener) => !before.has(listener));
+    expect(sdkListener).toBeDefined();
+    const hostListener: NodeJS.SignalsListener = () => {};
+    const originalListeners = process.listeners.bind(process);
+    vi.spyOn(process, "listeners").mockImplementation(((event: string | symbol) => (
+      event === "SIGTERM"
+        ? [hostListener, sdkListener as NodeJS.SignalsListener]
+        : originalListeners(event)
+    )) as typeof process.listeners);
+    const kill = vi.spyOn(process, "kill").mockImplementation((() => true) as typeof process.kill);
+
+    (sdkListener as NodeJS.SignalsListener)("SIGTERM");
+
+    await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBe(before.size));
+    expect(kill).not.toHaveBeenCalled();
+  });
 });
