@@ -487,7 +487,7 @@
       ],
       "module": "dexcost.delivery",
       "name": "DeliveryStatus",
-      "signature": "(enabled: 'bool', worker_state: 'DeliveryWorkerState', pending_events: 'int', quarantined_events: 'int', pending_tasks: 'int', pending_outcomes: 'int', quarantined_outcomes: 'int', pending_revenues: 'int', quarantined_revenues: 'int', pending_provider_jobs: 'int', quarantined_provider_jobs: 'int', oldest_pending_at: 'datetime | None', last_attempt_at: 'datetime | None', last_success_at: 'datetime | None', last_error_at: 'datetime | None', last_error_type: 'str | None', last_error_message: 'str | None', consecutive_failures: 'int', successful_batches: 'int', failed_batches: 'int', delivered_records: 'int', backoff_seconds: 'float') -> None"
+      "signature": "(enabled: 'bool', worker_state: 'DeliveryWorkerState', pending_events: 'int', quarantined_events: 'int', pending_tasks: 'int', quarantined_tasks: 'int', pending_outcomes: 'int', quarantined_outcomes: 'int', pending_revenues: 'int', quarantined_revenues: 'int', pending_provider_jobs: 'int', quarantined_provider_jobs: 'int', oldest_pending_at: 'datetime | None', last_attempt_at: 'datetime | None', last_success_at: 'datetime | None', last_error_at: 'datetime | None', last_error_type: 'str | None', last_error_message: 'str | None', consecutive_failures: 'int', successful_batches: 'int', failed_batches: 'int', delivered_records: 'int', backoff_seconds: 'float') -> None"
     },
     {
       "kind": "class",
