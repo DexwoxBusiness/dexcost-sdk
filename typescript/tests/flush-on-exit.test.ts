@@ -34,6 +34,7 @@ describe("flush on exit (B9)", () => {
     }
     EventBuffer._forceFallbackForTest = false;
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -166,5 +167,49 @@ describe("flush on exit (B9)", () => {
     expect(warn).toHaveBeenCalledWith(
       "[dexcost] exit-time flush exceeded 5000ms; continuing shutdown",
     );
+  });
+
+  test("beforeExit timeout aborts a stalled response body without acknowledging", async () => {
+    vi.useFakeTimers();
+    EventBuffer._forceFallbackForTest = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = new Set(process.listeners("beforeExit"));
+    const tracker = init({
+      apiKey: "dx_test_x",
+      autoInstrument: [],
+      trackHttp: false,
+    });
+    const sdkListener = process.listeners("beforeExit").find((listener) => !before.has(listener));
+    expect(sdkListener).toBeDefined();
+
+    await tracker.track({ taskType: "stalled-response-body" }, async () => {});
+    const markTasksSynced = vi.spyOn(tracker.buffer, "markTasksSynced");
+
+    let bodyReadAborted = false;
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      return Promise.resolve({
+        ok: true,
+        status: 202,
+        json: () => new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            bodyReadAborted = true;
+            const error = new Error("body read aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        }),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    (sdkListener as (code: number) => void)(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(bodyReadAborted).toBe(true);
+    expect(markTasksSynced).not.toHaveBeenCalled();
   });
 });

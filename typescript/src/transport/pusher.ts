@@ -695,61 +695,62 @@ export class EventPusher {
     this._activeRequestController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
     timeoutId.unref?.();
-    let response: Response;
     try {
-      response = await fetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers,
         body,
         signal: controller.signal,
       });
+
+      if (response.ok) {
+        try {
+          const result = await response.json() as { rejected?: number };
+          if ((result.rejected ?? 0) > 0) {
+            console.warn(
+              `[dexcost] Control plane rejected ${result.rejected} item(s) from an attribution-v2 batch`,
+            );
+            return false;
+          }
+        } catch (error) {
+          // Some compatible/private endpoints return an empty 2xx body. An
+          // aborted body read is different: it must remain pending for retry.
+          if (controller.signal.aborted) throw error;
+        }
+        return true;
+      }
+
+      if (response.status === 413) {
+        // Permanent error — batch too large, don't retry
+        // This shouldn't happen with pre-split but handle gracefully
+        console.warn("[dexcost] Server returned 413 despite pre-split check");
+        return false;
+      }
+
+      if (response.status === 401) {
+        // The ingestion contract uses 401 for invalid/revoked keys.
+        console.error(
+          `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
+        );
+        this._authFailed = true;
+        const error = new Error(`API key rejected (HTTP ${response.status})`);
+        error.name = "HTTPError";
+        this._recordError(error, "authentication", false, "auth_failed");
+        this.stop();
+        return false;
+      }
+
+      if (response.status === 403) {
+        throw new Error("control plane request was forbidden (HTTP 403)");
+      }
+
+      return false;
     } finally {
       clearTimeout(timeoutId);
       if (this._activeRequestController === controller) {
         this._activeRequestController = null;
       }
     }
-
-    if (response.ok) {
-      try {
-        const result = await response.json() as { rejected?: number };
-        if ((result.rejected ?? 0) > 0) {
-          console.warn(
-            `[dexcost] Control plane rejected ${result.rejected} item(s) from an attribution-v2 batch`,
-          );
-          return false;
-        }
-      } catch {
-        // Some compatible/private endpoints return an empty 2xx body.
-      }
-      return true;
-    }
-
-    if (response.status === 413) {
-      // Permanent error — batch too large, don't retry
-      // This shouldn't happen with pre-split but handle gracefully
-      console.warn("[dexcost] Server returned 413 despite pre-split check");
-      return false;
-    }
-
-    if (response.status === 401) {
-      // The ingestion contract uses 401 for invalid/revoked keys.
-      console.error(
-        `[dexcost] API key rejected (HTTP ${response.status}) — disabling sync`,
-      );
-      this._authFailed = true;
-      const error = new Error(`API key rejected (HTTP ${response.status})`);
-      error.name = "HTTPError";
-      this._recordError(error, "authentication", false, "auth_failed");
-      this.stop();
-      return false;
-    }
-
-    if (response.status === 403) {
-      throw new Error("control plane request was forbidden (HTTP 403)");
-    }
-
-    return false;
   }
 
   /** Whether sync has been permanently disabled due to a rejected API key. */
