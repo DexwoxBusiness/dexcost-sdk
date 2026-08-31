@@ -583,6 +583,9 @@ class SyncWorker:
             )
             for job in provider_jobs
         ]
+        provider_job_revisions = {
+            (str(job.event_id), job.revision) for job in provider_jobs
+        }
         event_dicts.extend(provider_job_dicts)
 
         if not event_dicts and not task_dicts and not outcome_dicts and not revenue_dicts:
@@ -603,6 +606,7 @@ class SyncWorker:
                 revenue_revisions=revenue_dicts,
                 event_sync_versions=event_sync_versions,
                 task_sync_versions=task_sync_versions,
+                provider_job_revisions=provider_job_revisions,
             )
         finally:
             self._active_post_stats = None
@@ -821,6 +825,7 @@ class SyncWorker:
         revenue_revisions: list[dict[str, Any]] | None = None,
         event_sync_versions: dict[str, int] | None = None,
         task_sync_versions: dict[str, int] | None = None,
+        provider_job_revisions: set[tuple[str, int]] | None = None,
     ) -> bool:
         """POST records, splitting every durable stream below the queue limit.
 
@@ -833,6 +838,7 @@ class SyncWorker:
         revenues = revenue_revisions or []
         event_versions = event_sync_versions
         task_versions = task_sync_versions
+        provider_job_keys = provider_job_revisions or set()
         payload: dict[str, Any] = {
             "events": events,
             "tasks": tasks,
@@ -845,7 +851,21 @@ class SyncWorker:
         if len(body) <= _MAX_PAYLOAD_BYTES:
             posted = self._post_raw(body)
             if posted and storage is not None:
-                event_ids = [str(event["event_id"]) for event in events]
+                event_ids: list[str] = []
+                provider_job_ids: list[tuple[str, int]] = []
+                for event in events:
+                    event_id = str(event["event_id"])
+                    lifecycle = event.get("lifecycle")
+                    revision = (
+                        lifecycle.get("revision") if isinstance(lifecycle, dict) else None
+                    )
+                    candidate = (
+                        (event_id, revision) if isinstance(revision, int) else None
+                    )
+                    if candidate is not None and candidate in provider_job_keys:
+                        provider_job_ids.append(candidate)
+                    else:
+                        event_ids.append(event_id)
                 task_ids = [str(task["task_id"]) for task in tasks]
                 outcome_ids = [
                     (
@@ -863,21 +883,12 @@ class SyncWorker:
                 ]
                 if event_ids:
                     _mark_event_snapshots_synced(storage, event_ids, event_versions)
+                if provider_job_ids:
                     mark_provider_jobs = _optional_storage_method(
                         storage, "mark_provider_jobs_synced"
                     )
                     if mark_provider_jobs is not None:
-                        provider_job_ids = [
-                            (
-                                str(event["event_id"]),
-                                int(cast(dict[str, Any], lifecycle)["revision"]),
-                            )
-                            for event in events
-                            if isinstance(lifecycle := event.get("lifecycle"), dict)
-                            and isinstance(lifecycle.get("revision"), int)
-                        ]
-                        if provider_job_ids:
-                            mark_provider_jobs(provider_job_ids)
+                        mark_provider_jobs(provider_job_ids)
                 if task_ids:
                     _mark_task_snapshots_synced(storage, task_ids, task_versions)
                 if outcome_ids:
@@ -912,11 +923,21 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
             return self._post_with_split(
-                events[mid:], [], [], depth + 1, storage, [], [], event_versions, task_versions
+                events[mid:],
+                [],
+                [],
+                depth + 1,
+                storage,
+                [],
+                [],
+                event_versions,
+                task_versions,
+                provider_job_keys,
             )
 
         if len(tasks) > 1:
@@ -945,6 +966,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -958,6 +980,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if len(outcome_revisions) > 1:
@@ -977,6 +1000,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -990,6 +1014,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if len(revenues) > 1:
@@ -1009,6 +1034,7 @@ class SyncWorker:
                 revenues[:mid],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not first_posted:
                 return False
@@ -1022,6 +1048,7 @@ class SyncWorker:
                 revenues[mid:],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         durable_count = len(events) + len(tasks) + len(outcome_revisions) + len(revenues)
@@ -1036,6 +1063,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not task_posted:
                 return False
@@ -1049,6 +1077,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if durable_count > 1 and outcome_revisions:
@@ -1062,6 +1091,7 @@ class SyncWorker:
                 [],
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not outcome_posted:
                 return False
@@ -1075,6 +1105,7 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
 
         if durable_count > 1 and revenues:
@@ -1088,11 +1119,21 @@ class SyncWorker:
                 revenues,
                 event_versions,
                 task_versions,
+                provider_job_keys,
             )
             if not revenue_posted:
                 return False
             return self._post_with_split(
-                events, [], [], depth + 1, storage, [], [], event_versions, task_versions
+                events,
+                [],
+                [],
+                depth + 1,
+                storage,
+                [],
+                [],
+                event_versions,
+                task_versions,
+                provider_job_keys,
             )
 
         if len(events) == 1:
@@ -1101,14 +1142,19 @@ class SyncWorker:
                 len(body),
             )
             if storage is not None:
+                event_id = str(events[0]["event_id"])
                 lifecycle = events[0].get("lifecycle")
-                if isinstance(lifecycle, dict) and isinstance(lifecycle.get("revision"), int):
+                revision = lifecycle.get("revision") if isinstance(lifecycle, dict) else None
+                provider_job_key = (
+                    (event_id, revision) if isinstance(revision, int) else None
+                )
+                if provider_job_key is not None and provider_job_key in provider_job_keys:
                     marker = _optional_storage_method(storage, "mark_provider_jobs_quarantined")
                     if marker is not None:
-                        marker([(str(events[0]["event_id"]), int(lifecycle["revision"]))])
+                        marker([provider_job_key])
                 else:
                     _mark_event_snapshots_quarantined(
-                        storage, [str(events[0]["event_id"])], event_versions
+                        storage, [event_id], event_versions
                     )
             if self._active_post_stats is not None:
                 self._active_post_stats["quarantined_records"] += 1

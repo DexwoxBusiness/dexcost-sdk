@@ -97,6 +97,82 @@ class TestBatchSplitting:
             assert mock_post.call_count == 0
         storage.mark_quarantined.assert_called_once_with([huge_event["event_id"]])
 
+    def test_oversized_v3_observation_quarantines_the_ordinary_event_row(
+        self, tmp_path: Path
+    ) -> None:
+        """A lifecycle revision alone must not classify an event as a provider job."""
+        storage = SQLiteStorage(db_path=tmp_path / "test.db")
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        event = _make_event(
+            details={
+                "attribution_usage_lines": [
+                    {
+                        "metric": f"custom.metric_{index}",
+                        "quantity": "1",
+                        "unit": "Items",
+                    }
+                    for index in range(32)
+                ],
+                "attribution_dimensions": [
+                    {
+                        "key": f"dimension_{index}",
+                        "value": {"type": "string", "value": "x" * 256},
+                    }
+                    for index in range(24)
+                ],
+            }
+        )
+        event_id = str(event.event_id)
+        try:
+            storage.insert_event(event)
+            [(stored, sync_version)] = storage.query_event_deliveries_for_sync()
+            converted = worker._prepare_event_dict(stored)
+            assert converted is not None
+            assert converted["lifecycle"]["revision"] == 1
+
+            with patch.object(worker, "_post_raw") as mock_post:
+                assert worker._post_with_split(
+                    [converted],
+                    [],
+                    storage=storage,
+                    event_sync_versions={event_id: sync_version},
+                    provider_job_revisions=set(),
+                ) is True
+
+            mock_post.assert_not_called()
+            counts = storage.delivery_counts()
+            assert counts["pending_events"] == 0
+            assert counts["quarantined_events"] == 1
+            assert counts["quarantined_provider_jobs"] == 0
+        finally:
+            storage.close()
+
+    def test_successful_leaf_acknowledges_only_explicit_provider_job_keys(self) -> None:
+        storage = MagicMock()
+        worker = SyncWorker(config=_make_config(), storage=storage)
+        ordinary_id = str(uuid.uuid4())
+        provider_job_id = str(uuid.uuid4())
+        events = [
+            {"event_id": ordinary_id, "lifecycle": {"state": "final", "revision": 1}},
+            {
+                "event_id": provider_job_id,
+                "lifecycle": {"state": "final", "revision": 2},
+            },
+        ]
+
+        with patch.object(worker, "_post_raw", return_value=True):
+            assert worker._post_with_split(
+                events,
+                [],
+                storage=storage,
+                event_sync_versions={ordinary_id: 7},
+                provider_job_revisions={(provider_job_id, 2)},
+            ) is True
+
+        storage.mark_event_deliveries_synced.assert_called_once_with([(ordinary_id, 7)])
+        storage.mark_provider_jobs_synced.assert_called_once_with([(provider_job_id, 2)])
+        storage.mark_synced.assert_not_called()
+
     def test_tasks_only_sent_with_first_chunk(self, tmp_path: Path) -> None:
         """Tasks are sent with the first chunk only, not duplicated."""
         config = _make_config()
