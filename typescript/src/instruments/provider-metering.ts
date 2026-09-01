@@ -216,7 +216,10 @@ export function mapProviderResult<T>(
             result,
             (payload: unknown) => {
               const row = payload as Record<string, unknown> | null;
-              if (row !== null && typeof row === "object" && "data" in row) fulfilled(row.data);
+              if (row !== null && typeof row === "object" && "data" in row) {
+                const mapped = fulfilled(row.data);
+                if (mapped !== row.data) return { ...row, data: mapped };
+              }
               return payload;
             },
             rejected,

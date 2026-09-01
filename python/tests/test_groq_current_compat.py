@@ -4,6 +4,8 @@ import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import pytest
+
 from dexcost.attribution import to_attribution_observation_v3
 from dexcost.instruments.groq import instrument_groq, uninstrument_groq
 from dexcost.storage.sqlite import SQLiteStorage
@@ -24,6 +26,8 @@ class _Completions:
                 "total_tokens": 130,
             },
         )
+        if kwargs.get("malformed_usage"):
+            response["usage"]["prompt_tokens_details"] = {"cached_tokens": 101}
         if not kwargs.get("omit_response_service_tier"):
             response["service_tier"] = kwargs.get("service_tier", "on_demand")
         return SimpleNamespace(**response)
@@ -108,6 +112,71 @@ def test_native_groq_request_tier_fails_open_when_response_omits_it(
             for item in observation["usage"][0]["dimensions"]
         }
         assert dimensions == {"gateway": "groq"}
+    finally:
+        uninstrument_groq()
+        storage.close()
+
+
+def test_native_groq_malformed_usage_does_not_replace_successful_response(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    module = ModuleType("groq.resources.chat.completions")
+    module.Completions = _Completions  # type: ignore[attr-defined]
+    module.AsyncCompletions = _AsyncCompletions  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "groq.resources.chat.completions", module)
+    storage = SQLiteStorage(tmp_path / "groq-native-malformed-usage.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    instrument_groq(tracker)
+    try:
+        with tracker.task(task_type="groq-native-malformed"):
+            response = _Completions().create(
+                model="openai/gpt-oss-120b",
+                malformed_usage=True,
+                messages=[],
+            )
+
+        assert response.id == "groq-native-1"
+        [event] = storage.query_events()
+        assert event.details["attribution_operation_status"] == "succeeded"
+        assert {
+            line["metric"]: line["quantity"]
+            for line in event.details["attribution_usage_lines"]
+        } == {"request_count": "1"}
+        assert (event.input_tokens, event.output_tokens, event.cached_tokens) == (0, 0, 0)
+    finally:
+        uninstrument_groq()
+        storage.close()
+
+
+@pytest.mark.asyncio  # type: ignore[misc]
+async def test_native_async_groq_malformed_usage_does_not_replace_successful_response(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    module = ModuleType("groq.resources.chat.completions")
+    module.Completions = _Completions  # type: ignore[attr-defined]
+    module.AsyncCompletions = _AsyncCompletions  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "groq.resources.chat.completions", module)
+    storage = SQLiteStorage(tmp_path / "groq-native-async-malformed-usage.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    instrument_groq(tracker)
+    try:
+        with tracker.task(task_type="groq-native-async-malformed"):
+            response = await _AsyncCompletions().create(
+                model="openai/gpt-oss-120b",
+                malformed_usage=True,
+                messages=[],
+            )
+
+        assert response.id == "groq-native-1"
+        [event] = storage.query_events()
+        assert event.details["attribution_operation_status"] == "succeeded"
+        assert {
+            line["metric"]: line["quantity"]
+            for line in event.details["attribution_usage_lines"]
+        } == {"request_count": "1"}
+        assert (event.input_tokens, event.output_tokens, event.cached_tokens) == (0, 0, 0)
     finally:
         uninstrument_groq()
         storage.close()

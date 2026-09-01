@@ -1264,7 +1264,7 @@ class _SyncStreamWrapper(Iterator[Any]):
             self._usage = chunk.usage
         if self._provider in {"xai", "groq"}:
             response_tier = _value(chunk, "service_tier")
-            if isinstance(response_tier, str):
+            if response_tier is not None:
                 self._service_tier = response_tier
         if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
             self._groq_tool_execution_seen = True
@@ -1445,7 +1445,7 @@ class _AsyncStreamWrapper:
             self._usage = chunk.usage
         if self._provider in {"xai", "groq"}:
             response_tier = _value(chunk, "service_tier")
-            if isinstance(response_tier, str):
+            if response_tier is not None:
                 self._service_tier = response_tier
         if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
             self._groq_tool_execution_seen = True

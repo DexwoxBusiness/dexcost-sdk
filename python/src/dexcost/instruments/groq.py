@@ -18,7 +18,7 @@ from dexcost.instruments.openai import (
     _groq_pricing_lane,
     _groq_tool_execution_blocks_static_pricing,
 )
-from dexcost.instruments.openai_usage import normalize_openai_usage
+from dexcost.instruments.openai_usage import OpenAIUsageError, normalize_openai_usage
 
 _active_tracker: Any | None = None
 _patched = False
@@ -62,22 +62,28 @@ def _measurement(
     pricing_usage: dict[str, int] = {}
     input_total = output_total = cached = reasoning = 0
     if usage is not None:
-        normalized = normalize_openai_usage(usage)
-        input_total = normalized.total_input_tokens
-        output_total = normalized.total_output_tokens
-        cached = normalized.cache_read_input_tokens
-        cache_write = normalized.cache_write_input_tokens
-        reasoning = normalized.reasoning_output_tokens
-        for metric, quantity in (
-            ("input_tokens", max(0, input_total - cached - cache_write)),
-            ("cache_read_input_tokens", cached),
-            ("cache_write_input_tokens", cache_write),
-            ("output_tokens", max(0, output_total - reasoning)),
-            ("reasoning_output_tokens", reasoning),
-        ):
-            if quantity > 0:
-                lines.append(ProviderUsageLine(metric, quantity, "Tokens"))
-                pricing_usage[metric] = quantity
+        try:
+            normalized = normalize_openai_usage(usage)
+        except OpenAIUsageError:
+            # Usage is telemetry-only. A successful provider response must remain
+            # usable when Groq adds or temporarily emits an inconsistent bucket.
+            normalized = None
+        if normalized is not None:
+            input_total = normalized.total_input_tokens
+            output_total = normalized.total_output_tokens
+            cached = normalized.cache_read_input_tokens
+            cache_write = normalized.cache_write_input_tokens
+            reasoning = normalized.reasoning_output_tokens
+            for metric, quantity in (
+                ("input_tokens", max(0, input_total - cached - cache_write)),
+                ("cache_read_input_tokens", cached),
+                ("cache_write_input_tokens", cache_write),
+                ("output_tokens", max(0, output_total - reasoning)),
+                ("reasoning_output_tokens", reasoning),
+            ):
+                if quantity > 0:
+                    lines.append(ProviderUsageLine(metric, quantity, "Tokens"))
+                    pricing_usage[metric] = quantity
     model = _value(response, "model")
     resolved_model = model if isinstance(model, str) and model else requested
     record_id = _value(response, "id")
