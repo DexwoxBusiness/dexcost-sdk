@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.9.0",
-    "observer_count": 32,
+    "version": "1.10.0",
+    "observer_count": 33,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -109,6 +109,24 @@
       "resource_type": "sku",
       "fixed_resource_id": "search",
       "source_url": "https://api-dashboard.search.brave.com/api-reference/web/search/get"
+    },
+    {
+      "service_key": "google_translate",
+      "provider_name": "google",
+      "provider_service": "cloud_translation_basic",
+      "component": "external",
+      "domains": ["translation.googleapis.com"],
+      "endpoints": ["/language/translate/v2"],
+      "endpoint_match": "exact",
+      "request_character_count_path": "q",
+      "minimum_quantity": "1",
+      "usage_metric": "characters",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "resource_query_parameter": "model",
+      "default_resource_id": "nmt",
+      "allowed_resource_ids": ["nmt", "base"],
+      "source_url": "https://docs.cloud.google.com/translate/docs/reference/rest/v2/translate"
     },
     {
       "service_key": "openai_tts",

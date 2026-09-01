@@ -24,10 +24,12 @@ class UsageObserver:
     component: str
     domains: tuple[str, ...]
     endpoints: tuple[str, ...]
+    endpoint_match: str
     response_path: str | None
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
+    minimum_quantity: str | None
     fixed_quantity: str | None
     usage_metric: str
     resource_type: str | None
@@ -74,6 +76,14 @@ def _bounded_string(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip()[:256]
+
+
+def _character_count(value: Any) -> int | None:
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return sum(len(item) for item in value)
+    return None
 
 
 def _query_value_is_truthy(value: str) -> bool:
@@ -152,6 +162,7 @@ class ServiceUsageObservers:
                 "resource_path",
                 "request_resource_path",
                 "request_character_count_path",
+                "minimum_quantity",
                 "response_quantity_header",
                 "fixed_quantity",
                 "resource_query_parameter",
@@ -161,6 +172,7 @@ class ServiceUsageObservers:
                 "quantity_multiplier_query_parameter",
                 "record_id_path",
                 "record_id_header",
+                "endpoint_match",
             )
             has_resource_selector = any(
                 field in definition
@@ -176,6 +188,7 @@ class ServiceUsageObservers:
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
+            minimum_quantity = definition.get("minimum_quantity")
             fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
             if (
@@ -189,6 +202,7 @@ class ServiceUsageObservers:
                 or not isinstance(endpoints, list)
                 or not endpoints
                 or not all(isinstance(item, str) and item.startswith("/") for item in endpoints)
+                or definition.get("endpoint_match", "prefix") not in {"exact", "prefix"}
                 or any(
                     field in definition
                     and (not isinstance(definition[field], str) or not definition[field])
@@ -206,6 +220,8 @@ class ServiceUsageObservers:
                 )
                 != 1
                 or fixed_quantity not in {None, "1"}
+                or minimum_quantity not in {None, "1"}
+                or (minimum_quantity is not None and request_character_count_path is None)
                 or (fixed_quantity is not None)
                 != (definition["usage_metric"] == "request_count")
                 or (
@@ -258,10 +274,12 @@ class ServiceUsageObservers:
                     component=definition["component"],
                     domains=tuple(domains),
                     endpoints=tuple(endpoints),
+                    endpoint_match=definition.get("endpoint_match", "prefix"),
                     response_path=response_path,
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
                     request_character_count_path=request_character_count_path,
+                    minimum_quantity=minimum_quantity,
                     fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
                     resource_type=definition.get("resource_type"),
@@ -295,7 +313,11 @@ class ServiceUsageObservers:
             for candidate in self._observers
             if parsed.hostname in candidate.domains
             and any(
-                parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
+                parsed.path == endpoint
+                or (
+                    candidate.endpoint_match == "prefix"
+                    and parsed.path.startswith(f"{endpoint}/")
+                )
                 for endpoint in candidate.endpoints
             )
             and (
@@ -346,10 +368,14 @@ class ServiceUsageObservers:
             ):
                 continue
             if observer.request_character_count_path:
-                text = _resolve_path(request_body, observer.request_character_count_path)
-                if not isinstance(text, str) or not text:
+                character_count = _character_count(
+                    _resolve_path(request_body, observer.request_character_count_path)
+                )
+                if character_count is None:
                     continue
-                quantity = Decimal(len(text))
+                if observer.minimum_quantity == "1":
+                    character_count = max(character_count, 1)
+                quantity = Decimal(character_count)
             elif observer.fixed_quantity:
                 quantity = Decimal(observer.fixed_quantity)
             elif observer.response_quantity_header:
@@ -421,14 +447,23 @@ class ServiceUsageObservers:
                 if observer.resource_path
                 else None
             )
-            if resource_id is None and observer.request_resource_path:
-                resource_id = _bounded_string(
-                    _resolve_path(request_body, observer.request_resource_path)
-                )
-            if resource_id is None and observer.resource_query_parameter:
-                resource_id = _bounded_string(
-                    next(iter(query.get(observer.resource_query_parameter, [])), None)
-                )
+            request_resource_id = (
+                _bounded_string(_resolve_path(request_body, observer.request_resource_path))
+                if observer.request_resource_path
+                else None
+            )
+            query_resource_id = (
+                _bounded_string(next(iter(query.get(observer.resource_query_parameter, [])), None))
+                if observer.resource_query_parameter
+                else None
+            )
+            if (
+                request_resource_id is not None
+                and query_resource_id is not None
+                and request_resource_id != query_resource_id
+            ):
+                continue
+            resource_id = resource_id or request_resource_id or query_resource_id
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
             if observer.allowed_resource_ids and resource_id not in observer.allowed_resource_ids:

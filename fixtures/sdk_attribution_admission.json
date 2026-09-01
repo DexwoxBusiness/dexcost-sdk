@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.9.0",
+  "observer_manifest_version": "1.10.0",
   "conformance_schema_version": "6",
   "required_sdks": ["typescript", "python", "go", "rust"],
   "observers": [
@@ -50,6 +50,19 @@
       "service_key": "brave_search",
       "positive_cases": ["brave_web_search_counts_one_successful_request"],
       "fail_open_cases": ["brave_unrelated_endpoint_is_not_assumed_to_be_web_search"]
+    },
+    {
+      "service_key": "google_translate",
+      "positive_cases": [
+        "google_translate_v2_counts_unicode_characters_across_queries",
+        "google_translate_v2_accepts_the_documented_base_nmt_alias",
+        "google_translate_v2_applies_the_documented_one_character_minimum"
+      ],
+      "fail_open_cases": [
+        "google_translate_v2_does_not_price_translation_llm",
+        "google_translate_v2_conflicting_model_sources_fail_open",
+        "google_translate_detect_is_not_assumed_to_be_translation"
+      ]
     },
     {
       "service_key": "openai_tts",

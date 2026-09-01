@@ -131,6 +131,54 @@
       "expected": []
     },
     {
+      "name": "google_translate_v2_counts_unicode_characters_across_queries",
+      "url": "https://translation.googleapis.com/language/translate/v2",
+      "headers": {},
+      "request": { "q": ["Hi \ud83c\udf0d", "\u7a7a"], "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola mundo" }, { "translatedText": "vac\u00edo" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
+      "name": "google_translate_v2_accepts_the_documented_base_nmt_alias",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=base",
+      "headers": {},
+      "request": { "q": "Alias", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Alias", "model": "base" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "base" }]
+    },
+    {
+      "name": "google_translate_v2_applies_the_documented_one_character_minimum",
+      "url": "https://translation.googleapis.com/language/translate/v2",
+      "headers": {},
+      "request": { "q": "", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "1", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
+      "name": "google_translate_v2_does_not_price_translation_llm",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=projects/demo/locations/us-central1/models/general/translation-llm",
+      "headers": {},
+      "request": { "q": "Hello", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola" }] } },
+      "expected": []
+    },
+    {
+      "name": "google_translate_v2_conflicting_model_sources_fail_open",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=base",
+      "headers": {},
+      "request": { "q": "Hello", "target": "es", "model": "nmt" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola" }] } },
+      "expected": []
+    },
+    {
+      "name": "google_translate_detect_is_not_assumed_to_be_translation",
+      "url": "https://translation.googleapis.com/language/translate/v2/detect",
+      "headers": {},
+      "request": { "q": "Hello" },
+      "response": { "data": { "detections": [[{ "language": "en" }]] } },
+      "expected": []
+    },
+    {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
       "url": "https://api.openai.com/v1/audio/speech",
       "headers": { "x-request-id": "req_tts_123" },

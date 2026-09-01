@@ -37,10 +37,12 @@ interface UsageObserverDefinition {
   component: ObservedAttributionComponent;
   domains: string[];
   endpoints: string[];
+  endpoint_match?: "exact" | "prefix";
   response_path?: string;
   response_quantity_header?: string;
   response_all?: ResponsePredicate[];
   request_character_count_path?: string;
+  minimum_quantity?: "1";
   fixed_quantity?: "1";
   usage_metric: ObservedUsageMetric;
   resource_type?: ObservedResourceType;
@@ -98,6 +100,14 @@ function boundedString(value: unknown): string | undefined {
     : undefined;
 }
 
+function characterCount(value: unknown): number | undefined {
+  if (typeof value === "string") return Array.from(value).length;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    return undefined;
+  }
+  return value.reduce((total, item) => total + Array.from(item).length, 0);
+}
+
 function positiveDecimal(value: unknown): string | undefined {
   if (typeof value !== "number" && typeof value !== "string") return undefined;
   try {
@@ -109,8 +119,8 @@ function positiveDecimal(value: unknown): string | undefined {
   }
 }
 
-function endpointMatches(pathname: string, endpoint: string): boolean {
-  return pathname === endpoint || pathname.startsWith(`${endpoint}/`);
+function endpointMatches(pathname: string, endpoint: string, mode: "exact" | "prefix" = "prefix"): boolean {
+  return pathname === endpoint || (mode === "prefix" && pathname.startsWith(`${endpoint}/`));
 }
 
 function queryValueIsTruthy(value: string | null): boolean {
@@ -179,6 +189,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.resource_path,
       observer.request_resource_path,
       observer.request_character_count_path,
+      observer.minimum_quantity,
       observer.response_quantity_header,
       observer.fixed_quantity,
       observer.resource_query_parameter,
@@ -188,6 +199,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.quantity_multiplier_query_parameter,
       observer.record_id_path,
       observer.record_id_header,
+      observer.endpoint_match,
     ];
     const hasResourceSelector = [
       observer.resource_path,
@@ -210,6 +222,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
+      (observer.endpoint_match !== undefined &&
+        observer.endpoint_match !== "exact" && observer.endpoint_match !== "prefix") ||
       [
         observer.response_path,
         observer.response_quantity_header,
@@ -217,6 +231,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.fixed_quantity,
       ].filter((value) => value !== undefined).length !== 1 ||
       (observer.fixed_quantity !== undefined && observer.fixed_quantity !== "1") ||
+      (observer.minimum_quantity !== undefined && observer.minimum_quantity !== "1") ||
+      (observer.minimum_quantity !== undefined && observer.request_character_count_path === undefined) ||
       ((observer.fixed_quantity !== undefined) !== (observer.usage_metric === "request_count")) ||
       (observer.response_path !== undefined &&
         (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
@@ -289,7 +305,8 @@ export class ServiceUsageObservers {
     }
     const observers = this.observers.filter(
       (candidate) => candidate.domains.includes(parsed.hostname) &&
-        candidate.endpoints.some((endpoint) => endpointMatches(parsed.pathname, endpoint)) &&
+        candidate.endpoints.some((endpoint) =>
+          endpointMatches(parsed.pathname, endpoint, candidate.endpoint_match)) &&
         (candidate.query_any === undefined ||
           candidate.query_any.some((predicate) => predicateMatches(parsed, predicate))),
     );
@@ -332,11 +349,11 @@ export class ServiceUsageObservers {
       }
       let quantity: Decimal;
       if (observer.request_character_count_path !== undefined) {
-        const text = resolvePath(requestBody, observer.request_character_count_path);
-        if (typeof text !== "string") continue;
-        const characterCount = Array.from(text).length;
-        if (characterCount === 0) continue;
-        quantity = new Decimal(characterCount);
+        const counted = characterCount(resolvePath(requestBody, observer.request_character_count_path));
+        if (counted === undefined) continue;
+        const billableCount = observer.minimum_quantity === "1" ? Math.max(counted, 1) : counted;
+        if (billableCount === 0) continue;
+        quantity = new Decimal(billableCount);
       } else if (observer.fixed_quantity !== undefined) {
         quantity = new Decimal(observer.fixed_quantity);
       } else if (observer.response_quantity_header !== undefined) {
@@ -369,12 +386,17 @@ export class ServiceUsageObservers {
       let resourceId = observer.resource_path === undefined
         ? undefined
         : boundedString(resolvePath(responseBody, observer.resource_path));
-      resourceId ??= observer.request_resource_path === undefined
+      const requestResourceId = observer.request_resource_path === undefined
         ? undefined
         : boundedString(resolvePath(requestBody, observer.request_resource_path));
-      resourceId ??= observer.resource_query_parameter === undefined
+      const queryResourceId = observer.resource_query_parameter === undefined
         ? undefined
         : boundedString(matched.parsed.searchParams.get(observer.resource_query_parameter));
+      if (requestResourceId !== undefined && queryResourceId !== undefined &&
+          requestResourceId !== queryResourceId) {
+        continue;
+      }
+      resourceId ??= requestResourceId ?? queryResourceId;
       resourceId ??= boundedString(observer.fixed_resource_id);
       resourceId ??= boundedString(observer.default_resource_id);
       if (

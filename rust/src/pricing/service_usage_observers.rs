@@ -17,10 +17,12 @@ struct ObserverDefinition {
     component: String,
     domains: Vec<String>,
     endpoints: Vec<String>,
+    endpoint_match: Option<String>,
     response_path: Option<String>,
     response_quantity_header: Option<String>,
     response_all: Option<Vec<ResponsePredicate>>,
     request_character_count_path: Option<String>,
+    minimum_quantity: Option<String>,
     fixed_quantity: Option<String>,
     usage_metric: String,
     resource_type: Option<String>,
@@ -129,6 +131,16 @@ fn bounded_text(value: Option<&str>) -> Option<String> {
     (!value.is_empty()).then(|| value.chars().take(256).collect())
 }
 
+fn character_count(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::String(value) => Some(value.chars().count() as u64),
+        serde_json::Value::Array(values) => values.iter().try_fold(0_u64, |total, value| {
+            Some(total + value.as_str()?.chars().count() as u64)
+        }),
+        _ => None,
+    }
+}
+
 fn query_value_is_truthy(value: &str) -> bool {
     !matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -202,6 +214,10 @@ impl ServiceUsageObservers {
                     .endpoints
                     .iter()
                     .any(|endpoint| !endpoint.starts_with('/'))
+                || observer
+                    .endpoint_match
+                    .as_deref()
+                    .is_some_and(|value| !matches!(value, "exact" | "prefix"))
                 || [
                     observer.response_path.is_some(),
                     observer.response_quantity_header.is_some(),
@@ -216,8 +232,13 @@ impl ServiceUsageObservers {
                     .fixed_quantity
                     .as_deref()
                     .is_some_and(|value| value != "1")
-                || observer.fixed_quantity.is_some()
-                    != (observer.usage_metric == "request_count")
+                || observer
+                    .minimum_quantity
+                    .as_deref()
+                    .is_some_and(|value| value != "1")
+                || (observer.minimum_quantity.is_some()
+                    && observer.request_character_count_path.is_none())
+                || observer.fixed_quantity.is_some() != (observer.usage_metric == "request_count")
                 || observer
                     .response_path
                     .as_ref()
@@ -297,7 +318,8 @@ impl ServiceUsageObservers {
                     .any(|domain| parsed.host_str() == Some(domain))
                     && observer.endpoints.iter().any(|endpoint| {
                         parsed.path() == endpoint
-                            || parsed.path().starts_with(&format!("{endpoint}/"))
+                            || (observer.endpoint_match.as_deref() != Some("exact")
+                                && parsed.path().starts_with(&format!("{endpoint}/")))
                     })
                     && (observer.query_any.is_empty()
                         || observer.query_any.iter().any(|predicate| {
@@ -319,11 +341,13 @@ impl ServiceUsageObservers {
                 }
                 let mut quantity =
                     if let Some(path) = observer.request_character_count_path.as_deref() {
-                        let text = request_body
+                        let mut count = request_body
                             .and_then(|request| resolve_path(request, path))
-                            .and_then(serde_json::Value::as_str)?;
-                        let count = text.chars().count();
-                        (count > 0).then(|| Decimal::from(count as u64))?
+                            .and_then(character_count)?;
+                        if observer.minimum_quantity.as_deref() == Some("1") {
+                            count = count.max(1);
+                        }
+                        (count > 0).then(|| Decimal::from(count))?
                     } else if observer.fixed_quantity.is_some() {
                         Decimal::ONE
                     } else if let Some(header) = observer.response_quantity_header.as_deref() {
@@ -369,23 +393,27 @@ impl ServiceUsageObservers {
                     .resource_path
                     .as_deref()
                     .and_then(|path| bounded_string(resolve_path(body, path)));
-                if resource_id.is_none() {
-                    resource_id = observer.request_resource_path.as_deref().and_then(|path| {
+                let request_resource_id =
+                    observer.request_resource_path.as_deref().and_then(|path| {
                         request_body.and_then(|request| bounded_string(resolve_path(request, path)))
                     });
+                let query_resource_id =
+                    observer
+                        .resource_query_parameter
+                        .as_deref()
+                        .and_then(|parameter| {
+                            query
+                                .get(parameter)
+                                .and_then(|values| values.first())
+                                .and_then(|value| bounded_text(Some(value)))
+                        });
+                if request_resource_id.is_some()
+                    && query_resource_id.is_some()
+                    && request_resource_id != query_resource_id
+                {
+                    return None;
                 }
-                if resource_id.is_none() {
-                    resource_id =
-                        observer
-                            .resource_query_parameter
-                            .as_deref()
-                            .and_then(|parameter| {
-                                query
-                                    .get(parameter)
-                                    .and_then(|values| values.first())
-                                    .and_then(|value| bounded_text(Some(value)))
-                            });
-                }
+                resource_id = resource_id.or(request_resource_id).or(query_resource_id);
                 if resource_id.is_none() {
                     resource_id = bounded_text(observer.fixed_resource_id.as_deref());
                 }
@@ -446,7 +474,9 @@ impl ServiceUsageObservers {
                     .iter()
                     .any(|domain| parsed.host_str() == Some(domain))
                 && observer.endpoints.iter().any(|endpoint| {
-                    parsed.path() == endpoint || parsed.path().starts_with(&format!("{endpoint}/"))
+                    parsed.path() == endpoint
+                        || (observer.endpoint_match.as_deref() != Some("exact")
+                            && parsed.path().starts_with(&format!("{endpoint}/")))
                 })
         })
     }
@@ -471,7 +501,9 @@ impl ServiceUsageObservers {
                 .iter()
                 .any(|domain| parsed.host_str() == Some(domain))
                 && observer.endpoints.iter().any(|endpoint| {
-                    parsed.path() == endpoint || parsed.path().starts_with(&format!("{endpoint}/"))
+                    parsed.path() == endpoint
+                        || (observer.endpoint_match.as_deref() != Some("exact")
+                            && parsed.path().starts_with(&format!("{endpoint}/")))
                 })
                 && (observer.query_any.is_empty()
                     || observer.query_any.iter().any(|predicate| {

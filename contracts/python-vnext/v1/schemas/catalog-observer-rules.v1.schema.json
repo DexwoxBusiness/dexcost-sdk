@@ -45,9 +45,11 @@
         "component": { "enum": ["external", "speech_to_text", "text_to_speech"] },
         "domains": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" } },
         "endpoints": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "pattern": "^/[A-Za-z0-9_./{}-]{0,511}$" } },
+        "endpoint_match": { "enum": ["exact", "prefix"] },
         "response_path": { "$ref": "#/$defs/jsonPath" },
         "response_quantity_header": { "type": "string", "minLength": 1, "maxLength": 256 },
         "request_character_count_path": { "$ref": "#/$defs/jsonPath" },
+        "minimum_quantity": { "const": "1" },
         "fixed_quantity": { "const": "1" },
         "usage_metric": { "enum": ["input_tokens", "characters", "audio_seconds", "request_count"] },
         "resource_type": { "enum": ["model", "sku"] },
@@ -79,14 +81,13 @@
         { "required": ["request_character_count_path"], "not": { "anyOf": [{ "required": ["response_path"] }, { "required": ["response_quantity_header"] }, { "required": ["fixed_quantity"] }] } },
         { "required": ["fixed_quantity"], "not": { "anyOf": [{ "required": ["response_path"] }, { "required": ["response_quantity_header"] }, { "required": ["request_character_count_path"] }] } }
       ],
-      "dependentRequired": { "allowed_resource_ids": ["request_resource_path"] },
+      "dependentRequired": { "allowed_resource_ids": ["request_resource_path"], "minimum_quantity": ["request_character_count_path"] },
       "allOf": [
         { "if": { "required": ["fixed_quantity"] }, "then": { "properties": { "usage_metric": { "const": "request_count" } } } },
         { "if": { "properties": { "usage_metric": { "const": "request_count" } }, "required": ["usage_metric"] }, "then": { "required": ["fixed_quantity"] } },
         { "not": { "required": ["resource_path", "request_resource_path"] } },
         { "not": { "required": ["resource_path", "resource_query_parameter"] } },
         { "not": { "required": ["resource_path", "fixed_resource_id"] } },
-        { "not": { "required": ["request_resource_path", "resource_query_parameter"] } },
         { "not": { "required": ["request_resource_path", "fixed_resource_id"] } },
         { "not": { "required": ["resource_query_parameter", "fixed_resource_id"] } }
       ]
