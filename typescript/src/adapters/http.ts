@@ -243,6 +243,22 @@ interface _LlmUsage {
   rawResponse?: unknown;
 }
 
+function _openAiTokenCounts(
+  usage: Record<string, unknown>,
+): { inputTokens: number; outputTokens: number } | null {
+  const input = typeof usage.prompt_tokens === "number"
+    ? usage.prompt_tokens
+    : usage.input_tokens;
+  const output = typeof usage.completion_tokens === "number"
+    ? usage.completion_tokens
+    : usage.output_tokens;
+  if (typeof input !== "number" && typeof output !== "number") return null;
+  return {
+    inputTokens: typeof input === "number" ? input : 0,
+    outputTokens: typeof output === "number" ? output : 0,
+  };
+}
+
 /** Known LLM API domains and their response format. */
 const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.openai.com": "openai",
@@ -383,19 +399,24 @@ function _extractLlmUsage(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = usage as Record<string, any>;
-  const inKey = format === "openai" ? "prompt_tokens" : "input_tokens";
-  const outKey = format === "openai" ? "completion_tokens" : "output_tokens";
+  const counts = format === "openai"
+    ? _openAiTokenCounts(u)
+    : typeof u.input_tokens === "number" || typeof u.output_tokens === "number"
+      ? {
+          inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+          outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+        }
+      : null;
 
   // Require at least one numeric token field in the expected format. Path-
   // shape detection now matches unknown hosts too, so a response that merely
   // happens to carry a differently-shaped `usage` object must not produce a
   // phantom $0 llm_call.
-  if (typeof u[inKey] !== "number" && typeof u[outKey] !== "number") return null;
+  if (counts === null) return null;
 
   return {
     model,
-    inputTokens: typeof u[inKey] === "number" ? u[inKey] : 0,
-    outputTokens: typeof u[outKey] === "number" ? u[outKey] : 0,
+    ...counts,
     rawResponse: body,
   };
 }
@@ -483,11 +504,24 @@ function _parseSseUsage(
             if (typeof meta.promptTokenCount === "number" || outTok) found = true;
           }
         }
-        if (format === "openai" && data.usage) {
-          inputTokens = data.usage.prompt_tokens ?? inputTokens;
-          outputTokens = data.usage.completion_tokens ?? outputTokens;
-          rawResponse = data;
-          found = true;
+        if (format === "openai") {
+          const payload = data.response !== null && typeof data.response === "object"
+            ? data.response
+            : data;
+          if (typeof payload.model === "string" && payload.model !== "unknown") {
+            model = payload.model;
+          }
+          if (payload.service_tier !== undefined) serviceTier = payload.service_tier;
+          if (groqToolExecutionBlocksStaticPricing(payload)) groqToolExecutionSeen = true;
+          const counts = payload.usage !== null && typeof payload.usage === "object"
+            ? _openAiTokenCounts(payload.usage)
+            : null;
+          if (counts !== null) {
+            inputTokens = counts.inputTokens;
+            outputTokens = counts.outputTokens;
+            rawResponse = payload;
+            found = true;
+          }
         }
         if (format === "anthropic") {
           if (data.type === "message_start" && data.message?.usage) {

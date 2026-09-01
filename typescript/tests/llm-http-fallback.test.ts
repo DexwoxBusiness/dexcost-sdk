@@ -175,6 +175,77 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(llmEvents[0].outputTokens).toBe(150);
   });
 
+  it("captures a raw OpenAI Responses JSON payload", async () => {
+    const body = {
+      id: "resp-json-1",
+      model: "gpt-5.6-luna",
+      output: [],
+      usage: { input_tokens: 320, output_tokens: 48 },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "responses-json" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, input: "private" }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "api.openai.com",
+      model: "gpt-5.6-luna",
+      inputTokens: 320,
+      outputTokens: 48,
+    });
+    expect(buffer.getAllEvents().filter((event) => event.eventType === "network"))
+      .toHaveLength(0);
+  });
+
+  it("captures nested usage from a raw OpenAI Responses SSE completion", async () => {
+    const sse = `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "resp-stream-1",
+        model: "gpt-5.6-luna",
+        output: [],
+        usage: { input_tokens: 640, output_tokens: 96 },
+      },
+    })}\n\n`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(sse, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "responses-stream" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5.6-luna", input: "private", stream: true }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "api.openai.com",
+      model: "gpt-5.6-luna",
+      inputTokens: 640,
+      outputTokens: 96,
+    });
+    expect(events[0].details?.source).toBe("http_llm_fallback_stream");
+  });
+
   it("attributes raw DeepSeek calls and preserves its cache-hit bucket", async () => {
     const body = {
       id: "chat-deepseek-1",
