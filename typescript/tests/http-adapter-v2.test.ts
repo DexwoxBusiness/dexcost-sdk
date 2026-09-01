@@ -538,6 +538,44 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(getRecordedEvents()).toEqual([]);
   });
 
+  it("does not fall back to legacy pricing inside an observer endpoint boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      kind: "customsearch#search",
+      items: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch(
+        "https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost",
+      );
+      await response.text();
+    });
+
+    expect(getRecordedEvents()).toEqual([]);
+  });
+
+  it("keeps a user override authoritative inside an observer endpoint boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      kind: "customsearch#search",
+      items: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    getServiceCatalog()?.registerOverride("google_custom_search", 0.05, "request");
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      await fetch("https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].costUsd.toString()).toBe("0.05");
+    expect(events[0].pricingSource).toBe("manual");
+    expect(events[0].pricingVersion).toBeUndefined();
+  });
+
   it("extracts cost from response header for known service", async () => {
     // Mock fetch returning ScrapingBee-like response with header
     const mockResponse = new Response("{}", {

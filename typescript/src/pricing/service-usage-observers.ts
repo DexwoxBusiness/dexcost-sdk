@@ -362,6 +362,20 @@ export class ServiceUsageObservers {
     return this.lookup(url) !== undefined;
   }
 
+  ownsEndpointBoundary(url: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    return this.observers.some(
+      (observer) => observer.domains.includes(parsed.hostname) &&
+        observer.endpoints.some((endpoint) =>
+          parsed.pathname === endpoint || parsed.pathname.startsWith(`${endpoint}/`)),
+    );
+  }
+
   needsRequestBody(url: string): boolean {
     return this.lookup(url)?.observers.some(
       (observer) => observer.request_resource_path !== undefined ||

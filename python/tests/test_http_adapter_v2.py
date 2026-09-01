@@ -215,6 +215,36 @@ class TestKnownServiceExtraction:
 
         assert get_recorded_events() == []
 
+    def test_observer_endpoint_boundary_does_not_fall_back_to_legacy_price(self) -> None:
+        task = _make_task("search")
+        with task_context(task):
+            _handle_http_call(
+                "https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost",
+                response=_make_response(body={"kind": "customsearch#search", "items": []}),
+            )
+
+        assert get_recorded_events() == []
+
+    def test_user_override_remains_authoritative_on_observer_endpoint_boundary(
+        self,
+    ) -> None:
+        catalog = ServiceCatalog()
+        catalog.register_override("google_custom_search", Decimal("0.05"), per="request")
+        set_catalog(catalog)
+        task = _make_task("search")
+
+        with task_context(task):
+            _handle_http_call(
+                "https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost",
+                response=_make_response(body={"kind": "customsearch#search", "items": []}),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        assert events[0].cost_usd == Decimal("0.05")
+        assert events[0].pricing_source == "user_override"
+        assert events[0].pricing_version is None
+
     def test_exa_user_catalog_override_remains_authoritative(self) -> None:
         catalog = ServiceCatalog()
         catalog.register_override("exa_search", Decimal("0.05"), per="request")

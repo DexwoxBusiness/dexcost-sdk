@@ -1882,11 +1882,12 @@ async function _maybeRecordCost(
       return;
     }
 
-    // Exact observer-owned routes supersede the bundled legacy catalog. A
-    // broad domain entry must not assert money before provider-owned usage is
-    // emitted for control-plane pricing. Manual domain rates above retain the
-    // highest precedence.
+    // Observer-owned endpoint boundaries supersede the bundled legacy catalog.
+    // Exact routes still decide whether usage can be emitted, while unsupported
+    // descendants remain fail-open instead of falling through to a broad
+    // legacy prefix. Manual domain rates retain the highest precedence.
     const observerRoute = serviceUsageObservers?.matches(urlStr) === true;
+    const observerBoundary = serviceUsageObservers?.ownsEndpointBoundary(urlStr) === true;
 
     // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
     // detect known LLM API endpoints and emit llm_call events using the
@@ -1973,9 +1974,9 @@ async function _maybeRecordCost(
         }
 
         // An explicit catalog/workspace override remains authoritative. The
-        // bundled base price is ignored for observer-owned routes so the same
-        // provider usage cannot be valued once here and again by the server.
-        const observerOwnedBase = observerRoute
+        // bundled base price is ignored throughout an observer-owned endpoint
+        // boundary so unsupported descendants cannot defeat fail-open routing.
+        const observerOwnedBase = observerBoundary
           && extractionResult?.pricingSource === "service_catalog";
         if (extractionResult && !observerOwnedBase) {
           const isUserOverride = extractionResult.pricingSource === "user_override";

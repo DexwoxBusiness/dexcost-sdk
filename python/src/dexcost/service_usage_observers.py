@@ -385,6 +385,25 @@ class ServiceUsageObservers:
     def matches(self, url: str) -> bool:
         return self._lookup(url) is not None
 
+    def owns_endpoint_boundary(self, url: str) -> bool:
+        """Return whether an observer owns this provider endpoint boundary.
+
+        Exact observer routes deliberately reject descendants and unsupported
+        query variants, but those requests must not fall back to a broader
+        bundled money catalog. Treat the declared endpoint and its descendants
+        as observer-owned while leaving unrelated paths on the same domain
+        available to other instrumentation.
+        """
+        parsed = urlparse(url)
+        return any(
+            parsed.hostname in candidate.domains
+            and any(
+                parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
+                for endpoint in candidate.endpoints
+            )
+            for candidate in self._observers
+        )
+
     def needs_request_body(self, url: str) -> bool:
         matched = self._lookup(url)
         return bool(

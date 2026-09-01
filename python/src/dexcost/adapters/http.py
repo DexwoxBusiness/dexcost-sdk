@@ -995,16 +995,18 @@ def _handle_http_call_inner(
     if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
         return
 
-    # Exact observer-owned routes supersede the bundled legacy catalog. This
-    # prevents a broad domain entry from asserting money before the SDK emits
-    # the provider-owned quantity that the control plane prices. Manual domain
-    # rates above remain the highest-precedence user override.
+    # Observer-owned endpoint boundaries supersede the bundled legacy catalog.
+    # This includes intentionally unsupported descendants of exact routes, so
+    # they fail open instead of falling through to a broader legacy prefix.
+    # Manual domain rates above and explicit catalog/workspace overrides remain
+    # authoritative.
     observers = get_service_usage_observers()
     observer_route = observers is not None and observers.matches(url)
-    if observer_route:
+    observer_boundary = observers is not None and observers.owns_endpoint_boundary(url)
+    if observer_boundary:
         # Explicit local and authenticated workspace rates remain
-        # authoritative on observer-owned routes. Bundled SDK base prices do
-        # not: those would double count the server-priced observation.
+        # authoritative on observer-owned boundaries. Bundled SDK base prices
+        # do not: those would either double count or defeat fail-open routing.
         if _handle_catalog_entry(
             url,
             domain,
@@ -1019,7 +1021,7 @@ def _handle_http_call_inner(
             return
         # Usage-only observers contain no rates and remain active even when
         # notable-network event emission is disabled.
-        if _handle_usage_observer(
+        if observer_route and _handle_usage_observer(
             url,
             domain,
             track_network,
