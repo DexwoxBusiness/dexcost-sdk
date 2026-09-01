@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.6.0",
-    "observer_count": 29,
+    "version": "1.7.0",
+    "observer_count": 30,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -58,6 +58,20 @@
       "resource_type": "model",
       "resource_path": "model",
       "source_url": "https://api.jina.ai/scalar"
+    },
+    {
+      "service_key": "nomic_embeddings",
+      "provider_name": "nomic",
+      "provider_service": "embeddings",
+      "component": "external",
+      "domains": ["api-atlas.nomic.ai"],
+      "endpoints": ["/v1/embedding/text"],
+      "response_path": "usage.total_tokens",
+      "usage_metric": "input_tokens",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "allowed_resource_ids": ["nomic-embed-text-v1", "nomic-embed-text-v1.5"],
+      "source_url": "https://docs.nomic.ai/reference/api/embed-text-v-1-embedding-text-post"
     },
     {
       "service_key": "openai_tts",

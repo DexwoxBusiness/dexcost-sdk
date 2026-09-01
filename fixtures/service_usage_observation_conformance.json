@@ -53,6 +53,38 @@
       "expected": [{ "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_type": "model", "resource_id": "jina-embeddings-v3" }]
     },
     {
+      "name": "nomic_embeddings_v1_5_use_provider_total_tokens",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1.5", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1.5", "usage": { "prompt_tokens": 37, "total_tokens": 37 } },
+      "expected": [{ "service_key": "nomic_embeddings", "provider_name": "nomic", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "37", "resource_type": "model", "resource_id": "nomic-embed-text-v1.5" }]
+    },
+    {
+      "name": "nomic_embeddings_v1_use_provider_total_tokens",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1", "usage": { "prompt_tokens": 31, "total_tokens": 31 } },
+      "expected": [{ "service_key": "nomic_embeddings", "provider_name": "nomic", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "31", "resource_type": "model", "resource_id": "nomic-embed-text-v1" }]
+    },
+    {
+      "name": "nomic_embeddings_missing_usage_is_not_invented",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1.5", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1.5", "embeddings": [[0.1, 0.2]] },
+      "expected": []
+    },
+    {
+      "name": "nomic_embeddings_v2_is_not_assumed_to_use_atlas_pricing",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v2-moe", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v2-moe", "usage": { "prompt_tokens": 37, "total_tokens": 37 } },
+      "expected": []
+    },
+    {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
       "url": "https://api.openai.com/v1/audio/speech",
       "headers": { "x-request-id": "req_tts_123" },
@@ -156,6 +188,13 @@
       "headers": {},
       "response": { "metadata": { "request_id": "dg-3", "duration": 4, "channels": 2 } },
       "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "4", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-3" }]
+    },
+    {
+      "name": "deepgram_entity_detection_missing_duration_is_not_invented",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&detect_entities=true",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-entity-pending" } },
+      "expected": []
     },
     {
       "name": "assemblyai_completed_transcript_uses_provider_duration_and_model",
