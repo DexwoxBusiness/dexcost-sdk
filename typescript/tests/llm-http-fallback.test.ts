@@ -175,6 +175,53 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(llmEvents[0].outputTokens).toBe(150);
   });
 
+  it("attributes raw DeepSeek calls and preserves its cache-hit bucket", async () => {
+    const body = {
+      id: "chat-deepseek-1",
+      model: "deepseek-v4-pro",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_cache_hit_tokens: 4,
+        prompt_cache_miss_tokens: 16,
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "deepseek" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "deepseek-v4-pro", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

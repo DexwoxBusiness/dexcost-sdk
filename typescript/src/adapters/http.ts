@@ -1498,12 +1498,13 @@ function _recordHttpLlmEvent(
   const requestedModel = _requestModel(ctx);
   const provider = ctx.liteLlmProxy
     ? classifyLiteLlmProvider(requestedModel, usage?.model)
-    : ctx.hostname;
+    : ctx.hostname === "api.deepseek.com" ? "deepseek" : ctx.hostname;
   const model = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
     : usage?.model ?? requestedModel ?? "unknown";
 
-  const measurement = ctx.liteLlmProxy && usage?.rawResponse !== undefined
+  const measurement = (ctx.liteLlmProxy || provider === "deepseek") &&
+      usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
   const inputTokens = measurement?.inputTokens ?? usage?.inputTokens ?? 0;

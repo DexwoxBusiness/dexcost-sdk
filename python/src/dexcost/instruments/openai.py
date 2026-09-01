@@ -103,6 +103,8 @@ def _provider_for_instance(instance: Any) -> str:
                 return "openrouter"
             if hostname == "api.perplexity.ai" or hostname.endswith(".perplexity.ai"):
                 return "perplexity"
+            if hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com"):
+                return "deepseek"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):

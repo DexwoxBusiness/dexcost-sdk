@@ -44,7 +44,7 @@ export function tokenMeasurement(
   let output = outputTotal;
   let cached = nonNegativeInteger(
     usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens ??
-      usage.cache_read_input_tokens ?? usage.cached_tokens,
+      usage.cache_read_input_tokens ?? usage.cached_tokens ?? usage.prompt_cache_hit_tokens,
   );
   let cacheWrite = nonNegativeInteger(usage.cache_creation_input_tokens ?? usage.cache_write_input_tokens);
   let reasoning = nonNegativeInteger(

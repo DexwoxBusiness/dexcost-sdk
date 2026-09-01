@@ -87,6 +87,57 @@ describe("OpenAI instrumentation", () => {
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("routes DeepSeek-compatible OpenAI calls with exact cache usage", async () => {
+    class DeepSeekCompletions {
+      _client = { baseURL: "https://api.deepseek.com" };
+
+      async create(): Promise<unknown> {
+        return makeMockResponse({
+          model: "deepseek-v4-flash",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            prompt_cache_hit_tokens: 4,
+            prompt_cache_miss_tokens: 16,
+            completion_tokens_details: { reasoning_tokens: 3 },
+          },
+        });
+      }
+    }
+    _setCompletionsClass(DeepSeekCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "deepseek" });
+
+    await runWithTask(task, async () => {
+      await new DeepSeekCompletions().create();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    // DeepSeek's scheduled tariff is evaluated by the server catalog.
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "deepseek", service: "api" });
+    expect(observation?.provider.record_id).toBe("chatcmpl-abc123");
+    expect(observation?.resource).toEqual({ type: "model", id: "deepseek-v4-flash" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "7",
+      reasoning_output_tokens: "3",
+    });
+  });
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

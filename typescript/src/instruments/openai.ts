@@ -294,6 +294,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) {
       return { provider: "perplexity" };
     }
+    if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) {
+      return { provider: "deepseek" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
@@ -314,7 +317,7 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (route.provider === "openai" && route.gateway === undefined) {
+  if ((route.provider === "openai" || route.provider === "deepseek") && route.gateway === undefined) {
     return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
   }
   const selected = route.provider === "azure_openai" || route.gateway !== undefined

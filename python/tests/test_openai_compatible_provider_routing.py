@@ -11,6 +11,7 @@ import httpx
 import pytest
 from openai import OpenAI
 
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.instruments.openai import instrument_openai, uninstrument_openai
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
@@ -164,6 +165,68 @@ def test_perplexity_openai_compatibility_is_exact_and_privacy_safe(
         assert "private-query" not in persisted
         assert "private-output" not in persisted
         assert "private-agent-input" not in persisted
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _chat_response("deepseek-v4-flash")
+        usage = payload["usage"]
+        assert isinstance(usage, dict)
+        usage.pop("prompt_tokens_details", None)
+        usage["prompt_cache_hit_tokens"] = 4
+        usage["prompt_cache_miss_tokens"] = 16
+        return httpx.Response(200, json=payload, request=request)
+
+    storage = SQLiteStorage(tmp_path / "deepseek-openai.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.deepseek.com",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="deepseek-openai"):
+            client.chat.completions.create(
+                model="deepseek-v4-flash",
+                messages=[{"role": "user", "content": "private-query"}],
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "deepseek"
+        assert event.model == "deepseek-v4-flash"
+        assert event.input_tokens == 20
+        assert event.output_tokens == 10
+        assert event.cached_tokens == 4
+        # DeepSeek's public tariff varies by weekday UTC time window. The SDK
+        # captures usage but intentionally leaves money to the server catalog.
+        assert event.cost_usd == Decimal("0")
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"]["name"] == "deepseek"
+        assert observation["provider"]["service"] == "api"
+        assert observation["provider"]["record_id"] == "chat-provider-1"
+        assert observation["resource"] == {
+            "type": "model",
+            "id": "deepseek-v4-flash",
+        }
+        assert {
+            line["metric"]: line["quantity"] for line in observation["usage"]
+        } == {
+            "input_tokens": "16",
+            "cache_read_input_tokens": "4",
+            "output_tokens": "7",
+            "reasoning_output_tokens": "3",
+        }
+        assert "private-query" not in json.dumps(event.to_dict())
     finally:
         uninstrument_openai()
         client.close()
