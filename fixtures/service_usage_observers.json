@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.11.0",
-    "observer_count": 34,
+    "version": "1.12.0",
+    "observer_count": 35,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -141,6 +141,20 @@
       "resource_type": "sku",
       "fixed_resource_id": "cse.list",
       "source_url": "https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list"
+    },
+    {
+      "service_key": "perplexity_search",
+      "provider_name": "perplexity",
+      "provider_service": "search_api",
+      "component": "external",
+      "domains": ["api.perplexity.ai"],
+      "endpoints": ["/search"],
+      "endpoint_match": "exact",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "raw_web_search",
+      "source_url": "https://docs.perplexity.ai/api-reference/search-post"
     },
     {
       "service_key": "openai_tts",

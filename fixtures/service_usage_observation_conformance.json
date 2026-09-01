@@ -200,6 +200,22 @@
       "expected": []
     },
     {
+      "name": "perplexity_raw_search_counts_one_successful_request",
+      "url": "https://api.perplexity.ai/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "max_results": 10 },
+      "response": { "id": "search-123", "results": [], "server_time": "2026-09-01T16:00:00Z" },
+      "expected": [{ "service_key": "perplexity_search", "provider_name": "perplexity", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "raw_web_search" }]
+    },
+    {
+      "name": "perplexity_sonar_chat_is_not_assumed_to_be_raw_search",
+      "url": "https://api.perplexity.ai/chat/completions",
+      "headers": {},
+      "request": { "model": "sonar", "messages": [{ "role": "user", "content": "latest pricing" }] },
+      "response": { "id": "chat-123", "choices": [] },
+      "expected": []
+    },
+    {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
       "url": "https://api.openai.com/v1/audio/speech",
       "headers": { "x-request-id": "req_tts_123" },
