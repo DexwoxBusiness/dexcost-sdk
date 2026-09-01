@@ -54,6 +54,7 @@ interface UsageObserverDefinition {
   response_all?: ResponsePredicate[];
   request_all?: RequestPredicate[];
   request_character_count_path?: string;
+  request_character_count_query_parameter?: string;
   minimum_quantity?: "1";
   fixed_quantity?: "1";
   usage_metric: ObservedUsageMetric;
@@ -61,6 +62,7 @@ interface UsageObserverDefinition {
   resource_path?: string;
   request_resource_path?: string;
   allowed_resource_ids?: string[];
+  resource_id_prefix_to_strip?: string;
   resource_query_parameter?: string;
   default_resource_id?: string;
   fixed_resource_id?: string;
@@ -229,6 +231,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.resource_path,
       observer.request_resource_path,
       observer.request_character_count_path,
+      observer.request_character_count_query_parameter,
+      observer.resource_id_prefix_to_strip,
       observer.minimum_quantity,
       observer.response_quantity_header,
       observer.fixed_quantity,
@@ -267,12 +271,14 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       [
         observer.response_path,
         observer.response_quantity_header,
-        observer.request_character_count_path,
+        observer.request_character_count_path ?? observer.request_character_count_query_parameter,
         observer.fixed_quantity,
       ].filter((value) => value !== undefined).length !== 1 ||
       (observer.fixed_quantity !== undefined && observer.fixed_quantity !== "1") ||
       (observer.minimum_quantity !== undefined && observer.minimum_quantity !== "1") ||
-      (observer.minimum_quantity !== undefined && observer.request_character_count_path === undefined) ||
+      (observer.minimum_quantity !== undefined &&
+        observer.request_character_count_path === undefined &&
+        observer.request_character_count_query_parameter === undefined) ||
       ((observer.fixed_quantity !== undefined) !== (observer.usage_metric === "request_count")) ||
       (observer.response_path !== undefined &&
         (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
@@ -419,8 +425,18 @@ export class ServiceUsageObservers {
         continue;
       }
       let quantity: Decimal;
-      if (observer.request_character_count_path !== undefined) {
-        const counted = characterCount(resolvePath(requestBody, observer.request_character_count_path));
+      if (
+        observer.request_character_count_path !== undefined ||
+        observer.request_character_count_query_parameter !== undefined
+      ) {
+        let counted = observer.request_character_count_path === undefined
+          ? undefined
+          : characterCount(resolvePath(requestBody, observer.request_character_count_path));
+        if (counted === undefined && observer.request_character_count_query_parameter !== undefined) {
+          counted = characterCount(
+            matched.parsed.searchParams.getAll(observer.request_character_count_query_parameter),
+          );
+        }
         if (counted === undefined) continue;
         const billableCount = observer.minimum_quantity === "1" ? Math.max(counted, 1) : counted;
         if (billableCount === 0) continue;
@@ -470,6 +486,13 @@ export class ServiceUsageObservers {
       resourceId ??= requestResourceId ?? queryResourceId;
       resourceId ??= boundedString(observer.fixed_resource_id);
       resourceId ??= boundedString(observer.default_resource_id);
+      if (
+        resourceId !== undefined &&
+        observer.resource_id_prefix_to_strip !== undefined &&
+        resourceId.startsWith(observer.resource_id_prefix_to_strip)
+      ) {
+        resourceId = resourceId.slice(observer.resource_id_prefix_to_strip.length);
+      }
       if (
         observer.allowed_resource_ids !== undefined &&
         (resourceId === undefined || !observer.allowed_resource_ids.includes(resourceId))

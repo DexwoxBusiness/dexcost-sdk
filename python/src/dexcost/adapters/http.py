@@ -430,6 +430,7 @@ async def _aiohttp_wrapper(
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
+    response_body = await _get_aiohttp_response_body(response)
     _handle_http_call(
         url,
         method=method,
@@ -437,6 +438,7 @@ async def _aiohttp_wrapper(
         request_body_len=0,
         request_body=request_body,
         response=response,
+        response_body=response_body,
         latency_ms=latency_ms,
     )
     return response
@@ -598,6 +600,45 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
     return None
 
 
+async def _get_aiohttp_response_body(response: Any) -> dict[str, Any] | None:
+    """Safely materialise a bounded aiohttp JSON response.
+
+    ``aiohttp.ClientResponse.json`` is asynchronous, so the synchronous
+    response helper cannot observe its body.  aiohttp caches ``read()`` in
+    the response object, which means awaiting a bounded JSON body here still
+    leaves it available to the caller.  Unknown-size and streaming responses
+    remain untouched.
+    """
+    headers = _get_response_headers(response)
+
+    def _hdr(name: str) -> str:
+        target = name.lower()
+        for key, value in headers.items():
+            if key.lower() == target:
+                return value
+        return ""
+
+    content_type = _hdr("content-type").lower()
+    if "application/json" not in content_type or "text/event-stream" in content_type:
+        return None
+    if "chunked" in _hdr("transfer-encoding").lower():
+        return None
+    content_length_raw = _hdr("content-length")
+    if not content_length_raw:
+        return None
+    try:
+        if int(content_length_raw) > _MAX_BODY_SIZE:
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        body = await response.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 def _response_body_len(response: Any) -> int:
     """Best-effort response body length in bytes.
 
@@ -630,6 +671,7 @@ def _handle_http_call(
     request_body_len: int = 0,
     request_body: Any = None,
     response: Any = None,
+    response_body: dict[str, Any] | None = None,
     latency_ms: int = 0,
 ) -> None:
     """Record cost + network bytes for one instrumented HTTP call.
@@ -666,6 +708,7 @@ def _handle_http_call(
             request_body_len,
             observer_request_body,
             response,
+            response_body,
             latency_ms,
         )
     except Exception:  # broad catch intentional: must never break the caller's HTTP call
@@ -767,6 +810,7 @@ def _handle_catalog_entry(
     byte_details: dict[str, Any],
     *,
     overrides_only: bool = False,
+    response_body: dict[str, Any] | None = None,
 ) -> bool:
     """Handle service-catalog path. Returns True if handled."""
     catalog = get_catalog()
@@ -774,7 +818,9 @@ def _handle_catalog_entry(
     if entry is None:
         return False
     result = catalog.extract_cost(
-        entry, response_headers, _get_response_body(response) if response else None
+        entry,
+        response_headers,
+        response_body if response_body is not None else _get_response_body(response),
     )
     if overrides_only and (
         result is None or result.pricing_source not in {"user_override", "workspace_overlay"}
@@ -832,6 +878,7 @@ def _handle_usage_observer(
     bytes_out: int,
     response_headers: dict[str, str],
     response: Any,
+    response_body: dict[str, Any] | None,
     status_code: int,
     byte_details: dict[str, Any],
     request_body: dict[str, Any] | None,
@@ -843,7 +890,10 @@ def _handle_usage_observer(
     if observers is None or not observers.matches(url):
         return False
     observations = observers.observe(
-        url, response_headers, _get_response_body(response), request_body
+        url,
+        response_headers,
+        response_body if response_body is not None else _get_response_body(response),
+        request_body,
     )
     if not observations:
         return False
@@ -951,6 +1001,7 @@ def _handle_http_call_inner(
     request_body_len: int,
     request_body: dict[str, Any] | None,
     response: Any,
+    response_body: dict[str, Any] | None,
     latency_ms: int,
 ) -> None:
     parsed = urlparse(str(url))
@@ -1017,6 +1068,7 @@ def _handle_http_call_inner(
             response,
             byte_details,
             overrides_only=True,
+            response_body=response_body,
         ):
             return
         # Usage-only observers contain no rates and remain active even when
@@ -1029,6 +1081,7 @@ def _handle_http_call_inner(
             bytes_out,
             response_headers,
             response,
+            response_body,
             status_code,
             byte_details,
             request_body,
@@ -1044,6 +1097,7 @@ def _handle_http_call_inner(
         response_headers,
         response,
         byte_details,
+        response_body=response_body,
     ):
         return
 

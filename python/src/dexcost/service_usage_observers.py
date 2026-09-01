@@ -36,6 +36,7 @@ class UsageObserver:
     response_all: tuple[dict[str, Any], ...]
     request_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
+    request_character_count_query_parameter: str | None
     minimum_quantity: str | None
     fixed_quantity: str | None
     usage_metric: str
@@ -43,6 +44,7 @@ class UsageObserver:
     resource_path: str | None
     request_resource_path: str | None
     allowed_resource_ids: tuple[str, ...]
+    resource_id_prefix_to_strip: str | None
     resource_query_parameter: str | None
     default_resource_id: str | None
     fixed_resource_id: str | None
@@ -201,6 +203,8 @@ class ServiceUsageObservers:
                 "resource_path",
                 "request_resource_path",
                 "request_character_count_path",
+                "request_character_count_query_parameter",
+                "resource_id_prefix_to_strip",
                 "minimum_quantity",
                 "response_quantity_header",
                 "fixed_quantity",
@@ -228,6 +232,9 @@ class ServiceUsageObservers:
             response_all = definition.get("response_all", [])
             request_all = definition.get("request_all", [])
             request_character_count_path = definition.get("request_character_count_path")
+            request_character_count_query_parameter = definition.get(
+                "request_character_count_query_parameter"
+            )
             minimum_quantity = definition.get("minimum_quantity")
             fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
@@ -254,14 +261,19 @@ class ServiceUsageObservers:
                     for value in (
                         response_path,
                         response_quantity_header,
-                        request_character_count_path,
+                        request_character_count_path
+                        or request_character_count_query_parameter,
                         fixed_quantity,
                     )
                 )
                 != 1
                 or fixed_quantity not in {None, "1"}
                 or minimum_quantity not in {None, "1"}
-                or (minimum_quantity is not None and request_character_count_path is None)
+                or (
+                    minimum_quantity is not None
+                    and request_character_count_path is None
+                    and request_character_count_query_parameter is None
+                )
                 or (fixed_quantity is not None)
                 != (definition["usage_metric"] == "request_count")
                 or (
@@ -326,6 +338,9 @@ class ServiceUsageObservers:
                     response_all=tuple(response_all),
                     request_all=tuple(request_all),
                     request_character_count_path=request_character_count_path,
+                    request_character_count_query_parameter=(
+                        request_character_count_query_parameter
+                    ),
                     minimum_quantity=minimum_quantity,
                     fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
@@ -333,6 +348,9 @@ class ServiceUsageObservers:
                     resource_path=definition.get("resource_path"),
                     request_resource_path=definition.get("request_resource_path"),
                     allowed_resource_ids=tuple(allowed_resource_ids),
+                    resource_id_prefix_to_strip=definition.get(
+                        "resource_id_prefix_to_strip"
+                    ),
                     resource_query_parameter=definition.get("resource_query_parameter"),
                     default_resource_id=definition.get("default_resource_id"),
                     fixed_resource_id=definition.get("fixed_resource_id"),
@@ -440,10 +458,24 @@ class ServiceUsageObservers:
                 for predicate in observer.response_all
             ):
                 continue
-            if observer.request_character_count_path:
-                character_count = _character_count(
-                    _resolve_path(request_body, observer.request_character_count_path)
+            if (
+                observer.request_character_count_path
+                or observer.request_character_count_query_parameter
+            ):
+                character_count = (
+                    _character_count(
+                        _resolve_path(request_body, observer.request_character_count_path)
+                    )
+                    if observer.request_character_count_path
+                    else None
                 )
+                if (
+                    character_count is None
+                    and observer.request_character_count_query_parameter
+                ):
+                    character_count = _character_count(
+                        query.get(observer.request_character_count_query_parameter)
+                    )
                 if character_count is None:
                     continue
                 if observer.minimum_quantity == "1":
@@ -539,6 +571,12 @@ class ServiceUsageObservers:
             resource_id = resource_id or request_resource_id or query_resource_id
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
+            if (
+                resource_id is not None
+                and observer.resource_id_prefix_to_strip
+                and resource_id.startswith(observer.resource_id_prefix_to_strip)
+            ):
+                resource_id = resource_id[len(observer.resource_id_prefix_to_strip) :]
             if observer.allowed_resource_ids and resource_id not in observer.allowed_resource_ids:
                 continue
             if resource_id is not None and observer.resource_variant is not None:

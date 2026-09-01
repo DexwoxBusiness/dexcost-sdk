@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": "1.15.0",
+    "version": "1.16.0",
     "observer_count": 42,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
@@ -70,6 +70,7 @@
       "usage_metric": "input_tokens",
       "resource_type": "model",
       "request_resource_path": "model",
+      "resource_id_prefix_to_strip": "jina-ai/",
       "allowed_resource_ids": [
         "jina-reranker-v1-tiny-en",
         "jina-reranker-v1-turbo-en",
@@ -120,6 +121,7 @@
       "endpoints": ["/language/translate/v2"],
       "endpoint_match": "exact",
       "request_character_count_path": "q",
+      "request_character_count_query_parameter": "q",
       "minimum_quantity": "1",
       "usage_metric": "characters",
       "resource_type": "model",
@@ -156,6 +158,7 @@
       "usage_metric": "request_count",
       "resource_type": "sku",
       "fixed_resource_id": "raw_web_search",
+      "record_id_path": "id",
       "source_url": "https://docs.perplexity.ai/api-reference/search-post"
     },
     {

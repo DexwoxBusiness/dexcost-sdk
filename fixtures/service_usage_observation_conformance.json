@@ -1,5 +1,5 @@
 {
-  "schema_version": "8",
+  "schema_version": "9",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -67,6 +67,14 @@
       "request": { "model": "jina-reranker-v2-base-multilingual", "query": "DexCost", "documents": ["Usage attribution"] },
       "response": { "model": "jina-reranker-v2-base-multilingual", "usage": { "total_tokens": 253, "prompt_tokens": 253 }, "results": [] },
       "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "253", "resource_type": "model", "resource_id": "jina-reranker-v2-base-multilingual" }]
+    },
+    {
+      "name": "jina_reranker_full_model_id_is_canonicalized",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-ai/jina-reranker-v3", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-ai/jina-reranker-v3", "usage": { "total_tokens": 377 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "377", "resource_type": "model", "resource_id": "jina-reranker-v3" }]
     },
     {
       "name": "jina_reranker_missing_usage_is_not_invented",
@@ -139,6 +147,21 @@
       "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "nmt" }]
     },
     {
+      "name": "google_translate_v2_counts_repeated_url_query_values",
+      "url": "https://translation.googleapis.com/language/translate/v2?q=Hi%20%F0%9F%8C%8D&q=%E7%A9%BA&target=es&model=base",
+      "headers": {},
+      "response": { "data": { "translations": [{ "translatedText": "Hola mundo" }, { "translatedText": "vacío" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "base" }]
+    },
+    {
+      "name": "google_translate_v2_prefers_body_quantity_over_url_fallback",
+      "url": "https://translation.googleapis.com/language/translate/v2?q=do-not-count-this&target=es",
+      "headers": {},
+      "request": { "q": "Body", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Cuerpo" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "4", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
       "name": "google_translate_v2_accepts_the_documented_base_nmt_alias",
       "url": "https://translation.googleapis.com/language/translate/v2?model=base",
       "headers": {},
@@ -205,7 +228,7 @@
       "headers": {},
       "request": { "query": "latest pricing", "max_results": 10 },
       "response": { "id": "search-123", "results": [], "server_time": "2026-09-01T16:00:00Z" },
-      "expected": [{ "service_key": "perplexity_search", "provider_name": "perplexity", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "raw_web_search" }]
+      "expected": [{ "service_key": "perplexity_search", "provider_name": "perplexity", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "raw_web_search", "provider_record_id": "search-123" }]
     },
     {
       "name": "perplexity_search_error_response_fails_open",
