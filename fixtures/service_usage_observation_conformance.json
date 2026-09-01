@@ -124,10 +124,10 @@
       "expected": [{ "service_key": "brave_search", "provider_name": "brave", "provider_service": "web_search", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "search" }]
     },
     {
-      "name": "brave_unrelated_endpoint_is_not_assumed_to_be_web_search",
-      "url": "https://api.search.brave.com/res/v1/answers/search?q=dexcost",
+      "name": "brave_web_search_error_response_fails_open",
+      "url": "https://api.search.brave.com/res/v1/web/search?q=dexcost",
       "headers": {},
-      "response": { "type": "answer" },
+      "response": { "type": "error", "message": "rate limited" },
       "expected": []
     },
     {
@@ -208,11 +208,11 @@
       "expected": [{ "service_key": "perplexity_search", "provider_name": "perplexity", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "raw_web_search" }]
     },
     {
-      "name": "perplexity_sonar_chat_is_not_assumed_to_be_raw_search",
-      "url": "https://api.perplexity.ai/chat/completions",
+      "name": "perplexity_search_error_response_fails_open",
+      "url": "https://api.perplexity.ai/search",
       "headers": {},
-      "request": { "model": "sonar", "messages": [{ "role": "user", "content": "latest pricing" }] },
-      "response": { "id": "chat-123", "choices": [] },
+      "request": { "query": "latest pricing", "max_results": 10 },
+      "response": { "error": { "message": "rate limited" } },
       "expected": []
     },
     {

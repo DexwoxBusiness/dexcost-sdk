@@ -194,10 +194,11 @@ function caseExercisesFixedQuantityEndpointBoundary(testCase, observer) {
     Array.isArray(observer.domains) &&
     observer.domains.includes(url.hostname) &&
     Array.isArray(observer.endpoints) &&
-    observer.endpoints.every(
+    observer.endpoints.some(
       (endpoint) =>
-        url.pathname !== endpoint && !url.pathname.startsWith(`${endpoint}/`),
-    )
+        url.pathname === endpoint || url.pathname.startsWith(`${endpoint}/`),
+    ) &&
+    !caseTargetsObserver(testCase, observer)
   );
 }
 

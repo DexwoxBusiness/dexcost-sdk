@@ -101,6 +101,20 @@ test("rejects a fail-open case that emits positive usage", () => {
   );
 });
 
+test("rejects a fixed-quantity fail-open case outside its endpoint boundary", () => {
+  const candidate = inputs();
+  const failOpen = candidate.conformance.cases.find(
+    (entry) => entry.name === "brave_web_search_error_response_fails_open",
+  );
+  failOpen.url =
+    "https://api.search.brave.com/res/v1/answers/search?q=dexcost";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "case brave_web_search_error_response_fails_open does not target observer brave_search",
+  );
+});
+
 test("rejects packaged observer drift in either paired SDK", () => {
   const candidate = inputs();
   candidate.packagedManifests.python.observers[0].usage_metric = "characters";
