@@ -234,6 +234,53 @@ describe("OpenAI instrumentation", () => {
     expect(dimensions.xai_pricing_lane).toBe(expectedLane);
   });
 
+  it.each([
+    ["on_demand", "on_demand", [], "public_sync"],
+    ["flex", "flex", [], "public_sync"],
+    ["performance", "performance", [], undefined],
+    ["performance", undefined, [], undefined],
+    ["auto", "auto", [], undefined],
+    ["on_demand", "on_demand", [{ type: "browser_search" }], undefined],
+  ])("routes Groq calls only into the public synchronous pricing lane", async (
+    requestTier,
+    responseTier,
+    executedTools,
+    expectedLane,
+  ) => {
+    class GroqCompletions {
+      _client = { baseURL: "https://api.groq.com/openai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: "openai/gpt-oss-120b",
+          service_tier: responseTier,
+          choices: [{ message: { executed_tools: executedTools } }],
+        });
+      }
+    }
+    _setCompletionsClass(GroqCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "groq" });
+
+    await runWithTask(task, async () => {
+      await new GroqCompletions().create({
+        model: "openai/gpt-oss-120b",
+        service_tier: requestTier,
+        messages: [],
+      });
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event).toMatchObject({ provider: "groq", model: "openai/gpt-oss-120b" });
+    const observation = toAttributionObservationV3(event);
+    expect(observation?.provider).toMatchObject({ name: "groq", service: "api" });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.groq_pricing_lane).toBe(expectedLane);
+  });
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

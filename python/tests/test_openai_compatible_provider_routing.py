@@ -306,6 +306,75 @@ def test_xai_openai_compatibility_captures_exact_cost_and_safe_pricing_lane(
 
 
 @pytest.mark.parametrize(
+    ("request_tier", "response_tier", "executed_tools", "expected_lane"),
+    [
+        ("on_demand", "on_demand", [], "public_sync"),
+        ("flex", "flex", [], "public_sync"),
+        ("performance", "performance", [], None),
+        ("performance", None, [], None),
+        ("auto", "auto", [], None),
+        ("on_demand", "on_demand", [{"type": "browser_search"}], None),
+    ],
+)
+def test_groq_openai_compatibility_only_admits_public_token_lane(
+    tmp_path: Path,
+    request_tier: str,
+    response_tier: str | None,
+    executed_tools: list[dict[str, str]],
+    expected_lane: str | None,
+) -> None:
+    model = "openai/gpt-oss-120b"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _chat_response(model)
+        if response_tier is not None:
+            payload["service_tier"] = response_tier
+        payload["choices"] = [{"message": {"executed_tools": executed_tools}}]
+        return httpx.Response(200, json=payload, request=request)
+
+    storage = SQLiteStorage(
+        tmp_path / f"groq-openai-{request_tier}-{response_tier}-{len(executed_tools)}.db"
+    )
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.groq.com/openai/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="groq-openai"):
+            client.chat.completions.create(
+                model=model,
+                service_tier=request_tier,  # type: ignore[arg-type]
+                messages=[{"role": "user", "content": "private-query"}],
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "groq"
+        assert event.model == model
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "groq",
+            "service": "api",
+            "record_id": "chat-provider-1",
+        }
+        dimensions = {
+            item["key"]: item["value"]["value"]
+            for item in observation["usage"][0]["dimensions"]
+        }
+        assert dimensions.get("groq_pricing_lane") == expected_lane
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+@pytest.mark.parametrize(
     ("base_url", "requested_tier", "expected_tier"),
     [
         ("https://api.fireworks.ai/inference/v1", None, "default"),

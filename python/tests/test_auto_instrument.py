@@ -302,17 +302,17 @@ class TestDefaultPatchesAll:
         for name in ALL_SUPPORTED_INSTRUMENTS:
             try:
                 if name == "openai":
-                    import openai as _
+                    __import__("openai")
                 elif name == "anthropic":
-                    import anthropic as _
+                    __import__("anthropic")
                 elif name == "litellm":
-                    import litellm as _
+                    __import__("litellm")
                 elif name == "gemini":
-                    import google.genai as _
+                    __import__("google.genai")
                 elif name == "bedrock":
-                    import botocore as _
+                    __import__("botocore")
                 elif name == "cohere":
-                    import cohere as _
+                    __import__("cohere")
                 elif name == "mcp":
                     __import__("mcp")
                 elif name == "ollama":
@@ -321,6 +321,8 @@ class TestDefaultPatchesAll:
                     __import__("openrouter")
                 elif name == "perplexity":
                     __import__("perplexity")
+                elif name == "groq":
+                    __import__("groq")
                 elif name == "fal":
                     __import__("fal_client")
                 expected.add(name)
@@ -650,6 +652,7 @@ class TestPublicAPI:
             "ollama",
             "openrouter",
             "perplexity",
+            "groq",
             "fal",
         ]
 

@@ -24,6 +24,8 @@ import {
 import { providerCaptureIsClaimed } from "../instruments/provider-capture.js";
 import {
   canonicalXaiModel,
+  groqPricingLane,
+  groqToolExecutionBlocksStaticPricing,
   nonNegativeDecimal,
   tokenMeasurement,
   xaiPricingLane,
@@ -270,6 +272,7 @@ const _LLM_ENDPOINTS = [
   "/chat/completions",
   "/v1/complete",
   "/v1/completions",
+  "/v1/responses",
   "/coding",        // Kimi Code Plan
   "/v1beta/models", // Google Gemini generateContent
 ];
@@ -293,6 +296,7 @@ function _formatFromPath(pathname: string): LlmFormat | null {
   if (/\/messages(\/|$)/.test(pathname)) return "anthropic";
   if (/\/chat\/completions(\/|$)/.test(pathname)) return "openai";
   if (/\/completions(\/|$)/.test(pathname)) return "openai";
+  if (/\/responses(\/|$)/.test(pathname)) return "openai";
   // Google Gemini / Vertex AI REST shape (models/<id>:generateContent).
   // Matching by path shape also covers Vertex regional hosts
   // (<region>-aiplatform.googleapis.com) without a domain-map entry.
@@ -447,6 +451,8 @@ function _parseSseUsage(
   let outputTokens = 0;
   let found = false;
   let rawResponse: unknown;
+  let serviceTier: unknown;
+  let groqToolExecutionSeen = false;
 
   for (const event of events) {
     // Extract the data line(s)
@@ -460,6 +466,8 @@ function _parseSseUsage(
         if (typeof data.model === "string" && data.model !== "unknown") {
           model = data.model;
         }
+        if (data.service_tier !== undefined) serviceTier = data.service_tier;
+        if (groqToolExecutionBlocksStaticPricing(data)) groqToolExecutionSeen = true;
         if (format === "gemini") {
           if (typeof data.modelVersion === "string" && data.modelVersion) {
             model = data.modelVersion;
@@ -496,6 +504,15 @@ function _parseSseUsage(
     }
   }
 
+  if (found && format === "openai") {
+    rawResponse = {
+      ...(rawResponse !== null && typeof rawResponse === "object"
+        ? rawResponse as Record<string, unknown>
+        : {}),
+      ...(serviceTier === undefined ? {} : { service_tier: serviceTier }),
+      _dexcost_groq_tool_execution_seen: groqToolExecutionSeen,
+    };
+  }
   return found ? { model, inputTokens, outputTokens, rawResponse } : null;
 }
 
@@ -1503,6 +1520,18 @@ function _fireworksServiceTier(ctx: _HttpCallContext): "default" | "priority" {
   return value === "priority" ? "priority" : "default";
 }
 
+function _groqRequestServiceTier(ctx: _HttpCallContext): unknown {
+  const body = ctx.observerRequestBody;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const record = body as Record<string, unknown>;
+  const extraBody = record.extra_body;
+  return record.service_tier ?? (
+    extraBody !== null && typeof extraBody === "object" && !Array.isArray(extraBody)
+      ? (extraBody as Record<string, unknown>).service_tier
+      : undefined
+  );
+}
+
 /** Record one HTTP-level LLM observation, with richer LiteLLM proxy identity. */
 function _recordHttpLlmEvent(
   ctx: _HttpCallContext,
@@ -1522,6 +1551,8 @@ function _recordHttpLlmEvent(
         ? "fireworks_ai"
         : ctx.hostname === "api.x.ai" || ctx.hostname.endsWith(".api.x.ai")
           ? "xai"
+          : ctx.hostname === "api.groq.com" || ctx.hostname.endsWith(".api.groq.com")
+            ? "groq"
           : ctx.hostname;
   const routedModel = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
@@ -1529,7 +1560,7 @@ function _recordHttpLlmEvent(
   const model = provider === "xai" ? canonicalXaiModel(routedModel) : routedModel;
 
   const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai" ||
-      provider === "xai") &&
+      provider === "xai" || provider === "groq") &&
       usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
@@ -1602,6 +1633,28 @@ function _recordHttpLlmEvent(
       details.attribution_dimensions = [
         ...dimensions,
         { key: "xai_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "groq" && usage?.rawResponse !== undefined) {
+    const response = usage.rawResponse !== null && typeof usage.rawResponse === "object"
+      ? usage.rawResponse as Record<string, unknown>
+      : {};
+    const requestTier = _groqRequestServiceTier(ctx);
+    const pricingLane = groqPricingLane({
+      ...response,
+      ...((response.service_tier === undefined || response.service_tier === null) &&
+          requestTier !== undefined
+        ? { service_tier: requestTier }
+        : {}),
+    });
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
       ];
     }
   }

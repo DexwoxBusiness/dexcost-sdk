@@ -326,6 +326,56 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(dimensions.xai_pricing_lane).toBe(expectedLane);
   });
 
+  it.each([
+    ["on_demand", "on_demand", [], "public_sync"],
+    ["performance", "performance", [], undefined],
+    ["performance", undefined, [], undefined],
+    ["auto", "auto", [], undefined],
+    ["on_demand", "on_demand", [{ type: "code_interpreter" }], undefined],
+  ])("captures raw Groq calls only in the public token lane", async (
+    requestTier,
+    responseTier,
+    executedTools,
+    expectedLane,
+  ) => {
+    const body = {
+      id: "chat-groq-1",
+      model: "openai/gpt-oss-120b",
+      service_tier: responseTier,
+      choices: [{ message: { executed_tools: executedTools } }],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "groq" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, service_tier: requestTier, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "groq", model: body.model });
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.groq_pricing_lane).toBe(expectedLane);
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

@@ -1,0 +1,13 @@
+{
+  "lane_cases": [
+    {"id":"omitted-tier","service_tier":null,"executed_tools":[],"expected":"public_sync"},
+    {"id":"default-tier","service_tier":"default","executed_tools":[],"expected":"public_sync"},
+    {"id":"on-demand-tier","service_tier":"on_demand","executed_tools":[],"expected":"public_sync"},
+    {"id":"flex-tier","service_tier":"flex","executed_tools":[],"expected":"public_sync"},
+    {"id":"performance-tier","service_tier":"performance","executed_tools":[],"expected":null},
+    {"id":"auto-tier","service_tier":"auto","executed_tools":[],"expected":null},
+    {"id":"unknown-tier","service_tier":"future","executed_tools":[],"expected":null},
+    {"id":"built-in-tool","service_tier":"on_demand","executed_tools":[{"type":"browser_search"}],"expected":null},
+    {"id":"malformed-tools","service_tier":"on_demand","executed_tools":"unknown","expected":null}
+  ]
+}

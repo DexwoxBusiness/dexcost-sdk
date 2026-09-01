@@ -109,6 +109,8 @@ def _provider_for_instance(instance: Any) -> str:
                 return "fireworks_ai"
             if hostname == "api.x.ai" or hostname.endswith(".api.x.ai"):
                 return "xai"
+            if hostname == "api.groq.com" or hostname.endswith(".api.groq.com"):
+                return "groq"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):
@@ -132,6 +134,19 @@ def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | N
         if isinstance(extra_body, Mapping):
             value = extra_body.get("service_tier")
     return "priority" if value == "priority" else "default"
+
+
+def _request_service_tier(provider: str, kwargs: Mapping[str, Any]) -> object:
+    """Retain only the request tier needed to select a verified pricing lane."""
+    if provider == "fireworks_ai":
+        return _fireworks_service_tier(provider, kwargs)
+    if provider != "groq":
+        return None
+    value = kwargs.get("service_tier")
+    extra_body = kwargs.get("extra_body")
+    if value is None and isinstance(extra_body, Mapping):
+        value = extra_body.get("service_tier")
+    return value
 
 
 _XAI_USD_TICKS_PER_USD = Decimal("10000000000")
@@ -212,6 +227,54 @@ def _xai_pricing_lane(
         return None
     context = "long" if total_input_tokens >= 200_000 else "short"
     return f"{tier}_{context}"
+
+
+def _groq_tool_execution_blocks_static_pricing(response: Any) -> bool:
+    """Return true when Groq may have charged for a provider-executed tool.
+
+    Groq exposes built-in execution on the response rather than in token usage.
+    Static token pricing must fail open when execution is present or malformed;
+    ordinary client-side function calls are intentionally not included here.
+    """
+    if response is None:
+        return False
+    if bool(_value(response, "_dexcost_groq_tool_execution_seen")):
+        return True
+    candidates = [_value(response, "executed_tools")]
+    choices = _value(response, "choices")
+    if isinstance(choices, Sequence) and not isinstance(choices, (str, bytes, bytearray)):
+        for choice in choices:
+            for container_name in ("message", "delta"):
+                container = _value(choice, container_name)
+                if container is not None:
+                    candidates.append(_value(container, "executed_tools"))
+    for executed in candidates:
+        if executed is None:
+            continue
+        if not isinstance(executed, Sequence) or isinstance(executed, (str, bytes, bytearray)):
+            return True
+        if len(executed) > 0:
+            return True
+    return False
+
+
+def _groq_pricing_lane(
+    response: Any,
+    service_tier: object,
+    provider: str,
+    *,
+    tool_execution_seen: bool = False,
+) -> str | None:
+    """Classify only publicly priced synchronous Groq token inference."""
+    if provider != "groq" or response is None:
+        return None
+    if tool_execution_seen or _groq_tool_execution_blocks_static_pricing(response):
+        return None
+    response_tier = _value(response, "service_tier")
+    raw_tier = response_tier if response_tier is not None else service_tier
+    if raw_tier in (None, "default", "on_demand", "flex"):
+        return "public_sync"
+    return None
 
 
 def _routed_wrapper(wrapper: Any) -> Any:
@@ -847,7 +910,7 @@ def _sync_create_common(
                 capability,
                 idempotency_key,
                 task_type,
-                _fireworks_service_tier(_current_provider(), kwargs),
+                _request_service_tier(_current_provider(), kwargs),
             )
 
         try:
@@ -876,7 +939,7 @@ def _sync_create_common(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=task_type,
-                service_tier=_fireworks_service_tier(_current_provider(), kwargs),
+                service_tier=_request_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -1028,7 +1091,7 @@ async def _async_non_stream_handler(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=operation_name,
-                service_tier=_fireworks_service_tier(_current_provider(), kwargs),
+                service_tier=_request_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -1090,7 +1153,7 @@ async def _async_stream_handler(
             capability,
             idempotency_key,
             operation_name,
-            _fireworks_service_tier(_current_provider(), kwargs),
+            _request_service_tier(_current_provider(), kwargs),
         )
     finally:
         if auto_token is not None:
@@ -1116,7 +1179,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
-        service_tier: str | None = None,
+        service_tier: object = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1134,6 +1197,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
         self._service_tier = service_tier
+        self._groq_tool_execution_seen = False
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -1198,10 +1262,12 @@ class _SyncStreamWrapper(Iterator[Any]):
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
-        if self._provider == "xai":
+        if self._provider in {"xai", "groq"}:
             response_tier = _value(chunk, "service_tier")
             if isinstance(response_tier, str):
                 self._service_tier = response_tier
+        if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
+            self._groq_tool_execution_seen = True
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1223,6 +1289,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
                 service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1248,6 +1315,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
                 service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1292,7 +1360,7 @@ class _AsyncStreamWrapper:
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
-        service_tier: str | None = None,
+        service_tier: object = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1310,6 +1378,7 @@ class _AsyncStreamWrapper:
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
         self._service_tier = service_tier
+        self._groq_tool_execution_seen = False
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -1374,10 +1443,12 @@ class _AsyncStreamWrapper:
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
-        if self._provider == "xai":
+        if self._provider in {"xai", "groq"}:
             response_tier = _value(chunk, "service_tier")
             if isinstance(response_tier, str):
                 self._service_tier = response_tier
+        if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
+            self._groq_tool_execution_seen = True
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1399,6 +1470,7 @@ class _AsyncStreamWrapper:
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
                 service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1424,6 +1496,7 @@ class _AsyncStreamWrapper:
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
                 service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1719,7 +1792,7 @@ def _record_from_response(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
-    service_tier: str | None = None,
+    service_tier: object = None,
 ) -> Event | None:
     """Extract fields from a Chat Completion or Responses response."""
     tracker = _active_tracker
@@ -1766,6 +1839,11 @@ def _record_from_response(
         _value(response, "service_tier"),
         provider,
     )
+    groq_pricing_lane = _groq_pricing_lane(
+        response,
+        service_tier,
+        provider,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1791,6 +1869,7 @@ def _record_from_response(
         operation_name=operation_name,
         service_tier=service_tier,
         xai_pricing_lane=xai_pricing_lane,
+        groq_pricing_lane=groq_pricing_lane,
     )
     _record_response_tool_events(
         response,
@@ -1816,7 +1895,8 @@ def _record_from_stream_usage(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
-    service_tier: str | None = None,
+    service_tier: object = None,
+    groq_tool_execution_seen: bool = False,
 ) -> Event | None:
     """Record an event from accumulated stream data."""
     tracker = _active_tracker
@@ -1861,6 +1941,12 @@ def _record_from_stream_usage(
         service_tier,
         resolved_provider,
     )
+    groq_pricing_lane = _groq_pricing_lane(
+        response if response is not None else {"usage": usage},
+        service_tier,
+        resolved_provider,
+        tool_execution_seen=groq_tool_execution_seen,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1887,6 +1973,7 @@ def _record_from_stream_usage(
         operation_name=operation_name,
         service_tier=service_tier,
         xai_pricing_lane=xai_pricing_lane,
+        groq_pricing_lane=groq_pricing_lane,
     )
     if response is not None:
         _record_response_tool_events(
@@ -1938,8 +2025,9 @@ def _insert_llm_event(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
-    service_tier: str | None = None,
+    service_tier: object = None,
     xai_pricing_lane: str | None = None,
+    groq_pricing_lane: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -2026,6 +2114,13 @@ def _insert_llm_event(
             {
                 "key": "xai_pricing_lane",
                 "value": {"type": "string", "value": xai_pricing_lane},
+            }
+        )
+    if provider == "groq" and groq_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "groq_pricing_lane",
+                "value": {"type": "string", "value": groq_pricing_lane},
             }
         )
     if provider == "azure_openai" and isinstance(requested_model, str) and requested_model:

@@ -13,6 +13,8 @@ import {
 } from "./provider-metering.js";
 import {
   canonicalXaiModel,
+  groqPricingLane,
+  groqToolExecutionBlocksStaticPricing,
   nonNegativeDecimal,
   nonNegativeInteger,
   prefixedModel,
@@ -57,6 +59,7 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return "deepseek";
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
     if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) return "xai";
+    if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) return "groq";
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) return "azure_openai";
   } catch { /* default client */ }
   return "openai";
@@ -67,7 +70,7 @@ function modelFor(provider: string, requested: unknown, response?: any, liteLlm 
     typeof requested === "string" ? requested : "unknown";
   if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
   if (provider === "xai") return canonicalXaiModel(selected);
-  return ["openai", "deepseek", "fireworks_ai", "xai"].includes(provider)
+  return ["openai", "deepseek", "fireworks_ai", "xai", "groq"].includes(provider)
     ? selected
     : prefixedModel(provider, selected);
 }
@@ -167,7 +170,14 @@ function transcriptionMeasurement(response: any, body: any, provider: string, li
   };
 }
 
-function measurement(kind: DirectKind, response: any, body: any, provider: string, liteLlm = false): OperationMeasurement {
+function measurement(
+  kind: DirectKind,
+  response: any,
+  body: any,
+  provider: string,
+  liteLlm = false,
+  groqState?: { serviceTier?: unknown; toolExecutionSeen: boolean },
+): OperationMeasurement {
   if (kind === "images") return imageMeasurement(response, body, provider, liteLlm);
   if (kind === "transcription") return transcriptionMeasurement(response, body, provider, liteLlm);
   if (kind === "speech") {
@@ -202,6 +212,25 @@ function measurement(kind: DirectKind, response: any, body: any, provider: strin
           return lane === undefined ? [] : [["xai_pricing_lane", lane] as const];
         })()
       : []),
+    ...(kind === "tokens" && provider === "groq"
+      ? (() => {
+          const responseRecord = response !== null && typeof response === "object" ? response : {};
+          const requestTier = body?.service_tier ?? body?.extra_body?.service_tier;
+          const capturedTier = groqState?.serviceTier ?? requestTier;
+          const pricingResponse = {
+            ...responseRecord,
+            ...((responseRecord.service_tier === undefined || responseRecord.service_tier === null) &&
+                capturedTier !== undefined
+              ? { service_tier: capturedTier }
+              : {}),
+            ...(groqState === undefined
+              ? {}
+              : { _dexcost_groq_tool_execution_seen: groqState.toolExecutionSeen }),
+          };
+          const lane = groqPricingLane(pricingResponse);
+          return lane === undefined ? [] : [["groq_pricing_lane", lane] as const];
+        })()
+      : []),
   ];
   return result;
 }
@@ -231,9 +260,20 @@ function patchDirect(
     const complete = (response: any): any => {
       if (body?.stream === true) {
         let terminal = response;
+        const groqState = {
+          serviceTier: (body?.service_tier ?? body?.extra_body?.service_tier) as unknown,
+          toolExecutionSeen: false,
+        };
         return wrapProviderStream(response, session, (chunk) => {
-          if ((chunk as any)?.usage !== undefined) terminal = chunk;
-        }, () => measurement(spec.kind, terminal, body, provider, liteLlm));
+          const item = chunk as any;
+          if (item?.usage !== undefined) terminal = chunk;
+          if (provider === "groq") {
+            if (item?.service_tier !== undefined && item?.service_tier !== null) {
+              groqState.serviceTier = item.service_tier;
+            }
+            if (groqToolExecutionBlocksStaticPricing(item)) groqState.toolExecutionSeen = true;
+          }
+        }, () => measurement(spec.kind, terminal, body, provider, liteLlm, groqState));
       }
       session.finish(measurement(spec.kind, response, body, provider, liteLlm));
       return response;

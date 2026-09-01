@@ -30,6 +30,8 @@ import {
 } from "../core/idempotency.js";
 import {
   canonicalXaiModel,
+  groqPricingLane,
+  groqToolExecutionBlocksStaticPricing,
   nonNegativeDecimal,
   nonNegativeInteger,
   prefixedModel,
@@ -198,7 +200,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     const startTime = performance.now();
     const self = this;
     const route = providerForResource(self, requestedModel);
-    const serviceTier = fireworksServiceTier(route, body);
+    const serviceTier = requestServiceTier(route, body);
     const capability = getCapability();
     const idempotencyKey = captureIdempotencyKey();
 
@@ -306,6 +308,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) {
       return { provider: "xai" };
     }
+    if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) {
+      return { provider: "groq" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
@@ -313,10 +318,10 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
   return { provider: "openai" };
 }
 
-function fireworksServiceTier(route: RoutedIdentity, body: any): "default" | "priority" | undefined {
-  if (route.provider !== "fireworks_ai") return undefined;
+function requestServiceTier(route: RoutedIdentity, body: any): unknown {
   const value = body?.service_tier ?? body?.extra_body?.service_tier;
-  return value === "priority" ? "priority" : "default";
+  if (route.provider === "fireworks_ai") return value === "priority" ? "priority" : "default";
+  return route.provider === "groq" ? value : undefined;
 }
 
 function routedService(route: RoutedIdentity, responsesApi: boolean): string {
@@ -332,7 +337,7 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (["openai", "deepseek", "fireworks_ai", "xai"].includes(route.provider) && route.gateway === undefined) {
+  if (["openai", "deepseek", "fireworks_ai", "xai", "groq"].includes(route.provider) && route.gateway === undefined) {
     const selected = typeof responseModel === "string" && responseModel.length > 0
       ? responseModel
       : requestedModel;
@@ -353,7 +358,7 @@ function recordEvent(
   responsesApi: boolean,
   capability: CapabilityIdentity | undefined,
   idempotencyKey: CapturedIdempotencyKey | undefined,
-  serviceTier?: "default" | "priority",
+  serviceTier?: unknown,
 ): void {
   if (!_buffer || !_pricing) return;
 
@@ -377,7 +382,7 @@ function recordUsageEvent(
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
   rawResponse?: unknown,
-  serviceTier?: "default" | "priority",
+  serviceTier?: unknown,
 ): void {
   if (!_buffer || !_pricing) return;
   const provider = route.provider;
@@ -416,7 +421,7 @@ function recordUsageEvent(
   } else if (provider !== "openai") {
     details.attribution_dimensions = [{ key: "gateway", value: { type: "string", value: provider } }];
   }
-  if (provider === "fireworks_ai" && serviceTier !== undefined) {
+  if (provider === "fireworks_ai" && typeof serviceTier === "string") {
     const dimensions = Array.isArray(details.attribution_dimensions)
       ? details.attribution_dimensions as Array<Record<string, unknown>>
       : [];
@@ -514,6 +519,27 @@ function recordUsageEvent(
       ];
     }
   }
+  if (provider === "groq") {
+    const response = rawResponse !== null && typeof rawResponse === "object"
+      ? rawResponse as Record<string, unknown>
+      : { usage: rawUsage };
+    const pricingLane = groqPricingLane({
+      ...response,
+      ...((response.service_tier === undefined || response.service_tier === null) &&
+          serviceTier !== undefined
+        ? { service_tier: serviceTier }
+        : {}),
+    });
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
   const usageLines = [
     ...(billableInputTokens > 0 ? [{ metric: "input_tokens", quantity: String(billableInputTokens), unit: "Tokens" }] : []),
     ...(cachedTokens > 0 ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }] : []),
@@ -583,12 +609,14 @@ function wrapStream(
   requestedModel: string = "unknown",
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
-  serviceTier?: "default" | "priority",
+  serviceTier?: unknown,
 ): AsyncIterable<any> {
   let model = routedModel(route, undefined, requestedModel);
   let usage: unknown;
   let providerRecordId: unknown;
   let terminalResponse: unknown;
+  let groqServiceTier: unknown = route.provider === "groq" ? serviceTier : undefined;
+  let groqToolExecutionSeen = false;
   let finalized = false;
 
   const finalize = (
@@ -598,10 +626,19 @@ function wrapStream(
     if (finalized) return;
     finalized = true;
     try {
+      const pricingResponse = route.provider === "groq"
+        ? {
+            ...(terminalResponse !== null && typeof terminalResponse === "object"
+              ? terminalResponse as Record<string, unknown>
+              : {}),
+            ...(groqServiceTier === undefined ? {} : { service_tier: groqServiceTier }),
+            _dexcost_groq_tool_execution_seen: groqToolExecutionSeen,
+          }
+        : terminalResponse;
       recordUsageEvent(
         task, routedModel(route, model, requestedModel), usage,
         Math.round(performance.now() - startTime), providerRecordId, route,
-        responsesApi, status, error, capability, idempotencyKey, terminalResponse,
+        responsesApi, status, error, capability, idempotencyKey, pricingResponse,
         serviceTier,
       );
     } catch {
@@ -632,6 +669,12 @@ function wrapStream(
             ? chunk.response
             : chunk;
           terminalResponse = response;
+          if (route.provider === "groq") {
+            if (response?.service_tier !== undefined && response?.service_tier !== null) {
+              groqServiceTier = response.service_tier;
+            }
+            if (groqToolExecutionBlocksStaticPricing(response)) groqToolExecutionSeen = true;
+          }
           if (response?.model) model = response.model;
           if (response?.id) providerRecordId = response.id;
           if (response?.usage) usage = response.usage;

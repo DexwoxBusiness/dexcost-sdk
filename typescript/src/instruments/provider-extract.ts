@@ -95,6 +95,32 @@ export function xaiPricingLane(
   return `${tier}_${totalInputTokens >= 200_000 ? "long" : "short"}`;
 }
 
+export function groqToolExecutionBlocksStaticPricing(response: any): boolean {
+  if (response?._dexcost_groq_tool_execution_seen === true) return true;
+  const candidates: unknown[] = [response?.executed_tools];
+  if (Array.isArray(response?.choices)) {
+    for (const choice of response.choices) {
+      candidates.push(choice?.message?.executed_tools, choice?.delta?.executed_tools);
+    }
+  }
+  for (const executed of candidates) {
+    if (executed === undefined || executed === null) continue;
+    if (!Array.isArray(executed) || executed.length > 0) return true;
+  }
+  return false;
+}
+
+export function groqPricingLane(response: any): "public_sync" | undefined {
+  if (response === undefined || response === null || groqToolExecutionBlocksStaticPricing(response)) {
+    return undefined;
+  }
+  const tier = response?.service_tier;
+  return tier === undefined || tier === null || tier === "default" ||
+    tier === "on_demand" || tier === "flex"
+    ? "public_sync"
+    : undefined;
+}
+
 export function tokenMeasurement(
   response: any,
   requestedModel?: string,
