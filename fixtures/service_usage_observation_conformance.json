@@ -53,6 +53,38 @@
       "expected": [{ "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_type": "model", "resource_id": "jina-embeddings-v3" }]
     },
     {
+      "name": "jina_reranker_v3_5_uses_provider_total_tokens",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v3.5", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v3.5", "usage": { "total_tokens": 2813 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "2813", "resource_type": "model", "resource_id": "jina-reranker-v3.5" }]
+    },
+    {
+      "name": "jina_reranker_v2_uses_provider_total_tokens",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v2-base-multilingual", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v2-base-multilingual", "usage": { "total_tokens": 253, "prompt_tokens": 253 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "253", "resource_type": "model", "resource_id": "jina-reranker-v2-base-multilingual" }]
+    },
+    {
+      "name": "jina_reranker_missing_usage_is_not_invented",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v3.5", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v3.5", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "jina_reranker_unknown_model_is_not_assumed_to_use_public_pricing",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v4-unverified", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v4-unverified", "usage": { "total_tokens": 2813 }, "results": [] },
+      "expected": []
+    },
+    {
       "name": "nomic_embeddings_v1_5_use_provider_total_tokens",
       "url": "https://api-atlas.nomic.ai/v1/embedding/text",
       "headers": {},

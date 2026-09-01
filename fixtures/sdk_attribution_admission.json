@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.7.0",
+  "observer_manifest_version": "1.8.0",
   "conformance_schema_version": "5",
   "required_sdks": ["typescript", "python", "go", "rust"],
   "observers": [
@@ -23,6 +23,17 @@
       "service_key": "jina_embeddings",
       "positive_cases": ["jina_embeddings_are_observed"],
       "fail_open_cases": ["zero_usage_is_not_a_billable_observation"]
+    },
+    {
+      "service_key": "jina_reranker",
+      "positive_cases": [
+        "jina_reranker_v3_5_uses_provider_total_tokens",
+        "jina_reranker_v2_uses_provider_total_tokens"
+      ],
+      "fail_open_cases": [
+        "jina_reranker_missing_usage_is_not_invented",
+        "jina_reranker_unknown_model_is_not_assumed_to_use_public_pricing"
+      ]
     },
     {
       "service_key": "nomic_embeddings",

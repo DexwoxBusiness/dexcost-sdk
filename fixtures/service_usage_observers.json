@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.7.0",
-    "observer_count": 30,
+    "version": "1.8.0",
+    "observer_count": 31,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -58,6 +58,30 @@
       "resource_type": "model",
       "resource_path": "model",
       "source_url": "https://api.jina.ai/scalar"
+    },
+    {
+      "service_key": "jina_reranker",
+      "provider_name": "jina",
+      "provider_service": "rerank",
+      "component": "external",
+      "domains": ["api.jina.ai"],
+      "endpoints": ["/v1/rerank"],
+      "response_path": "usage.total_tokens",
+      "usage_metric": "input_tokens",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "allowed_resource_ids": [
+        "jina-reranker-v1-tiny-en",
+        "jina-reranker-v1-turbo-en",
+        "jina-reranker-v1-base-en",
+        "jina-reranker-v2-base-multilingual",
+        "jina-reranker-v3",
+        "jina-reranker-v3.5",
+        "jina-reranker-m0",
+        "jina-colbert-v1-en",
+        "jina-colbert-v2"
+      ],
+      "source_url": "https://api.jina.ai/openapi.json"
     },
     {
       "service_key": "nomic_embeddings",
