@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -211,15 +212,20 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
   });
 
   it("captures nested usage from a raw OpenAI Responses SSE completion", async () => {
+    const generatedOutput = "x".repeat(20_000);
     const sse = `event: response.completed\ndata: ${JSON.stringify({
       type: "response.completed",
       response: {
         id: "resp-stream-1",
         model: "gpt-5.6-luna",
-        output: [],
+        output: [{
+          type: "message",
+          content: [{ type: "output_text", text: generatedOutput }],
+        }],
         usage: { input_tokens: 640, output_tokens: 96 },
       },
     })}\n\n`;
+    expect(Buffer.byteLength(sse, "utf-8")).toBeGreaterThan(16_384);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(sse, {
       status: 200,
       headers: { "content-type": "text/event-stream" },

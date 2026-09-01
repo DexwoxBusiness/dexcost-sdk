@@ -184,6 +184,9 @@ let _pricing: PricingEngine | null = null;
 /** Max response body size to parse (1 MB). */
 const MAX_BODY_SIZE = 1_048_576;
 
+/** Max size of one complete SSE event retained for usage extraction (1 MB). */
+const MAX_SSE_USAGE_EVENT_SIZE = MAX_BODY_SIZE;
+
 // ---------------------------------------------------------------------------
 // Domain rate registration
 // ---------------------------------------------------------------------------
@@ -1203,6 +1206,14 @@ interface _HttpCallContext {
   sseTailBuffer?: string;
   /** Head of SSE stream preserved so Anthropic message_start is not lost. */
   sseHeadBuffer?: string;
+  /** Current SSE event, retained only until its terminating blank line. */
+  ssePendingEventBuffer?: string;
+  /** True after the current SSE event exceeds the bounded parse limit. */
+  ssePendingEventOverflow?: boolean;
+  /** Small suffix used to find a blank-line delimiter after an overflow. */
+  sseOverflowDelimiterTail?: string;
+  /** Last complete SSE event that carried parseable token usage. */
+  sseUsageEventBuffer?: string;
   /** Shared TextDecoder for SSE chunk decoding (avoids per-chunk allocation). */
   _sseDecoder?: InstanceType<typeof TextDecoder>;
   /** Task resolved once in _maybeRecordCost, reused in _finaliseHttpCall.
@@ -1432,6 +1443,79 @@ function _isInternalToValue(p: boolean | null): boolean | null {
 }
 
 /**
+ * Incrementally retain complete SSE events that carry token usage.
+ *
+ * A Responses API `response.completed` event includes the full generated
+ * output before its usage object, so it can be much larger than the rolling
+ * 8 KiB stream tail. Keep the current event only until its blank-line
+ * delimiter, cap it at the same 1 MiB boundary used for JSON responses, and
+ * discard oversized events until their delimiter arrives. This preserves a
+ * complete terminal event without retaining an unbounded stream.
+ */
+function _bufferCompleteSseUsageEvent(
+  ctx: _HttpCallContext,
+  text: string,
+  flush = false,
+): void {
+  if (!ctx.llmStreamFormat) return;
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (ctx.ssePendingEventOverflow) {
+      const scan = (ctx.sseOverflowDelimiterTail ?? "") + remaining;
+      const delimiter = /\r?\n\r?\n/.exec(scan);
+      if (delimiter === null) {
+        ctx.sseOverflowDelimiterTail = scan.slice(-3);
+        remaining = "";
+        break;
+      }
+      remaining = scan.slice(delimiter.index + delimiter[0].length);
+      ctx.ssePendingEventOverflow = false;
+      ctx.sseOverflowDelimiterTail = undefined;
+      ctx.ssePendingEventBuffer = undefined;
+      continue;
+    }
+
+    const combined = (ctx.ssePendingEventBuffer ?? "") + remaining;
+    const delimiter = /\r?\n\r?\n/.exec(combined);
+    if (delimiter !== null) {
+      const event = combined.slice(0, delimiter.index);
+      if (
+        Buffer.byteLength(event, "utf-8") <= MAX_SSE_USAGE_EVENT_SIZE &&
+        _parseSseUsage(event, ctx.llmStreamFormat) !== null
+      ) {
+        ctx.sseUsageEventBuffer = event;
+      }
+      ctx.ssePendingEventBuffer = undefined;
+      remaining = combined.slice(delimiter.index + delimiter[0].length);
+      continue;
+    }
+
+    if (Buffer.byteLength(combined, "utf-8") <= MAX_SSE_USAGE_EVENT_SIZE) {
+      ctx.ssePendingEventBuffer = combined;
+    } else {
+      ctx.ssePendingEventBuffer = undefined;
+      ctx.ssePendingEventOverflow = true;
+      ctx.sseOverflowDelimiterTail = combined.slice(-3);
+    }
+    remaining = "";
+  }
+
+  if (flush) {
+    const event = ctx.ssePendingEventBuffer;
+    if (
+      !ctx.ssePendingEventOverflow && event &&
+      _parseSseUsage(event, ctx.llmStreamFormat) !== null
+    ) {
+      ctx.sseUsageEventBuffer = event;
+    }
+    ctx.ssePendingEventBuffer = undefined;
+    ctx.ssePendingEventOverflow = false;
+    ctx.sseOverflowDelimiterTail = undefined;
+  }
+}
+
+/**
  * Wrap a Response in a new Response whose body is piped through a
  * counting TransformStream. The counter is held in the closure; when the
  * stream's flush fires (source ended) — or when the caller drops the
@@ -1480,6 +1564,7 @@ function _wrapResponseForByteCounting(
           if ((ctx.sseHeadBuffer?.length ?? 0) < 4096) {
             ctx.sseHeadBuffer = ((ctx.sseHeadBuffer ?? "") + text).slice(0, 4096);
           }
+          _bufferCompleteSseUsageEvent(ctx, text);
         } catch { /* ignore decode errors */ }
       }
     },
@@ -1491,6 +1576,7 @@ function _wrapResponseForByteCounting(
           if (text) {
             ctx.sseTailBuffer = ((ctx.sseTailBuffer ?? "") + text).slice(-8192);
           }
+          _bufferCompleteSseUsageEvent(ctx, text, true);
         } catch { /* ignore decode errors */ }
       }
       finalise("succeeded");
@@ -1777,15 +1863,14 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
 
   // LLM streaming fallback — extract usage from accumulated SSE data.
   if (ctx.llmStreamFormat && (ctx.sseTailBuffer || ctx.liteLlmProxy) && _pricing && !ctx.suppressed) {
-    // Merge head + tail buffers so Anthropic message_start (model + input
-    // tokens) survives even when the stream exceeds the 8k tail window.
-    // Only merge when the tail does NOT already start with the head — for
-    // short streams the 8k tail already contains the 4k head, and blind
-    // concatenation would duplicate the overlapping prefix.
-    const sseData =
-      ctx.sseHeadBuffer && ctx.sseTailBuffer && !ctx.sseTailBuffer.startsWith(ctx.sseHeadBuffer)
-        ? ctx.sseHeadBuffer + ctx.sseTailBuffer
-        : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
+    // Parse the bounded head, the last complete usage-bearing event, and the
+    // tail. The head preserves Anthropic message_start while the complete
+    // event preserves large Responses API terminal payloads whose usage lies
+    // beyond the rolling tail window.
+    const sseData = [ctx.sseHeadBuffer, ctx.sseUsageEventBuffer, ctx.sseTailBuffer]
+      .filter((part, index, all): part is string =>
+        typeof part === "string" && part.length > 0 && all.indexOf(part) === index)
+      .join("\n\n");
     const llmUsage = _parseSseUsage(sseData, ctx.llmStreamFormat);
     if (llmUsage || ctx.liteLlmProxy) {
       const status = ctx.llmStreamStatus ?? "unknown";
