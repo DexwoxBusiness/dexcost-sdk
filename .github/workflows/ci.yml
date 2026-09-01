@@ -229,7 +229,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with: { workspaces: rust }
 
-      - name: P2 cost-map drift check (all SDKs)
+      - name: Active cost-map drift check (Python and TypeScript)
         if: matrix.sdk == 'python'
         run: bash scripts/check_cost_map_drift.sh
 
