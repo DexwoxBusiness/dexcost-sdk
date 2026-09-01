@@ -983,8 +983,30 @@ def _handle_http_call_inner(
     if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
         return
 
+    # Exact observer-owned routes supersede the bundled legacy catalog. This
+    # prevents a broad domain entry from asserting money before the SDK emits
+    # the provider-owned quantity that the control plane prices. Manual domain
+    # rates above remain the highest-precedence user override.
+    observers = get_service_usage_observers()
+    observer_route = observers is not None and observers.matches(url)
+    if observer_route:
+        # Usage-only observers contain no rates and remain active even when
+        # notable-network event emission is disabled.
+        if _handle_usage_observer(
+            url,
+            domain,
+            track_network,
+            bytes_in,
+            bytes_out,
+            response_headers,
+            response,
+            status_code,
+            byte_details,
+            request_body,
+        ):
+            return
     # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
-    if _handle_catalog_entry(
+    elif _handle_catalog_entry(
         url,
         domain,
         track_network,
@@ -993,22 +1015,6 @@ def _handle_http_call_inner(
         response_headers,
         response,
         byte_details,
-    ):
-        return
-
-    # Usage-only observers contain no rates and remain active even when
-    # notable-network event emission is disabled.
-    if _handle_usage_observer(
-        url,
-        domain,
-        track_network,
-        bytes_in,
-        bytes_out,
-        response_headers,
-        response,
-        status_code,
-        byte_details,
-        request_body,
     ):
         return
 

@@ -49,6 +49,19 @@ test("rejects monetary authority in the SDK observer manifest", () => {
   );
 });
 
+test("rejects fixed request quantity with a non-request metric", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "brave_search",
+  );
+  observer.usage_metric = "input_tokens";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer brave_search fixed_quantity and request_count must be declared together",
+  );
+});
+
 test("rejects conformance dimensions that disagree with the observer", () => {
   const candidate = inputs();
   candidate.conformance.cases[0].expected[0].metric = "characters";

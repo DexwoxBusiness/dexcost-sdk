@@ -3,7 +3,7 @@
 import { createRequire } from "node:module";
 import { Decimal } from "../core/models.js";
 
-export type ObservedUsageMetric = "input_tokens" | "audio_seconds" | "characters";
+export type ObservedUsageMetric = "input_tokens" | "audio_seconds" | "characters" | "request_count";
 export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
 export type ObservedResourceType = "model" | "sku";
 
@@ -41,6 +41,7 @@ interface UsageObserverDefinition {
   response_quantity_header?: string;
   response_all?: ResponsePredicate[];
   request_character_count_path?: string;
+  fixed_quantity?: "1";
   usage_metric: ObservedUsageMetric;
   resource_type?: ObservedResourceType;
   resource_path?: string;
@@ -78,7 +79,7 @@ export interface ServiceUsageObservation {
 }
 
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds", "characters"]);
+const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds", "characters", "request_count"]);
 const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text", "text_to_speech"]);
 const RESOURCE_TYPES = new Set<ObservedResourceType>(["model", "sku"]);
 
@@ -179,6 +180,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.request_resource_path,
       observer.request_character_count_path,
       observer.response_quantity_header,
+      observer.fixed_quantity,
       observer.resource_query_parameter,
       observer.default_resource_id,
       observer.fixed_resource_id,
@@ -212,7 +214,10 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.response_path,
         observer.response_quantity_header,
         observer.request_character_count_path,
+        observer.fixed_quantity,
       ].filter((value) => value !== undefined).length !== 1 ||
+      (observer.fixed_quantity !== undefined && observer.fixed_quantity !== "1") ||
+      ((observer.fixed_quantity !== undefined) !== (observer.usage_metric === "request_count")) ||
       (observer.response_path !== undefined &&
         (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
       optionalStrings.some(
@@ -332,6 +337,8 @@ export class ServiceUsageObservers {
         const characterCount = Array.from(text).length;
         if (characterCount === 0) continue;
         quantity = new Decimal(characterCount);
+      } else if (observer.fixed_quantity !== undefined) {
+        quantity = new Decimal(observer.fixed_quantity);
       } else if (observer.response_quantity_header !== undefined) {
         const rawQuantity = positiveDecimal(headers.get(observer.response_quantity_header));
         if (rawQuantity === undefined) continue;

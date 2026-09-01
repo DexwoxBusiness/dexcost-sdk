@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.8.0",
-    "observer_count": 31,
+    "version": "1.9.0",
+    "observer_count": 32,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -96,6 +96,19 @@
       "request_resource_path": "model",
       "allowed_resource_ids": ["nomic-embed-text-v1", "nomic-embed-text-v1.5"],
       "source_url": "https://docs.nomic.ai/reference/api/embed-text-v-1-embedding-text-post"
+    },
+    {
+      "service_key": "brave_search",
+      "provider_name": "brave",
+      "provider_service": "web_search",
+      "component": "external",
+      "domains": ["api.search.brave.com"],
+      "endpoints": ["/res/v1/web/search"],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "search",
+      "source_url": "https://api-dashboard.search.brave.com/api-reference/web/search/get"
     },
     {
       "service_key": "openai_tts",

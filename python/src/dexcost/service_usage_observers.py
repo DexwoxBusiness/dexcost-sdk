@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
-_METRICS = {"input_tokens", "audio_seconds", "characters"}
+_METRICS = {"input_tokens", "audio_seconds", "characters", "request_count"}
 _COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
 _LOG = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ class UsageObserver:
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
+    fixed_quantity: str | None
     usage_metric: str
     resource_type: str | None
     resource_path: str | None
@@ -152,6 +153,7 @@ class ServiceUsageObservers:
                 "request_resource_path",
                 "request_character_count_path",
                 "response_quantity_header",
+                "fixed_quantity",
                 "resource_query_parameter",
                 "default_resource_id",
                 "fixed_resource_id",
@@ -174,6 +176,7 @@ class ServiceUsageObservers:
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
+            fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
             if (
                 definition["service_key"] in keys
@@ -198,9 +201,13 @@ class ServiceUsageObservers:
                         response_path,
                         response_quantity_header,
                         request_character_count_path,
+                        fixed_quantity,
                     )
                 )
                 != 1
+                or fixed_quantity not in {None, "1"}
+                or (fixed_quantity is not None)
+                != (definition["usage_metric"] == "request_count")
                 or (
                     response_path is not None
                     and (not isinstance(response_path, str) or not response_path)
@@ -255,6 +262,7 @@ class ServiceUsageObservers:
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
                     request_character_count_path=request_character_count_path,
+                    fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
                     resource_type=definition.get("resource_type"),
                     resource_path=definition.get("resource_path"),
@@ -342,6 +350,8 @@ class ServiceUsageObservers:
                 if not isinstance(text, str) or not text:
                     continue
                 quantity = Decimal(len(text))
+            elif observer.fixed_quantity:
+                quantity = Decimal(observer.fixed_quantity)
             elif observer.response_quantity_header:
                 raw_quantity = next(
                     (

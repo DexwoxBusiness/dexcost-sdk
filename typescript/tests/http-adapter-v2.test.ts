@@ -72,6 +72,52 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("lets the Brave observer supersede the legacy domain catalog", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      type: "search",
+      web: { results: [] },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.search.brave.com/res/v1/web/search?q=dexcost");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.details["attribution_observer_service"]).toBe("brave_search");
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "brave", service: "web_search" },
+      resource: { type: "sku", id: "search" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("does not apply the legacy Brave price to a failed search request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: "unavailable",
+    }), { status: 503, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+    await runWithTask(task, async () => {
+      const response = await fetch(
+        "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+      );
+      await response.text();
+    });
+
+    const events = getRecordedEvents();
+    expect(events.every(
+      (event) => event.details["attribution_observer_service"] === undefined,
+    )).toBe(true);
+    expect(events.every((event) => event.pricingSource !== "service_catalog")).toBe(true);
+  });
+
   it("does not observe usage from failed provider responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       model: "text-embedding-3-small",

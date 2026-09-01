@@ -21,6 +21,7 @@ struct ObserverDefinition {
     response_quantity_header: Option<String>,
     response_all: Option<Vec<ResponsePredicate>>,
     request_character_count_path: Option<String>,
+    fixed_quantity: Option<String>,
     usage_metric: String,
     resource_type: Option<String>,
     resource_path: Option<String>,
@@ -189,7 +190,7 @@ impl ServiceUsageObservers {
                 )
                 || !matches!(
                     observer.usage_metric.as_str(),
-                    "input_tokens" | "audio_seconds" | "characters"
+                    "input_tokens" | "audio_seconds" | "characters" | "request_count"
                 )
                 || observer.domains.is_empty()
                 || observer.endpoints.is_empty()
@@ -205,11 +206,18 @@ impl ServiceUsageObservers {
                     observer.response_path.is_some(),
                     observer.response_quantity_header.is_some(),
                     observer.request_character_count_path.is_some(),
+                    observer.fixed_quantity.is_some(),
                 ]
                 .into_iter()
                 .filter(|present| *present)
                 .count()
                     != 1
+                || observer
+                    .fixed_quantity
+                    .as_deref()
+                    .is_some_and(|value| value != "1")
+                || observer.fixed_quantity.is_some()
+                    != (observer.usage_metric == "request_count")
                 || observer
                     .response_path
                     .as_ref()
@@ -316,6 +324,8 @@ impl ServiceUsageObservers {
                             .and_then(serde_json::Value::as_str)?;
                         let count = text.chars().count();
                         (count > 0).then(|| Decimal::from(count as u64))?
+                    } else if observer.fixed_quantity.is_some() {
+                        Decimal::ONE
                     } else if let Some(header) = observer.response_quantity_header.as_deref() {
                         headers
                             .iter()
@@ -438,6 +448,38 @@ impl ServiceUsageObservers {
                 && observer.endpoints.iter().any(|endpoint| {
                     parsed.path() == endpoint || parsed.path().starts_with(&format!("{endpoint}/"))
                 })
+        })
+    }
+
+    pub fn matches(&self, raw_url: &str) -> bool {
+        let Ok(parsed) = reqwest::Url::parse(raw_url) else {
+            return false;
+        };
+        let query: HashMap<String, Vec<String>> =
+            parsed
+                .query_pairs()
+                .fold(HashMap::new(), |mut values, (key, value)| {
+                    values
+                        .entry(key.into_owned())
+                        .or_default()
+                        .push(value.into_owned());
+                    values
+                });
+        self.observers.iter().any(|observer| {
+            observer
+                .domains
+                .iter()
+                .any(|domain| parsed.host_str() == Some(domain))
+                && observer.endpoints.iter().any(|endpoint| {
+                    parsed.path() == endpoint || parsed.path().starts_with(&format!("{endpoint}/"))
+                })
+                && (observer.query_any.is_empty()
+                    || observer.query_any.iter().any(|predicate| {
+                        query.get(&predicate.parameter).is_some_and(|values| {
+                            predicate.operator == "present"
+                                || values.iter().any(|value| query_value_is_truthy(value))
+                        })
+                    }))
         })
     }
 }

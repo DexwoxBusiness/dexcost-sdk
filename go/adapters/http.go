@@ -247,6 +247,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	domainRatesMu.RUnlock()
 
 	cat := GetServiceCatalog()
+	observerRoute := pricing.HasServiceUsageObserver(req.URL.String())
 
 	// ── Path 1: user-registered domain rate ─────────────────────────────
 	if hasRate {
@@ -268,7 +269,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 
 	// ── Path 2: service catalog match ──────────────────────────────────
-	if cat != nil {
+	if cat != nil && !observerRoute {
 		if entry := cat.Lookup(req.URL.String()); entry != nil {
 			headers := flattenHeaders(resp.Header)
 			body, replaced, bodyByteCount := readAndReplaceBodyCounted(resp)
@@ -297,7 +298,7 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	// task finalize).
 	// Usage-only observation for services withheld from SDK pricing. Buffer
 	// only known observer responses and never attach a monetary rate.
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 && pricing.HasServiceUsageObserver(req.URL.String()) {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && observerRoute {
 		headers := flattenHeaders(resp.Header)
 		body, replaced, bodyByteCount := readAndReplaceBodyCounted(resp)
 		if replaced != nil {

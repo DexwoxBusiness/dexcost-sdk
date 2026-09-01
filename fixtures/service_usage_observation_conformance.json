@@ -1,5 +1,5 @@
 {
-  "schema_version": "5",
+  "schema_version": "6",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -114,6 +114,20 @@
       "headers": {},
       "request": { "model": "nomic-embed-text-v2-moe", "texts": ["search_document: DexCost"] },
       "response": { "model": "nomic-embed-text-v2-moe", "usage": { "prompt_tokens": 37, "total_tokens": 37 } },
+      "expected": []
+    },
+    {
+      "name": "brave_web_search_counts_one_successful_request",
+      "url": "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+      "headers": {},
+      "response": { "type": "search", "web": { "type": "search", "results": [] } },
+      "expected": [{ "service_key": "brave_search", "provider_name": "brave", "provider_service": "web_search", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "search" }]
+    },
+    {
+      "name": "brave_unrelated_endpoint_is_not_assumed_to_be_web_search",
+      "url": "https://api.search.brave.com/res/v1/answers/search?q=dexcost",
+      "headers": {},
+      "response": { "type": "answer" },
       "expected": []
     },
     {

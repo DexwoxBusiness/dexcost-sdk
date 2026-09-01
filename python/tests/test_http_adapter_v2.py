@@ -132,6 +132,43 @@ class TestKnownServiceExtraction:
         assert wire["usage"] == [{"metric": "input_tokens", "quantity": "17", "unit": "Tokens"}]
         assert "cost_evidence" not in wire
 
+    def test_brave_observer_supersedes_legacy_domain_catalog(self) -> None:
+        task = _make_task("search")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+                response=_make_response(body={"type": "search", "web": {"results": []}}),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.details["attribution_observer_service"] == "brave_search"
+        assert wire is not None
+        assert wire["provider"] == {"name": "brave", "service": "web_search"}
+        assert wire["resource"] == {"type": "sku", "id": "search"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert "cost_evidence" not in wire
+
+    def test_failed_brave_request_does_not_fall_back_to_legacy_price(self) -> None:
+        task = _make_task("search")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+                response=_make_response(body={"error": "unavailable"}, status_code=503),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        assert events[0].event_type == "network"
+        assert events[0].details.get("attribution_observer_service") is None
+        assert events[0].pricing_source != "service_catalog"
+
     def test_provider_suppression_precedes_usage_observer(self) -> None:
         task = _make_task("embedding")
         response = _make_response(

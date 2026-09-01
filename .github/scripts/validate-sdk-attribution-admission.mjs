@@ -168,6 +168,25 @@ function caseTargetsObserver(testCase, observer) {
   return true;
 }
 
+function caseExercisesFixedQuantityEndpointBoundary(testCase, observer) {
+  if (observer?.fixed_quantity !== "1") return false;
+  let url;
+  try {
+    url = new URL(testCase.url);
+  } catch {
+    return false;
+  }
+  return (
+    Array.isArray(observer.domains) &&
+    observer.domains.includes(url.hostname) &&
+    Array.isArray(observer.endpoints) &&
+    observer.endpoints.every(
+      (endpoint) =>
+        url.pathname !== endpoint && !url.pathname.startsWith(`${endpoint}/`),
+    )
+  );
+}
+
 function isPositiveDecimal(value) {
   if (
     typeof value !== "string" ||
@@ -248,9 +267,21 @@ function validateObserverShape(observer, issues) {
     observer?.response_path,
     observer?.response_quantity_header,
     observer?.request_character_count_path,
+    observer?.fixed_quantity,
   ].filter(isNonEmptyString);
   if (quantitySources.length !== 1) {
     issues.push(`observer ${key} must declare exactly one usage quantity source`);
+  }
+  if (observer?.fixed_quantity !== undefined && observer.fixed_quantity !== "1") {
+    issues.push(`observer ${key} fixed_quantity must be exactly 1`);
+  }
+  if (
+    (observer?.fixed_quantity === "1") !==
+    (observer?.usage_metric === "request_count")
+  ) {
+    issues.push(
+      `observer ${key} fixed_quantity and request_count must be declared together`,
+    );
   }
 
   const resourceSelectors = [
@@ -405,7 +436,11 @@ export function validateSdkAttributionAdmission({
           issues.push(`observer ${serviceKey} references missing case ${caseName}`);
           continue;
         }
-        if (!caseTargetsObserver(testCase, observer)) {
+        const targetsObserver = caseTargetsObserver(testCase, observer);
+        const exercisesFixedEndpointBoundary =
+          field === "fail_open_cases" &&
+          caseExercisesFixedQuantityEndpointBoundary(testCase, observer);
+        if (!targetsObserver && !exercisesFixedEndpointBoundary) {
           issues.push(`case ${caseName} does not target observer ${serviceKey}`);
         }
         const emitsService = testCase.expected.some(

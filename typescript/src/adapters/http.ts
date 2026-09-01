@@ -1882,6 +1882,12 @@ async function _maybeRecordCost(
       return;
     }
 
+    // Exact observer-owned routes supersede the bundled legacy catalog. A
+    // broad domain entry must not assert money before provider-owned usage is
+    // emitted for control-plane pricing. Manual domain rates above retain the
+    // highest precedence.
+    const observerRoute = serviceUsageObservers?.matches(urlStr) === true;
+
     // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
     // detect known LLM API endpoints and emit llm_call events using the
     // pricing engine for proper token-based cost attribution.
@@ -1948,7 +1954,7 @@ async function _maybeRecordCost(
     }
 
     // 2. Check service catalog
-    if (_catalog) {
+    if (!observerRoute && _catalog) {
       const entry = _catalog.lookup(urlStr);
       if (entry) {
         // Extract cost from response
@@ -2000,7 +2006,7 @@ async function _maybeRecordCost(
     // 2.5. Usage-only observation for safety-disabled services. These
     // definitions deliberately contain no rates: the SDK reports provider-
     // owned quantities and the control plane decides whether they are priced.
-    if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
+    if (response?.ok && observerRoute) {
       try {
         let observerResponseBody: unknown;
         if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {

@@ -27,6 +27,7 @@ type usageObserverDefinition struct {
 	ResponseQuantityHeader           string                   `json:"response_quantity_header"`
 	ResponseAll                      []usageResponsePredicate `json:"response_all"`
 	RequestCharacterCountPath        string                   `json:"request_character_count_path"`
+	FixedQuantity                    string                   `json:"fixed_quantity"`
 	UsageMetric                      string                   `json:"usage_metric"`
 	ResourceType                     string                   `json:"resource_type"`
 	ResourcePath                     string                   `json:"resource_path"`
@@ -118,7 +119,9 @@ func loadUsageObservers() {
 		_, duplicate := keys[observer.ServiceKey]
 		if duplicate || observer.ServiceKey == "" || observer.ProviderName == "" ||
 			observer.ProviderService == "" ||
-			boolCount(observer.ResponsePath != "", observer.ResponseQuantityHeader != "", observer.RequestCharacterCountPath != "") != 1 ||
+			boolCount(observer.ResponsePath != "", observer.ResponseQuantityHeader != "", observer.RequestCharacterCountPath != "", observer.FixedQuantity != "") != 1 ||
+			(observer.FixedQuantity != "" && observer.FixedQuantity != "1") ||
+			(observer.FixedQuantity != "") != (observer.UsageMetric == "request_count") ||
 			observer.metricInvalid() ||
 			(observer.Component != "external" && observer.Component != "speech_to_text" &&
 				observer.Component != "text_to_speech") ||
@@ -192,7 +195,7 @@ func loadUsageObservers() {
 
 func (observer usageObserverDefinition) metricInvalid() bool {
 	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds" &&
-		observer.UsageMetric != "characters"
+		observer.UsageMetric != "characters" && observer.UsageMetric != "request_count"
 }
 
 func boolCount(values ...bool) int {
@@ -377,6 +380,8 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 				continue
 			}
 			quantity = decimal.NewFromInt(int64(utf8.RuneCountInString(text)))
+		} else if observer.FixedQuantity != "" {
+			quantity = decimal.NewFromInt(1)
 		} else if observer.ResponseQuantityHeader != "" {
 			var headerValue string
 			for key, value := range headers {
