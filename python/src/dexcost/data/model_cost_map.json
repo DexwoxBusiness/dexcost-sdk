@@ -32653,15 +32653,6 @@
             "/v1/audio/transcriptions"
         ]
     },
-    "whisper-1": {
-        "input_cost_per_second": 0.0001,
-        "litellm_provider": "openai",
-        "mode": "audio_transcription",
-        "output_cost_per_second": 0.0001,
-        "supported_endpoints": [
-            "/v1/audio/transcriptions"
-        ]
-    },
     "xai/grok-2": {
         "litellm_provider": "xai",
         "max_input_tokens": 131072,

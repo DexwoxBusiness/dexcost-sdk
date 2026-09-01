@@ -241,11 +241,12 @@ def test_early_image_stream_close_is_cancelled_not_successful(
     assert raw.closed
 
 
-def test_whisper_duration_and_tts_characters_are_priced_without_content(
+def test_whisper_duration_and_tts_characters_are_observed_without_content(
     tracker: CostTracker, storage: SQLiteStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from openai.resources.audio.speech import Speech
     from openai.resources.audio.transcriptions import Transcriptions
+    from openai.resources.audio.translations import Translations
 
     from dexcost.instruments.openai import instrument_openai
 
@@ -256,13 +257,38 @@ def test_whisper_duration_and_tts_characters_are_priced_without_content(
     monkeypatch.setattr(
         Transcriptions, "create", staticmethod(lambda **kwargs: transcription)
     )
+    monkeypatch.setattr(
+        Translations, "create", staticmethod(lambda **kwargs: transcription)
+    )
     monkeypatch.setattr(Speech, "create", staticmethod(lambda **kwargs: object()))
     instrument_openai(tracker)
 
     Transcriptions.create(model="whisper-1", file=object())
+    Translations.create(model="whisper-1", file=object())
     Speech.create(model="tts-1", voice="alloy", input="do not retain")
-    by_service = {event.service_name: event for event in _events(storage)}
-    assert by_service["speech_to_text"].cost_usd == Decimal("0.00600")
+    events = _events(storage)
+    by_service = {event.service_name: event for event in events}
+    whisper_events = [event for event in events if event.service_name == "speech_to_text"]
+    assert len(whisper_events) == 2
+    assert all(event.cost_usd == 0 for event in whisper_events)
+    assert all(event.cost_confidence == "unknown" for event in whisper_events)
+    for event in whisper_events:
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "openai",
+            "service": "speech_to_text",
+        }
+        assert observation["resource"] == {"type": "model", "id": "whisper-1"}
+        assert observation["usage"] == [
+            {
+                "line_id": observation["usage"][0]["line_id"],
+                "metric": "audio_seconds",
+                "quantity": "60",
+                "unit": "Seconds",
+                "dimensions": [],
+            }
+        ]
     assert by_service["text_to_speech"].cost_usd == Decimal("0.000195")
     assert "do not retain" not in str(by_service["text_to_speech"].details)
     assert by_service["text_to_speech"].details["attribution_usage_lines"] == [
