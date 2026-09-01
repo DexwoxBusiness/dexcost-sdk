@@ -110,7 +110,7 @@ def test_async_embedding_preserves_explicit_task(
     asyncio.run(run())
 
 
-def test_gpt_image_prices_text_image_and_output_tokens_separately(
+def test_gpt_image_2_emits_server_pricing_usage_without_local_money(
     tracker: CostTracker, storage: SQLiteStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from openai.resources.images import Images
@@ -131,24 +131,25 @@ def test_gpt_image_prices_text_image_and_output_tokens_separately(
     monkeypatch.setattr(Images, "generate", staticmethod(lambda **kwargs: response))
     instrument_openai(tracker)
 
-    Images.generate(model="gpt-image-1", prompt="private prompt")
+    Images.generate(model="gpt-image-2", prompt="private prompt")
     event = _events(storage)[0]
-    assert event.cost_usd == Decimal("0.0167000")
-    assert [line["dimension"] for line in event.details["pricing_breakdown"]] == [
-        "input_image_tokens",
-        "input_tokens",
-        "output_image_tokens",
-    ]
+    assert event.cost_usd == 0
+    assert event.cost_confidence == "unknown"
     assert [line["metric"] for line in event.details["attribution_usage_lines"]] == [
         "input_tokens",
         "input_image_tokens",
         "output_image_tokens",
         "image_count",
     ]
+    observation = to_attribution_observation_v3(event)
+    assert observation is not None
+    assert observation["component"] == "external"
+    assert observation["provider"] == {"name": "openai", "service": "images"}
+    assert observation["resource"] == {"type": "model", "id": "gpt-image-2"}
     assert "private prompt" not in str(event.details)
 
 
-def test_dall_e_uses_resolution_and_quality_catalog_variant(
+def test_removed_dall_e_model_is_observed_without_stale_local_money(
     tracker: CostTracker, storage: SQLiteStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from openai.resources.images import Images
@@ -166,8 +167,20 @@ def test_dall_e_uses_resolution_and_quality_catalog_variant(
         size="1792x1024",
     )
     event = _events(storage)[0]
-    assert event.cost_usd == Decimal("0.11999117312")
-    assert event.details["pricing_resolved_model"] == "hd/1792-x-1024/dall-e-3"
+    assert event.cost_usd == 0
+    assert event.cost_confidence == "unknown"
+    observation = to_attribution_observation_v3(event)
+    assert observation is not None
+    assert observation["resource"] == {"type": "model", "id": "dall-e-3"}
+    assert observation["usage"] == [
+        {
+            "line_id": observation["usage"][0]["line_id"],
+            "metric": "image_count",
+            "quantity": "1",
+            "unit": "Images",
+            "dimensions": [],
+        }
+    ]
 
 
 class _SyncStream:
@@ -404,5 +417,6 @@ def test_async_image_and_speech_public_methods(
     by_operation = {
         event.details["attribution_operation_name"]: event for event in _events(storage)
     }
-    assert by_operation["openai.images.edit"].cost_usd == Decimal("0.02")
+    assert by_operation["openai.images.edit"].cost_usd == 0
+    assert by_operation["openai.images.edit"].cost_confidence == "unknown"
     assert by_operation["openai.audio.speech.create"].cost_usd == Decimal("0.00012")

@@ -190,7 +190,7 @@ describe("current official OpenAI TypeScript surface", () => {
     await instrumentOpenai(new PricingEngine(), buffer);
     expect(Images.prototype.generate).not.toBe(originalImage);
     await new Embeddings().create({ model: "text-embedding-3-small", input: "private" });
-    await new Images().generate({ model: "gpt-image-1", prompt: "private" });
+    await new Images().generate({ model: "gpt-image-2", prompt: "private" });
     await new Transcriptions().create({ model: "whisper-1", file: "private" });
     await new Translations().create({ model: "whisper-1", file: "private" });
     await new Speech().create({ model: "tts-1", input: "do not retain" });
@@ -209,6 +209,15 @@ describe("current official OpenAI TypeScript surface", () => {
       expect.objectContaining({ metric: "output_image_tokens", quantity: "100" }),
       expect.objectContaining({ metric: "image_count", quantity: "1" }),
     ]));
+    const imageEvent = byService.get("images");
+    expect(imageEvent?.costUsd.toString()).toBe("0");
+    expect(imageEvent?.costConfidence).toBe("unknown");
+    const imageObservation = imageEvent === undefined
+      ? undefined
+      : toAttributionObservationV3(imageEvent);
+    expect(imageObservation?.component).toBe("external");
+    expect(imageObservation?.provider).toEqual({ name: "openai", service: "images" });
+    expect(imageObservation?.resource).toEqual({ type: "model", id: "gpt-image-2" });
     const whisperEvents = allEvents.filter((event) => event.serviceName === "speech_to_text");
     expect(whisperEvents).toHaveLength(2);
     for (const event of whisperEvents) {
@@ -225,6 +234,24 @@ describe("current official OpenAI TypeScript surface", () => {
       expect.objectContaining({ metric: "characters", quantity: "13" }),
     ]);
     expect(JSON.stringify(buffer.getAllEvents())).not.toContain("do not retain");
+  });
+
+  it("observes removed DALL-E models without stale local money", async () => {
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new Images().generate({
+      model: "dall-e-3",
+      prompt: "private",
+      quality: "hd",
+      size: "1792x1024",
+    });
+
+    const event = buffer.getAllEvents()[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(toAttributionObservationV3(event)?.resource).toEqual({
+      type: "model",
+      id: "dall-e-3",
+    });
   });
 
   it("keeps Fireworks embedding provider and resource identity unprefixed", async () => {
