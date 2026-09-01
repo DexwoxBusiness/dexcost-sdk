@@ -337,16 +337,18 @@ class TestKnownServiceExtraction:
         url = (
             "https://api.deepgram.com/v1/listen?model=nova-3&language=multi"
             "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme"
+            "&detect_entities=true"
         )
         with task_context(task):
             _handle_http_call(url, method="POST", response=response)
         wires = [to_attribution_event_v2(event) for event in get_recorded_events()]
-        assert len(wires) == 4
+        assert len(wires) == 5
         assert [wire["resource"]["id"] for wire in wires if wire is not None] == [
             "nova-3:multilingual",
             "speaker_diarization",
             "redaction",
             "keyterm_prompting",
+            "entity_detection",
         ]
         assert all(
             wire is not None

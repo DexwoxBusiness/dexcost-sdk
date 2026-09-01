@@ -139,19 +139,20 @@
     },
     {
       "name": "deepgram_emits_base_and_billable_addons_with_channel_seconds",
-      "url": "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-2", "duration": 10, "channels": 2 } },
       "expected": [
         { "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "nova-3:multilingual", "provider_record_id": "dg-2" },
         { "service_key": "deepgram_diarization", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "speaker_diarization", "provider_record_id": "dg-2" },
         { "service_key": "deepgram_redaction", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "redaction", "provider_record_id": "dg-2" },
-        { "service_key": "deepgram_keyterm_prompting", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "keyterm_prompting", "provider_record_id": "dg-2" }
+        { "service_key": "deepgram_keyterm_prompting", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "keyterm_prompting", "provider_record_id": "dg-2" },
+        { "service_key": "deepgram_entity_detection", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "entity_detection", "provider_record_id": "dg-2" }
       ]
     },
     {
       "name": "false_deepgram_addon_flags_do_not_create_lines",
-      "url": "https://api.deepgram.com/v1/listen?model=nova-3&diarize=false&redact=false",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&diarize=false&redact=false&detect_entities=false",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-3", "duration": 4, "channels": 2 } },
       "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "4", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-3" }]

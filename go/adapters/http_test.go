@@ -215,7 +215,7 @@ func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
 	client := adapters.TrackHTTP(&http.Client{Transport: base})
 	task := core.NewTask("transcription")
 	rawURL := "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
-		"&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme"
+		"&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true"
 	req, _ := http.NewRequestWithContext(
 		core.WithTask(context.Background(), &task), http.MethodPost, rawURL, nil,
 	)
@@ -225,11 +225,12 @@ func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
 	}
 	resp.Body.Close()
 	events := adapters.GetRecordedEvents()
-	if len(events) != 4 {
-		t.Fatalf("expected base plus three add-on events, got %d", len(events))
+	if len(events) != 5 {
+		t.Fatalf("expected base plus four add-on events, got %d", len(events))
 	}
 	wantResources := []string{
 		"nova-3:multilingual", "speaker_diarization", "redaction", "keyterm_prompting",
+		"entity_detection",
 	}
 	for i, event := range events {
 		wire := attribution.ToEventV2(event)

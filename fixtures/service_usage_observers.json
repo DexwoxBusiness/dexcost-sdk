@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.5.0",
-    "observer_count": 28,
+    "version": "1.6.0",
+    "observer_count": 29,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -177,6 +177,25 @@
       "quantity_multiplier_query_parameter": "multichannel",
       "record_id_path": "metadata.request_id",
       "source_url": "https://deepgram.com/pricing"
+    },
+    {
+      "service_key": "deepgram_entity_detection",
+      "provider_name": "deepgram",
+      "provider_service": "speech_to_text_addon",
+      "component": "speech_to_text",
+      "domains": ["api.deepgram.com", "api.eu.deepgram.com", "api.au.deepgram.com"],
+      "endpoints": ["/v1/listen"],
+      "response_path": "metadata.duration",
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "entity_detection",
+      "query_any": [
+        { "parameter": "detect_entities", "operator": "truthy" }
+      ],
+      "quantity_multiplier_path": "metadata.channels",
+      "quantity_multiplier_query_parameter": "multichannel",
+      "record_id_path": "metadata.request_id",
+      "source_url": "https://developers.deepgram.com/docs/detect-entities"
     },
     {
       "service_key": "assemblyai_transcription",

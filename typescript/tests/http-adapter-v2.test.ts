@@ -384,16 +384,17 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     trackHttp(buffer);
     const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
     const url = "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
-      "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme";
+      "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true";
     await runWithTask(task, async () => { await fetch(url, { method: "POST" }); });
 
     const wires = getRecordedEvents().map(toAttributionEventV2);
-    expect(wires).toHaveLength(4);
+    expect(wires).toHaveLength(5);
     expect(wires.map((wire) => wire?.resource?.id)).toEqual([
       "nova-3:multilingual",
       "speaker_diarization",
       "redaction",
       "keyterm_prompting",
+      "entity_detection",
     ]);
     expect(wires.every((wire) => wire?.usage[0].quantity === "20")).toBe(true);
     expect(wires.every((wire) => wire?.cost_evidence === undefined)).toBe(true);

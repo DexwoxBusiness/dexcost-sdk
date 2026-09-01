@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.5.0",
+  "observer_manifest_version": "1.6.0",
   "conformance_schema_version": "5",
   "required_sdks": ["typescript", "python", "go", "rust"],
   "observers": [
@@ -53,6 +53,11 @@
       "service_key": "deepgram_keyterm_prompting",
       "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
       "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "deepgram_entity_detection",
+      "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
+      "fail_open_cases": ["false_deepgram_addon_flags_do_not_create_lines"]
     },
     {
       "service_key": "assemblyai_transcription",
