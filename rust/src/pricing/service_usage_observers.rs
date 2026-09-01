@@ -202,7 +202,11 @@ impl ServiceUsageObservers {
                 )
                 || !matches!(
                     observer.usage_metric.as_str(),
-                    "input_tokens" | "audio_seconds" | "characters" | "request_count"
+                    "input_tokens"
+                        | "audio_seconds"
+                        | "characters"
+                        | "request_count"
+                        | "credit_count"
                 )
                 || observer.domains.is_empty()
                 || observer.endpoints.is_empty()

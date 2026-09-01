@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.12.0",
-    "observer_count": 35,
+    "version": "1.13.0",
+    "observer_count": 39,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -155,6 +155,66 @@
       "resource_type": "sku",
       "fixed_resource_id": "raw_web_search",
       "source_url": "https://docs.perplexity.ai/api-reference/search-post"
+    },
+    {
+      "service_key": "tavily_search",
+      "provider_name": "tavily",
+      "provider_service": "search_api",
+      "component": "external",
+      "domains": ["api.tavily.com"],
+      "endpoints": ["/search"],
+      "endpoint_match": "exact",
+      "response_path": "usage.credits",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "api_credit",
+      "record_id_path": "request_id",
+      "source_url": "https://docs.tavily.com/documentation/api-reference/endpoint/search"
+    },
+    {
+      "service_key": "tavily_extract",
+      "provider_name": "tavily",
+      "provider_service": "extract_api",
+      "component": "external",
+      "domains": ["api.tavily.com"],
+      "endpoints": ["/extract"],
+      "endpoint_match": "exact",
+      "response_path": "usage.credits",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "api_credit",
+      "record_id_path": "request_id",
+      "source_url": "https://docs.tavily.com/documentation/api-reference/endpoint/extract"
+    },
+    {
+      "service_key": "tavily_crawl",
+      "provider_name": "tavily",
+      "provider_service": "crawl_api",
+      "component": "external",
+      "domains": ["api.tavily.com"],
+      "endpoints": ["/crawl"],
+      "endpoint_match": "exact",
+      "response_path": "usage.credits",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "api_credit",
+      "record_id_path": "request_id",
+      "source_url": "https://docs.tavily.com/documentation/api-reference/endpoint/crawl"
+    },
+    {
+      "service_key": "tavily_map",
+      "provider_name": "tavily",
+      "provider_service": "map_api",
+      "component": "external",
+      "domains": ["api.tavily.com"],
+      "endpoints": ["/map"],
+      "endpoint_match": "exact",
+      "response_path": "usage.credits",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "api_credit",
+      "record_id_path": "request_id",
+      "source_url": "https://docs.tavily.com/documentation/api-reference/endpoint/map"
     },
     {
       "service_key": "openai_tts",

@@ -3,7 +3,12 @@
 import { createRequire } from "node:module";
 import { Decimal } from "../core/models.js";
 
-export type ObservedUsageMetric = "input_tokens" | "audio_seconds" | "characters" | "request_count";
+export type ObservedUsageMetric =
+  | "input_tokens"
+  | "audio_seconds"
+  | "characters"
+  | "request_count"
+  | "credit_count";
 export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
 export type ObservedResourceType = "model" | "sku";
 
@@ -81,7 +86,13 @@ export interface ServiceUsageObservation {
 }
 
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const METRICS = new Set<ObservedUsageMetric>(["input_tokens", "audio_seconds", "characters", "request_count"]);
+const METRICS = new Set<ObservedUsageMetric>([
+  "input_tokens",
+  "audio_seconds",
+  "characters",
+  "request_count",
+  "credit_count",
+]);
 const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text", "text_to_speech"]);
 const RESOURCE_TYPES = new Set<ObservedResourceType>(["model", "sku"]);
 

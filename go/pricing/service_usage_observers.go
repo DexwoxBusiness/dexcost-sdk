@@ -200,7 +200,8 @@ func loadUsageObservers() {
 
 func (observer usageObserverDefinition) metricInvalid() bool {
 	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds" &&
-		observer.UsageMetric != "characters" && observer.UsageMetric != "request_count"
+		observer.UsageMetric != "characters" && observer.UsageMetric != "request_count" &&
+		observer.UsageMetric != "credit_count"
 }
 
 func boolCount(values ...bool) int {

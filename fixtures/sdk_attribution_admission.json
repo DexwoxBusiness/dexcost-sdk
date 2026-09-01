@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.12.0",
+  "observer_manifest_version": "1.13.0",
   "conformance_schema_version": "6",
   "required_sdks": ["typescript", "python", "go", "rust"],
   "observers": [
@@ -78,6 +78,26 @@
       "service_key": "perplexity_search",
       "positive_cases": ["perplexity_raw_search_counts_one_successful_request"],
       "fail_open_cases": ["perplexity_sonar_chat_is_not_assumed_to_be_raw_search"]
+    },
+    {
+      "service_key": "tavily_search",
+      "positive_cases": ["tavily_search_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_search_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_extract",
+      "positive_cases": ["tavily_extract_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_extract_zero_threshold_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_crawl",
+      "positive_cases": ["tavily_crawl_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_crawl_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_map",
+      "positive_cases": ["tavily_map_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_map_zero_threshold_usage_is_not_invented"]
     },
     {
       "service_key": "openai_tts",

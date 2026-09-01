@@ -216,6 +216,70 @@
       "expected": []
     },
     {
+      "name": "tavily_search_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "search_depth": "advanced", "include_usage": true },
+      "response": { "results": [], "usage": { "credits": 2 }, "request_id": "tvly-search-1" },
+      "expected": [{ "service_key": "tavily_search", "provider_name": "tavily", "provider_service": "search_api", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-search-1" }]
+    },
+    {
+      "name": "tavily_search_missing_usage_is_not_invented",
+      "url": "https://api.tavily.com/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "search_depth": "basic" },
+      "response": { "results": [], "request_id": "tvly-search-no-usage" },
+      "expected": []
+    },
+    {
+      "name": "tavily_extract_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/extract",
+      "headers": {},
+      "request": { "urls": ["https://example.com"], "extract_depth": "advanced", "include_usage": true },
+      "response": { "results": [{ "url": "https://example.com", "raw_content": "Example" }], "failed_results": [], "usage": { "credits": 2 }, "request_id": "tvly-extract-1" },
+      "expected": [{ "service_key": "tavily_extract", "provider_name": "tavily", "provider_service": "extract_api", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-extract-1" }]
+    },
+    {
+      "name": "tavily_extract_zero_threshold_usage_is_not_invented",
+      "url": "https://api.tavily.com/extract",
+      "headers": {},
+      "request": { "urls": ["https://example.com"], "include_usage": true },
+      "response": { "results": [{ "url": "https://example.com", "raw_content": "Example" }], "failed_results": [], "usage": { "credits": 0 }, "request_id": "tvly-extract-zero" },
+      "expected": []
+    },
+    {
+      "name": "tavily_crawl_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/crawl",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": [], "usage": { "credits": "3" }, "request_id": "tvly-crawl-1" },
+      "expected": [{ "service_key": "tavily_crawl", "provider_name": "tavily", "provider_service": "crawl_api", "component": "external", "metric": "credit_count", "quantity": "3", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-crawl-1" }]
+    },
+    {
+      "name": "tavily_crawl_missing_usage_is_not_invented",
+      "url": "https://api.tavily.com/crawl",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com" },
+      "response": { "base_url": "docs.tavily.com", "results": [], "request_id": "tvly-crawl-no-usage" },
+      "expected": []
+    },
+    {
+      "name": "tavily_map_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/map",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "instructions": "Find pricing pages", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": ["https://docs.tavily.com/documentation/api-credits"], "usage": { "credits": 1 }, "request_id": "tvly-map-1" },
+      "expected": [{ "service_key": "tavily_map", "provider_name": "tavily", "provider_service": "map_api", "component": "external", "metric": "credit_count", "quantity": "1", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-map-1" }]
+    },
+    {
+      "name": "tavily_map_zero_threshold_usage_is_not_invented",
+      "url": "https://api.tavily.com/map",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": [], "usage": { "credits": 0 }, "request_id": "tvly-map-zero" },
+      "expected": []
+    },
+    {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
       "url": "https://api.openai.com/v1/audio/speech",
       "headers": { "x-request-id": "req_tts_123" },

@@ -11,7 +11,13 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
-_METRICS = {"input_tokens", "audio_seconds", "characters", "request_count"}
+_METRICS = {
+    "input_tokens",
+    "audio_seconds",
+    "characters",
+    "request_count",
+    "credit_count",
+}
 _COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
 _LOG = logging.getLogger(__name__)
 
