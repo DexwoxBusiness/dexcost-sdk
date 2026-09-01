@@ -169,6 +169,11 @@ def _reset_instrument_state() -> None:
     except ImportError:
         pass
     try:
+        from dexcost.instruments.groq import uninstrument_groq
+        uninstrument_groq()
+    except ImportError:
+        pass
+    try:
         from dexcost.instruments.fal import uninstrument_fal
         uninstrument_fal()
     except ImportError:

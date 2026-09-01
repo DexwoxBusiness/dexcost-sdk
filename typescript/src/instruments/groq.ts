@@ -128,10 +128,8 @@ export async function instrumentGroq(pricing: PricingEngine, buffer: EventBuffer
   const roots: any[] = [];
   if (providedModule !== undefined) roots.push(providedModule);
   else {
-    // @ts-expect-error optional official SDK
     roots.push(await import("groq-sdk"));
     try {
-      // @ts-expect-error optional official SDK subpath
       roots.push(await import("groq-sdk/resources/chat/completions"));
     } catch { /* older official packages still expose injectable client instances */ }
   }

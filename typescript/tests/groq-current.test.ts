@@ -47,6 +47,11 @@ describe("current official Groq attribution", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("patches the installed official groq-sdk 1.x resource surface", async () => {
+    provideGroqModule(undefined);
+    await expect(instrumentGroq(new PricingEngine(), buffer)).resolves.toBeUndefined();
+  });
+
   it.each([
     ["on_demand", false, [], "public_sync"],
     ["flex", false, [], "public_sync"],

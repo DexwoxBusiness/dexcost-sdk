@@ -111,3 +111,22 @@ def test_native_groq_request_tier_fails_open_when_response_omits_it(
     finally:
         uninstrument_groq()
         storage.close()
+
+
+def test_installed_official_groq_1x_surface_is_patchable(tmp_path: Any) -> None:
+    from groq.resources.chat.completions import AsyncCompletions, Completions
+
+    uninstrument_groq()
+    original_sync = Completions.create
+    original_async = AsyncCompletions.create
+    storage = SQLiteStorage(tmp_path / "groq-official-surface.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    try:
+        instrument_groq(tracker)
+        assert Completions.create is not original_sync
+        assert AsyncCompletions.create is not original_async
+    finally:
+        uninstrument_groq()
+        assert Completions.create is original_sync
+        assert AsyncCompletions.create is original_async
+        storage.close()
