@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.14.0",
-  "conformance_schema_version": "7",
+  "observer_manifest_version": "1.15.0",
+  "conformance_schema_version": "8",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -113,6 +113,26 @@
         "exa_search_with_synthesized_output_fails_open_until_synthesis_is_metered",
         "exa_search_unknown_type_is_not_assumed_to_use_public_pricing",
         "exa_search_without_captured_request_metadata_fails_open"
+      ]
+    },
+    {
+      "service_key": "fireworks_embeddings",
+      "positive_cases": [
+        "fireworks_embeddings_uses_provider_reported_prompt_tokens",
+        "fireworks_embeddings_accepts_the_documented_shorthand"
+      ],
+      "fail_open_cases": [
+        "fireworks_embeddings_unknown_model_fails_open"
+      ]
+    },
+    {
+      "service_key": "fireworks_rerank",
+      "positive_cases": [
+        "fireworks_rerank_uses_provider_reported_prompt_tokens",
+        "fireworks_rerank_accepts_the_documented_shorthand"
+      ],
+      "fail_open_cases": [
+        "fireworks_rerank_endpoint_descendant_is_not_observed"
       ]
     },
     {
