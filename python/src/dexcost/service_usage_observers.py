@@ -34,6 +34,7 @@ class UsageObserver:
     response_path: str | None
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
+    request_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
     minimum_quantity: str | None
     fixed_quantity: str | None
@@ -120,6 +121,38 @@ def _valid_response_predicate(predicate: Any) -> bool:
     )
 
 
+def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    resolved = _resolve_path(value, predicate["path"])
+    if resolved is None:
+        return True
+    if predicate["operator"] == "absent_or_false_or_null":
+        return resolved is False
+    return (
+        predicate["operator"] == "absent_or_lte"
+        and isinstance(resolved, (int, float))
+        and not isinstance(resolved, bool)
+        and resolved <= predicate["value"]
+    )
+
+
+def _valid_request_predicate(predicate: Any) -> bool:
+    if not isinstance(predicate, dict) or not isinstance(predicate.get("path"), str):
+        return False
+    if not predicate["path"]:
+        return False
+    if predicate.get("operator") in {"absent_or_null", "absent_or_false_or_null"}:
+        return set(predicate) == {"path", "operator"}
+    value = predicate.get("value")
+    return (
+        predicate.get("operator") == "absent_or_lte"
+        and set(predicate) == {"path", "operator", "value"}
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    )
+
+
 class ServiceUsageObservers:
     def __init__(
         self,
@@ -193,6 +226,7 @@ class ServiceUsageObservers:
             response_path = definition.get("response_path")
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
+            request_all = definition.get("request_all", [])
             request_character_count_path = definition.get("request_character_count_path")
             minimum_quantity = definition.get("minimum_quantity")
             fixed_quantity = definition.get("fixed_quantity")
@@ -250,6 +284,12 @@ class ServiceUsageObservers:
                 or not all(_valid_response_predicate(item) for item in response_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid response predicate")
+            if (
+                not isinstance(request_all, list)
+                or ("request_all" in definition and not request_all)
+                or not all(_valid_request_predicate(item) for item in request_all)
+            ):
+                raise ValueError("usage observer manifest contains an invalid request predicate")
             query_any = definition.get("query_any", [])
             if (
                 not isinstance(query_any, list)
@@ -284,6 +324,7 @@ class ServiceUsageObservers:
                     response_path=response_path,
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
+                    request_all=tuple(request_all),
                     request_character_count_path=request_character_count_path,
                     minimum_quantity=minimum_quantity,
                     fixed_quantity=fixed_quantity,
@@ -349,7 +390,9 @@ class ServiceUsageObservers:
         return bool(
             matched
             and any(
-                item.request_resource_path or item.request_character_count_path
+                item.request_resource_path
+                or item.request_character_count_path
+                or item.request_all
                 for item in matched[1]
             )
         )
@@ -368,6 +411,11 @@ class ServiceUsageObservers:
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
         for observer in observers:
+            if not all(
+                _request_predicate_matches(request_body, predicate)
+                for predicate in observer.request_all
+            ):
+                continue
             if not all(
                 _response_predicate_matches(response_body, predicate)
                 for predicate in observer.response_all

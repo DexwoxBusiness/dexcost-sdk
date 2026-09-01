@@ -7,13 +7,13 @@ name: CI
 #    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
 #    excludes the parity/conformance files exercised once in the shared gate.
 #
-# 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
-#    and pricing parity suites and the active attribution contract corpora in all
-#    four languages. A contract regression in any SDK blocks merge.
+# 2. cross-sdk-conformance MUST pass. It runs historical serialization and
+#    pricing parity in all four languages. Provider-usage observer parity is
+#    currently paired in Python and TypeScript; Go and Rust remain independent.
 #
-# 3. sdk-attribution-admission runs only after all four shared consumers pass.
+# 3. sdk-attribution-admission runs after the shared consumers pass.
 #    It rejects observers without exact dimensions, provider API evidence,
-#    positive and fail-open fixtures, or identical packaged manifests.
+#    positive and fail-open fixtures, or identical Python/TypeScript manifests.
 #
 # Per-SDK hardening flags pin specific audit findings:
 #   - Go    : -race (catches B13 session race, race conditions in pusher)
@@ -254,7 +254,6 @@ jobs:
           go test -v -run '^TestCrossSDK' .
           go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3)' ./attribution
           go test -v -run '^TestSharedOpenAIUsageConformance$' ./clients
-          go test -v -run '^(TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)' ./pricing
 
       - name: Run cross-SDK conformance (typescript)
         if: matrix.sdk == 'typescript'
@@ -275,7 +274,6 @@ jobs:
         run: |
           cargo test --test cross_sdk_parity
           cargo test --test attribution_v2_conformance
-          cargo test --test service_usage_observer_conformance
 
   sdk-attribution-admission:
     name: SDK attribution admission gate

@@ -1,5 +1,5 @@
 {
-  "schema_version": "6",
+  "schema_version": "7",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -277,6 +277,77 @@
       "headers": {},
       "request": { "url": "https://docs.tavily.com", "include_usage": true },
       "response": { "base_url": "docs.tavily.com", "results": [], "usage": { "credits": 0 }, "request_id": "tvly-map-zero" },
+      "expected": []
+    },
+    {
+      "name": "exa_search_defaults_to_the_standard_auto_tariff",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost public pricing" },
+      "response": { "requestId": "exa-auto-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "auto", "provider_record_id": "exa-auto-1" }]
+    },
+    {
+      "name": "exa_deep_search_uses_the_requested_tariff_variant",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost attribution", "type": "deep", "numResults": 10, "contents": null, "context": false },
+      "response": { "requestId": "exa-deep-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "deep", "provider_record_id": "exa-deep-1" }]
+    },
+    {
+      "name": "exa_deep_reasoning_uses_the_requested_tariff_variant",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost allocation", "type": "deep-reasoning", "numResults": 5 },
+      "response": { "requestId": "exa-deep-reasoning-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "deep-reasoning", "provider_record_id": "exa-deep-reasoning-1" }]
+    },
+    {
+      "name": "exa_search_over_ten_results_fails_open_until_incremental_results_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "auto", "numResults": 11 },
+      "response": { "requestId": "exa-extra-results", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_content_addons_fails_open_until_pages_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "fast", "contents": { "text": true } },
+      "response": { "requestId": "exa-content-addon", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_legacy_context_fails_open_until_pages_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "auto", "context": true },
+      "response": { "requestId": "exa-context-addon", "results": [], "context": "page text" },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_synthesized_output_fails_open_until_synthesis_is_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "fast", "outputSchema": { "type": "text" } },
+      "response": { "requestId": "exa-synthesized-output", "results": [], "output": { "content": "summary" } },
+      "expected": []
+    },
+    {
+      "name": "exa_search_unknown_type_is_not_assumed_to_use_public_pricing",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "future-mode", "numResults": 10 },
+      "response": { "requestId": "exa-future-mode", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_without_captured_request_metadata_fails_open",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "response": { "requestId": "exa-unreadable-request", "results": [] },
       "expected": []
     },
     {

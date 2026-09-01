@@ -30,6 +30,12 @@ interface ResponsePredicate {
   value?: string | boolean;
 }
 
+interface RequestPredicate {
+  path: string;
+  operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte";
+  value?: number;
+}
+
 export interface ObservedBillingDimension {
   key: string;
   value: { type: "string"; value: string };
@@ -46,6 +52,7 @@ interface UsageObserverDefinition {
   response_path?: string;
   response_quantity_header?: string;
   response_all?: ResponsePredicate[];
+  request_all?: RequestPredicate[];
   request_character_count_path?: string;
   minimum_quantity?: "1";
   fixed_quantity?: "1";
@@ -166,6 +173,28 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
       typeof candidate.value === "boolean");
 }
 
+function requestPredicateMatches(value: unknown, predicate: RequestPredicate): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const resolved = resolvePath(value, predicate.path);
+  if (resolved === undefined || resolved === null) return true;
+  if (predicate.operator === "absent_or_false_or_null") return resolved === false;
+  return predicate.operator === "absent_or_lte" &&
+    typeof resolved === "number" && Number.isFinite(resolved) &&
+    predicate.value !== undefined && resolved <= predicate.value;
+}
+
+function validRequestPredicate(predicate: unknown): predicate is RequestPredicate {
+  if (predicate === null || typeof predicate !== "object") return false;
+  const candidate = predicate as Partial<RequestPredicate>;
+  if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
+  if (candidate.operator === "absent_or_null" || candidate.operator === "absent_or_false_or_null") {
+    return Object.keys(candidate).length === 2 && candidate.value === undefined;
+  }
+  return candidate.operator === "absent_or_lte" &&
+    Object.keys(candidate).length === 3 &&
+    typeof candidate.value === "number" && Number.isFinite(candidate.value);
+}
+
 function pathDimensions(url: URL, definition: UsageObserverDefinition): ObservedBillingDimension[] {
   if (definition.service_key !== "elevenlabs_tts") return [];
   const prefix = "/v1/text-to-speech/";
@@ -265,6 +294,11 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.response_all.length === 0 ||
         !observer.response_all.every(validResponsePredicate)
       )) ||
+      (observer.request_all !== undefined && (
+        !Array.isArray(observer.request_all) ||
+        observer.request_all.length === 0 ||
+        !observer.request_all.every(validRequestPredicate)
+      )) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
         !observer.query_any.every((predicate) =>
@@ -331,13 +365,18 @@ export class ServiceUsageObservers {
   needsRequestBody(url: string): boolean {
     return this.lookup(url)?.observers.some(
       (observer) => observer.request_resource_path !== undefined ||
-        observer.request_character_count_path !== undefined,
+        observer.request_character_count_path !== undefined ||
+        observer.request_all !== undefined,
     ) === true;
   }
 
   needsResponseBody(url: string): boolean {
     return this.lookup(url)?.observers.some(
-      (observer) => observer.response_path !== undefined,
+      (observer) => observer.response_path !== undefined ||
+        observer.resource_path !== undefined ||
+        observer.record_id_path !== undefined ||
+        observer.response_all !== undefined ||
+        observer.quantity_multiplier_path !== undefined,
     ) === true;
   }
 
@@ -351,6 +390,13 @@ export class ServiceUsageObservers {
     if (matched === undefined) return [];
     const observations: ServiceUsageObservation[] = [];
     for (const observer of matched.observers) {
+      if (
+        observer.request_all !== undefined &&
+        !observer.request_all.every((predicate) =>
+          requestPredicateMatches(requestBody, predicate))
+      ) {
+        continue;
+      }
       if (
         observer.response_all !== undefined &&
         !observer.response_all.every((predicate) =>

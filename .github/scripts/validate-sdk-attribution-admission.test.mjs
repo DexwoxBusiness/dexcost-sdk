@@ -23,7 +23,7 @@ function expectIssue(issues, expected) {
   );
 }
 
-test("admits the current four-SDK observer contract", () => {
+test("admits the current Python and TypeScript observer contract", () => {
   assert.deepEqual(validateSdkAttributionAdmission(inputs()), []);
 });
 
@@ -62,6 +62,19 @@ test("rejects fixed request quantity with a non-request metric", () => {
   );
 });
 
+test("rejects an invalid request predicate", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "exa_search",
+  );
+  observer.request_all[0].operator = "assume_default";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer exa_search has invalid request predicates",
+  );
+});
+
 test("rejects conformance dimensions that disagree with the observer", () => {
   const candidate = inputs();
   candidate.conformance.cases[0].expected[0].metric = "characters";
@@ -88,23 +101,23 @@ test("rejects a fail-open case that emits positive usage", () => {
   );
 });
 
-test("rejects packaged observer drift in any language", () => {
+test("rejects packaged observer drift in either paired SDK", () => {
   const candidate = inputs();
-  candidate.packagedManifests.go.observers[0].usage_metric = "characters";
+  candidate.packagedManifests.python.observers[0].usage_metric = "characters";
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
-    "go packaged observer manifest differs from canonical",
+    "python packaged observer manifest differs from canonical",
   );
 });
 
-test("requires all four shared conformance consumers", () => {
+test("requires both paired shared conformance consumers", () => {
   const candidate = inputs();
-  candidate.consumerTests.rust = "";
+  candidate.consumerTests.typescript = "";
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
-    "rust lacks the shared observer conformance consumer",
+    "typescript lacks the shared observer conformance consumer",
   );
 });
 
@@ -134,12 +147,12 @@ test("does not treat a provider documentation mapping as a generic bypass", () =
 test("rejects CI that stops executing a language consumer", () => {
   const candidate = inputs();
   candidate.workflowText = candidate.workflowText.replace(
-    "cargo test --test service_usage_observer_conformance",
-    "cargo test --test removed_observer_consumer",
+    "tests/service-usage-observer-conformance.test.ts",
+    "tests/removed-observer-consumer.test.ts",
   );
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
-    "CI does not execute the rust observer conformance consumer",
+    "CI does not execute the typescript observer conformance consumer",
   );
 });

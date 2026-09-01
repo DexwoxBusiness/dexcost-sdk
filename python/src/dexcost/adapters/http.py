@@ -765,11 +765,20 @@ def _handle_catalog_entry(
     response_headers: dict[str, str],
     response: Any,
     byte_details: dict[str, Any],
+    *,
+    overrides_only: bool = False,
 ) -> bool:
     """Handle service-catalog path. Returns True if handled."""
     catalog = get_catalog()
     entry = catalog.lookup(url)
     if entry is None:
+        return False
+    result = catalog.extract_cost(
+        entry, response_headers, _get_response_body(response) if response else None
+    )
+    if overrides_only and (
+        result is None or result.pricing_source not in {"user_override", "workspace_overlay"}
+    ):
         return False
     task = _resolve_task()
     if task is None:
@@ -784,17 +793,20 @@ def _handle_catalog_entry(
             bytes_out=bytes_out,
             is_internal=byte_details.get("is_internal_traffic"),
         )
-    result = catalog.extract_cost(
-        entry, response_headers, _get_response_body(response) if response else None
-    )
     if result is not None:
+        pricing_source = result.pricing_source
+        pricing_version: str | None = catalog.catalog_version
+        if pricing_source == "user_override":
+            pricing_version = None
+        elif pricing_source == "workspace_overlay":
+            pricing_source = "service_catalog"
         event = Event(
             task_id=task.task_id,
             event_type="external_cost",
             cost_usd=result.amount,
             cost_confidence=result.confidence,
-            pricing_source=result.pricing_source,
-            pricing_version=catalog.catalog_version,
+            pricing_source=pricing_source,
+            pricing_version=pricing_version,
             service_name=result.service_name,
             details={"url": url, **byte_details},
         )
@@ -990,6 +1002,21 @@ def _handle_http_call_inner(
     observers = get_service_usage_observers()
     observer_route = observers is not None and observers.matches(url)
     if observer_route:
+        # Explicit local and authenticated workspace rates remain
+        # authoritative on observer-owned routes. Bundled SDK base prices do
+        # not: those would double count the server-priced observation.
+        if _handle_catalog_entry(
+            url,
+            domain,
+            track_network,
+            bytes_in,
+            bytes_out,
+            response_headers,
+            response,
+            byte_details,
+            overrides_only=True,
+        ):
+            return
         # Usage-only observers contain no rates and remain active even when
         # notable-network event emission is disabled.
         if _handle_usage_observer(

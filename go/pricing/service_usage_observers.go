@@ -23,13 +23,10 @@ type usageObserverDefinition struct {
 	Component                        string                   `json:"component"`
 	Domains                          []string                 `json:"domains"`
 	Endpoints                        []string                 `json:"endpoints"`
-	EndpointMatch                    string                   `json:"endpoint_match"`
 	ResponsePath                     string                   `json:"response_path"`
 	ResponseQuantityHeader           string                   `json:"response_quantity_header"`
 	ResponseAll                      []usageResponsePredicate `json:"response_all"`
 	RequestCharacterCountPath        string                   `json:"request_character_count_path"`
-	MinimumQuantity                  string                   `json:"minimum_quantity"`
-	FixedQuantity                    string                   `json:"fixed_quantity"`
 	UsageMetric                      string                   `json:"usage_metric"`
 	ResourceType                     string                   `json:"resource_type"`
 	ResourcePath                     string                   `json:"resource_path"`
@@ -121,18 +118,13 @@ func loadUsageObservers() {
 		_, duplicate := keys[observer.ServiceKey]
 		if duplicate || observer.ServiceKey == "" || observer.ProviderName == "" ||
 			observer.ProviderService == "" ||
-			boolCount(observer.ResponsePath != "", observer.ResponseQuantityHeader != "", observer.RequestCharacterCountPath != "", observer.FixedQuantity != "") != 1 ||
-			(observer.FixedQuantity != "" && observer.FixedQuantity != "1") ||
-			(observer.MinimumQuantity != "" && observer.MinimumQuantity != "1") ||
-			(observer.MinimumQuantity != "" && observer.RequestCharacterCountPath == "") ||
-			(observer.FixedQuantity != "") != (observer.UsageMetric == "request_count") ||
+			boolCount(observer.ResponsePath != "", observer.ResponseQuantityHeader != "", observer.RequestCharacterCountPath != "") != 1 ||
 			observer.metricInvalid() ||
 			(observer.Component != "external" && observer.Component != "speech_to_text" &&
 				observer.Component != "text_to_speech") ||
 			len(observer.Domains) == 0 || len(observer.Endpoints) == 0 ||
 			!allUsageObserverDomainsValid(observer.Domains) ||
 			!allUsageObserverEndpointsValid(observer.Endpoints) ||
-			(observer.EndpointMatch != "" && observer.EndpointMatch != "exact" && observer.EndpointMatch != "prefix") ||
 			!strings.HasPrefix(observer.SourceURL, "https://") {
 			log.Printf(
 				"[dexcost] bundled service usage observers disabled: invalid observer %q",
@@ -200,8 +192,7 @@ func loadUsageObservers() {
 
 func (observer usageObserverDefinition) metricInvalid() bool {
 	return observer.UsageMetric != "input_tokens" && observer.UsageMetric != "audio_seconds" &&
-		observer.UsageMetric != "characters" && observer.UsageMetric != "request_count" &&
-		observer.UsageMetric != "credit_count"
+		observer.UsageMetric != "characters"
 }
 
 func boolCount(values ...bool) int {
@@ -232,8 +223,8 @@ func allUsageObserverEndpointsValid(endpoints []string) bool {
 	return true
 }
 
-func usageObserverEndpointMatches(path, endpoint, mode string) bool {
-	return path == endpoint || (mode != "exact" && strings.HasPrefix(path, endpoint+"/"))
+func usageObserverEndpointMatches(path, endpoint string) bool {
+	return path == endpoint || strings.HasPrefix(path, endpoint+"/")
 }
 
 func queryValueIsTruthy(value string) bool {
@@ -321,7 +312,7 @@ func lookupUsageObservers(rawURL string) (*url.URL, []*usageObserverDefinition) 
 			continue
 		}
 		for _, endpoint := range observer.Endpoints {
-			if usageObserverEndpointMatches(parsed.Path, endpoint, observer.EndpointMatch) && observerQueryMatches(parsed.Query(), observer.QueryAny) {
+			if usageObserverEndpointMatches(parsed.Path, endpoint) && observerQueryMatches(parsed.Query(), observer.QueryAny) {
 				matched = append(matched, observer)
 				break
 			}
@@ -359,25 +350,6 @@ func boundedUsageString(value interface{}) string {
 	return text
 }
 
-func usageCharacterCount(value interface{}) (int64, bool) {
-	switch typed := value.(type) {
-	case string:
-		return int64(utf8.RuneCountInString(typed)), true
-	case []interface{}:
-		var total int64
-		for _, item := range typed {
-			text, ok := item.(string)
-			if !ok {
-				return 0, false
-			}
-			total += int64(utf8.RuneCountInString(text))
-		}
-		return total, true
-	default:
-		return 0, false
-	}
-}
-
 // ObserveServiceUsage extracts a positive quantity from a successful provider response.
 func ObserveServiceUsage(rawURL string, headers map[string]string, body map[string]interface{}, requestBody map[string]interface{}) []ServiceUsageObservation {
 	parsed, observers := lookupUsageObservers(rawURL)
@@ -400,16 +372,11 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 		}
 		var quantity decimal.Decimal
 		if observer.RequestCharacterCountPath != "" {
-			count, ok := usageCharacterCount(resolveDottedPath(requestBody, observer.RequestCharacterCountPath))
-			if !ok {
+			text, ok := resolveDottedPath(requestBody, observer.RequestCharacterCountPath).(string)
+			if !ok || text == "" {
 				continue
 			}
-			if observer.MinimumQuantity == "1" && count < 1 {
-				count = 1
-			}
-			quantity = decimal.NewFromInt(count)
-		} else if observer.FixedQuantity != "" {
-			quantity = decimal.NewFromInt(1)
+			quantity = decimal.NewFromInt(int64(utf8.RuneCountInString(text)))
 		} else if observer.ResponseQuantityHeader != "" {
 			var headerValue string
 			for key, value := range headers {
@@ -468,22 +435,11 @@ func ObserveServiceUsage(rawURL string, headers map[string]string, body map[stri
 		if observer.ResourcePath != "" {
 			resourceID = boundedUsageString(resolveDottedPath(body, observer.ResourcePath))
 		}
-		requestResourceID := ""
-		if observer.RequestResourcePath != "" {
-			requestResourceID = boundedUsageString(resolveDottedPath(requestBody, observer.RequestResourcePath))
+		if resourceID == "" && observer.RequestResourcePath != "" {
+			resourceID = boundedUsageString(resolveDottedPath(requestBody, observer.RequestResourcePath))
 		}
-		queryResourceID := ""
-		if observer.ResourceQueryParameter != "" {
-			queryResourceID = boundedUsageString(parsed.Query().Get(observer.ResourceQueryParameter))
-		}
-		if requestResourceID != "" && queryResourceID != "" && requestResourceID != queryResourceID {
-			continue
-		}
-		if resourceID == "" {
-			resourceID = requestResourceID
-		}
-		if resourceID == "" {
-			resourceID = queryResourceID
+		if resourceID == "" && observer.ResourceQueryParameter != "" {
+			resourceID = boundedUsageString(parsed.Query().Get(observer.ResourceQueryParameter))
 		}
 		if resourceID == "" {
 			resourceID = boundedUsageString(observer.FixedResourceID)

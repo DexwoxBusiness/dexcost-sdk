@@ -72,79 +72,6 @@ func TestTrackHTTP_ObservesEmbeddingUsageWithoutSyntheticCost(t *testing.T) {
 	}
 }
 
-func TestTrackHTTP_BraveObserverSupersedesLegacyDomainCatalog(t *testing.T) {
-	adapters.ClearDomainRates()
-	adapters.ClearRecordedEvents()
-	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": {"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"type":"search","web":{"results":[]}}`)),
-			Request:    req,
-		}, nil
-	})
-	client := adapters.TrackHTTP(&http.Client{Transport: base})
-	task := core.NewTask("search")
-	req, _ := http.NewRequestWithContext(
-		core.WithTask(context.Background(), &task),
-		http.MethodGet,
-		"https://api.search.brave.com/res/v1/web/search?q=dexcost",
-		nil,
-	)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	events := adapters.GetRecordedEvents()
-	if len(events) != 1 {
-		t.Fatalf("expected one Brave observer event, got %d", len(events))
-	}
-	event := events[0]
-	if !event.CostUSD.IsZero() || event.CostConfidence != core.CostConfidenceUnknown ||
-		event.Details["attribution_observer_service"] != "brave_search" {
-		t.Fatalf("legacy catalog intercepted Brave observer route: %+v", event)
-	}
-	wire := attribution.ToEventV2(event)
-	if wire == nil || wire.Provider.Name != "brave" || wire.Provider.Service != "web_search" ||
-		len(wire.Usage) != 1 || wire.Usage[0].Metric != attribution.MetricRequestCount ||
-		wire.Usage[0].Quantity != "1" || wire.Resource == nil ||
-		wire.Resource.Type != "sku" || wire.Resource.ID != "search" || wire.CostEvidence != nil {
-		t.Fatalf("unexpected Brave attribution event: %+v", wire)
-	}
-}
-
-func TestTrackHTTP_FailedBraveRequestDoesNotUseLegacyPrice(t *testing.T) {
-	adapters.ClearDomainRates()
-	adapters.ClearRecordedEvents()
-	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Header:     http.Header{"Content-Type": {"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"error":"unavailable"}`)),
-			Request:    req,
-		}, nil
-	})
-	client := adapters.TrackHTTP(&http.Client{Transport: base})
-	task := core.NewTask("search")
-	req, _ := http.NewRequestWithContext(
-		core.WithTask(context.Background(), &task),
-		http.MethodGet,
-		"https://api.search.brave.com/res/v1/web/search?q=dexcost",
-		nil,
-	)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	events := adapters.GetRecordedEvents()
-	if len(events) != 1 || events[0].EventType != core.EventTypeNetwork {
-		t.Fatalf("failed Brave request used a billable fallback: %+v", events)
-	}
-}
-
 func TestTrackHTTP_DoesNotObserveFailedProviderResponse(t *testing.T) {
 	adapters.ClearDomainRates()
 	adapters.ClearRecordedEvents()
@@ -288,7 +215,7 @@ func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
 	client := adapters.TrackHTTP(&http.Client{Transport: base})
 	task := core.NewTask("transcription")
 	rawURL := "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
-		"&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true"
+		"&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme"
 	req, _ := http.NewRequestWithContext(
 		core.WithTask(context.Background(), &task), http.MethodPost, rawURL, nil,
 	)
@@ -298,12 +225,11 @@ func TestTrackHTTP_DeepgramEmitsSeparateBillableAddonLines(t *testing.T) {
 	}
 	resp.Body.Close()
 	events := adapters.GetRecordedEvents()
-	if len(events) != 5 {
-		t.Fatalf("expected base plus four add-on events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected base plus three add-on events, got %d", len(events))
 	}
 	wantResources := []string{
 		"nova-3:multilingual", "speaker_diarization", "redaction", "keyterm_prompting",
-		"entity_detection",
 	}
 	for i, event := range events {
 		wire := attribution.ToEventV2(event)

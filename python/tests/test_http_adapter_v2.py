@@ -32,6 +32,7 @@ from dexcost.context import (
 )
 from dexcost.instruments._capture import provider_capture_scope
 from dexcost.models.task import Task
+from dexcost.service_catalog import ServiceCatalog
 from dexcost.session import reset_session_manager
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,79 @@ class TestKnownServiceExtraction:
         assert events[0].event_type == "network"
         assert events[0].details.get("attribution_observer_service") is None
         assert events[0].pricing_source != "service_catalog"
+
+    def test_exa_search_observer_emits_variant_without_sdk_money(self) -> None:
+        task = _make_task("search")
+        request_body = {"query": "DexCost", "type": "deep", "numResults": 10}
+        with task_context(task):
+            _handle_http_call(
+                "https://api.exa.ai/search",
+                method="POST",
+                request_body=request_body,
+                response=_make_response(
+                    body={"requestId": "exa-deep-http-1", "results": []}
+                ),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "exa",
+            "service": "search_api",
+            "record_id": "exa-deep-http-1",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "deep"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert "cost_evidence" not in wire
+
+    def test_exa_search_without_captured_request_body_fails_open(self) -> None:
+        task = _make_task("search")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.exa.ai/search",
+                method="POST",
+                response=_make_response(
+                    body={"requestId": "exa-unreadable-http", "results": []}
+                ),
+            )
+
+        assert get_recorded_events() == []
+
+    def test_exa_user_catalog_override_remains_authoritative(self) -> None:
+        catalog = ServiceCatalog()
+        catalog.register_override("exa_search", Decimal("0.05"), per="request")
+        set_catalog(catalog)
+        task = _make_task("search")
+
+        with task_context(task):
+            _handle_http_call(
+                "https://api.exa.ai/search",
+                method="POST",
+                response=_make_response(body={"requestId": "exa-override", "results": []}),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == Decimal("0.05")
+        assert event.pricing_source == "user_override"
+        assert event.pricing_version is None
+        assert wire is not None
+        assert wire["cost_evidence"] == {
+            "amount": "0.05",
+            "currency": "USD",
+            "source": "manual",
+            "confidence": "computed",
+        }
 
     def test_provider_suppression_precedes_usage_observer(self) -> None:
         task = _make_task("embedding")
@@ -671,7 +745,12 @@ class TestEventFields:
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _handle_http_call("https://api.exa.ai/search?query=test", response=response)
+            _handle_http_call(
+                "https://api.exa.ai/search?query=test",
+                method="POST",
+                request_body={"query": "test"},
+                response=response,
+            )
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -682,7 +761,12 @@ class TestEventFields:
         response = _make_response(body={})
 
         with task_context(task):
-            _handle_http_call("https://api.exa.ai/search", response=response)
+            _handle_http_call(
+                "https://api.exa.ai/search",
+                method="POST",
+                request_body={"query": "test"},
+                response=response,
+            )
 
         events = get_recorded_events()
         assert len(events) == 1
@@ -690,11 +774,28 @@ class TestEventFields:
 
     def test_catalog_version_in_pricing_version(self) -> None:
         """Events from catalog matches include pricing_version."""
+        set_catalog(
+            ServiceCatalog(
+                data={
+                    "_meta": {"version": "test"},
+                    "fixed_test": {
+                        "display_name": "Fixed Test API",
+                        "domains": ["fixed.example.test"],
+                        "category": "test",
+                        "pricing_model": "per_request",
+                        "cost_per_request_usd": "0.01",
+                        "cost_extraction": {"type": "fixed"},
+                        "source": "https://example.test/pricing",
+                        "last_verified": "2026-09-01",
+                    },
+                }
+            )
+        )
         task = _make_task()
         response = _make_response(body={"results": []})
 
         with task_context(task):
-            _handle_http_call("https://api.exa.ai/search", response=response)
+            _handle_http_call("https://fixed.example.test/search", response=response)
 
         events = get_recorded_events()
         assert len(events) == 1

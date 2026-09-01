@@ -384,8 +384,6 @@ impl Middleware for DexcostMiddleware {
             .and_then(|_| req.body().and_then(|body| body.as_bytes()))
             .filter(|bytes| bytes.len() <= 1_048_576)
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
-        let observer_route = default_service_usage_observers()
-            .is_some_and(|observers| observers.matches(url.as_str()));
         let request_bytes = measure_bytes_from_headers(
             &method,
             url.as_str(),
@@ -516,34 +514,19 @@ impl Middleware for DexcostMiddleware {
             let mut buf = self.buffer.lock().await;
             let mut recorded = false;
 
-            // User-authored domain rates retain highest precedence, including
-            // on routes that are otherwise owned by a usage-only observer.
-            if let Some(mut event) =
-                dexcost_http::resolve_http_cost_event(url.as_str(), &task_id, None)
-            {
-                stamp_byte_details(&mut event, &byte_details);
-                buf.add_event(event);
-                recorded = true;
-            }
-
-            // Exact observer-owned routes supersede broad bundled catalog
-            // entries so the SDK emits quantity and the control plane prices
-            // it exactly once.
-            if !recorded && !observer_route {
-                if let Some(entry) = self.catalog.lookup(url.as_str()) {
-                    if let Some(extraction) =
-                        self.catalog
-                            .extract_cost(entry, &Default::default(), Some(&body_json))
-                    {
-                        self.record_extraction(
-                            &task_id,
-                            &host,
-                            &extraction,
-                            &byte_details,
-                            &mut buf,
-                        );
-                        recorded = true;
-                    }
+            if let Some(entry) = self.catalog.lookup(url.as_str()) {
+                if let Some(extraction) =
+                    self.catalog
+                        .extract_cost(entry, &Default::default(), Some(&body_json))
+                {
+                    self.record_extraction(
+                        &task_id,
+                        &host,
+                        &extraction,
+                        &byte_details,
+                        &mut buf,
+                    );
+                    recorded = true;
                 }
             }
 
@@ -571,12 +554,17 @@ impl Middleware for DexcostMiddleware {
                 }
             }
 
-            if !recorded && !observer_route {
-                recorded =
-                    self.try_record_llm(&host, &task_id, &body_json, &byte_details, &mut buf);
+            if !recorded {
+                recorded = self.try_record_llm(
+                    &host,
+                    &task_id,
+                    &body_json,
+                    &byte_details,
+                    &mut buf,
+                );
             }
 
-            if !recorded && !observer_route {
+            if !recorded {
                 // Domain-rate / catalog fallback — persist to the durable
                 // EventBuffer (so the pusher ships it) instead of the in-memory
                 // record_http_cost log. buf is still held here.
@@ -614,14 +602,7 @@ impl Middleware for DexcostMiddleware {
             // the EventBuffer so it syncs.
             let mut buf = self.buffer.lock().await;
             let mut recorded = false;
-            if let Some(mut event) =
-                dexcost_http::resolve_http_cost_event(url.as_str(), &task_id, None)
-            {
-                stamp_byte_details(&mut event, &byte_details);
-                buf.add_event(event);
-                recorded = true;
-            }
-            if !recorded && status.is_success() {
+            if status.is_success() {
                 let observations = default_service_usage_observers()
                     .map(|observers| {
                         observers.observe(
@@ -644,7 +625,7 @@ impl Middleware for DexcostMiddleware {
                     recorded = true;
                 }
             }
-            if !recorded && !observer_route {
+            if !recorded {
                 if let Some(mut event) = dexcost_http::resolve_http_cost_event(
                     url.as_str(),
                     &task_id,
@@ -902,15 +883,6 @@ mod tests {
             provider_observation_event_id(&observation),
             "2dc521b3-742a-5f61-9942-c4a59e6935f6"
         );
-    }
-
-    #[test]
-    fn brave_observer_owns_the_legacy_catalog_route() {
-        let observers = default_service_usage_observers().expect("bundled observers");
-        let search_url = "https://api.search.brave.com/res/v1/web/search?q=dexcost";
-        assert!(observers.matches(search_url));
-        assert!(ServiceCatalog::new().lookup(search_url).is_some());
-        assert!(!observers.matches("https://api.search.brave.com/res/v1/suggest/search?q=dexcost"));
     }
 
     #[tokio::test]

@@ -5,29 +5,21 @@ import { fileURLToPath } from "node:url";
 export const REQUIRED_SDKS = Object.freeze([
   "typescript",
   "python",
-  "go",
-  "rust",
 ]);
 
 const PACKAGED_MANIFEST_PATHS = Object.freeze({
   typescript: "typescript/src/data/service_usage_observers.json",
   python: "python/src/dexcost/data/service_usage_observers.json",
-  go: "go/pricing/data/service_usage_observers.json",
-  rust: "rust/src/data/service_usage_observers.json",
 });
 
 const CONSUMER_TEST_PATHS = Object.freeze({
   typescript: "typescript/tests/service-usage-observer-conformance.test.ts",
   python: "python/tests/test_service_usage_observer_conformance.py",
-  go: "go/pricing/service_usage_observers_test.go",
-  rust: "rust/tests/service_usage_observer_conformance.rs",
 });
 
 const WORKFLOW_CONFORMANCE_MARKERS = Object.freeze({
   typescript: "tests/service-usage-observer-conformance.test.ts",
   python: "tests/test_service_usage_observer_conformance.py",
-  go: "TestSharedServiceUsageObserverConformance",
-  rust: "cargo test --test service_usage_observer_conformance",
 });
 
 const REQUIRED_OBSERVER_FIELDS = Object.freeze([
@@ -177,6 +169,19 @@ function caseTargetsObserver(testCase, observer) {
   return true;
 }
 
+function validRequestPredicate(predicate) {
+  if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
+  if (
+    predicate.operator === "absent_or_null" ||
+    predicate.operator === "absent_or_false_or_null"
+  ) {
+    return Object.keys(predicate).length === 2 && predicate.value === undefined;
+  }
+  return predicate.operator === "absent_or_lte" &&
+    Object.keys(predicate).length === 3 &&
+    typeof predicate.value === "number" && Number.isFinite(predicate.value);
+}
+
 function caseExercisesFixedQuantityEndpointBoundary(testCase, observer) {
   if (observer?.fixed_quantity !== "1") return false;
   let url;
@@ -253,6 +258,14 @@ function validateObserverShape(observer, issues) {
     )
   ) {
     issues.push(`observer ${key} has invalid endpoints`);
+  }
+  if (
+    observer?.request_all !== undefined &&
+    (!Array.isArray(observer.request_all) ||
+      observer.request_all.length === 0 ||
+      !observer.request_all.every(validRequestPredicate))
+  ) {
+    issues.push(`observer ${key} has invalid request predicates`);
   }
 
   let sourceUrl;

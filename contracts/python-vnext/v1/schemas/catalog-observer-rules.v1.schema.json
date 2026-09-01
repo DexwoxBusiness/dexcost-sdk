@@ -35,6 +35,19 @@
         { "if": { "properties": { "operator": { "const": "non_empty" } } }, "then": { "not": { "required": ["value"] } } }
       ]
     },
+    "requestPredicate": {
+      "type": "object", "additionalProperties": false, "required": ["path", "operator"],
+      "properties": {
+        "path": { "$ref": "#/$defs/jsonPath" },
+        "operator": { "enum": ["absent_or_null", "absent_or_false_or_null", "absent_or_lte"] },
+        "value": { "type": "number" }
+      },
+      "allOf": [
+        { "if": { "properties": { "operator": { "const": "absent_or_null" } } }, "then": { "not": { "required": ["value"] } } },
+        { "if": { "properties": { "operator": { "const": "absent_or_false_or_null" } } }, "then": { "not": { "required": ["value"] } } },
+        { "if": { "properties": { "operator": { "const": "absent_or_lte" } } }, "then": { "required": ["value"] } }
+      ]
+    },
     "rule": {
       "type": "object", "additionalProperties": false,
       "required": ["service_key", "provider_name", "provider_service", "component", "domains", "endpoints", "usage_metric", "resource_type", "source_url"],
@@ -70,6 +83,7 @@
         "quantity_multiplier_path": { "$ref": "#/$defs/jsonPath" },
         "quantity_multiplier_query_parameter": { "$ref": "#/$defs/identifier" },
         "query_any": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/queryPredicate" } },
+        "request_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/requestPredicate" } },
         "response_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/responsePredicate" } },
         "record_id_header": { "type": "string", "minLength": 1, "maxLength": 256 },
         "record_id_path": { "$ref": "#/$defs/jsonPath" },

@@ -493,6 +493,51 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("observes the Exa search variant without SDK-side money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: "exa-deep-http-1",
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "DexCost", type: "deep", numResults: 10 }),
+      });
+    });
+
+    const event = getRecordedEvents()[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingVersion).toBeUndefined();
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "exa", service: "search_api", record_id: "exa-deep-http-1" },
+      resource: { type: "sku", id: "deep" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("fails open when Exa request metadata cannot be captured", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: "exa-unreadable-http",
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.exa.ai/search", { method: "POST" });
+      await response.text();
+    });
+
+    expect(getRecordedEvents()).toEqual([]);
+  });
+
   it("extracts cost from response header for known service", async () => {
     // Mock fetch returning ScrapingBee-like response with header
     const mockResponse = new Response("{}", {
@@ -642,19 +687,20 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
 
     trackHttp(buffer);
+    registerDomainRate("fixed.example.test", 0.007, "request");
 
     const task = createTask({ taskId: randomUUID(), taskType: "test" });
 
     await runWithTask(task, async () => {
-      // Exa is a fixed-price service, so non-JSON body is fine
-      await fetch("https://api.exa.ai/search");
+      await fetch("https://fixed.example.test/search");
     });
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    // Should still get the fixed cost even without JSON body
+    // A user-authored fixed rate does not depend on a JSON response body.
     expect(events[0].costUsd.toNumber()).toBe(0.007);
-    expect(events[0].serviceName).toBe("Exa Search");
+    expect(events[0].pricingSource).toBe("manual");
+    expect(events[0].serviceName).toBe("fixed.example.test");
   });
 
   it("handles large response body by skipping body parse", async () => {
