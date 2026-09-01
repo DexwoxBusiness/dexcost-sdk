@@ -192,9 +192,9 @@
       "sha256": "0fc3007cb307a98d6ddb7df53fd394e91411abc75389652c22e0060dcea8e871"
     },
     {
-      "byte_size": 32265,
+      "byte_size": 33596,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "66ef6e49747192705244acc2369ee3d1e81dd5d5c22be82f1a96eac6f1efc7ea"
+      "sha256": "905a292a9debb6e44673f63294d6907daf9fcfa416b70693041e65f0c19d0b54"
     }
   ],
   "schema_version": "1",

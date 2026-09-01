@@ -179,6 +179,27 @@
       "expected": []
     },
     {
+      "name": "google_custom_search_counts_existing_customer_query",
+      "url": "https://customsearch.googleapis.com/customsearch/v1?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": [{ "service_key": "google_custom_search", "provider_name": "google", "provider_service": "custom_search_json", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "cse.list" }]
+    },
+    {
+      "name": "google_custom_search_supports_documented_www_endpoint",
+      "url": "https://www.googleapis.com/customsearch/v1?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": [{ "service_key": "google_custom_search", "provider_name": "google", "provider_service": "custom_search_json", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "cse.list" }]
+    },
+    {
+      "name": "google_custom_search_site_restricted_retired_endpoint_fails_open",
+      "url": "https://www.googleapis.com/customsearch/v1/siterestrict?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": []
+    },
+    {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
       "url": "https://api.openai.com/v1/audio/speech",
       "headers": { "x-request-id": "req_tts_123" },

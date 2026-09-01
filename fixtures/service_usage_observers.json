@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.10.0",
-    "observer_count": 33,
+    "version": "1.11.0",
+    "observer_count": 34,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -127,6 +127,20 @@
       "default_resource_id": "nmt",
       "allowed_resource_ids": ["nmt", "base"],
       "source_url": "https://docs.cloud.google.com/translate/docs/reference/rest/v2/translate"
+    },
+    {
+      "service_key": "google_custom_search",
+      "provider_name": "google",
+      "provider_service": "custom_search_json",
+      "component": "external",
+      "domains": ["customsearch.googleapis.com", "www.googleapis.com"],
+      "endpoints": ["/customsearch/v1"],
+      "endpoint_match": "exact",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "cse.list",
+      "source_url": "https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list"
     },
     {
       "service_key": "openai_tts",
