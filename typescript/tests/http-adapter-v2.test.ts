@@ -458,9 +458,12 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(toAttributionEventV2(event)?.cost_evidence).toMatchObject({ source: "manual", amount: "0.05" });
   });
 
-  it("extracts cost from response body for known service", async () => {
-    // Mock fetch returning Tavily-like response with credits used
-    const responseBody = { results: [], usage: { credits: 2 } };
+  it("observes Tavily credits without SDK-side money", async () => {
+    const responseBody = {
+      request_id: "tavily-2",
+      results: [],
+      usage: { credits: 2 },
+    };
     const mockResponse = new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -477,10 +480,17 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].serviceName).toBe("Tavily Search");
-    // 2 credits * $0.008 = $0.016
-    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.016, 6);
-    expect(events[0].costConfidence).toBe("exact");
+    expect(events[0].serviceName).toBe("search_api");
+    expect(events[0].costUsd.toNumber()).toBe(0);
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(events[0].pricingSource).toBe("unknown");
+    const wire = toAttributionEventV2(events[0]);
+    expect(wire).toMatchObject({
+      provider: { name: "tavily", service: "search_api", record_id: "tavily-2" },
+      resource: { type: "sku", id: "api_credit" },
+      usage: [{ metric: "credit_count", quantity: "2", unit: "Credits" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
   });
 
   it("extracts cost from response header for known service", async () => {
@@ -668,9 +678,9 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    // Should fall back to estimated cost (fallback_credits=1 * $0.008)
-    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.008, 6);
-    expect(events[0].costConfidence).toBe("estimated");
+    expect(events[0].costUsd.toNumber()).toBe(0);
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(events[0].pricingSource).not.toBe("service_catalog");
   });
 
   it("returns original response unchanged", async () => {

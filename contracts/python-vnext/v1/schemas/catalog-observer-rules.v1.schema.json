@@ -51,7 +51,7 @@
         "request_character_count_path": { "$ref": "#/$defs/jsonPath" },
         "minimum_quantity": { "const": "1" },
         "fixed_quantity": { "const": "1" },
-        "usage_metric": { "enum": ["input_tokens", "characters", "audio_seconds", "request_count"] },
+        "usage_metric": { "enum": ["input_tokens", "characters", "audio_seconds", "request_count", "credit_count"] },
         "resource_type": { "enum": ["model", "sku"] },
         "resource_path": { "$ref": "#/$defs/jsonPath" },
         "request_resource_path": { "$ref": "#/$defs/jsonPath" },

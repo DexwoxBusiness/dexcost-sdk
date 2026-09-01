@@ -118,6 +118,19 @@ test("rejects a non-provider observer source", () => {
   );
 });
 
+test("does not treat a provider documentation mapping as a generic bypass", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "google_custom_search",
+  );
+  observer.domains = ["api.example.com"];
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer google_custom_search source is not provider-owned",
+  );
+});
+
 test("rejects CI that stops executing a language consumer", () => {
   const candidate = inputs();
   candidate.workflowText = candidate.workflowText.replace(

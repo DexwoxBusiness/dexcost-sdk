@@ -394,10 +394,12 @@ class TestKnownServiceExtraction:
             for wire in wires
         )
 
-    def test_tavily_cost_from_response_body(self) -> None:
-        """Tavily: cost extracted from response_body.usage.credits."""
+    def test_tavily_usage_from_response_body(self) -> None:
+        """Tavily: billed credits are observed without SDK-side money."""
         task = _make_task()
-        response = _make_response(body={"usage": {"credits": 2}, "results": []})
+        response = _make_response(
+            body={"request_id": "tavily-2", "usage": {"credits": 2}, "results": []}
+        )
 
         with task_context(task):
             _handle_http_call("https://api.tavily.com/search", response=response)
@@ -406,11 +408,21 @@ class TestKnownServiceExtraction:
         assert len(events) == 1
         event = events[0]
         assert event.event_type == "external_cost"
-        # 2 credits * $0.008 = $0.016
-        assert event.cost_usd == Decimal("2") * Decimal("0.008")
-        assert event.cost_confidence == "computed"
-        assert event.pricing_source == "service_catalog"
-        assert event.service_name == "Tavily Search"
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "tavily",
+            "service": "search_api",
+            "record_id": "tavily-2",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "api_credit"}
+        assert wire["usage"] == [
+            {"metric": "credit_count", "quantity": "2", "unit": "Credits"}
+        ]
+        assert "cost_evidence" not in wire
 
     def test_provider_suppression_precedes_service_catalog(self) -> None:
         task = _make_task()
@@ -540,7 +552,9 @@ class TestAutoSession:
 
     def test_creates_session_when_no_task(self) -> None:
         """Without an explicit task, a session task is auto-created."""
-        response = _make_response(body={"results": []})
+        response = _make_response(
+            body={"request_id": "session-1", "usage": {"credits": 1}, "results": []}
+        )
 
         # No task context active
         _handle_http_call("https://api.tavily.com/search", response=response)
@@ -552,8 +566,12 @@ class TestAutoSession:
 
     def test_session_groups_multiple_calls(self) -> None:
         """Multiple calls without explicit task share the same session task."""
-        response1 = _make_response(body={"api_credits_used": 1})
-        response2 = _make_response(body={"api_credits_used": 2})
+        response1 = _make_response(
+            body={"request_id": "session-1", "usage": {"credits": 1}}
+        )
+        response2 = _make_response(
+            body={"request_id": "session-2", "usage": {"credits": 2}}
+        )
 
         _handle_http_call("https://api.tavily.com/search", response=response1)
         _handle_http_call("https://api.tavily.com/search", response=response2)
@@ -609,10 +627,10 @@ class TestResponseBodyEdgeCases:
 
         events = get_recorded_events()
         assert len(events) == 1
-        # Cost should use fallback (body wasn't parsed due to size)
-        # Tavily has fallback_credits=1, so: 1 * $0.008 = $0.008
-        assert events[0].cost_usd == Decimal("1") * Decimal("0.008")
-        assert events[0].cost_confidence == "estimated"
+        assert events[0].event_type == "network"
+        assert events[0].cost_usd == 0
+        assert events[0].cost_confidence == "unknown"
+        assert events[0].pricing_source != "service_catalog"
 
     def test_non_json_response_body_skipped(self) -> None:
         """Non-JSON responses don't attempt body parsing."""
@@ -625,10 +643,7 @@ class TestResponseBodyEdgeCases:
             _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
-        assert len(events) == 1
-        # Body not parsed -> fallback credits used
-        assert events[0].cost_usd == Decimal("1") * Decimal("0.008")
-        assert events[0].cost_confidence == "estimated"
+        assert events == []
 
     def test_json_parse_failure_graceful(self) -> None:
         """If response.json() raises, extraction falls back gracefully."""
@@ -640,9 +655,7 @@ class TestResponseBodyEdgeCases:
             _handle_http_call("https://api.tavily.com/search", response=response)
 
         events = get_recorded_events()
-        assert len(events) == 1
-        # Falls back to fallback_credits
-        assert events[0].cost_confidence == "estimated"
+        assert events == []
 
 
 # ---------------------------------------------------------------------------

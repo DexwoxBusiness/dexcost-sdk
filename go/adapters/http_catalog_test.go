@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DexwoxBusiness/dexcost-sdk/go/adapters"
+	"github.com/DexwoxBusiness/dexcost-sdk/go/attribution"
 	"github.com/DexwoxBusiness/dexcost-sdk/go/core"
 	"github.com/shopspring/decimal"
 )
@@ -43,17 +44,15 @@ func (s *stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// TestTrackHTTP_RecordsCatalogEntryFromBody — Tavily Search uses
-// response_body extraction (`usage.credits` * 0.008/credit). With a stub
-// returning {"usage":{"credits":5}}, the recorded event should carry
-// cost=5*0.008=0.04 with confidence=computed and pricing_source=service_catalog.
-func TestTrackHTTP_RecordsCatalogEntryFromBody(t *testing.T) {
+// TestTrackHTTP_ObservesTavilyCreditsFromBody verifies that the provider-owned
+// credit count reaches attribution without retaining the legacy SDK price.
+func TestTrackHTTP_ObservesTavilyCreditsFromBody(t *testing.T) {
 	adapters.ClearDomainRates()
 	adapters.ClearRecordedEvents()
 
 	stub := &stubTransport{
 		statusCode:  200,
-		body:        `{"usage":{"credits":5},"results":[]}`,
+		body:        `{"request_id":"tavily-5","usage":{"credits":5},"results":[]}`,
 		contentType: "application/json",
 	}
 	client := adapters.TrackHTTP(&http.Client{Transport: stub})
@@ -85,15 +84,23 @@ func TestTrackHTTP_RecordsCatalogEntryFromBody(t *testing.T) {
 	if ev.EventType != core.EventTypeExternalCost {
 		t.Errorf("event type: expected external_cost, got %s", ev.EventType)
 	}
-	expected := decimal.RequireFromString("0.040")
-	if !ev.CostUSD.Equal(expected) {
-		t.Errorf("cost: expected %s, got %s", expected, ev.CostUSD)
+	if !ev.CostUSD.IsZero() {
+		t.Errorf("cost: expected observer-only zero, got %s", ev.CostUSD)
 	}
-	if ev.CostConfidence != core.CostConfidenceComputed {
-		t.Errorf("confidence: expected computed, got %s", ev.CostConfidence)
+	if ev.CostConfidence != core.CostConfidenceUnknown {
+		t.Errorf("confidence: expected unknown, got %s", ev.CostConfidence)
 	}
-	if string(ev.PricingSource) != "service_catalog" {
-		t.Errorf("pricing_source: expected service_catalog, got %s", ev.PricingSource)
+	if ev.PricingSource != "" {
+		t.Errorf("pricing_source: expected none, got %s", ev.PricingSource)
+	}
+	wire := attribution.ToEventV2(ev)
+	if wire == nil || wire.Provider.Name != "tavily" || wire.Provider.Service != "search_api" ||
+		wire.Provider.RecordID != "tavily-5" || wire.Resource == nil ||
+		wire.Resource.Type != "sku" || wire.Resource.ID != "api_credit" ||
+		len(wire.Usage) != 1 || wire.Usage[0].Metric != attribution.MetricCreditCount ||
+		wire.Usage[0].Quantity != "5" || wire.Usage[0].Unit != "Credits" ||
+		wire.CostEvidence != nil {
+		t.Fatalf("unexpected Tavily attribution event: %+v", wire)
 	}
 }
 

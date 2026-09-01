@@ -1954,7 +1954,7 @@ async function _maybeRecordCost(
     }
 
     // 2. Check service catalog
-    if (!observerRoute && _catalog) {
+    if (_catalog) {
       const entry = _catalog.lookup(urlStr);
       if (entry) {
         // Extract cost from response
@@ -1972,7 +1972,12 @@ async function _maybeRecordCost(
           extractionResult = await _extractFromResponse(_catalog, entry, response);
         }
 
-        if (extractionResult) {
+        // An explicit catalog/workspace override remains authoritative. The
+        // bundled base price is ignored for observer-owned routes so the same
+        // provider usage cannot be valued once here and again by the server.
+        const observerOwnedBase = observerRoute
+          && extractionResult?.pricingSource === "service_catalog";
+        if (extractionResult && !observerOwnedBase) {
           const isUserOverride = extractionResult.pricingSource === "user_override";
           const event = createCostEvent({
             eventId: randomUUID(),

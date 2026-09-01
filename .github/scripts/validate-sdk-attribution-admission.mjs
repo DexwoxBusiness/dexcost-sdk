@@ -54,6 +54,15 @@ const FORBIDDEN_MONETARY_KEYS = new Set([
   "tiers",
 ]);
 
+// Some providers host their API reference on a different first-party domain
+// from the request endpoint. Keep this allowlist explicit and provider-scoped
+// so a documentation CDN cannot become a generic provenance bypass.
+const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
+  google: Object.freeze([
+    Object.freeze({ apiRoot: "googleapis.com", documentationRoot: "google.com" }),
+  ]),
+});
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -258,7 +267,18 @@ function validateObserverShape(observer, issues) {
     const providerDomainRoots = new Set(
       (observer?.domains ?? []).map(domainRoot),
     );
-    if (!providerDomainRoots.has(domainRoot(sourceUrl.hostname))) {
+    const sourceRoot = domainRoot(sourceUrl.hostname);
+    const documentationMappings = OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS[
+      observer?.provider_name
+    ] ?? [];
+    const isMappedFirstPartySource = documentationMappings.some(
+      ({ apiRoot, documentationRoot }) =>
+        providerDomainRoots.has(apiRoot) && sourceRoot === documentationRoot,
+    );
+    if (
+      !providerDomainRoots.has(sourceRoot) &&
+      !isMappedFirstPartySource
+    ) {
       issues.push(`observer ${key} source is not provider-owned`);
     }
   }
