@@ -274,6 +274,58 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     ]);
   });
 
+  it.each([
+    [0, "default_short"],
+    [2, undefined],
+  ])("captures raw xAI exact cost and fails open for server tools", async (toolCount, expectedLane) => {
+    const body = {
+      id: "chat-xai-1",
+      model: "grok-4.3",
+      service_tier: "default",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        cost_in_usd_ticks: 12_345_678,
+        num_server_side_tools_used: toolCount,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "xai" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "grok-4.3", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "xai",
+      model: "grok-4.3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+      costConfidence: "exact",
+      pricingSource: "provider_response",
+    });
+    expect(events[0].costUsd.toString()).toBe("0.0012345678");
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.xai_pricing_lane).toBe(expectedLane);
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

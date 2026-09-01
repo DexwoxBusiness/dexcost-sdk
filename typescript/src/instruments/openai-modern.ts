@@ -11,7 +11,14 @@ import {
   type OperationMeasurement,
   type ProviderUsageLine,
 } from "./provider-metering.js";
-import { nonNegativeDecimal, nonNegativeInteger, prefixedModel, tokenMeasurement } from "./provider-extract.js";
+import {
+  canonicalXaiModel,
+  nonNegativeDecimal,
+  nonNegativeInteger,
+  prefixedModel,
+  tokenMeasurement,
+  xaiPricingLane,
+} from "./provider-extract.js";
 import {
   canonicalLiteLlmModel,
   classifyLiteLlmProvider,
@@ -49,6 +56,7 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return "deepseek";
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
+    if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) return "xai";
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) return "azure_openai";
   } catch { /* default client */ }
   return "openai";
@@ -58,7 +66,8 @@ function modelFor(provider: string, requested: unknown, response?: any, liteLlm 
   const selected = typeof response?.model === "string" ? response.model :
     typeof requested === "string" ? requested : "unknown";
   if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
-  return ["openai", "deepseek", "fireworks_ai"].includes(provider)
+  if (provider === "xai") return canonicalXaiModel(selected);
+  return ["openai", "deepseek", "fireworks_ai", "xai"].includes(provider)
     ? selected
     : prefixedModel(provider, selected);
 }
@@ -187,6 +196,12 @@ function measurement(kind: DirectKind, response: any, body: any, provider: strin
   result.billingDimensions = [
     ...gatewayDimensions(provider, liteLlm),
     ...(kind === "tokens" ? fireworksTierDimension(provider, body) : []),
+    ...(kind === "tokens" && provider === "xai"
+      ? (() => {
+          const lane = xaiPricingLane(response, result.inputTokens ?? 0);
+          return lane === undefined ? [] : [["xai_pricing_lane", lane] as const];
+        })()
+      : []),
   ];
   return result;
 }

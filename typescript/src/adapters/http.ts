@@ -22,7 +22,12 @@ import {
   type CapturedIdempotencyKey,
 } from "../core/idempotency.js";
 import { providerCaptureIsClaimed } from "../instruments/provider-capture.js";
-import { nonNegativeDecimal, tokenMeasurement } from "../instruments/provider-extract.js";
+import {
+  canonicalXaiModel,
+  nonNegativeDecimal,
+  tokenMeasurement,
+  xaiPricingLane,
+} from "../instruments/provider-extract.js";
 import {
   canonicalLiteLlmModel,
   classifyLiteLlmProvider,
@@ -1515,12 +1520,16 @@ function _recordHttpLlmEvent(
     : ctx.hostname === "api.deepseek.com" ? "deepseek"
       : ctx.hostname === "api.fireworks.ai" || ctx.hostname.endsWith(".api.fireworks.ai")
         ? "fireworks_ai"
-        : ctx.hostname;
-  const model = ctx.liteLlmProxy
+        : ctx.hostname === "api.x.ai" || ctx.hostname.endsWith(".api.x.ai")
+          ? "xai"
+          : ctx.hostname;
+  const routedModel = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
     : usage?.model ?? requestedModel ?? "unknown";
+  const model = provider === "xai" ? canonicalXaiModel(routedModel) : routedModel;
 
-  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai") &&
+  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai" ||
+      provider === "xai") &&
       usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
@@ -1583,6 +1592,18 @@ function _recordHttpLlmEvent(
       ...dimensions,
       { key: "service_tier", value: { type: "string", value: _fireworksServiceTier(ctx) } },
     ];
+  }
+  if (provider === "xai" && usage?.rawResponse !== undefined) {
+    const pricingLane = xaiPricingLane(usage.rawResponse, inputTokens);
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "xai_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
   }
   if (measurement?.providerRecordId) details.provider_record_id = measurement.providerRecordId;
   if (providerCost !== undefined) details.provider_reported_cost_usd = providerCost.toString();

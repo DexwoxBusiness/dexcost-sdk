@@ -107,6 +107,8 @@ def _provider_for_instance(instance: Any) -> str:
                 return "deepseek"
             if hostname == "api.fireworks.ai" or hostname.endswith(".api.fireworks.ai"):
                 return "fireworks_ai"
+            if hostname == "api.x.ai" or hostname.endswith(".api.x.ai"):
+                return "xai"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):
@@ -130,6 +132,86 @@ def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | N
         if isinstance(extra_body, Mapping):
             value = extra_body.get("service_tier")
     return "priority" if value == "priority" else "default"
+
+
+_XAI_USD_TICKS_PER_USD = Decimal("10000000000")
+_XAI_MODEL_ALIASES = {
+    "grok-4.3-latest": "grok-4.3",
+    "grok-code-fast-1": "grok-build-0.1",
+    "grok-code-fast": "grok-build-0.1",
+    "grok-code-fast-1-0825": "grok-build-0.1",
+    "grok-4.5-latest": "grok-4.5",
+    "grok-build-latest": "grok-4.5",
+    "grok-4.20-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning-gv2": "grok-4.20-0309-reasoning",
+    "grok-4.20-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-latest-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-0309-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-gv2": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-multi-agent": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-0304": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-0309": "grok-4.20-multi-agent-0309",
+    "grok-4-1-fast-reasoning": "grok-4.3",
+    "grok-4-1-fast-non-reasoning": "grok-4.3",
+    "grok-4-fast-reasoning": "grok-4.3",
+    "grok-4-fast-non-reasoning": "grok-4.3",
+    "grok-4-0709": "grok-4.3",
+    "grok-3": "grok-4.3",
+}
+
+
+def _xai_provider_cost(usage: Any, provider: str) -> Decimal | None:
+    """Return xAI's exact per-request charge without losing tick precision."""
+    if provider != "xai":
+        return None
+    ticks = _decimal_quantity(_value(usage, "cost_in_usd_ticks"))
+    if ticks is None or ticks != ticks.to_integral_value():
+        return None
+    return ticks / _XAI_USD_TICKS_PER_USD
+
+
+def _xai_pricing_lane(
+    usage: Any,
+    total_input_tokens: int,
+    service_tier: object,
+    provider: str,
+) -> str | None:
+    """Classify only the xAI surface the static server catalog can price exactly."""
+    if provider != "xai" or usage is None:
+        return None
+    raw_tool_count = _value(usage, "num_server_side_tools_used")
+    if raw_tool_count is not None:
+        tool_count = _count(raw_tool_count)
+        if tool_count is None or tool_count > 0:
+            return None
+    if service_tier is None or service_tier == "default":
+        tier = "default"
+    elif service_tier == "priority":
+        tier = "priority"
+    else:
+        return None
+    context = "long" if total_input_tokens >= 200_000 else "short"
+    return f"{tier}_{context}"
 
 
 def _routed_wrapper(wrapper: Any) -> Any:
@@ -1116,6 +1198,10 @@ class _SyncStreamWrapper(Iterator[Any]):
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
+        if self._provider == "xai":
+            response_tier = _value(chunk, "service_tier")
+            if isinstance(response_tier, str):
+                self._service_tier = response_tier
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1288,6 +1374,10 @@ class _AsyncStreamWrapper:
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
+        if self._provider == "xai":
+            response_tier = _value(chunk, "service_tier")
+            if isinstance(response_tier, str):
+                self._service_tier = response_tier
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1436,10 +1526,13 @@ def _record_response_tool_events(
     task: Any,
     latency_ms: int,
     *,
+    provider: str,
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
 ) -> None:
     """Persist provider-observed built-in tool calls without tool payloads."""
+    if provider != "openai":
+        return
     tracker = _active_tracker
     if tracker is None:
         return
@@ -1511,7 +1604,7 @@ def _record_response_tool_events(
             record_provider_operation(
                 tracker=tracker,
                 task=task,
-                provider=_current_provider(),
+                provider=provider,
                 service=service,
                 operation=operation,
                 component="external",
@@ -1536,6 +1629,8 @@ def _record_response_tool_events(
 
 
 def _provider_model(model: str, provider: str) -> str:
+    if provider == "xai":
+        return _XAI_MODEL_ALIASES.get(model, model)
     prefixes = {
         "openrouter": "openrouter/",
         "perplexity": "perplexity/",
@@ -1642,6 +1737,8 @@ def _record_from_response(
     provider_cost, upstream_cost, is_byok = _openrouter_costs(usage, provider)
     if provider_cost is None:
         provider_cost = _perplexity_cost(usage, provider)
+    if provider_cost is None:
+        provider_cost = _xai_provider_cost(usage, provider)
 
     if usage is not None:
         try:
@@ -1662,6 +1759,13 @@ def _record_from_response(
         input_tokens = output_tokens = cached_tokens = cache_write_tokens = reasoning_tokens = 0
         usage_error = None
         has_usage = False
+
+    xai_pricing_lane = _xai_pricing_lane(
+        usage,
+        input_tokens,
+        _value(response, "service_tier"),
+        provider,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1686,11 +1790,13 @@ def _record_from_response(
         idempotency_key=idempotency_key,
         operation_name=operation_name,
         service_tier=service_tier,
+        xai_pricing_lane=xai_pricing_lane,
     )
     _record_response_tool_events(
         response,
         resolved_task,
         latency_ms,
+        provider=provider,
         capability=capability,
         idempotency_key=idempotency_key,
     )
@@ -1726,6 +1832,8 @@ def _record_from_stream_usage(
     provider_cost, upstream_cost, is_byok = _openrouter_costs(usage, resolved_provider)
     if provider_cost is None:
         provider_cost = _perplexity_cost(usage, resolved_provider)
+    if provider_cost is None:
+        provider_cost = _xai_provider_cost(usage, resolved_provider)
 
     if usage is not None:
         try:
@@ -1746,6 +1854,13 @@ def _record_from_stream_usage(
         input_tokens = output_tokens = cached_tokens = cache_write_tokens = reasoning_tokens = 0
         usage_error = None
         has_usage = False
+
+    xai_pricing_lane = _xai_pricing_lane(
+        usage,
+        input_tokens,
+        service_tier,
+        resolved_provider,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1771,12 +1886,14 @@ def _record_from_stream_usage(
         idempotency_key=idempotency_key,
         operation_name=operation_name,
         service_tier=service_tier,
+        xai_pricing_lane=xai_pricing_lane,
     )
     if response is not None:
         _record_response_tool_events(
             response,
             resolved_task,
             latency_ms,
+            provider=resolved_provider,
             capability=capability,
             idempotency_key=idempotency_key,
         )
@@ -1822,6 +1939,7 @@ def _insert_llm_event(
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
     service_tier: str | None = None,
+    xai_pricing_lane: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -1901,6 +2019,13 @@ def _insert_llm_event(
             {
                 "key": "service_tier",
                 "value": {"type": "string", "value": service_tier},
+            }
+        )
+    if provider == "xai" and xai_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "xai_pricing_lane",
+                "value": {"type": "string", "value": xai_pricing_lane},
             }
         )
     if provider == "azure_openai" and isinstance(requested_model, str) and requested_model:
@@ -2391,7 +2516,7 @@ def _observe_realtime_event(connection: object, event: object) -> None:
     event_record = session.finish(measurement, status)
     tool_counts = _response_tool_counts(response)
     if tool_counts:
-        _record_response_tool_events(response, session.task, 0)
+        _record_response_tool_events(response, session.task, 0, provider="openai")
         if session.auto_task and event_record is not None:
             _active_tracker._aggregate_costs(session.task)
             _active_tracker._storage.insert_task(session.task)

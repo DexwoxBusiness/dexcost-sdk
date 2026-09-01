@@ -176,6 +176,64 @@ describe("OpenAI instrumentation", () => {
     ]) ?? [])).toMatchObject({ service_tier: expectedTier });
   });
 
+  it.each([
+    [0, "grok-4.6", "grok-4.6", "priority_short"],
+    [1, "grok-4-1-fast-reasoning", "grok-4.3", undefined],
+  ])("captures xAI exact cost and only admits tool-free catalog lanes", async (
+    toolCount,
+    reportedModel,
+    expectedModel,
+    expectedLane,
+  ) => {
+    class XaiCompletions {
+      _client = { baseURL: "https://api.x.ai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: reportedModel,
+          service_tier: "priority",
+          usage: {
+            prompt_tokens: 800,
+            completion_tokens: 150,
+            prompt_tokens_details: { cached_tokens: 50 },
+            cost_in_usd_ticks: 12_345_678,
+            num_server_side_tools_used: toolCount,
+          },
+        });
+      }
+    }
+    _setCompletionsClass(XaiCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "xai" });
+
+    await runWithTask(task, async () => {
+      await new XaiCompletions().create({ model: reportedModel, messages: [] });
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "xai",
+      model: expectedModel,
+      costConfidence: "exact",
+      pricingSource: "provider_response",
+    });
+    expect(events[0].costUsd.toString()).toBe("0.0012345678");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "xai", service: "api" });
+    expect(observation?.cost_evidence).toEqual({
+      amount: "0.0012345678",
+      currency: "USD",
+      source: "provider_reported",
+      confidence: "exact",
+    });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.xai_pricing_lane).toBe(expectedLane);
+  });
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

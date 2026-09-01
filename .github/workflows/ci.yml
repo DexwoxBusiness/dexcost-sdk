@@ -111,7 +111,7 @@ jobs:
         working-directory: typescript
         run: >-
           npx vitest run
-          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance}.test.ts'
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance,xai-pricing-conformance}.test.ts'
       - name: Build + runtime and catalog-probe smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs && npm run test:catalog-probe
@@ -244,6 +244,7 @@ jobs:
             tests/test_attribution_v2_conformance.py \
             tests/test_attribution_v3_conformance.py \
             tests/test_openai_usage_conformance.py \
+            tests/test_xai_pricing_conformance.py \
             tests/test_service_usage_observer_conformance.py \
             -v
 
@@ -266,6 +267,7 @@ jobs:
             tests/attribution-v3-conformance.test.ts \
             tests/attribution-v3-pusher-conformance.test.ts \
             tests/openai-usage-conformance.test.ts \
+            tests/xai-pricing-conformance.test.ts \
             tests/service-usage-observer-conformance.test.ts
 
       - name: Run cross-SDK conformance (rust)

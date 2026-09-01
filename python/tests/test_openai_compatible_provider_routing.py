@@ -234,6 +234,78 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
 
 
 @pytest.mark.parametrize(
+    ("tool_count", "reported_model", "expected_model", "expected_lane"),
+    [
+        (0, "grok-4.6", "grok-4.6", "priority_short"),
+        (1, "grok-4-1-fast-reasoning", "grok-4.3", None),
+    ],
+)
+def test_xai_openai_compatibility_captures_exact_cost_and_safe_pricing_lane(
+    tmp_path: Path,
+    tool_count: int,
+    reported_model: str,
+    expected_model: str,
+    expected_lane: str | None,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _chat_response(reported_model)
+        payload["service_tier"] = "priority"
+        usage = payload["usage"]
+        assert isinstance(usage, dict)
+        usage["cost_in_usd_ticks"] = 12_345_678
+        usage["num_server_side_tools_used"] = tool_count
+        if tool_count > 0:
+            payload["output"] = [{"type": "web_search_call", "status": "completed"}]
+        return httpx.Response(200, json=payload, request=request)
+
+    storage = SQLiteStorage(tmp_path / f"xai-openai-{tool_count}.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.x.ai/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="xai-openai"):
+            client.chat.completions.create(
+                model=reported_model,
+                messages=[{"role": "user", "content": "private-query"}],
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "xai"
+        assert event.model == expected_model
+        assert event.cost_usd == Decimal("0.0012345678")
+        assert event.cost_confidence == "exact"
+        assert event.pricing_source == "provider_response"
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "xai",
+            "service": "api",
+            "record_id": "chat-provider-1",
+        }
+        assert observation["cost_evidence"] == {
+            "amount": "0.0012345678",
+            "currency": "USD",
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
+        dimensions = {
+            item["key"]: item["value"]["value"] for item in observation["usage"][0]["dimensions"]
+        }
+        assert dimensions.get("xai_pricing_lane") == expected_lane
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+@pytest.mark.parametrize(
     ("base_url", "requested_tier", "expected_tier"),
     [
         ("https://api.fireworks.ai/inference/v1", None, "default"),

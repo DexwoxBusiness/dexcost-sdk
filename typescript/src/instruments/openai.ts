@@ -29,10 +29,12 @@ import {
   type CapturedIdempotencyKey,
 } from "../core/idempotency.js";
 import {
+  canonicalXaiModel,
   nonNegativeDecimal,
   nonNegativeInteger,
   prefixedModel,
   tokenMeasurement,
+  xaiPricingLane,
 } from "./provider-extract.js";
 import { normalizeOpenAIUsage, OpenAIUsageError } from "./openai-usage.js";
 import { mapProviderResult, recordProviderFailure } from "./provider-metering.js";
@@ -301,6 +303,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) {
       return { provider: "fireworks_ai" };
     }
+    if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) {
+      return { provider: "xai" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
@@ -327,8 +332,11 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (["openai", "deepseek", "fireworks_ai"].includes(route.provider) && route.gateway === undefined) {
-    return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
+  if (["openai", "deepseek", "fireworks_ai", "xai"].includes(route.provider) && route.gateway === undefined) {
+    const selected = typeof responseModel === "string" && responseModel.length > 0
+      ? responseModel
+      : requestedModel;
+    return route.provider === "xai" ? canonicalXaiModel(selected) : selected;
   }
   const selected = route.provider === "azure_openai" || route.gateway !== undefined
     ? requestedModel
@@ -489,6 +497,21 @@ function recordUsageEvent(
     }
     if (providerUpstreamCostUsd !== undefined) {
       details.provider_upstream_cost_usd = providerUpstreamCostUsd.toString();
+    }
+  }
+  if (provider === "xai") {
+    const pricingLane = xaiPricingLane(
+      rawResponse ?? { usage: rawUsage },
+      inputTokens,
+    );
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "xai_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
     }
   }
   const usageLines = [

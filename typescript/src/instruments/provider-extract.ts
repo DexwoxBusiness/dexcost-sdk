@@ -28,6 +28,73 @@ export function nonNegativeInteger(value: unknown): number {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+const XAI_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  "grok-4.3-latest": "grok-4.3",
+  "grok-code-fast-1": "grok-build-0.1",
+  "grok-code-fast": "grok-build-0.1",
+  "grok-code-fast-1-0825": "grok-build-0.1",
+  "grok-4.5-latest": "grok-4.5",
+  "grok-build-latest": "grok-4.5",
+  "grok-4.20-reasoning-latest": "grok-4.20-0309-reasoning",
+  "grok-4.20": "grok-4.20-0309-reasoning",
+  "grok-4.20-reasoning": "grok-4.20-0309-reasoning",
+  "grok-4.20-0309": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta-0309-reasoning": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta-0309": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta-latest": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta-latest-reasoning": "grok-4.20-0309-reasoning",
+  "grok-4.20-beta-reasoning": "grok-4.20-0309-reasoning",
+  "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-0309-reasoning",
+  "grok-4.20-experimental-beta-0304": "grok-4.20-0309-reasoning",
+  "grok-4.20-experimental-beta-reasoning-latest": "grok-4.20-0309-reasoning",
+  "grok-4.20-experimental-beta-latest": "grok-4.20-0309-reasoning",
+  "grok-4.20-reasoning-gv2": "grok-4.20-0309-reasoning",
+  "grok-4.20-non-reasoning": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-beta-non-reasoning": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-beta-latest-non-reasoning": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-experimental-beta-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-beta-0309-non-reasoning": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-non-reasoning-gv2": "grok-4.20-0309-non-reasoning",
+  "grok-4.20-multi-agent": "grok-4.20-multi-agent-0309",
+  "grok-4.20-multi-agent-latest": "grok-4.20-multi-agent-0309",
+  "grok-4.20-multi-agent-beta-latest": "grok-4.20-multi-agent-0309",
+  "grok-4.20-multi-agent-experimental-beta-0304": "grok-4.20-multi-agent-0309",
+  "grok-4.20-multi-agent-experimental-beta-latest": "grok-4.20-multi-agent-0309",
+  "grok-4.20-multi-agent-beta-0309": "grok-4.20-multi-agent-0309",
+  "grok-4-1-fast-reasoning": "grok-4.3",
+  "grok-4-1-fast-non-reasoning": "grok-4.3",
+  "grok-4-fast-reasoning": "grok-4.3",
+  "grok-4-fast-non-reasoning": "grok-4.3",
+  "grok-4-0709": "grok-4.3",
+  "grok-3": "grok-4.3",
+};
+
+export function canonicalXaiModel(model: string): string {
+  return XAI_MODEL_ALIASES[model] ?? model;
+}
+
+export function xaiPricingLane(
+  response: any,
+  totalInputTokens: number,
+): "default_short" | "default_long" | "priority_short" | "priority_long" | undefined {
+  const usage = response?.usage ?? response?.meta?.usage;
+  if (usage === undefined || usage === null) return undefined;
+  const rawToolCount = usage.num_server_side_tools_used;
+  if (rawToolCount !== undefined && rawToolCount !== null) {
+    if (typeof rawToolCount !== "number" || !Number.isSafeInteger(rawToolCount) ||
+      rawToolCount < 0 || rawToolCount > 0) return undefined;
+  }
+  const rawTier = response?.service_tier;
+  const tier = rawTier === undefined || rawTier === null || rawTier === "default"
+    ? "default"
+    : rawTier === "priority" ? "priority" : undefined;
+  if (tier === undefined) return undefined;
+  return `${tier}_${totalInputTokens >= 200_000 ? "long" : "short"}`;
+}
+
 export function tokenMeasurement(
   response: any,
   requestedModel?: string,
@@ -95,6 +162,9 @@ export function tokenMeasurement(
     );
   } else if (provider === "perplexity") {
     providerCost = nonNegativeDecimal(usage.cost?.total_cost);
+  } else if (provider === "xai") {
+    const ticks = nonNegativeDecimal(usage.cost_in_usd_ticks);
+    if (ticks?.isInteger()) providerCost = ticks.div("10000000000");
   }
   return {
     usageLines: lines,
