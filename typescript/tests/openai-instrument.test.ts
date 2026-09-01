@@ -281,6 +281,70 @@ describe("OpenAI instrumentation", () => {
     expect(dimensions.groq_pricing_lane).toBe(expectedLane);
   });
 
+  it.each([
+    ["standard", "global_standard"],
+    ["priority", undefined],
+    [undefined, undefined],
+  ])("routes Mistral calls only into the confirmed global Standard lane", async (
+    responseTier,
+    expectedLane,
+  ) => {
+    class MistralCompletions {
+      _client = { baseURL: "https://api.mistral.ai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: "mistral-large-latest",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            prompt_tokens_details: { cached_tokens: 4 },
+            completion_tokens_details: { reasoning_tokens: 3 },
+            ...(responseTier === undefined ? {} : { service_tier: responseTier }),
+          },
+        });
+      }
+    }
+    _setCompletionsClass(MistralCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral" });
+
+    await runWithTask(task, async () => {
+      await new MistralCompletions().create({
+        model: "mistral-large-latest",
+        messages: [],
+      });
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event).toMatchObject({
+      provider: "mistral",
+      model: "mistral-large-2512",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(event.costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(event);
+    expect(observation?.provider).toMatchObject({ name: "mistral", service: "api" });
+    expect(observation?.provider.record_id).toBe("chatcmpl-abc123");
+    expect(observation?.resource).toEqual({ type: "model", id: "mistral-large-2512" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "7",
+      reasoning_output_tokens: "3",
+    });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
+  });
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

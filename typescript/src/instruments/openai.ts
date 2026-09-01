@@ -29,9 +29,11 @@ import {
   type CapturedIdempotencyKey,
 } from "../core/idempotency.js";
 import {
+  canonicalMistralModel,
   canonicalXaiModel,
   groqPricingLane,
   groqToolExecutionBlocksStaticPricing,
+  mistralPricingLane,
   nonNegativeDecimal,
   nonNegativeInteger,
   prefixedModel,
@@ -311,6 +313,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) {
       return { provider: "groq" };
     }
+    if (hostname === "api.mistral.ai") {
+      return { provider: "mistral" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
@@ -337,11 +342,15 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (["openai", "deepseek", "fireworks_ai", "xai", "groq"].includes(route.provider) && route.gateway === undefined) {
+  if (["openai", "deepseek", "fireworks_ai", "xai", "groq", "mistral"].includes(route.provider) && route.gateway === undefined) {
     const selected = typeof responseModel === "string" && responseModel.length > 0
       ? responseModel
       : requestedModel;
-    return route.provider === "xai" ? canonicalXaiModel(selected) : selected;
+    return route.provider === "xai"
+      ? canonicalXaiModel(selected)
+      : route.provider === "mistral"
+        ? canonicalMistralModel(selected)
+        : selected;
   }
   const selected = route.provider === "azure_openai" || route.gateway !== undefined
     ? requestedModel
@@ -537,6 +546,18 @@ function recordUsageEvent(
       details.attribution_dimensions = [
         ...dimensions,
         { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "mistral") {
+    const pricingLane = mistralPricingLane(rawResponse ?? { usage: rawUsage });
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "mistral_pricing_lane", value: { type: "string", value: pricingLane } },
       ];
     }
   }

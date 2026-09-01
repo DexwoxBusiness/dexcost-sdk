@@ -23,9 +23,11 @@ import {
 } from "../core/idempotency.js";
 import { providerCaptureIsClaimed } from "../instruments/provider-capture.js";
 import {
+  canonicalMistralModel,
   canonicalXaiModel,
   groqPricingLane,
   groqToolExecutionBlocksStaticPricing,
+  mistralPricingLane,
   nonNegativeDecimal,
   tokenMeasurement,
   xaiPricingLane,
@@ -1673,14 +1675,20 @@ function _recordHttpLlmEvent(
           ? "xai"
           : ctx.hostname === "api.groq.com" || ctx.hostname.endsWith(".api.groq.com")
             ? "groq"
-          : ctx.hostname;
+            : ctx.hostname === "api.mistral.ai"
+              ? "mistral"
+              : ctx.hostname;
   const routedModel = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
     : usage?.model ?? requestedModel ?? "unknown";
-  const model = provider === "xai" ? canonicalXaiModel(routedModel) : routedModel;
+  const model = provider === "xai"
+    ? canonicalXaiModel(routedModel)
+    : provider === "mistral"
+      ? canonicalMistralModel(routedModel)
+      : routedModel;
 
   const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai" ||
-      provider === "xai" || provider === "groq") &&
+      provider === "xai" || provider === "groq" || provider === "mistral") &&
       usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
@@ -1775,6 +1783,18 @@ function _recordHttpLlmEvent(
       details.attribution_dimensions = [
         ...dimensions,
         { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "mistral" && usage?.rawResponse !== undefined) {
+    const pricingLane = mistralPricingLane(usage.rawResponse);
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "mistral_pricing_lane", value: { type: "string", value: pricingLane } },
       ];
     }
   }

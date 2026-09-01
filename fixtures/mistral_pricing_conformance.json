@@ -1,0 +1,21 @@
+{
+  "model_cases": {
+    "mistral-large-latest": "mistral-large-2512",
+    "mistral-medium-latest": "mistral-medium-3-5",
+    "mistral-small-latest": "mistral-small-2603",
+    "ministral-14b-latest": "ministral-14b-2512",
+    "ministral-8b-latest": "ministral-8b-2512",
+    "ministral-3b-latest": "ministral-3b-2512",
+    "codestral-latest": "codestral-2508",
+    "mistral-large-2512": "mistral-large-2512",
+    "future-mistral-model": "future-mistral-model"
+  },
+  "lane_cases": [
+    {"id":"standard","service_tier":"standard","expected":"global_standard"},
+    {"id":"priority","service_tier":"priority","expected":null},
+    {"id":"omitted","service_tier":null,"expected":null},
+    {"id":"request-standard-only","service_tier":"standard_only","expected":null},
+    {"id":"request-auto","service_tier":"auto","expected":null},
+    {"id":"unknown","service_tier":"future","expected":null}
+  ]
+}

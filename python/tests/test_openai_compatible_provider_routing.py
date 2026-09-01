@@ -234,6 +234,75 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
 
 
 @pytest.mark.parametrize(
+    ("response_tier", "expected_lane"),
+    [("standard", "global_standard"), ("priority", None), (None, None)],
+)
+def test_mistral_openai_compatibility_only_admits_confirmed_global_standard_lane(
+    tmp_path: Path,
+    response_tier: str | None,
+    expected_lane: str | None,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _chat_response("mistral-large-latest")
+        usage = payload["usage"]
+        assert isinstance(usage, dict)
+        if response_tier is not None:
+            usage["service_tier"] = response_tier
+        return httpx.Response(200, json=payload, request=request)
+
+    storage = SQLiteStorage(tmp_path / f"mistral-openai-{response_tier}.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.mistral.ai/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="mistral-openai"):
+            client.chat.completions.create(
+                model="mistral-large-latest",
+                messages=[{"role": "user", "content": "private-query"}],
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "mistral"
+        assert event.model == "mistral-large-2512"
+        assert event.cost_usd == Decimal("0")
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "mistral",
+            "service": "api",
+            "record_id": "chat-provider-1",
+        }
+        assert observation["resource"] == {
+            "type": "model",
+            "id": "mistral-large-2512",
+        }
+        assert {
+            line["metric"]: line["quantity"] for line in observation["usage"]
+        } == {
+            "input_tokens": "16",
+            "cache_read_input_tokens": "4",
+            "output_tokens": "7",
+            "reasoning_output_tokens": "3",
+        }
+        dimensions = {
+            item["key"]: item["value"]["value"]
+            for item in observation["usage"][0]["dimensions"]
+        }
+        assert dimensions.get("mistral_pricing_lane") == expected_lane
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+@pytest.mark.parametrize(
     ("tool_count", "reported_model", "expected_model", "expected_lane"),
     [
         (0, "grok-4.6", "grok-4.6", "priority_short"),

@@ -453,6 +453,65 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(dimensions.groq_pricing_lane).toBe(expectedLane);
   });
 
+  it.each([
+    ["standard", "global_standard"],
+    ["priority", undefined],
+    [undefined, undefined],
+  ])("captures raw Mistral calls only in the confirmed global Standard lane", async (
+    responseTier,
+    expectedLane,
+  ) => {
+    const body = {
+      id: "chat-mistral-1",
+      model: "mistral-large-latest",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+        ...(responseTier === undefined ? {} : { service_tier: responseTier }),
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "mistral",
+      model: "mistral-large-2512",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

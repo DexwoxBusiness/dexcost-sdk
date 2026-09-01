@@ -111,6 +111,8 @@ def _provider_for_instance(instance: Any) -> str:
                 return "xai"
             if hostname == "api.groq.com" or hostname.endswith(".api.groq.com"):
                 return "groq"
+            if hostname == "api.mistral.ai":
+                return "mistral"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):
@@ -150,6 +152,15 @@ def _request_service_tier(provider: str, kwargs: Mapping[str, Any]) -> object:
 
 
 _XAI_USD_TICKS_PER_USD = Decimal("10000000000")
+_MISTRAL_MODEL_ALIASES = {
+    "mistral-large-latest": "mistral-large-2512",
+    "mistral-medium-latest": "mistral-medium-3-5",
+    "mistral-small-latest": "mistral-small-2603",
+    "ministral-14b-latest": "ministral-14b-2512",
+    "ministral-8b-latest": "ministral-8b-2512",
+    "ministral-3b-latest": "ministral-3b-2512",
+    "codestral-latest": "codestral-2508",
+}
 _XAI_MODEL_ALIASES = {
     "grok-4.3-latest": "grok-4.3",
     "grok-code-fast-1": "grok-build-0.1",
@@ -275,6 +286,13 @@ def _groq_pricing_lane(
     if raw_tier in (None, "default", "on_demand", "flex"):
         return "public_sync"
     return None
+
+
+def _mistral_pricing_lane(usage: Any, provider: str) -> str | None:
+    """Admit only global Standard Tier responses to the first static tariff."""
+    if provider != "mistral" or usage is None:
+        return None
+    return "global_standard" if _value(usage, "service_tier") == "standard" else None
 
 
 def _routed_wrapper(wrapper: Any) -> Any:
@@ -1704,6 +1722,8 @@ def _record_response_tool_events(
 def _provider_model(model: str, provider: str) -> str:
     if provider == "xai":
         return _XAI_MODEL_ALIASES.get(model, model)
+    if provider == "mistral":
+        return _MISTRAL_MODEL_ALIASES.get(model, model)
     prefixes = {
         "openrouter": "openrouter/",
         "perplexity": "perplexity/",
@@ -1844,6 +1864,7 @@ def _record_from_response(
         service_tier,
         provider,
     )
+    mistral_pricing_lane = _mistral_pricing_lane(usage, provider)
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1870,6 +1891,7 @@ def _record_from_response(
         service_tier=service_tier,
         xai_pricing_lane=xai_pricing_lane,
         groq_pricing_lane=groq_pricing_lane,
+        mistral_pricing_lane=mistral_pricing_lane,
     )
     _record_response_tool_events(
         response,
@@ -1947,6 +1969,7 @@ def _record_from_stream_usage(
         resolved_provider,
         tool_execution_seen=groq_tool_execution_seen,
     )
+    mistral_pricing_lane = _mistral_pricing_lane(usage, resolved_provider)
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1974,6 +1997,7 @@ def _record_from_stream_usage(
         service_tier=service_tier,
         xai_pricing_lane=xai_pricing_lane,
         groq_pricing_lane=groq_pricing_lane,
+        mistral_pricing_lane=mistral_pricing_lane,
     )
     if response is not None:
         _record_response_tool_events(
@@ -2028,6 +2052,7 @@ def _insert_llm_event(
     service_tier: object = None,
     xai_pricing_lane: str | None = None,
     groq_pricing_lane: str | None = None,
+    mistral_pricing_lane: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -2121,6 +2146,13 @@ def _insert_llm_event(
             {
                 "key": "groq_pricing_lane",
                 "value": {"type": "string", "value": groq_pricing_lane},
+            }
+        )
+    if provider == "mistral" and mistral_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "mistral_pricing_lane",
+                "value": {"type": "string", "value": mistral_pricing_lane},
             }
         )
     if provider == "azure_openai" and isinstance(requested_model, str) and requested_model:

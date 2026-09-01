@@ -76,6 +76,27 @@ export function canonicalXaiModel(model: string): string {
   return XAI_MODEL_ALIASES[model] ?? model;
 }
 
+const MISTRAL_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  "mistral-large-latest": "mistral-large-2512",
+  "mistral-medium-latest": "mistral-medium-3-5",
+  "mistral-small-latest": "mistral-small-2603",
+  "ministral-14b-latest": "ministral-14b-2512",
+  "ministral-8b-latest": "ministral-8b-2512",
+  "ministral-3b-latest": "ministral-3b-2512",
+  "codestral-latest": "codestral-2508",
+};
+
+/** Canonicalize only aliases explicitly published by Mistral. */
+export function canonicalMistralModel(model: string): string {
+  return MISTRAL_MODEL_ALIASES[model] ?? model;
+}
+
+/** Admit only global Standard Tier responses to the first static tariff. */
+export function mistralPricingLane(response: any): "global_standard" | undefined {
+  const usage = response?.usage ?? response?.meta?.usage;
+  return usage?.service_tier === "standard" ? "global_standard" : undefined;
+}
+
 export function xaiPricingLane(
   response: any,
   totalInputTokens: number,
