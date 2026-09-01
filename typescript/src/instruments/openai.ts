@@ -196,6 +196,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     const startTime = performance.now();
     const self = this;
     const route = providerForResource(self, requestedModel);
+    const serviceTier = fireworksServiceTier(route, body);
     const capability = getCapability();
     const idempotencyKey = captureIdempotencyKey();
 
@@ -218,7 +219,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
       if (body?.stream) {
         return wrapStream(
           response, task, startTime, autoCreated, responsesApi, route, requestedModel,
-          capability, idempotencyKey,
+          capability, idempotencyKey, serviceTier,
         );
       }
       if (_modernInstalled && responsesApi && body?.background === true) {
@@ -229,7 +230,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
         const latencyMs = Math.round(performance.now() - startTime);
         recordEvent(
           response, task, latencyMs, route, requestedModel, responsesApi,
-          capability, idempotencyKey,
+          capability, idempotencyKey, serviceTier,
         );
         if (responsesApi && route.provider === "openai" && route.gateway === undefined &&
             _pricing && _buffer) {
@@ -297,11 +298,20 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) {
       return { provider: "deepseek" };
     }
+    if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) {
+      return { provider: "fireworks_ai" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
   } catch { /* the default OpenAI client may expose a relative/opaque URL */ }
   return { provider: "openai" };
+}
+
+function fireworksServiceTier(route: RoutedIdentity, body: any): "default" | "priority" | undefined {
+  if (route.provider !== "fireworks_ai") return undefined;
+  const value = body?.service_tier ?? body?.extra_body?.service_tier;
+  return value === "priority" ? "priority" : "default";
 }
 
 function routedService(route: RoutedIdentity, responsesApi: boolean): string {
@@ -317,7 +327,7 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if ((route.provider === "openai" || route.provider === "deepseek") && route.gateway === undefined) {
+  if (["openai", "deepseek", "fireworks_ai"].includes(route.provider) && route.gateway === undefined) {
     return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
   }
   const selected = route.provider === "azure_openai" || route.gateway !== undefined
@@ -335,13 +345,14 @@ function recordEvent(
   responsesApi: boolean,
   capability: CapabilityIdentity | undefined,
   idempotencyKey: CapturedIdempotencyKey | undefined,
+  serviceTier?: "default" | "priority",
 ): void {
   if (!_buffer || !_pricing) return;
 
   const model = routedModel(route, response?.model, requestedModel);
   recordUsageEvent(
     task, model, response?.usage, latencyMs, response?.id, route,
-    responsesApi, "succeeded", undefined, capability, idempotencyKey, response,
+    responsesApi, "succeeded", undefined, capability, idempotencyKey, response, serviceTier,
   );
 }
 
@@ -358,6 +369,7 @@ function recordUsageEvent(
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
   rawResponse?: unknown,
+  serviceTier?: "default" | "priority",
 ): void {
   if (!_buffer || !_pricing) return;
   const provider = route.provider;
@@ -395,6 +407,15 @@ function recordUsageEvent(
     }];
   } else if (provider !== "openai") {
     details.attribution_dimensions = [{ key: "gateway", value: { type: "string", value: provider } }];
+  }
+  if (provider === "fireworks_ai" && serviceTier !== undefined) {
+    const dimensions = Array.isArray(details.attribution_dimensions)
+      ? details.attribution_dimensions as Array<Record<string, unknown>>
+      : [];
+    details.attribution_dimensions = [
+      ...dimensions,
+      { key: "service_tier", value: { type: "string", value: serviceTier } },
+    ];
   }
   if (provider === "azure_openai") {
     details.azure_deployment = model.replace(/^azure\//, "");
@@ -539,6 +560,7 @@ function wrapStream(
   requestedModel: string = "unknown",
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
+  serviceTier?: "default" | "priority",
 ): AsyncIterable<any> {
   let model = routedModel(route, undefined, requestedModel);
   let usage: unknown;
@@ -557,6 +579,7 @@ function wrapStream(
         task, routedModel(route, model, requestedModel), usage,
         Math.round(performance.now() - startTime), providerRecordId, route,
         responsesApi, status, error, capability, idempotencyKey, terminalResponse,
+        serviceTier,
       );
     } catch {
       // dexcost errors must never crash the provider stream

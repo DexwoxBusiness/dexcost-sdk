@@ -1,5 +1,5 @@
 {
-  "schema_version": "7",
+  "schema_version": "8",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -628,6 +628,112 @@
       "url": "https://api.openai.com/v1/chat/completions",
       "headers": {},
       "response": { "usage": { "total_tokens": 17 } },
+      "expected": []
+    },
+    {
+      "name": "fireworks_embeddings_uses_provider_reported_prompt_tokens",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": {
+        "model": "accounts/fireworks/models/qwen3-embedding-8b",
+        "input": ["private embedding input"]
+      },
+      "response": {
+        "data": [],
+        "usage": { "prompt_tokens": 125, "total_tokens": 125 }
+      },
+      "expected": [
+        {
+          "service_key": "fireworks_embeddings",
+          "provider_name": "fireworks_ai",
+          "provider_service": "embeddings",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "125",
+          "resource_type": "model",
+          "resource_id": "accounts/fireworks/models/qwen3-embedding-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_embeddings_accepts_the_documented_shorthand",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": { "model": "fireworks/qwen3-embedding-8b", "input": "private" },
+      "response": { "data": [], "usage": { "prompt_tokens": 21 } },
+      "expected": [
+        {
+          "service_key": "fireworks_embeddings",
+          "provider_name": "fireworks_ai",
+          "provider_service": "embeddings",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "21",
+          "resource_type": "model",
+          "resource_id": "fireworks/qwen3-embedding-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_embeddings_unknown_model_fails_open",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": { "model": "accounts/fireworks/models/future-embedding", "input": "private" },
+      "response": { "data": [], "usage": { "prompt_tokens": 21 } },
+      "expected": []
+    },
+    {
+      "name": "fireworks_rerank_uses_provider_reported_prompt_tokens",
+      "url": "https://api.fireworks.ai/inference/v1/rerank",
+      "headers": {},
+      "request": {
+        "model": "accounts/fireworks/models/qwen3-reranker-8b",
+        "query": "private query",
+        "documents": ["private document"]
+      },
+      "response": { "results": [], "usage": { "prompt_tokens": 89 } },
+      "expected": [
+        {
+          "service_key": "fireworks_rerank",
+          "provider_name": "fireworks_ai",
+          "provider_service": "rerank",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "89",
+          "resource_type": "model",
+          "resource_id": "accounts/fireworks/models/qwen3-reranker-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_rerank_accepts_the_documented_shorthand",
+      "url": "https://api.fireworks.ai/inference/v1/rerank",
+      "headers": {},
+      "request": {
+        "model": "fireworks/qwen3-reranker-8b",
+        "query": "private",
+        "documents": ["private"]
+      },
+      "response": { "results": [], "usage": { "prompt_tokens": 34 } },
+      "expected": [
+        {
+          "service_key": "fireworks_rerank",
+          "provider_name": "fireworks_ai",
+          "provider_service": "rerank",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "34",
+          "resource_type": "model",
+          "resource_id": "fireworks/qwen3-reranker-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_rerank_endpoint_descendant_is_not_observed",
+      "url": "https://api.fireworks.ai/inference/v1/rerank/preview",
+      "headers": {},
+      "request": { "model": "fireworks/qwen3-reranker-8b" },
+      "response": { "usage": { "prompt_tokens": 34 } },
       "expected": []
     },
     {

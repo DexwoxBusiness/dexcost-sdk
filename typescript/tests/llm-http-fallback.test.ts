@@ -222,6 +222,58 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(events[0].costUsd.toString()).toBe("0");
   });
 
+  it.each([
+    ["https://api.fireworks.ai/inference/v1/chat/completions", undefined, "default"],
+    ["https://us.api.fireworks.ai/inference/v1/chat/completions", "priority", "priority"],
+    ["https://api.fireworks.ai/inference/v1/chat/completions", "standard", "default"],
+  ])("attributes raw Fireworks calls with an exact serving tier", async (url, tier, expectedTier) => {
+    const model = "accounts/fireworks/models/kimi-k3";
+    const body = {
+      id: "chat-fireworks-1",
+      model,
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "fireworks" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [],
+          ...(tier === undefined ? {} : { service_tier: tier }),
+        }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "fireworks_ai",
+      model,
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    expect(events[0].details?.attribution_dimensions).toEqual([
+      { key: "service_tier", value: { type: "string", value: expectedTier } },
+    ]);
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

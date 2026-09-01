@@ -105,11 +105,31 @@ def _provider_for_instance(instance: Any) -> str:
                 return "perplexity"
             if hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com"):
                 return "deepseek"
+            if hostname == "api.fireworks.ai" or hostname.endswith(".api.fireworks.ai"):
+                return "fireworks_ai"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):
                 return "azure_openai"
     return "openai"
+
+
+def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | None:
+    """Normalize Fireworks' only billable serving-tier selector.
+
+    Fireworks documents ``priority`` as the sole special value and treats every
+    other value (including omission) as standard/default serving.  Keeping that
+    normalization at capture time gives the server an exact, low-cardinality
+    billing dimension without retaining the request body.
+    """
+    if provider != "fireworks_ai":
+        return None
+    value = kwargs.get("service_tier")
+    if value is None:
+        extra_body = kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            value = extra_body.get("service_tier")
+    return "priority" if value == "priority" else "default"
 
 
 def _routed_wrapper(wrapper: Any) -> Any:
@@ -745,6 +765,7 @@ def _sync_create_common(
                 capability,
                 idempotency_key,
                 task_type,
+                _fireworks_service_tier(_current_provider(), kwargs),
             )
 
         try:
@@ -773,6 +794,7 @@ def _sync_create_common(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=task_type,
+                service_tier=_fireworks_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -924,6 +946,7 @@ async def _async_non_stream_handler(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=operation_name,
+                service_tier=_fireworks_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -985,6 +1008,7 @@ async def _async_stream_handler(
             capability,
             idempotency_key,
             operation_name,
+            _fireworks_service_tier(_current_provider(), kwargs),
         )
     finally:
         if auto_token is not None:
@@ -1010,6 +1034,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
+        service_tier: str | None = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1026,6 +1051,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._capability = capability
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
+        self._service_tier = service_tier
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -1110,6 +1136,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1134,6 +1161,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1178,6 +1206,7 @@ class _AsyncStreamWrapper:
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
+        service_tier: str | None = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1194,6 +1223,7 @@ class _AsyncStreamWrapper:
         self._capability = capability
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
+        self._service_tier = service_tier
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -1278,6 +1308,7 @@ class _AsyncStreamWrapper:
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1302,6 +1333,7 @@ class _AsyncStreamWrapper:
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1592,6 +1624,7 @@ def _record_from_response(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: str | None = None,
 ) -> Event | None:
     """Extract fields from a Chat Completion or Responses response."""
     tracker = _active_tracker
@@ -1652,6 +1685,7 @@ def _record_from_response(
         capability=capability,
         idempotency_key=idempotency_key,
         operation_name=operation_name,
+        service_tier=service_tier,
     )
     _record_response_tool_events(
         response,
@@ -1676,6 +1710,7 @@ def _record_from_stream_usage(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: str | None = None,
 ) -> Event | None:
     """Record an event from accumulated stream data."""
     tracker = _active_tracker
@@ -1735,6 +1770,7 @@ def _record_from_stream_usage(
         capability=capability,
         idempotency_key=idempotency_key,
         operation_name=operation_name,
+        service_tier=service_tier,
     )
     if response is not None:
         _record_response_tool_events(
@@ -1785,6 +1821,7 @@ def _insert_llm_event(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -1859,6 +1896,13 @@ def _insert_llm_event(
             }
         ]
     dimensions = list(details.get("attribution_dimensions", []))
+    if provider == "fireworks_ai" and service_tier in {"default", "priority"}:
+        dimensions.append(
+            {
+                "key": "service_tier",
+                "value": {"type": "string", "value": service_tier},
+            }
+        )
     if provider == "azure_openai" and isinstance(requested_model, str) and requested_model:
         dimensions.append(
             {

@@ -47,6 +47,8 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     const hostname = new URL(raw).hostname.toLowerCase();
     if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
+    if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return "deepseek";
+    if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) return "azure_openai";
   } catch { /* default client */ }
   return "openai";
@@ -56,12 +58,20 @@ function modelFor(provider: string, requested: unknown, response?: any, liteLlm 
   const selected = typeof response?.model === "string" ? response.model :
     typeof requested === "string" ? requested : "unknown";
   if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
-  return provider === "openai" ? selected : prefixedModel(provider, selected);
+  return ["openai", "deepseek", "fireworks_ai"].includes(provider)
+    ? selected
+    : prefixedModel(provider, selected);
 }
 
 function gatewayDimensions(provider: string, liteLlm: boolean): Array<readonly [string, string]> {
   if (liteLlm) return [["gateway", "litellm"]];
   return provider === "openai" ? [] : [["gateway", provider]];
+}
+
+function fireworksTierDimension(provider: string, body: any): Array<readonly [string, string]> {
+  if (provider !== "fireworks_ai") return [];
+  const value = body?.service_tier ?? body?.extra_body?.service_tier;
+  return [["service_tier", value === "priority" ? "priority" : "default"]];
 }
 
 function line(metric: string, quantity: unknown, unit: string): ProviderUsageLine[] {
@@ -174,7 +184,10 @@ function measurement(kind: DirectKind, response: any, body: any, provider: strin
     result.usageLines = [...(result.usageLines ?? []), ...line("embedding_count", count, "Embeddings")];
   }
   result.responseModel = modelFor(provider, body?.model, response, liteLlm);
-  result.billingDimensions = gatewayDimensions(provider, liteLlm);
+  result.billingDimensions = [
+    ...gatewayDimensions(provider, liteLlm),
+    ...(kind === "tokens" ? fireworksTierDimension(provider, body) : []),
+  ];
   return result;
 }
 

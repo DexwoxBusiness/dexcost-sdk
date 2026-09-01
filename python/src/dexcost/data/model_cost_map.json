@@ -12315,161 +12315,125 @@
         "mode": "chat"
     },
     "fireworks-ai-4.1b-to-16b": {
-        "input_cost_per_token": 2e-07,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 2e-07
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks-ai-56b-to-176b": {
-        "input_cost_per_token": 1.2e-06,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 1.2e-06
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks-ai-above-16b": {
-        "input_cost_per_token": 9e-07,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 9e-07
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks-ai-default": {
-        "input_cost_per_token": 0.0,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 0.0
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks-ai-embedding-150m-to-350m": {
-        "input_cost_per_token": 1.6e-08,
-        "litellm_provider": "fireworks_ai-embedding-models",
-        "output_cost_per_token": 0.0
+        "litellm_provider": "fireworks_ai-embedding-models"
     },
     "fireworks-ai-embedding-up-to-150m": {
-        "input_cost_per_token": 8e-09,
-        "litellm_provider": "fireworks_ai-embedding-models",
-        "output_cost_per_token": 0.0
+        "litellm_provider": "fireworks_ai-embedding-models"
     },
     "fireworks-ai-moe-up-to-56b": {
-        "input_cost_per_token": 5e-07,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 5e-07
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks-ai-up-to-4b": {
-        "input_cost_per_token": 2e-07,
-        "litellm_provider": "fireworks_ai",
-        "output_cost_per_token": 2e-07
+        "litellm_provider": "fireworks_ai"
     },
     "fireworks_ai/WhereIsAI/UAE-Large-V1": {
-        "input_cost_per_token": 1.6e-08,
         "litellm_provider": "fireworks_ai-embedding-models",
         "max_input_tokens": 512,
         "max_tokens": 512,
         "mode": "embedding",
-        "output_cost_per_token": 0.0,
         "source": "https://fireworks.ai/pricing"
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-coder-v2-instruct": {
-        "input_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
         "max_tokens": 65536,
         "mode": "chat",
-        "output_cost_per_token": 1.2e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-r1": {
-        "input_cost_per_token": 3e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 20480,
         "max_tokens": 20480,
         "mode": "chat",
-        "output_cost_per_token": 8e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528": {
-        "input_cost_per_token": 3e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 160000,
         "max_output_tokens": 160000,
         "max_tokens": 160000,
         "mode": "chat",
-        "output_cost_per_token": 8e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-r1-basic": {
-        "input_cost_per_token": 5.5e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 20480,
         "max_tokens": 20480,
         "mode": "chat",
-        "output_cost_per_token": 2.19e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-v3": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 8192,
         "max_tokens": 8192,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-v3-0324": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
         "max_tokens": 163840,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/models/fireworks/deepseek-v3-0324",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-v3p1": {
-        "input_cost_per_token": 5.6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 8192,
         "max_tokens": 8192,
         "mode": "chat",
-        "output_cost_per_token": 1.68e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_reasoning": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-v3p1-terminus": {
-        "input_cost_per_token": 5.6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 8192,
         "max_tokens": 8192,
         "mode": "chat",
-        "output_cost_per_token": 1.68e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_reasoning": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/deepseek-v3p2": {
-        "input_cost_per_token": 5.6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
         "max_tokens": 163840,
         "mode": "chat",
-        "output_cost_per_token": 1.68e-06,
         "source": "https://fireworks.ai/models/fireworks/deepseek-v3p2",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12477,26 +12441,22 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/firefunction-v2": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
         "max_tokens": 8192,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/glm-4p5": {
-        "input_cost_per_token": 5.5e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 96000,
         "max_tokens": 96000,
         "mode": "chat",
-        "output_cost_per_token": 2.19e-06,
         "source": "https://fireworks.ai/models/fireworks/glm-4p5",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12504,13 +12464,11 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/glm-4p5-air": {
-        "input_cost_per_token": 2.2e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 96000,
         "max_tokens": 96000,
         "mode": "chat",
-        "output_cost_per_token": 8.8e-07,
         "source": "https://artificialanalysis.ai/models/glm-4-5-air",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12518,8 +12476,6 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/glm-4p6": {
-        "input_cost_per_token": 5.5e-07,
-        "output_cost_per_token": 2.19e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 202800,
         "max_output_tokens": 202800,
@@ -12532,14 +12488,11 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/glm-4p7": {
-        "cache_read_input_token_cost": 3e-07,
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 202800,
         "max_output_tokens": 202800,
         "max_tokens": 202800,
         "mode": "chat",
-        "output_cost_per_token": 2.2e-06,
         "source": "https://fireworks.ai/models/fireworks/glm-4p7",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12547,13 +12500,11 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/gpt-oss-120b": {
-        "input_cost_per_token": 1.5e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
         "max_tokens": 131072,
         "mode": "chat",
-        "output_cost_per_token": 6e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12561,13 +12512,11 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/gpt-oss-20b": {
-        "input_cost_per_token": 5e-08,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
         "max_tokens": 131072,
         "mode": "chat",
-        "output_cost_per_token": 2e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12575,39 +12524,33 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/kimi-k2-instruct": {
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 131072,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 2.5e-06,
         "source": "https://fireworks.ai/models/fireworks/kimi-k2-instruct",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/kimi-k2-instruct-0905": {
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 262144,
         "max_output_tokens": 32768,
         "max_tokens": 32768,
         "mode": "chat",
-        "output_cost_per_token": 2.5e-06,
         "source": "https://app.fireworks.ai/models/fireworks/kimi-k2-instruct-0905",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/kimi-k2-thinking": {
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
         "max_tokens": 262144,
         "mode": "chat",
-        "output_cost_per_token": 2.5e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
@@ -12615,53 +12558,44 @@
         "supports_web_search": true
     },
     "fireworks_ai/accounts/fireworks/models/kimi-k2p5": {
-        "cache_read_input_token_cost": 1e-07,
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
         "max_tokens": 262144,
         "mode": "chat",
-        "output_cost_per_token": 3e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p1-405b-instruct": {
-        "input_cost_per_token": 3e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 128000,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 3e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p1-8b-instruct": {
-        "input_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 1e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p2-11b-vision-instruct": {
-        "input_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 2e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
@@ -12669,143 +12603,119 @@
         "supports_vision": true
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p2-1b-instruct": {
-        "input_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 1e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p2-3b-instruct": {
-        "input_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 1e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/llama-v3p2-90b-vision-instruct": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
         "max_tokens": 16384,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false,
         "supports_vision": true
     },
     "fireworks_ai/accounts/fireworks/models/llama4-maverick-instruct-basic": {
-        "input_cost_per_token": 2.2e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
         "max_tokens": 131072,
         "mode": "chat",
-        "output_cost_per_token": 8.8e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/llama4-scout-instruct-basic": {
-        "input_cost_per_token": 1.5e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
         "max_tokens": 131072,
         "mode": "chat",
-        "output_cost_per_token": 6e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/minimax-m2p1": {
-        "cache_read_input_token_cost": 3e-08,
-        "input_cost_per_token": 3e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 204800,
         "max_output_tokens": 204800,
         "max_tokens": 204800,
         "mode": "chat",
-        "output_cost_per_token": 1.2e-06,
         "source": "https://fireworks.ai/models/fireworks/minimax-m2p1",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/mixtral-8x22b-instruct-hf": {
-        "input_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
         "max_tokens": 65536,
         "mode": "chat",
-        "output_cost_per_token": 1.2e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/accounts/fireworks/models/qwen2-72b-instruct": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
         "max_tokens": 32768,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/qwen2p5-coder-32b-instruct": {
-        "input_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
         "max_tokens": 4096,
         "mode": "chat",
-        "output_cost_per_token": 9e-07,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/accounts/fireworks/models/yi-large": {
-        "input_cost_per_token": 3e-06,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
         "max_tokens": 32768,
         "mode": "chat",
-        "output_cost_per_token": 3e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": false,
         "supports_response_schema": true,
         "supports_tool_choice": false
     },
     "fireworks_ai/glm-4p7": {
-        "cache_read_input_token_cost": 3e-07,
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 202800,
         "max_output_tokens": 202800,
         "max_tokens": 202800,
         "mode": "chat",
-        "output_cost_per_token": 2.2e-06,
         "source": "https://fireworks.ai/models/fireworks/glm-4p7",
         "supports_function_calling": true,
         "supports_reasoning": true,
@@ -12813,67 +12723,53 @@
         "supports_tool_choice": true
     },
     "fireworks_ai/kimi-k2p5": {
-        "cache_read_input_token_cost": 1e-07,
-        "input_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
         "max_tokens": 262144,
         "mode": "chat",
-        "output_cost_per_token": 3e-06,
         "source": "https://fireworks.ai/pricing",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/minimax-m2p1": {
-        "cache_read_input_token_cost": 3e-08,
-        "input_cost_per_token": 3e-07,
         "litellm_provider": "fireworks_ai",
         "max_input_tokens": 204800,
         "max_output_tokens": 204800,
         "max_tokens": 204800,
         "mode": "chat",
-        "output_cost_per_token": 1.2e-06,
         "source": "https://fireworks.ai/models/fireworks/minimax-m2p1",
         "supports_function_calling": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
     "fireworks_ai/nomic-ai/nomic-embed-text-v1": {
-        "input_cost_per_token": 8e-09,
         "litellm_provider": "fireworks_ai-embedding-models",
         "max_input_tokens": 8192,
         "max_tokens": 8192,
         "mode": "embedding",
-        "output_cost_per_token": 0.0,
         "source": "https://fireworks.ai/pricing"
     },
     "fireworks_ai/nomic-ai/nomic-embed-text-v1.5": {
-        "input_cost_per_token": 8e-09,
         "litellm_provider": "fireworks_ai-embedding-models",
         "max_input_tokens": 8192,
         "max_tokens": 8192,
         "mode": "embedding",
-        "output_cost_per_token": 0.0,
         "source": "https://fireworks.ai/pricing"
     },
     "fireworks_ai/thenlper/gte-base": {
-        "input_cost_per_token": 8e-09,
         "litellm_provider": "fireworks_ai-embedding-models",
         "max_input_tokens": 512,
         "max_tokens": 512,
         "mode": "embedding",
-        "output_cost_per_token": 0.0,
         "source": "https://fireworks.ai/pricing"
     },
     "fireworks_ai/thenlper/gte-large": {
-        "input_cost_per_token": 1.6e-08,
         "litellm_provider": "fireworks_ai-embedding-models",
         "max_input_tokens": 512,
         "max_tokens": 512,
         "mode": "embedding",
-        "output_cost_per_token": 0.0,
         "source": "https://fireworks.ai/pricing"
     },
     "friendliai/meta-llama-3.1-70b-instruct": {
@@ -33634,8 +33530,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 4.5e-07,
-        "output_cost_per_token": 1.8e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat",
         "supports_reasoning": true
@@ -33644,8 +33538,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 4e-08,
-        "output_cost_per_token": 4e-08,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -33653,8 +33545,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1.3e-10,
-        "output_cost_per_token": 1.3e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -33662,8 +33552,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33671,8 +33559,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33680,8 +33566,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33689,8 +33573,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33698,8 +33580,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33707,8 +33587,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33716,8 +33594,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33725,8 +33601,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33734,8 +33608,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33743,8 +33615,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33752,8 +33622,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33761,8 +33629,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33770,8 +33636,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33779,8 +33643,6 @@
         "max_tokens": 65536,
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33788,8 +33650,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33797,8 +33657,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33806,8 +33664,6 @@
         "max_tokens": 163840,
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33815,8 +33671,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33824,8 +33678,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33833,8 +33685,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33842,8 +33692,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33851,8 +33699,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33860,8 +33706,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 8e-08,
-        "output_cost_per_token": 8e-08,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -33869,8 +33713,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33878,8 +33720,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33887,8 +33727,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33896,8 +33734,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33905,8 +33741,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33914,8 +33748,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33923,8 +33755,6 @@
         "max_tokens": 163840,
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33932,8 +33762,6 @@
         "max_tokens": 163840,
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33941,8 +33769,6 @@
         "max_tokens": 163840,
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33950,8 +33776,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33959,8 +33783,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33968,8 +33790,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33977,8 +33797,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33986,8 +33804,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -33995,8 +33811,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34004,8 +33818,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34013,8 +33825,6 @@
         "max_tokens": 163840,
         "max_input_tokens": 163840,
         "max_output_tokens": 163840,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34022,8 +33832,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34031,8 +33839,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34040,8 +33846,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34049,8 +33853,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34058,8 +33860,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34067,8 +33867,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34076,8 +33874,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34085,8 +33881,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34094,8 +33888,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34103,8 +33895,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34112,8 +33902,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34121,8 +33909,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34130,8 +33916,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "audio_transcription"
     },
@@ -34139,8 +33923,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "audio_transcription"
     },
@@ -34148,8 +33930,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34157,8 +33937,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-09,
-        "output_cost_per_token": 1e-09,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34166,8 +33944,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 5e-10,
-        "output_cost_per_token": 5e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -34175,8 +33951,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34184,8 +33958,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 3.5e-10,
-        "output_cost_per_token": 3.5e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -34193,8 +33965,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34202,8 +33972,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34211,8 +33979,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34220,8 +33986,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34229,8 +33993,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34238,8 +34000,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat",
         "supports_reasoning": true
@@ -34248,8 +34008,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34257,8 +34015,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34266,8 +34022,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34275,8 +34029,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34284,8 +34036,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34293,8 +34043,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34302,8 +34050,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1.3e-10,
-        "output_cost_per_token": 1.3e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -34311,8 +34057,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34320,8 +34064,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34329,8 +34071,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34338,8 +34078,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34347,8 +34085,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34356,8 +34092,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34365,8 +34099,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34374,8 +34106,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34383,8 +34113,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34392,8 +34120,6 @@
         "max_tokens": 2048,
         "max_input_tokens": 2048,
         "max_output_tokens": 2048,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34401,8 +34127,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34410,8 +34134,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34419,8 +34141,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34428,8 +34148,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34437,8 +34155,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34446,8 +34162,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34455,8 +34169,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34464,8 +34176,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34473,8 +34183,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34482,8 +34190,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34491,8 +34197,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34500,8 +34204,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34509,8 +34211,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34518,8 +34218,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34527,8 +34225,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34536,8 +34232,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34545,8 +34239,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 3e-07,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34554,8 +34246,6 @@
         "max_tokens": 256000,
         "max_input_tokens": 256000,
         "max_output_tokens": 256000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34563,8 +34253,6 @@
         "max_tokens": 256000,
         "max_input_tokens": 256000,
         "max_output_tokens": 256000,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34572,8 +34260,6 @@
         "max_tokens": 256000,
         "max_input_tokens": 256000,
         "max_output_tokens": 256000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34581,8 +34267,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34590,8 +34274,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34599,8 +34281,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34608,8 +34288,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34617,8 +34295,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34626,8 +34302,6 @@
         "max_tokens": 256000,
         "max_input_tokens": 256000,
         "max_output_tokens": 256000,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34635,8 +34309,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34644,8 +34316,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34653,8 +34323,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34662,8 +34330,6 @@
         "max_tokens": 65536,
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34671,8 +34337,6 @@
         "max_tokens": 65536,
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
-        "input_cost_per_token": 1.2e-06,
-        "output_cost_per_token": 1.2e-06,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34680,8 +34344,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34689,8 +34351,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34698,8 +34358,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34707,8 +34365,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34716,8 +34372,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34725,8 +34379,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34734,8 +34386,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34743,8 +34393,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34752,8 +34400,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34761,8 +34407,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34770,8 +34414,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34779,8 +34421,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34788,8 +34428,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34797,8 +34435,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34806,8 +34442,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34815,8 +34449,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34824,8 +34456,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34833,8 +34463,6 @@
         "max_tokens": 2048,
         "max_input_tokens": 2048,
         "max_output_tokens": 2048,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34842,8 +34470,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34851,8 +34477,6 @@
         "max_tokens": 32064,
         "max_input_tokens": 32064,
         "max_output_tokens": 32064,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34860,8 +34484,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34869,8 +34491,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34878,8 +34498,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34887,8 +34505,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1.3e-10,
-        "output_cost_per_token": 1.3e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -34896,8 +34512,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1.3e-10,
-        "output_cost_per_token": 1.3e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -34905,8 +34519,6 @@
         "max_tokens": 2048,
         "max_input_tokens": 2048,
         "max_output_tokens": 2048,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34914,8 +34526,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34923,8 +34533,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34932,8 +34540,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34941,8 +34547,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34950,8 +34554,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34959,8 +34561,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34968,8 +34568,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34977,8 +34575,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34986,8 +34582,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -34995,8 +34589,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35004,8 +34596,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35013,8 +34603,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35022,8 +34610,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35031,8 +34617,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35040,8 +34624,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35049,8 +34631,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35058,8 +34638,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35067,8 +34645,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35076,8 +34652,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35085,8 +34659,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35094,8 +34666,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35103,8 +34673,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35112,8 +34680,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35121,8 +34687,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35130,8 +34694,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35139,8 +34701,6 @@
         "max_tokens": 65536,
         "max_input_tokens": 65536,
         "max_output_tokens": 65536,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35148,8 +34708,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35157,8 +34715,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35166,8 +34722,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35175,8 +34729,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35184,8 +34736,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35193,8 +34743,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35202,8 +34750,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35211,8 +34757,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35220,8 +34764,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35229,8 +34771,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35238,8 +34778,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35247,8 +34785,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35256,8 +34792,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35265,8 +34799,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35274,8 +34806,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35283,8 +34813,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 2.2e-07,
-        "output_cost_per_token": 8.8e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35292,8 +34820,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 2.2e-07,
-        "output_cost_per_token": 8.8e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35301,8 +34827,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 2.2e-07,
-        "output_cost_per_token": 8.8e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35310,8 +34834,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 1.5e-07,
-        "output_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35319,8 +34841,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 5e-07,
-        "output_cost_per_token": 5e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35328,8 +34848,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35337,8 +34855,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat",
         "supports_reasoning": true
@@ -35347,8 +34863,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35356,8 +34870,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35365,8 +34877,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat",
         "supports_reasoning": true
@@ -35375,8 +34885,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 1.5e-07,
-        "output_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35384,8 +34892,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35393,8 +34899,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "embedding"
     },
@@ -35402,8 +34906,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "embedding"
     },
@@ -35411,8 +34913,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "embedding"
     },
@@ -35420,8 +34920,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35429,8 +34927,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35438,8 +34934,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "rerank"
     },
@@ -35447,8 +34941,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "rerank"
     },
@@ -35456,8 +34948,6 @@
         "max_tokens": 40960,
         "max_input_tokens": 40960,
         "max_output_tokens": 40960,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "rerank"
     },
@@ -35465,8 +34955,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 2.2e-07,
-        "output_cost_per_token": 8.8e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35474,8 +34962,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 2.2e-07,
-        "output_cost_per_token": 8.8e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35483,8 +34969,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 1.5e-07,
-        "output_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35492,8 +34976,6 @@
         "max_tokens": 262144,
         "max_input_tokens": 262144,
         "max_output_tokens": 262144,
-        "input_cost_per_token": 1.5e-07,
-        "output_cost_per_token": 6e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35501,8 +34983,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35510,8 +34990,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35519,8 +34997,6 @@
         "max_tokens": 131072,
         "max_input_tokens": 131072,
         "max_output_tokens": 131072,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35528,8 +35004,6 @@
         "max_tokens": 128000,
         "max_input_tokens": 128000,
         "max_output_tokens": 128000,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35537,8 +35011,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35546,8 +35018,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1.3e-10,
-        "output_cost_per_token": 1.3e-10,
         "litellm_provider": "fireworks_ai",
         "mode": "image_generation"
     },
@@ -35555,8 +35025,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35564,8 +35032,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35573,8 +35039,6 @@
         "max_tokens": 8192,
         "max_input_tokens": 8192,
         "max_output_tokens": 8192,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35582,8 +35046,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35591,8 +35053,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 1e-07,
-        "output_cost_per_token": 1e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35600,8 +35060,6 @@
         "max_tokens": 16384,
         "max_input_tokens": 16384,
         "max_output_tokens": 16384,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35609,8 +35067,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35618,8 +35074,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "audio_transcription"
     },
@@ -35627,8 +35081,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 0.0,
-        "output_cost_per_token": 0.0,
         "litellm_provider": "fireworks_ai",
         "mode": "audio_transcription"
     },
@@ -35636,8 +35088,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35645,8 +35095,6 @@
         "max_tokens": 200000,
         "max_input_tokens": 200000,
         "max_output_tokens": 200000,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35654,8 +35102,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 9e-07,
-        "output_cost_per_token": 9e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35663,8 +35109,6 @@
         "max_tokens": 4096,
         "max_input_tokens": 4096,
         "max_output_tokens": 4096,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },
@@ -35672,8 +35116,6 @@
         "max_tokens": 32768,
         "max_input_tokens": 32768,
         "max_output_tokens": 32768,
-        "input_cost_per_token": 2e-07,
-        "output_cost_per_token": 2e-07,
         "litellm_provider": "fireworks_ai",
         "mode": "chat"
     },

@@ -234,6 +234,124 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
 
 
 @pytest.mark.parametrize(
+    ("base_url", "requested_tier", "expected_tier"),
+    [
+        ("https://api.fireworks.ai/inference/v1", None, "default"),
+        ("https://api.fireworks.ai/inference/v1", "priority", "priority"),
+        ("https://us.api.fireworks.ai/inference/v1", "standard", "default"),
+    ],
+)
+def test_fireworks_openai_compatibility_preserves_exact_model_and_tier(
+    tmp_path: Path,
+    base_url: str,
+    requested_tier: str | None,
+    expected_tier: str,
+) -> None:
+    model = "accounts/fireworks/models/kimi-k3"
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, json=_chat_response(model), request=request
+        )
+    )
+    storage = SQLiteStorage(tmp_path / f"fireworks-{expected_tier}.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url=base_url,
+        http_client=httpx.Client(transport=transport),
+    )
+    instrument_openai(tracker)
+    try:
+        kwargs: dict[str, object] = {
+            "model": model,
+            "messages": [{"role": "user", "content": "private-query"}],
+        }
+        if requested_tier is not None:
+            kwargs["extra_body"] = {"service_tier": requested_tier}
+        with tracker.task(task_type="fireworks-openai"):
+            client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "fireworks_ai"
+        assert event.model == model
+        assert event.cost_usd == Decimal("0")
+        dimensions = {
+            item["key"]: item["value"]["value"]
+            for item in event.details["attribution_dimensions"]
+        }
+        assert dimensions["service_tier"] == expected_tier
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "fireworks_ai",
+            "service": "api",
+            "record_id": "chat-provider-1",
+        }
+        assert observation["resource"] == {"type": "model", "id": model}
+        assert {
+            item["key"]: item["value"]["value"]
+            for item in observation["usage"][0]["dimensions"]
+        }["service_tier"] == expected_tier
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+def test_fireworks_openai_compatible_embeddings_keep_exact_resource_identity(
+    tmp_path: Path,
+) -> None:
+    model = "accounts/fireworks/models/qwen3-embedding-8b"
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": model,
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                "usage": {"prompt_tokens": 125, "total_tokens": 125},
+            },
+            request=request,
+        )
+    )
+    storage = SQLiteStorage(tmp_path / "fireworks-embeddings.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.fireworks.ai/inference/v1",
+        http_client=httpx.Client(transport=transport),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="fireworks-embeddings"):
+            client.embeddings.create(model=model, input="private embedding input")
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "fireworks_ai"
+        assert event.model == model
+        assert event.service_name == "embeddings"
+        assert event.cost_usd == Decimal("0")
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"]["name"] == "fireworks_ai"
+        assert observation["provider"]["service"] == "embeddings"
+        assert observation["resource"] == {"type": "model", "id": model}
+        assert [(line["metric"], line["quantity"]) for line in observation["usage"]] == [
+            ("input_tokens", "125")
+        ]
+        assert "private embedding input" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+@pytest.mark.parametrize(
     "base_url",
     [
         "https://demo.openai.azure.com/openai/v1/",

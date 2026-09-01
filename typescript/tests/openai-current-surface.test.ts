@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { provideInstrumentModule } from "../src/instruments/index.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import {
   instrumentOpenai,
   uninstrumentOpenai,
@@ -213,6 +214,34 @@ describe("current official OpenAI TypeScript surface", () => {
       expect.objectContaining({ metric: "characters", quantity: "13" }),
     ]);
     expect(JSON.stringify(buffer.getAllEvents())).not.toContain("do not retain");
+  });
+
+  it("keeps Fireworks embedding provider and resource identity unprefixed", async () => {
+    class FireworksEmbeddings extends Embeddings {
+      _client = { baseURL: "https://api.fireworks.ai/inference/v1" };
+    }
+    const model = "accounts/fireworks/models/qwen3-embedding-8b";
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new FireworksEmbeddings().create({ model, input: "private embedding input" });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "fireworks_ai",
+      model,
+      serviceName: "embeddings",
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({
+      name: "fireworks_ai",
+      service: "embeddings",
+    });
+    expect(observation?.resource).toEqual({ type: "model", id: model });
+    expect(observation?.usage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metric: "input_tokens", quantity: "12" }),
+    ]));
+    expect(JSON.stringify(events)).not.toContain("private embedding input");
   });
 
   it("reconciles Responses, batch, fine-tuning, and video jobs", async () => {

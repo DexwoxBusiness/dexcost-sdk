@@ -91,7 +91,7 @@ describe("OpenAI instrumentation", () => {
     class DeepSeekCompletions {
       _client = { baseURL: "https://api.deepseek.com" };
 
-      async create(): Promise<unknown> {
+      async create(_body?: unknown): Promise<unknown> {
         return makeMockResponse({
           model: "deepseek-v4-flash",
           usage: {
@@ -136,6 +136,44 @@ describe("OpenAI instrumentation", () => {
       output_tokens: "7",
       reasoning_output_tokens: "3",
     });
+  });
+
+  it.each([
+    ["https://api.fireworks.ai/inference/v1", undefined, "default"],
+    ["https://api.fireworks.ai/inference/v1", "priority", "priority"],
+    ["https://us.api.fireworks.ai/inference/v1", "standard", "default"],
+  ])("routes Fireworks calls and normalizes the serving tier", async (baseURL, tier, expectedTier) => {
+    const model = "accounts/fireworks/models/kimi-k3";
+    class FireworksCompletions {
+      _client = { baseURL };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({ model });
+      }
+    }
+    _setCompletionsClass(FireworksCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "fireworks" });
+
+    await runWithTask(task, async () => {
+      await new FireworksCompletions().create({
+        model,
+        messages: [],
+        ...(tier === undefined ? {} : { service_tier: tier }),
+      });
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "fireworks_ai", model });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "fireworks_ai", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: model });
+    expect(Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? [])).toMatchObject({ service_tier: expectedTier });
   });
 
   it("records into an auto-task when no task and no context set", async () => {

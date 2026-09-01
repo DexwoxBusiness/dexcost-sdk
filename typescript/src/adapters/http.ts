@@ -247,6 +247,7 @@ const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.groq.com": "openai",
   "api.together.xyz": "openai",
   "api.fireworks.ai": "openai",
+  "us.api.fireworks.ai": "openai",
   "api.mistral.ai": "openai",
   "api.x.ai": "openai",
   "generativelanguage.googleapis.com": "gemini",
@@ -1484,6 +1485,19 @@ function _requestModel(ctx: _HttpCallContext): string | undefined {
   return typeof model === "string" && model.trim().length > 0 ? model.trim() : undefined;
 }
 
+function _fireworksServiceTier(ctx: _HttpCallContext): "default" | "priority" {
+  const body = ctx.observerRequestBody;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return "default";
+  const record = body as Record<string, unknown>;
+  const extraBody = record.extra_body;
+  const value = record.service_tier ?? (
+    extraBody !== null && typeof extraBody === "object" && !Array.isArray(extraBody)
+      ? (extraBody as Record<string, unknown>).service_tier
+      : undefined
+  );
+  return value === "priority" ? "priority" : "default";
+}
+
 /** Record one HTTP-level LLM observation, with richer LiteLLM proxy identity. */
 function _recordHttpLlmEvent(
   ctx: _HttpCallContext,
@@ -1498,12 +1512,15 @@ function _recordHttpLlmEvent(
   const requestedModel = _requestModel(ctx);
   const provider = ctx.liteLlmProxy
     ? classifyLiteLlmProvider(requestedModel, usage?.model)
-    : ctx.hostname === "api.deepseek.com" ? "deepseek" : ctx.hostname;
+    : ctx.hostname === "api.deepseek.com" ? "deepseek"
+      : ctx.hostname === "api.fireworks.ai" || ctx.hostname.endsWith(".api.fireworks.ai")
+        ? "fireworks_ai"
+        : ctx.hostname;
   const model = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
     : usage?.model ?? requestedModel ?? "unknown";
 
-  const measurement = (ctx.liteLlmProxy || provider === "deepseek") &&
+  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai") &&
       usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
@@ -1557,6 +1574,15 @@ function _recordHttpLlmEvent(
     details.attribution_dimensions = [{
       key: "gateway", value: { type: "string", value: "litellm" },
     }];
+  }
+  if (provider === "fireworks_ai") {
+    const dimensions = Array.isArray(details.attribution_dimensions)
+      ? details.attribution_dimensions as Array<Record<string, unknown>>
+      : [];
+    details.attribution_dimensions = [
+      ...dimensions,
+      { key: "service_tier", value: { type: "string", value: _fireworksServiceTier(ctx) } },
+    ];
   }
   if (measurement?.providerRecordId) details.provider_record_id = measurement.providerRecordId;
   if (providerCost !== undefined) details.provider_reported_cost_usd = providerCost.toString();
