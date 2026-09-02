@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.26.0",
-  "conformance_schema_version": "18",
+  "observer_manifest_version": "1.27.0",
+  "conformance_schema_version": "19",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -11,8 +11,25 @@
     },
     {
       "service_key": "cohere_embed",
-      "positive_cases": ["cohere_embed_uses_billed_tokens_and_request_model"],
-      "fail_open_cases": ["cohere_embed_missing_billed_units_is_not_invented"]
+      "positive_cases": [
+        "cohere_embed_uses_billed_tokens_and_request_model",
+        "cohere_embed_mixed_usage_preserves_each_billed_meter"
+      ],
+      "fail_open_cases": [
+        "cohere_embed_missing_billed_units_is_not_invented",
+        "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing"
+      ]
+    },
+    {
+      "service_key": "cohere_embed_image_tokens",
+      "positive_cases": [
+        "cohere_embed_uses_provider_billed_image_tokens",
+        "cohere_embed_mixed_usage_preserves_each_billed_meter"
+      ],
+      "fail_open_cases": [
+        "cohere_embed_image_count_is_not_assumed_to_be_image_tokens",
+        "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing"
+      ]
     },
     {
       "service_key": "voyage_ai",

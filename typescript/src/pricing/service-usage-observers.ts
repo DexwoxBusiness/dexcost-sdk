@@ -5,6 +5,8 @@ import { Decimal } from "../core/models.js";
 
 export type ObservedUsageMetric =
   | "input_tokens"
+  | "input_image_tokens"
+  | "output_image_tokens"
   | "output_tokens"
   | "audio_seconds"
   | "characters"
@@ -143,6 +145,8 @@ export interface ServiceUsageObservation {
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const METRICS = new Set<ObservedUsageMetric>([
   "input_tokens",
+  "input_image_tokens",
+  "output_image_tokens",
   "output_tokens",
   "audio_seconds",
   "characters",

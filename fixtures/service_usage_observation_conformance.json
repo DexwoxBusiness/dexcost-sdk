@@ -1,5 +1,5 @@
 {
-  "schema_version": "18",
+  "schema_version": "19",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -24,11 +24,46 @@
       "expected": [{ "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-1" }]
     },
     {
+      "name": "cohere_embed_uses_provider_billed_image_tokens",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "image" },
+      "response": { "id": "cohere-image-1", "meta": { "billed_units": { "image_tokens": 4096, "images": 1 } } },
+      "expected": [{ "service_key": "cohere_embed_image_tokens", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_image_tokens", "quantity": "4096", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-image-1" }]
+    },
+    {
+      "name": "cohere_embed_mixed_usage_preserves_each_billed_meter",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "search_document" },
+      "response": { "id": "cohere-mixed-1", "meta": { "billed_units": { "input_tokens": 29, "image_tokens": 4096, "images": 1 } } },
+      "expected": [
+        { "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-mixed-1" },
+        { "service_key": "cohere_embed_image_tokens", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_image_tokens", "quantity": "4096", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-mixed-1" }
+      ]
+    },
+    {
       "name": "cohere_embed_missing_billed_units_is_not_invented",
       "url": "https://api.cohere.com/v2/embed",
       "headers": {},
       "request": { "model": "embed-v4.0", "input_type": "search_document" },
       "response": { "id": "cohere-missing-billed-units", "meta": { "tokens": { "input_tokens": 31 } } },
+      "expected": []
+    },
+    {
+      "name": "cohere_embed_image_count_is_not_assumed_to_be_image_tokens",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "image" },
+      "response": { "id": "cohere-image-count-only", "meta": { "billed_units": { "images": 1 } } },
+      "expected": []
+    },
+    {
+      "name": "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-future", "input_type": "search_document" },
+      "response": { "id": "cohere-unknown-model", "meta": { "billed_units": { "input_tokens": 29, "image_tokens": 4096 } } },
       "expected": []
     },
     {

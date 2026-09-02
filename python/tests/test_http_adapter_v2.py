@@ -797,7 +797,11 @@ class TestKnownServiceExtraction:
     ) -> None:
         task = _make_task("embedding")
         with task_context(task):
-            _handle_http_call(url, response=_make_response(body=body))
+            _handle_http_call(
+                url,
+                request_body={"model": "embed-v4.0"} if provider == "cohere" else None,
+                response=_make_response(body=body),
+            )
         event = get_recorded_events()[0]
         wire = to_attribution_event_v2(event)
         assert event.cost_usd == 0
@@ -910,6 +914,40 @@ class TestKnownServiceExtraction:
         wire = to_attribution_event_v2(get_recorded_events()[0])
         assert wire is not None
         assert wire["resource"] == {"type": "model", "id": "embed-v4.0"}
+
+    def test_cohere_mixed_usage_emits_distinct_text_and_image_token_events(self) -> None:
+        task = _make_task("embedding")
+        response = _make_response(
+            body={
+                "id": "cohere-mixed-1",
+                "meta": {
+                    "billed_units": {
+                        "input_tokens": 29,
+                        "image_tokens": 4096,
+                        "images": 1,
+                    }
+                },
+            }
+        )
+        with task_context(task):
+            _handle_http_call(
+                "https://api.cohere.com/v2/embed",
+                method="POST",
+                request_body={"model": "embed-v4.0", "inputs": []},
+                response=response,
+            )
+
+        events = sorted(
+            get_recorded_events(),
+            key=lambda event: str(event.details["attribution_observer_service"]),
+        )
+        assert len(events) == 2
+        assert len({event.event_id for event in events}) == 2
+        wires = [to_attribution_event_v2(event) for event in events]
+        assert [wire["usage"][0] for wire in wires if wire is not None] == [
+            {"metric": "input_tokens", "quantity": "29", "unit": "Tokens"},
+            {"metric": "input_image_tokens", "quantity": "4096", "unit": "Tokens"},
+        ]
 
     def test_deepgram_addons_are_separate_channel_second_lines(self) -> None:
         task = _make_task("transcription")

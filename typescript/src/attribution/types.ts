@@ -20,6 +20,8 @@ export type AttributionComponent = (typeof ATTRIBUTION_COMPONENTS)[number];
 
 export const ATTRIBUTION_USAGE_METRICS = [
   "input_tokens",
+  "input_image_tokens",
+  "output_image_tokens",
   "output_tokens",
   "cache_read_input_tokens",
   "cache_write_input_tokens",
@@ -65,6 +67,8 @@ export const ATTRIBUTION_UNIT_BY_METRIC: Readonly<
   Record<AttributionUsageMetric, AttributionUsageUnit>
 > = Object.freeze({
   input_tokens: "Tokens",
+  input_image_tokens: "Tokens",
+  output_image_tokens: "Tokens",
   output_tokens: "Tokens",
   cache_read_input_tokens: "Tokens",
   cache_write_input_tokens: "Tokens",

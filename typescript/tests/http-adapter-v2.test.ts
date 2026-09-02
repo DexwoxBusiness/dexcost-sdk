@@ -354,6 +354,33 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("emits distinct Cohere text and image token events for mixed usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "cohere-mixed-1",
+      meta: { billed_units: { input_tokens: 29, image_tokens: 4096, images: 1 } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.cohere.com/v2/embed", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "embed-v4.0", inputs: [] }),
+      });
+    });
+
+    const events = getRecordedEvents().sort((left, right) =>
+      String(left.details["attribution_observer_service"])
+        .localeCompare(String(right.details["attribution_observer_service"]))
+    );
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.eventId)).size).toBe(2);
+    expect(events.map((event) => toAttributionEventV2(event)?.usage[0])).toEqual([
+      { metric: "input_tokens", quantity: "29", unit: "Tokens" },
+      { metric: "input_image_tokens", quantity: "4096", unit: "Tokens" },
+    ]);
+  });
+
   it("emits Amazon Translate standard-text characters from fetch request JSON", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       TranslatedText: "Hola mundo",
@@ -385,7 +412,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
-  it("does not block on unfinished Request streams for observer metadata", async () => {
+  it("does not block or assume Embed 4 pricing for unfinished Request streams", async () => {
     const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "cohere-stream",
       meta: { billed_units: { input_tokens: 11 } },
@@ -411,13 +438,9 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     await request.body?.cancel();
 
     expect(baseFetch).toHaveBeenCalledOnce();
-    const wire = toAttributionEventV2(getRecordedEvents()[0]);
-    expect(wire).toMatchObject({
-      provider: { name: "cohere", service: "embed", record_id: "cohere-stream" },
-      usage: [{ metric: "input_tokens", quantity: "11", unit: "Tokens" }],
-    });
-    expect(wire?.resource).toBeUndefined();
-    expect(wire?.cost_evidence).toBeUndefined();
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "cohere_embed",
+    )).toBe(false);
   });
 
   it("emits Deepgram duration as speech-to-text seconds", async () => {

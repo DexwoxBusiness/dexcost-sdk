@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
 _METRICS = {
     "input_tokens",
+    "input_image_tokens",
+    "output_image_tokens",
     "output_tokens",
     "audio_seconds",
     "characters",

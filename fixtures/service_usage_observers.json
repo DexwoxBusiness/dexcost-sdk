@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.26.0",
-    "observer_count": 69,
+    "version": "1.27.0",
+    "observer_count": 70,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -30,8 +30,24 @@
       "usage_metric": "input_tokens",
       "resource_type": "model",
       "request_resource_path": "model",
+      "allowed_resource_ids": ["embed-v4.0"],
       "record_id_path": "id",
-      "source_url": "https://docs.cohere.com/v2/reference/embed"
+      "source_url": "https://docs.cohere.com/reference/embed"
+    },
+    {
+      "service_key": "cohere_embed_image_tokens",
+      "provider_name": "cohere",
+      "provider_service": "embed",
+      "component": "external",
+      "domains": ["api.cohere.com"],
+      "endpoints": ["/v1/embed", "/v2/embed"],
+      "response_path": "meta.billed_units.image_tokens",
+      "usage_metric": "input_image_tokens",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "allowed_resource_ids": ["embed-v4.0"],
+      "record_id_path": "id",
+      "source_url": "https://docs.cohere.com/reference/embed"
     },
     {
       "service_key": "voyage_ai",

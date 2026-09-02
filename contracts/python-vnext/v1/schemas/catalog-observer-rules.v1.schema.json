@@ -113,7 +113,7 @@
         "character_count_encoding": { "enum": ["unicode_code_points", "utf16_code_units"] },
         "minimum_quantity": { "const": "1" },
         "fixed_quantity": { "const": "1" },
-        "usage_metric": { "enum": ["input_tokens", "output_tokens", "characters", "audio_seconds", "image_count", "request_count", "credit_count"] },
+        "usage_metric": { "enum": ["input_tokens", "input_image_tokens", "output_tokens", "output_image_tokens", "characters", "audio_seconds", "image_count", "request_count", "credit_count"] },
         "resource_type": { "enum": ["model", "sku"] },
         "resource_path": { "$ref": "#/$defs/jsonPath" },
         "request_resource_path": { "$ref": "#/$defs/jsonPath" },
