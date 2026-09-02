@@ -115,6 +115,46 @@ test("rejects request-header predicates that could retain noncanonical names", (
   );
 });
 
+test("rejects malformed value-aware request-header predicates", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "aws_rekognition_image_group_1",
+  );
+  observer.request_header_all[0].values.push(observer.request_header_all[0].values[0]);
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer aws_rekognition_image_group_1 has invalid request-header predicates",
+  );
+});
+
+test("matches request-header predicates by value, not presence alone", () => {
+  const candidate = inputs();
+  const testCase = candidate.conformance.cases.find(
+    (entry) =>
+      entry.name === "aws_rekognition_group_1_request_captures_region_and_request_id",
+  );
+  testCase.request_headers["x-amz-target"] = "RekognitionService.StartLabelDetection";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "case aws_rekognition_group_1_request_captures_region_and_request_id does not target observer aws_rekognition_image_group_1",
+  );
+});
+
+test("requires paired provider-region extraction fields", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "aws_rekognition_image_group_1",
+  );
+  delete observer.allowed_provider_regions;
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer aws_rekognition_image_group_1 has invalid provider-region extraction",
+  );
+});
+
 test("rejects invalid request-collection predicates", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

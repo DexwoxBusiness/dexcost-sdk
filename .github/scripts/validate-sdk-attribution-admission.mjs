@@ -64,6 +64,7 @@ const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
 });
 
 const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -210,6 +211,12 @@ function requestPredicateMatches(request, predicate) {
   if (predicate.operator === "string_not_contains") {
     return typeof value === "string" && !value.includes(predicate.value);
   }
+  if (predicate.operator === "array_contains") {
+    return Array.isArray(value) && value.some((item) => item === predicate.value);
+  }
+  if (predicate.operator === "absent_or_empty_collection") {
+    return Array.isArray(value) && value.length === 0;
+  }
   if (predicate.operator === "absent_or_false_or_null") return value === false;
   return predicate.operator === "absent_or_lte" &&
     typeof value === "number" && Number.isFinite(value) &&
@@ -217,13 +224,23 @@ function requestPredicateMatches(request, predicate) {
 }
 
 function requestHeaderPredicateMatches(requestHeaders, predicate) {
-  const normalized = new Set(
-    (Array.isArray(requestHeaders) ? requestHeaders : [])
-      .filter((name) => typeof name === "string")
-      .map((name) => name.toLowerCase()),
-  );
+  const normalized = new Map();
+  if (Array.isArray(requestHeaders)) {
+    for (const name of requestHeaders) {
+      if (typeof name === "string") normalized.set(name.toLowerCase(), undefined);
+    }
+  } else if (isObject(requestHeaders)) {
+    for (const [name, value] of Object.entries(requestHeaders)) {
+      if (typeof value === "string") normalized.set(name.toLowerCase(), value);
+    }
+  }
   const present = normalized.has(predicate.name);
-  return predicate.operator === "present" ? present : !present;
+  if (predicate.operator === "present") return present;
+  if (predicate.operator === "absent") return !present;
+  const value = normalized.get(predicate.name);
+  if (predicate.operator === "equals") return present && value === predicate.value;
+  return present && typeof value === "string" &&
+    Array.isArray(predicate.values) && predicate.values.includes(value);
 }
 
 function collectionPredicateMatches(value, predicate) {
@@ -246,6 +263,11 @@ function caseTargetsObserver(testCase, observer) {
     !(Array.isArray(observer.excluded_endpoints) &&
       observer.excluded_endpoints.includes(url.pathname));
   if (!domainMatches || !endpointMatches) return false;
+
+  if (Number.isInteger(observer.provider_region_domain_label)) {
+    const candidate = url.hostname.split(".")[observer.provider_region_domain_label];
+    if (!observer.allowed_provider_regions?.includes(candidate)) return false;
+  }
 
   if (
     Array.isArray(observer.request_all) &&
@@ -339,9 +361,16 @@ function validRequestPredicate(predicate) {
   }
   if (
     predicate.operator === "absent_or_null" ||
-    predicate.operator === "absent_or_false_or_null"
+    predicate.operator === "absent_or_false_or_null" ||
+    predicate.operator === "absent_or_empty_collection"
   ) {
     return Object.keys(predicate).length === 2 && predicate.value === undefined;
+  }
+  if (predicate.operator === "array_contains") {
+    return Object.keys(predicate).length === 3 &&
+      (typeof predicate.value === "boolean" ||
+        (typeof predicate.value === "number" && Number.isFinite(predicate.value)) ||
+        isNonEmptyString(predicate.value));
   }
   return predicate.operator === "absent_or_lte" &&
     Object.keys(predicate).length === 3 &&
@@ -349,11 +378,24 @@ function validRequestPredicate(predicate) {
 }
 
 function validRequestHeaderPredicate(predicate) {
-  return isObject(predicate) &&
-    Object.keys(predicate).length === 2 &&
-    typeof predicate.name === "string" &&
-    /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(predicate.name) &&
-    ["present", "absent"].includes(predicate.operator);
+  if (
+    !isObject(predicate) ||
+    typeof predicate.name !== "string" ||
+    !/^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(predicate.name) ||
+    predicate.name !== predicate.name.toLowerCase()
+  ) return false;
+  if (["present", "absent"].includes(predicate.operator)) {
+    return Object.keys(predicate).length === 2;
+  }
+  if (predicate.operator === "equals") {
+    return Object.keys(predicate).length === 3 &&
+      isNonEmptyString(predicate.value) && predicate.value.length <= 256;
+  }
+  return predicate.operator === "one_of" &&
+    Object.keys(predicate).length === 3 &&
+    uniqueStrings(predicate.values) &&
+    predicate.values.length > 0 && predicate.values.length <= 100 &&
+    predicate.values.every((value) => value.length <= 256);
 }
 
 function validCollectionPredicate(predicate) {
@@ -446,6 +488,21 @@ function validateObserverShape(observer, issues) {
       ))
   ) {
     issues.push(`observer ${key} has invalid domain suffixes`);
+  }
+  if (
+    (observer?.provider_region_domain_label !== undefined) !==
+      (observer?.allowed_provider_regions !== undefined) ||
+    (observer?.provider_region_domain_label !== undefined && (
+      !Number.isInteger(observer.provider_region_domain_label) ||
+      observer.provider_region_domain_label < 0 ||
+      observer.provider_region_domain_label > 10 ||
+      !uniqueStrings(observer.allowed_provider_regions) ||
+      observer.allowed_provider_regions.length === 0 ||
+      observer.allowed_provider_regions.length > 100 ||
+      !observer.allowed_provider_regions.every((region) => CANONICAL_NAME.test(region))
+    ))
+  ) {
+    issues.push(`observer ${key} has invalid provider-region extraction`);
   }
   if (
     !Array.isArray(observer?.endpoints) ||

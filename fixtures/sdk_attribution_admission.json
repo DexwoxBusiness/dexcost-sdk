@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.25.0",
-  "conformance_schema_version": "17",
+  "observer_manifest_version": "1.26.0",
+  "conformance_schema_version": "18",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -406,6 +406,46 @@
         "deepl_missing_provider_billed_characters_fails_open",
         "deepl_failed_translation_is_not_observed"
       ]
+    },
+    {
+      "service_key": "aws_rekognition_image_group_1",
+      "positive_cases": ["aws_rekognition_group_1_request_captures_region_and_request_id"],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "aws_rekognition_image_group_2",
+      "positive_cases": ["aws_rekognition_group_2_request_supports_dualstack_endpoint"],
+      "fail_open_cases": [
+        "aws_rekognition_unknown_operation_fails_open",
+        "aws_rekognition_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_default",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_defaults_to_general_labels_when_features_absent",
+        "aws_rekognition_detect_labels_empty_features_uses_default_group"
+      ],
+      "fail_open_cases": [
+        "aws_rekognition_unknown_operation_fails_open",
+        "aws_rekognition_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_general",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_general_feature_uses_group_2",
+        "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units"
+      ],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_image_properties",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_image_properties_uses_separate_sku",
+        "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units"
+      ],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
     }
   ]
 }
