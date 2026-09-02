@@ -48,14 +48,14 @@
       "type": "object", "additionalProperties": false, "required": ["path", "operator"],
       "properties": {
         "path": { "$ref": "#/$defs/jsonPath" },
-        "operator": { "enum": ["absent_or_null", "absent_or_false_or_null", "absent_or_lte", "not_equals"] },
+        "operator": { "enum": ["absent_or_null", "absent_or_false_or_null", "absent_or_lte", "not_equals", "string_not_contains"] },
         "value": { "type": ["number", "string"] }
       },
       "allOf": [
         { "if": { "properties": { "operator": { "const": "absent_or_null" } } }, "then": { "not": { "required": ["value"] } } },
         { "if": { "properties": { "operator": { "const": "absent_or_false_or_null" } } }, "then": { "not": { "required": ["value"] } } },
         { "if": { "properties": { "operator": { "const": "absent_or_lte" } } }, "then": { "required": ["value"], "properties": { "value": { "type": "number" } } } },
-        { "if": { "properties": { "operator": { "const": "not_equals" } } }, "then": { "required": ["value"], "properties": { "value": { "type": "string", "minLength": 1, "maxLength": 256 } } } }
+        { "if": { "properties": { "operator": { "enum": ["not_equals", "string_not_contains"] } } }, "then": { "required": ["value"], "properties": { "value": { "type": "string", "minLength": 1, "maxLength": 256 } } } }
       ]
     },
     "rule": {

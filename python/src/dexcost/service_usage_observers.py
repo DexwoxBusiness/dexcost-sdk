@@ -238,6 +238,8 @@ def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
         return operator.startswith("absent_or_")
     if operator == "not_equals":
         return bool(resolved != predicate["value"])
+    if operator == "string_not_contains":
+        return isinstance(resolved, str) and predicate["value"] not in resolved
     if operator == "absent_or_false_or_null":
         return resolved is False
     return (
@@ -256,7 +258,7 @@ def _valid_request_predicate(predicate: Any) -> bool:
     if predicate.get("operator") in {"absent_or_null", "absent_or_false_or_null"}:
         return set(predicate) == {"path", "operator"}
     value = predicate.get("value")
-    if predicate.get("operator") == "not_equals":
+    if predicate.get("operator") in {"not_equals", "string_not_contains"}:
         return (
             set(predicate) == {"path", "operator", "value"}
             and isinstance(value, str)

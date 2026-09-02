@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.18.0",
-  "conformance_schema_version": "10",
+  "observer_manifest_version": "1.19.0",
+  "conformance_schema_version": "11",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -168,6 +168,14 @@
       "service_key": "openai_tts",
       "positive_cases": ["openai_tts_counts_unicode_characters_from_the_successful_request"],
       "fail_open_cases": ["openai_tts_does_not_invent_usage_without_billed_text"]
+    },
+    {
+      "service_key": "resemble_ai",
+      "positive_cases": ["resemble_tts_uses_provider_reported_generated_audio_duration"],
+      "fail_open_cases": [
+        "resemble_speech_to_speech_does_not_use_the_tts_tariff",
+        "resemble_failed_or_durationless_synthesis_fails_open"
+      ]
     },
     {
       "service_key": "elevenlabs_tts",

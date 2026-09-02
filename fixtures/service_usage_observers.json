@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.18.0",
-    "observer_count": 44,
+    "version": "1.19.0",
+    "observer_count": 45,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -342,6 +342,26 @@
       "allowed_resource_ids": ["tts-1", "tts-1-hd"],
       "record_id_header": "x-request-id",
       "source_url": "https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
+    },
+    {
+      "service_key": "resemble_ai",
+      "provider_name": "resemble",
+      "provider_service": "text_to_speech",
+      "component": "text_to_speech",
+      "domains": ["f.cluster.resemble.ai"],
+      "endpoints": ["/synthesize"],
+      "endpoint_match": "exact",
+      "response_path": "duration",
+      "response_all": [
+        { "path": "success", "operator": "equals", "value": true }
+      ],
+      "request_all": [
+        { "path": "data", "operator": "string_not_contains", "value": "<resemble:convert" }
+      ],
+      "usage_metric": "audio_seconds",
+      "resource_type": "sku",
+      "fixed_resource_id": "text_to_speech",
+      "source_url": "https://docs.resemble.ai/voice-generation/text-to-speech/synchronous"
     },
     {
       "service_key": "elevenlabs_tts",

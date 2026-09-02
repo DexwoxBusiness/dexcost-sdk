@@ -513,6 +513,30 @@
       "expected": []
     },
     {
+      "name": "resemble_tts_uses_provider_reported_generated_audio_duration",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "Hello from DexCost" },
+      "response": { "success": true, "duration": 1.68, "synth_duration": 1.64, "audio_content": "private" },
+      "expected": [{ "service_key": "resemble_ai", "provider_name": "resemble", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "audio_seconds", "quantity": "1.68", "resource_type": "sku", "resource_id": "text_to_speech" }]
+    },
+    {
+      "name": "resemble_speech_to_speech_does_not_use_the_tts_tariff",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "<speak><resemble:convert src=\"https://example.invalid/donor.wav\" /></speak>" },
+      "response": { "success": true, "duration": 12.5, "synth_duration": 2.1 },
+      "expected": []
+    },
+    {
+      "name": "resemble_failed_or_durationless_synthesis_fails_open",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "Hello" },
+      "response": { "success": false, "issues": ["generation failed"] },
+      "expected": []
+    },
+    {
       "name": "elevenlabs_tts_uses_provider_billed_character_header",
       "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
       "headers": { "Character-Cost": "11", "Request-Id": "el_req_123" },

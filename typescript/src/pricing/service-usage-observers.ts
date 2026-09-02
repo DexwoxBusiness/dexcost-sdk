@@ -35,7 +35,8 @@ interface ResponsePredicate {
 
 interface RequestPredicate {
   path: string;
-  operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte" | "not_equals";
+  operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte" |
+    "not_equals" | "string_not_contains";
   value?: number | string;
 }
 
@@ -251,6 +252,11 @@ function requestPredicateMatches(value: unknown, predicate: RequestPredicate): b
     return predicate.operator.startsWith("absent_or_");
   }
   if (predicate.operator === "not_equals") return resolved !== predicate.value;
+  if (predicate.operator === "string_not_contains") {
+    return typeof resolved === "string" &&
+      typeof predicate.value === "string" &&
+      !resolved.includes(predicate.value);
+  }
   if (predicate.operator === "absent_or_false_or_null") return resolved === false;
   return predicate.operator === "absent_or_lte" &&
     typeof resolved === "number" && Number.isFinite(resolved) &&
@@ -264,7 +270,7 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   if (candidate.operator === "absent_or_null" || candidate.operator === "absent_or_false_or_null") {
     return Object.keys(candidate).length === 2 && candidate.value === undefined;
   }
-  if (candidate.operator === "not_equals") {
+  if (candidate.operator === "not_equals" || candidate.operator === "string_not_contains") {
     return Object.keys(candidate).length === 3 &&
       typeof candidate.value === "string" && candidate.value.length > 0;
   }
