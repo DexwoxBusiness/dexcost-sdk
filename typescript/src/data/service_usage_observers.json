@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.29.0",
-    "observer_count": 76,
+    "version": "1.30.0",
+    "observer_count": 78,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -160,6 +160,46 @@
       "fixed_resource_id": "payment_charge",
       "record_id_path": "id",
       "source_url": "https://docs.stripe.com/api/charges/object"
+    },
+    {
+      "service_key": "twilio_message_create",
+      "provider_name": "twilio",
+      "provider_service": "messaging",
+      "component": "external",
+      "domains": ["api.twilio.com"],
+      "endpoints": ["/2010-04-01/Accounts/{id}/Messages.json"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "sid", "operator": "non_empty" },
+        { "path": "direction", "operator": "equals", "value": "outbound-api" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "outbound_message",
+      "record_id_path": "sid",
+      "source_url": "https://www.twilio.com/docs/messaging/api/message-resource"
+    },
+    {
+      "service_key": "twilio_call_create",
+      "provider_name": "twilio",
+      "provider_service": "voice_connectivity",
+      "component": "external",
+      "domains": ["api.twilio.com"],
+      "endpoints": ["/2010-04-01/Accounts/{id}/Calls.json"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "sid", "operator": "non_empty" },
+        { "path": "direction", "operator": "equals", "value": "outbound-api" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "outbound_call",
+      "record_id_path": "sid",
+      "source_url": "https://www.twilio.com/docs/voice/api/call-resource"
     },
     {
       "service_key": "voyage_ai",

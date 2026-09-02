@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.29.0",
-  "conformance_schema_version": "21",
+  "observer_manifest_version": "1.30.0",
+  "conformance_schema_version": "22",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -66,6 +66,16 @@
       "service_key": "stripe_charge_create",
       "positive_cases": ["stripe_legacy_charge_create_captures_charge_identity"],
       "fail_open_cases": ["stripe_charge_retrieval_is_not_a_new_charge"]
+    },
+    {
+      "service_key": "twilio_message_create",
+      "positive_cases": ["twilio_message_create_captures_outbound_message_sid"],
+      "fail_open_cases": ["twilio_message_list_read_is_not_a_send"]
+    },
+    {
+      "service_key": "twilio_call_create",
+      "positive_cases": ["twilio_call_create_captures_outbound_call_sid"],
+      "fail_open_cases": ["twilio_call_list_read_is_not_a_new_call"]
     },
     {
       "service_key": "voyage_ai",
