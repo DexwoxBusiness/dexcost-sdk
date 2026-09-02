@@ -918,14 +918,16 @@ class ServiceUsageObservers:
         parsed, observers = matched
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
-        normalized_request_headers = (
-            {
+        normalized_request_headers: dict[str, str | None]
+        if isinstance(request_headers, dict):
+            normalized_request_headers = {
                 str(name).lower(): value
                 for name, value in request_headers.items()
             }
-            if isinstance(request_headers, dict)
-            else {str(name).lower(): None for name in request_headers}
-        )
+        else:
+            normalized_request_headers = {
+                str(name).lower(): None for name in request_headers
+            }
         for observer in observers:
             if not all(
                 _request_predicate_matches(request_body, predicate)
