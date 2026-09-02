@@ -170,3 +170,16 @@ test("rejects CI that stops executing a language consumer", () => {
     "CI does not execute the typescript observer conformance consumer",
   );
 });
+
+test("rejects CI that drops a paired SDK from the cross-SDK matrix", () => {
+  const candidate = inputs();
+  candidate.workflowText = candidate.workflowText.replace(
+    "sdk: [python, typescript]",
+    "sdk: [python]",
+  );
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "CI cross-SDK matrix must include paired python and typescript SDKs",
+  );
+});

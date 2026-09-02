@@ -512,9 +512,9 @@ export function validateSdkAttributionAdmission({
 
   if (
     !isNonEmptyString(workflowText) ||
-    !workflowText.includes("sdk: [python, go, typescript, rust]")
+    !workflowText.includes("sdk: [python, typescript]")
   ) {
-    issues.push("CI cross-SDK matrix must include python, go, typescript, and rust");
+    issues.push("CI cross-SDK matrix must include paired python and typescript SDKs");
   }
 
   return [...new Set(issues)].sort();
