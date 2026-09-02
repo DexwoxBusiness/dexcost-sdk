@@ -153,7 +153,6 @@
         { "required": ["fixed_quantity"], "not": { "anyOf": [{ "required": ["response_path"] }, { "required": ["response_collection_sum_path"] }, { "required": ["response_quantity_header"] }, { "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }, { "required": ["request_collection_count_path"] }] } }
       ],
       "dependentRequired": {
-        "allowed_resource_ids": ["request_resource_path"],
         "quantity_multiplier_query_parameter": ["quantity_multiplier_path"],
         "request_collection_count_path": ["request_collection_all"],
         "request_collection_all": ["request_collection_count_path"],
@@ -171,6 +170,7 @@
         { "if": { "required": ["quantity_multiplier_query_parameter_count"] }, "then": { "required": ["query_all"], "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } },
         { "not": { "required": ["quantity_multiplier_query_parameter_count", "quantity_multiplier_path"] } },
         { "if": { "required": ["resource_id_prefix_to_strip"] }, "then": { "anyOf": [{ "required": ["resource_path"] }, { "required": ["request_resource_path"] }, { "required": ["resource_query_parameter"] }, { "required": ["fixed_resource_id"] }] } },
+        { "if": { "required": ["allowed_resource_ids"] }, "then": { "anyOf": [{ "required": ["resource_path"] }, { "required": ["request_resource_path"] }] } },
         { "not": { "required": ["resource_path", "request_resource_path"] } },
         { "not": { "required": ["resource_path", "resource_query_parameter"] } },
         { "not": { "required": ["resource_path", "fixed_resource_id"] } },

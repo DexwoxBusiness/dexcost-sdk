@@ -1,5 +1,5 @@
 {
-  "schema_version": "23",
+  "schema_version": "24",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1586,6 +1586,80 @@
       "headers": {},
       "request": { "model": "remove-bg" },
       "response": { "error": "invalid request", "cost": { "amount": "0.1047", "unit": "DOLLARS" } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_completed_summarize_reports_final_units",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-summary-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-summary-1", "workflow": "summarize", "status": "completed", "units_consumed": 650, "outputs": { "title": "private output" } } },
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "650", "resource_type": "sku", "resource_id": "summarize", "provider_record_id": "rjob-summary-1" }]
+    },
+    {
+      "name": "mux_robots_completed_multiword_workflow_reports_final_units",
+      "url": "https://api.mux.com/robots/v0/jobs/translate-captions/rjob-translate-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-translate-1", "workflow": "translate-captions", "status": "completed", "units_consumed": "1600", "outputs": { "temporary_vtt_url": "private" } } },
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "1600", "resource_type": "sku", "resource_id": "translate-captions", "provider_record_id": "rjob-translate-1" }]
+    },
+    {
+      "name": "mux_robots_pending_job_is_not_billed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-pending",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-pending", "workflow": "summarize", "status": "pending", "units_consumed": 650 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_errored_job_is_not_billed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-error",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-error", "workflow": "summarize", "status": "errored", "units_consumed": 650, "errors": [{ "message": "failed" }] } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_zero_units_fail_open",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-zero",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-zero", "workflow": "summarize", "status": "completed", "units_consumed": 0 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_unknown_workflow_fails_open",
+      "url": "https://api.mux.com/robots/v0/jobs/future-workflow/rjob-future",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-future", "workflow": "future-workflow", "status": "completed", "units_consumed": 1000 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_creation_response_is_not_terminal_usage",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize",
+      "method": "POST",
+      "headers": {},
+      "request": { "parameters": { "asset_id": "asset-private" } },
+      "response": { "data": { "id": "rjob-new", "workflow": "summarize", "status": "pending", "units_consumed": 1 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_list_response_is_not_a_single_charge",
+      "url": "https://api.mux.com/robots/v0/jobs?status=completed",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": [{ "id": "rjob-list", "workflow": "summarize", "status": "completed", "units_consumed": 650 }] },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_failed_http_response_is_not_observed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-server-error",
+      "method": "GET",
+      "status_code": 500,
+      "headers": {},
+      "response": { "data": { "id": "rjob-server-error", "workflow": "summarize", "status": "completed", "units_consumed": 650 } },
       "expected": []
     }
   ]

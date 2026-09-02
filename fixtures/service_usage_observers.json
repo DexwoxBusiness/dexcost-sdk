@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.31.0",
-    "observer_count": 80,
+    "version": "1.32.0",
+    "observer_count": 81,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1651,6 +1651,53 @@
       "record_id_path": "generationId",
       "provider_cost_usd_path": "cost.amount",
       "source_url": "https://docs.leonardo.ai/me/docs/pricing-and-plans-faq"
+    },
+    {
+      "service_key": "mux_robots_terminal_units",
+      "provider_name": "mux",
+      "provider_service": "robots",
+      "component": "external",
+      "domains": ["api.mux.com"],
+      "endpoints": [
+        "/robots/v0/jobs/ask-questions/{id}",
+        "/robots/v0/jobs/edit-captions/{id}",
+        "/robots/v0/jobs/find-best-thumbnails/{id}",
+        "/robots/v0/jobs/find-key-moments/{id}",
+        "/robots/v0/jobs/find-scenes/{id}",
+        "/robots/v0/jobs/generate-chapters/{id}",
+        "/robots/v0/jobs/generate-engagement-insights/{id}",
+        "/robots/v0/jobs/generate-premium-captions/{id}",
+        "/robots/v0/jobs/moderate/{id}",
+        "/robots/v0/jobs/summarize/{id}",
+        "/robots/v0/jobs/translate-audio/{id}",
+        "/robots/v0/jobs/translate-captions/{id}"
+      ],
+      "endpoint_match": "path_template",
+      "methods": ["GET"],
+      "response_all": [
+        { "path": "data.status", "operator": "equals", "value": "completed" },
+        { "path": "data.id", "operator": "non_empty" }
+      ],
+      "response_path": "data.units_consumed",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "resource_path": "data.workflow",
+      "allowed_resource_ids": [
+        "ask-questions",
+        "edit-captions",
+        "find-best-thumbnails",
+        "find-key-moments",
+        "find-scenes",
+        "generate-chapters",
+        "generate-engagement-insights",
+        "generate-premium-captions",
+        "moderate",
+        "summarize",
+        "translate-audio",
+        "translate-captions"
+      ],
+      "record_id_path": "data.id",
+      "source_url": "https://www.mux.com/docs/guides/robots"
     }
   ]
 }

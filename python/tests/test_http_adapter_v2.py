@@ -369,6 +369,48 @@ class TestKnownServiceExtraction:
             "confidence": "exact",
         }
 
+    def test_mux_robots_records_terminal_provider_units_without_response_content(
+        self,
+    ) -> None:
+        task = _make_task("mux-robots")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.mux.com/robots/v0/jobs/summarize/rjob-summary-1",
+                method="GET",
+                response=_make_response(
+                    body={
+                        "data": {
+                            "id": "rjob-summary-1",
+                            "workflow": "summarize",
+                            "status": "completed",
+                            "units_consumed": 650,
+                            "outputs": {"title": "private output"},
+                        }
+                    }
+                ),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        assert event.details["attribution_observer_service"] == "mux_robots_terminal_units"
+        assert "private output" not in json.dumps(event.details)
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "mux",
+            "service": "robots",
+            "record_id": "rjob-summary-1",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "summarize"}
+        assert wire["usage"] == [
+            {"metric": "credit_count", "quantity": "650", "unit": "Credits"}
+        ]
+        assert "cost_evidence" not in wire
+
     def test_github_rest_api_is_usage_only_without_synthetic_money(self) -> None:
         task = _make_task("github-api")
         with task_context(task):

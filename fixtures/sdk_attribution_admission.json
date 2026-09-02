@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.31.0",
-  "conformance_schema_version": "23",
+  "observer_manifest_version": "1.32.0",
+  "conformance_schema_version": "24",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -525,6 +525,20 @@
       "fail_open_cases": [
         "leonardo_transitional_credit_unit_does_not_invent_usd",
         "leonardo_read_does_not_repeat_generation_cost"
+      ]
+    },
+    {
+      "service_key": "mux_robots_terminal_units",
+      "positive_cases": [
+        "mux_robots_completed_summarize_reports_final_units",
+        "mux_robots_completed_multiword_workflow_reports_final_units"
+      ],
+      "fail_open_cases": [
+        "mux_robots_pending_job_is_not_billed",
+        "mux_robots_errored_job_is_not_billed",
+        "mux_robots_zero_units_fail_open",
+        "mux_robots_creation_response_is_not_terminal_usage",
+        "mux_robots_failed_http_response_is_not_observed"
       ]
     }
   ]

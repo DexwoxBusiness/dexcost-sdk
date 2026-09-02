@@ -115,6 +115,43 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("records terminal Mux Robots units without retaining response content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        id: "rjob-summary-1",
+        workflow: "summarize",
+        status: "completed",
+        units_consumed: 650,
+        outputs: { title: "private output" },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "mux-robots" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.mux.com/robots/v0/jobs/summarize/rjob-summary-1");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("mux_robots_terminal_units");
+    expect(JSON.stringify(event.details)).not.toContain("private output");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "mux",
+        service: "robots",
+        record_id: "rjob-summary-1",
+      },
+      resource: { type: "sku", id: "summarize" },
+      usage: [{ metric: "credit_count", quantity: "650", unit: "Credits" }],
+    });
+    expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",
