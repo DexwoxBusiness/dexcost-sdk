@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.28.0",
-  "conformance_schema_version": "20",
+  "observer_manifest_version": "1.29.0",
+  "conformance_schema_version": "21",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -48,6 +48,24 @@
         "stability_ai_sd3_uses_requested_flash_model"
       ],
       "fail_open_cases": ["stability_ai_unknown_sd3_model_fails_open"]
+    },
+    {
+      "service_key": "stripe_payment_intent_create",
+      "positive_cases": ["stripe_confirmed_payment_intent_captures_charge_identity"],
+      "fail_open_cases": ["stripe_unconfirmed_or_async_payment_intent_is_not_assumed_billable"]
+    },
+    {
+      "service_key": "stripe_payment_intent_terminal",
+      "positive_cases": [
+        "stripe_payment_intent_confirm_template_captures_charge_identity",
+        "stripe_manual_capture_captures_charge_identity"
+      ],
+      "fail_open_cases": ["stripe_payment_intent_metadata_update_is_not_a_new_charge"]
+    },
+    {
+      "service_key": "stripe_charge_create",
+      "positive_cases": ["stripe_legacy_charge_create_captures_charge_identity"],
+      "fail_open_cases": ["stripe_charge_retrieval_is_not_a_new_charge"]
     },
     {
       "service_key": "voyage_ai",

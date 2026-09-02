@@ -51,6 +51,7 @@ def test_shared_service_usage_observer_conformance() -> None:
                 case["response"],
                 case.get("request"),
                 case.get("request_headers", []),
+                case.get("method"),
             )
             if 200 <= status_code < 300
             else []

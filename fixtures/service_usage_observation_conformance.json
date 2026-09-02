@@ -1,5 +1,5 @@
 {
-  "schema_version": "20",
+  "schema_version": "21",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -122,6 +122,68 @@
       "headers": {},
       "request": { "prompt": "invalid" },
       "response": { "errors": ["invalid request"] },
+      "expected": []
+    },
+    {
+      "name": "stripe_confirmed_payment_intent_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents",
+      "method": "POST",
+      "headers": { "request-id": "req_stripe_1" },
+      "request": { "amount": 2000, "currency": "usd", "confirm": true },
+      "response": { "id": "pi_1", "status": "succeeded", "latest_charge": "ch_1" },
+      "expected": [{ "service_key": "stripe_payment_intent_create", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_1" }]
+    },
+    {
+      "name": "stripe_payment_intent_confirm_template_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_2/confirm",
+      "method": "POST",
+      "headers": {},
+      "request": {},
+      "response": { "id": "pi_2", "status": "succeeded", "latest_charge": "ch_2" },
+      "expected": [{ "service_key": "stripe_payment_intent_terminal", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_2" }]
+    },
+    {
+      "name": "stripe_manual_capture_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_3/capture",
+      "method": "POST",
+      "headers": {},
+      "request": {},
+      "response": { "id": "pi_3", "status": "succeeded", "latest_charge": "ch_3" },
+      "expected": [{ "service_key": "stripe_payment_intent_terminal", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_3" }]
+    },
+    {
+      "name": "stripe_unconfirmed_or_async_payment_intent_is_not_assumed_billable",
+      "url": "https://api.stripe.com/v1/payment_intents",
+      "method": "POST",
+      "headers": {},
+      "request": { "amount": 2000, "currency": "usd" },
+      "response": { "id": "pi_async", "status": "requires_action", "latest_charge": null },
+      "expected": []
+    },
+    {
+      "name": "stripe_payment_intent_metadata_update_is_not_a_new_charge",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_4",
+      "method": "POST",
+      "headers": {},
+      "request": { "metadata": { "order": "4" } },
+      "response": { "id": "pi_4", "status": "succeeded", "latest_charge": "ch_4" },
+      "expected": []
+    },
+    {
+      "name": "stripe_legacy_charge_create_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/charges",
+      "method": "POST",
+      "headers": {},
+      "request": { "amount": 2000, "currency": "usd" },
+      "response": { "id": "ch_legacy", "status": "succeeded", "paid": true, "balance_transaction": "txn_legacy" },
+      "expected": [{ "service_key": "stripe_charge_create", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_legacy" }]
+    },
+    {
+      "name": "stripe_charge_retrieval_is_not_a_new_charge",
+      "url": "https://api.stripe.com/v1/charges",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "ch_existing", "status": "succeeded", "paid": true, "balance_transaction": "txn_existing" },
       "expected": []
     },
     {

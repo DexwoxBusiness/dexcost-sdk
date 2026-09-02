@@ -939,6 +939,7 @@ def _handle_catalog_entry(
 
 def _handle_usage_observer(
     url: str,
+    method: str,
     domain: str,
     track_network: bool,
     bytes_in: int,
@@ -963,6 +964,7 @@ def _handle_usage_observer(
         response_body if response_body is not None else _get_response_body(response),
         request_body,
         request_headers,
+        method,
     )
     if not observations:
         return False
@@ -1164,6 +1166,7 @@ def _handle_http_call_inner(
         # notable-network event emission is disabled.
         if observers is not None and observer_route and _handle_usage_observer(
             url,
+            method,
             domain,
             record_network,
             bytes_in,

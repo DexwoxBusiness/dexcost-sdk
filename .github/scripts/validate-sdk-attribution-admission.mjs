@@ -180,12 +180,23 @@ function observerDomainMatches(observer, hostname) {
 
 function observerEndpointMatches(observer, pathname, boundary = false) {
   if (!Array.isArray(observer.endpoints)) return false;
-  const matchMode = boundary ? "prefix" : (observer.endpoint_match ?? "prefix");
-  return observer.endpoints.some((endpoint) =>
-    pathname === endpoint ||
-    (matchMode === "prefix" &&
-      (endpoint === "/" || pathname.startsWith(`${endpoint}/`)))
-  );
+  const matchMode = observer.endpoint_match ?? "prefix";
+  return observer.endpoints.some((endpoint) => {
+    if (matchMode === "path_template") {
+      const staticBoundary = endpoint.slice(0, endpoint.indexOf("/{id}"));
+      if (boundary) {
+        return pathname === staticBoundary || pathname.startsWith(`${staticBoundary}/`);
+      }
+      const actual = pathname.split("/");
+      const template = endpoint.split("/");
+      return actual.length === template.length && template.every(
+        (segment, index) => segment === "{id}" ? actual[index].length > 0 : segment === actual[index],
+      );
+    }
+    return pathname === endpoint ||
+      ((boundary || matchMode === "prefix") &&
+        (endpoint === "/" || pathname.startsWith(`${endpoint}/`)));
+  });
 }
 
 function responsePredicateMatches(response, predicate) {
@@ -263,6 +274,11 @@ function caseTargetsObserver(testCase, observer) {
     !(Array.isArray(observer.excluded_endpoints) &&
       observer.excluded_endpoints.includes(url.pathname));
   if (!domainMatches || !endpointMatches) return false;
+  if (Array.isArray(observer.methods) &&
+      (!isNonEmptyString(testCase.method) ||
+        !observer.methods.includes(testCase.method.toUpperCase()))) {
+    return false;
+  }
 
   if (Number.isInteger(observer.provider_region_domain_label)) {
     const candidate = url.hostname.split(".")[observer.provider_region_domain_label];

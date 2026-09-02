@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.28.0",
-    "observer_count": 73,
+    "version": "1.29.0",
+    "observer_count": 76,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -95,6 +95,71 @@
       "allowed_resource_ids": ["sd3.5-large", "sd3.5-large-turbo", "sd3.5-medium", "sd3.5-flash"],
       "record_id_header": "x-request-id",
       "source_url": "https://platform.stability.ai/docs/api-reference#tag/Generate/paths/~1v2beta~1stable-image~1generate~1sd3/post"
+    },
+    {
+      "service_key": "stripe_payment_intent_create",
+      "provider_name": "stripe",
+      "provider_service": "payment_processing",
+      "component": "external",
+      "domains": ["api.stripe.com"],
+      "endpoints": ["/v1/payment_intents"],
+      "endpoint_match": "exact",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "succeeded" },
+        { "path": "latest_charge", "operator": "non_empty" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "payment_charge",
+      "record_id_path": "latest_charge",
+      "source_url": "https://docs.stripe.com/api/payment_intents/object"
+    },
+    {
+      "service_key": "stripe_payment_intent_terminal",
+      "provider_name": "stripe",
+      "provider_service": "payment_processing",
+      "component": "external",
+      "domains": ["api.stripe.com"],
+      "endpoints": [
+        "/v1/payment_intents/{id}/confirm",
+        "/v1/payment_intents/{id}/capture"
+      ],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "succeeded" },
+        { "path": "latest_charge", "operator": "non_empty" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "payment_charge",
+      "record_id_path": "latest_charge",
+      "source_url": "https://docs.stripe.com/payments/payment-intents/verifying-status"
+    },
+    {
+      "service_key": "stripe_charge_create",
+      "provider_name": "stripe",
+      "provider_service": "payment_processing",
+      "component": "external",
+      "domains": ["api.stripe.com"],
+      "endpoints": ["/v1/charges"],
+      "endpoint_match": "exact",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "status", "operator": "equals", "value": "succeeded" },
+        { "path": "paid", "operator": "equals", "value": true },
+        { "path": "balance_transaction", "operator": "non_empty" },
+        { "path": "id", "operator": "non_empty" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "payment_charge",
+      "record_id_path": "id",
+      "source_url": "https://docs.stripe.com/api/charges/object"
     },
     {
       "service_key": "voyage_ai",

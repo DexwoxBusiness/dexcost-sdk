@@ -83,7 +83,8 @@ interface UsageObserverDefinition {
   domain_suffixes?: string[];
   endpoints: string[];
   excluded_endpoints?: string[];
-  endpoint_match?: "exact" | "prefix";
+  endpoint_match?: "exact" | "prefix" | "path_template";
+  methods?: string[];
   response_path?: string;
   response_collection_sum_path?: string;
   response_quantity_header?: string;
@@ -252,9 +253,30 @@ function positiveDecimal(value: unknown): string | undefined {
   }
 }
 
-function endpointMatches(pathname: string, endpoint: string, mode: "exact" | "prefix" = "prefix"): boolean {
+function endpointMatches(
+  pathname: string,
+  endpoint: string,
+  mode: "exact" | "prefix" | "path_template" = "prefix",
+): boolean {
+  if (mode === "path_template") {
+    const pathSegments = pathname.split("/");
+    const templateSegments = endpoint.split("/");
+    return pathSegments.length === templateSegments.length &&
+      templateSegments.every((segment, index) =>
+        segment === "{id}" ? pathSegments[index].length > 0 : segment === pathSegments[index]);
+  }
   return pathname === endpoint ||
     (mode === "prefix" && (endpoint === "/" || pathname.startsWith(`${endpoint}/`)));
+}
+
+function endpointBoundaryMatches(
+  pathname: string,
+  endpoint: string,
+  mode: "exact" | "prefix" | "path_template" = "prefix",
+): boolean {
+  if (mode !== "path_template") return endpointMatches(pathname, endpoint, "prefix");
+  const boundary = endpoint.slice(0, endpoint.indexOf("/{id}"));
+  return pathname === boundary || pathname.startsWith(`${boundary}/`);
 }
 
 function requestHeaderPredicateMatches(
@@ -523,6 +545,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
+      (observer.endpoint_match === "path_template" &&
+        !observer.endpoints.every((endpoint) => endpoint.split("/").filter((part) => part === "{id}").length === 1)) ||
       (observer.excluded_endpoints !== undefined && (
         !Array.isArray(observer.excluded_endpoints) ||
         observer.excluded_endpoints.length === 0 ||
@@ -531,7 +555,14 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         new Set(observer.excluded_endpoints).size !== observer.excluded_endpoints.length
       )) ||
       (observer.endpoint_match !== undefined &&
-        observer.endpoint_match !== "exact" && observer.endpoint_match !== "prefix") ||
+        observer.endpoint_match !== "exact" && observer.endpoint_match !== "prefix" &&
+        observer.endpoint_match !== "path_template") ||
+      (observer.methods !== undefined && (
+        !Array.isArray(observer.methods) || observer.methods.length === 0 ||
+        !observer.methods.every((method) =>
+          typeof method === "string" && /^[A-Z]+$/.test(method)) ||
+        new Set(observer.methods).size !== observer.methods.length
+      )) ||
       [
         observer.response_path,
         observer.response_collection_sum_path,
@@ -689,7 +720,7 @@ export class ServiceUsageObservers {
     return this.observers.some(
       (observer) => domainMatches(parsed.hostname, observer) &&
         observer.endpoints.some((endpoint) =>
-          endpointMatches(parsed.pathname, endpoint, "prefix")),
+          endpointBoundaryMatches(parsed.pathname, endpoint, observer.endpoint_match)),
     );
   }
 
@@ -751,6 +782,7 @@ export class ServiceUsageObservers {
     responseBody: unknown,
     requestBody?: unknown,
     requestHeaders: readonly string[] | ObservedRequestHeaders = [],
+    method?: string,
   ): ServiceUsageObservation[] {
     const matched = this.lookup(url);
     if (matched === undefined) return [];
@@ -766,6 +798,10 @@ export class ServiceUsageObservers {
       }
     }
     for (const observer of matched.observers) {
+      if (observer.methods !== undefined &&
+          (method === undefined || !observer.methods.includes(method.toUpperCase()))) {
+        continue;
+      }
       if (
         observer.request_all !== undefined &&
         !observer.request_all.every((predicate) =>

@@ -178,6 +178,71 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     });
   });
 
+  it("observes bounded Node response JSON only for the declared method and path template", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        id: "pi_node",
+        status: "succeeded",
+        latest_charge: "ch_node",
+      }));
+    });
+    setServiceUsageObservers(new ServiceUsageObservers({
+      _meta: {
+        version: "test-node-response-body",
+        observer_count: 1,
+        purpose: "test",
+      },
+      observers: [{
+        service_key: "stripe_payment_intent_terminal",
+        provider_name: "stripe",
+        provider_service: "payment_processing",
+        component: "external",
+        domains: ["127.0.0.1"],
+        endpoints: ["/v1/payment_intents/{id}/confirm"],
+        endpoint_match: "path_template",
+        methods: ["POST"],
+        response_all: [
+          { path: "status", operator: "equals", value: "succeeded" },
+          { path: "latest_charge", operator: "non_empty" },
+        ],
+        fixed_quantity: "1",
+        usage_metric: "request_count",
+        resource_type: "sku",
+        fixed_resource_id: "payment_charge",
+        record_id_path: "latest_charge",
+        source_url: "https://docs.stripe.com/api/payment_intents/object",
+      }],
+    }));
+    const task = createTask({ taskId: "t-node-stripe" });
+    const call = (method: string) => runWithTask(task, () => new Promise<void>((resolve, reject) => {
+      const request = http.request(`${server.url}/v1/payment_intents/pi_node/confirm`, {
+        method,
+      }, (response) => {
+        response.resume();
+        response.on("end", resolve);
+      });
+      request.on("error", reject);
+      request.end();
+    }));
+
+    await call("GET");
+    await call("POST");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await server.close();
+
+    const observations = getRecordedEvents().filter((event) =>
+      event.details?.attribution_observer_service === "stripe_payment_intent_terminal"
+    );
+    expect(observations).toHaveLength(1);
+    expect(observations[0].details).toMatchObject({
+      provider_record_id: "ch_node",
+      attribution_usage_metric: "request_count",
+      attribution_usage_quantity: "1",
+      attribution_resource_id: "payment_charge",
+    });
+  });
+
   it("records bytes into the registered accountant", async () => {
     const server = await startServer((req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });

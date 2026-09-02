@@ -988,7 +988,7 @@ function _captureNodeObserverRequestBody(req: any): () => unknown {
   };
 }
 
-function _nodeResponseAsFetchResponse(response: any): Response {
+function _nodeResponseAsFetchResponse(response: any, body?: unknown): Response {
   const headers = new Headers();
   for (const [name, rawValue] of Object.entries(response?.headers ?? {})) {
     if (Array.isArray(rawValue)) {
@@ -1001,7 +1001,67 @@ function _nodeResponseAsFetchResponse(response: any): Response {
   const status = Number.isInteger(candidateStatus) && candidateStatus >= 200 && candidateStatus <= 599
     ? candidateStatus
     : 200;
-  return new Response(null, { status, headers });
+  const serialized = body === undefined || status === 204 || status === 205
+    ? null
+    : JSON.stringify(body);
+  return new Response(serialized, { status, headers });
+}
+
+/** Observe a Node response without taking ownership of its stream. Provider
+ * clients retain their normal data listeners; this listener only keeps a
+ * bounded JSON copy for declarative attribution. */
+function _captureNodeObserverResponseBody(
+  response: any,
+  complete: (body: unknown) => void,
+): void {
+  const contentType = String(response?.headers?.["content-type"] ?? "").toLowerCase();
+  const declaredLength = Number.parseInt(
+    String(response?.headers?.["content-length"] ?? ""),
+    10,
+  );
+  if (!contentType.includes("application/json") ||
+      (Number.isFinite(declaredLength) && declaredLength > MAX_OBSERVER_RESPONSE_BODY_BYTES) ||
+      response === null || typeof response?.on !== "function") {
+    complete(undefined);
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let overflow = false;
+  let settled = false;
+  const finish = (body: unknown): void => {
+    if (settled) return;
+    settled = true;
+    complete(body);
+  };
+  response.on("data", (chunk: unknown) => {
+    if (overflow) return;
+    try {
+      const bytes = Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk as any);
+      byteLength += bytes.byteLength;
+      if (byteLength > MAX_OBSERVER_RESPONSE_BODY_BYTES) {
+        overflow = true;
+        chunks.length = 0;
+      } else {
+        chunks.push(bytes);
+      }
+    } catch {
+      overflow = true;
+      chunks.length = 0;
+    }
+  });
+  response.once("end", () => {
+    if (overflow || byteLength === 0) {
+      finish(undefined);
+      return;
+    }
+    try {
+      finish(JSON.parse(Buffer.concat(chunks, byteLength).toString("utf8")));
+    } catch {
+      finish(undefined);
+    }
+  });
+  response.once("error", () => finish(undefined));
 }
 
 /** Patch http.request/get and https.request/get to record external costs. */
@@ -1053,13 +1113,21 @@ function _patchNodeHttp(): void {
               const observerRequestHeaders = typeof req.getHeaders === "function"
                 ? serviceUsageObservers?.selectRequestHeaders(urlStr, req.getHeaders()) ?? {}
                 : {};
-              void _maybeRecordCost(
-                urlStr,
-                _nodeResponseAsFetchResponse(response),
-                undefined,
-                observerRequestBody,
-                observerRequestHeaders,
-              );
+              const record = (body?: unknown): void => {
+                void _maybeRecordCost(
+                  urlStr,
+                  _nodeResponseAsFetchResponse(response, body),
+                  undefined,
+                  observerRequestBody,
+                  observerRequestHeaders,
+                  typeof req.method === "string" ? req.method : undefined,
+                );
+              };
+              if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
+                _captureNodeObserverResponseBody(response, record);
+              } else {
+                record();
+              }
             });
           } else {
             void _maybeRecordCost(urlStr);
@@ -2155,6 +2223,7 @@ async function _maybeRecordCost(
   ctx?: _HttpCallContext,
   nodeObserverRequestBody?: unknown,
   nodeObserverRequestHeaders: ObservedRequestHeaders = {},
+  nodeObserverMethod?: string,
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -2396,6 +2465,7 @@ async function _maybeRecordCost(
           observerResponseBody,
           ctx?.observerRequestBody ?? nodeObserverRequestBody,
           ctx?.observerRequestHeaders ?? nodeObserverRequestHeaders,
+          ctx?.method ?? nodeObserverMethod,
         ) ?? [];
         if (observations.length > 0) {
           for (const observation of observations) {

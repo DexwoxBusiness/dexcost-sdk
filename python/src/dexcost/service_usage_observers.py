@@ -41,6 +41,7 @@ class UsageObserver:
     endpoints: tuple[str, ...]
     excluded_endpoints: tuple[str, ...]
     endpoint_match: str
+    methods: tuple[str, ...]
     response_path: str | None
     response_collection_sum_path: str | None
     response_quantity_header: str | None
@@ -226,6 +227,26 @@ def _domain_matches(
     if hostname is None:
         return False
     return hostname in domains or any(hostname.endswith(f".{suffix}") for suffix in suffixes)
+
+
+def _endpoint_matches(path: str, endpoint: str, mode: str) -> bool:
+    if mode == "path_template":
+        path_parts = path.split("/")
+        template_parts = endpoint.split("/")
+        return len(path_parts) == len(template_parts) and all(
+            actual == expected or (expected == "{id}" and bool(actual))
+            for actual, expected in zip(path_parts, template_parts, strict=True)
+        )
+    return path == endpoint or (
+        mode == "prefix" and (endpoint == "/" or path.startswith(f"{endpoint}/"))
+    )
+
+
+def _endpoint_boundary_matches(path: str, endpoint: str, mode: str) -> bool:
+    if mode != "path_template":
+        return _endpoint_matches(path, endpoint, "prefix")
+    boundary = endpoint[: endpoint.index("/{id}")]
+    return path == boundary or path.startswith(f"{boundary}/")
 
 
 def _valid_domain_suffix(value: Any) -> bool:
@@ -573,7 +594,20 @@ class ServiceUsageObservers:
                     for item in excluded_endpoints
                 )
                 or len(set(excluded_endpoints)) != len(excluded_endpoints)
-                or definition.get("endpoint_match", "prefix") not in {"exact", "prefix"}
+                or definition.get("endpoint_match", "prefix")
+                not in {"exact", "prefix", "path_template"}
+                or (
+                    definition.get("endpoint_match") == "path_template"
+                    and not all(item.split("/").count("{id}") == 1 for item in endpoints)
+                )
+                or not isinstance(definition.get("methods", []), list)
+                or ("methods" in definition and not definition["methods"])
+                or any(
+                    not isinstance(item, str) or not item.isalpha() or not item.isupper()
+                    for item in definition.get("methods", [])
+                )
+                or len(set(definition.get("methods", [])))
+                != len(definition.get("methods", []))
                 or any(
                     field in definition
                     and (not isinstance(definition[field], str) or not definition[field])
@@ -730,6 +764,7 @@ class ServiceUsageObservers:
                     endpoints=tuple(endpoints),
                     excluded_endpoints=tuple(excluded_endpoints),
                     endpoint_match=definition.get("endpoint_match", "prefix"),
+                    methods=tuple(definition.get("methods", [])),
                     response_path=response_path,
                     response_collection_sum_path=response_collection_sum_path,
                     response_quantity_header=response_quantity_header,
@@ -788,13 +823,8 @@ class ServiceUsageObservers:
             candidate
             for candidate in self._observers
             if _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
-            and any(
-                parsed.path == endpoint or (
-                    candidate.endpoint_match == "prefix"
-                    and (endpoint == "/" or parsed.path.startswith(f"{endpoint}/"))
-                )
-                for endpoint in candidate.endpoints
-            )
+            and any(_endpoint_matches(parsed.path, endpoint, candidate.endpoint_match)
+                    for endpoint in candidate.endpoints)
             and parsed.path not in candidate.excluded_endpoints
             and (
                 not candidate.query_any
@@ -825,8 +855,9 @@ class ServiceUsageObservers:
         return any(
             _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
             and any(
-                parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
-                or endpoint == "/"
+                _endpoint_boundary_matches(
+                    parsed.path, endpoint, candidate.endpoint_match
+                )
                 for endpoint in candidate.endpoints
             )
             for candidate in self._observers
@@ -913,6 +944,7 @@ class ServiceUsageObservers:
         request_headers: (
             tuple[str, ...] | list[str] | dict[str, str | None]
         ) = (),
+        method: str | None = None,
     ) -> list[ServiceUsageObservation]:
         matched = self._lookup(url)
         if matched is None:
@@ -931,6 +963,10 @@ class ServiceUsageObservers:
                 str(name).lower(): None for name in request_headers
             }
         for observer in observers:
+            if observer.methods and (
+                method is None or method.upper() not in observer.methods
+            ):
+                continue
             if not all(
                 _request_predicate_matches(request_body, predicate)
                 for predicate in observer.request_all
