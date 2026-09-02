@@ -1,5 +1,5 @@
 {
-  "schema_version": "9",
+  "schema_version": "10",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -239,6 +239,81 @@
       "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
       "request": { "Text": "Hello", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
       "response": { "TranslatedText": "\u4f60\u597d", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
+      "expected": []
+    },
+    {
+      "name": "azure_translator_counts_utf16_units_for_each_target",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es&to=ja",
+      "headers": {},
+      "request": [{ "Text": "A\ud83d\ude00" }, { "text": "\u00e9" }],
+      "response": [
+        { "translations": [{ "text": "A feliz", "to": "es" }, { "text": "A happy", "to": "ja" }] },
+        { "translations": [{ "text": "e", "to": "es" }, { "text": "e", "to": "ja" }] }
+      ],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "8", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_supports_documented_geography_endpoint",
+      "url": "https://api-eur.cognitive.microsofttranslator.com/translate?api-version=3.0&to=fr&category=general",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Bonjour", "to": "fr" }] }],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_supports_documented_resource_endpoint",
+      "url": "https://dexcost-translator.cognitiveservices.azure.com/translator/text/v3.0/translate?api-version=3.0&to=de",
+      "headers": {},
+      "request": [{ "text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hallo", "to": "de" }] }],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_custom_category_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es&category=customer-model",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_missing_api_version_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_missing_target_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_ambiguous_text_casing_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello", "text": "Different" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_spoofed_resource_suffix_fails_open",
+      "url": "https://dexcost-translator.cognitiveservices.azure.com.evil.example/translator/text/v3.0/translate?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_endpoint_descendant_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate/preview?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
       "expected": []
     },
     {

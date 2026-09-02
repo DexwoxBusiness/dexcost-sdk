@@ -685,10 +685,10 @@ def _handle_http_call(
     # between extraction and event creation.
     url = scrub_url(url)
     try:
-        observer_request_body: dict[str, Any] | None = None
+        observer_request_body: dict[str, Any] | list[Any] | None = None
         observers = get_service_usage_observers()
         if observers is not None and observers.needs_request_body(url):
-            if isinstance(request_body, dict):
+            if isinstance(request_body, (dict, list)):
                 observer_request_body = request_body
             elif isinstance(request_body, (str, bytes, bytearray)):
                 raw = (
@@ -699,7 +699,7 @@ def _handle_http_call(
                         decoded = json.loads(raw)
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         decoded = None
-                    if isinstance(decoded, dict):
+                    if isinstance(decoded, (dict, list)):
                         observer_request_body = decoded
         _handle_http_call_inner(
             url,
@@ -881,7 +881,7 @@ def _handle_usage_observer(
     response_body: dict[str, Any] | None,
     status_code: int,
     byte_details: dict[str, Any],
-    request_body: dict[str, Any] | None,
+    request_body: dict[str, Any] | list[Any] | None,
 ) -> bool:
     """Record provider-owned usage without asserting an SDK-side price."""
     if status_code < 200 or status_code >= 300:
@@ -999,7 +999,7 @@ def _handle_http_call_inner(
     method: str,
     request_headers: dict[str, Any],
     request_body_len: int,
-    request_body: dict[str, Any] | None,
+    request_body: dict[str, Any] | list[Any] | None,
     response: Any,
     response_body: dict[str, Any] | None,
     latency_ms: int,

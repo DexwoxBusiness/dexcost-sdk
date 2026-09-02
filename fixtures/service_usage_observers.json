@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.17.0",
-    "observer_count": 43,
+    "version": "1.18.0",
+    "observer_count": 44,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -186,6 +186,34 @@
       "resource_type": "sku",
       "fixed_resource_id": "standard_text",
       "source_url": "https://docs.aws.amazon.com/translate/latest/APIReference/API_TranslateText.html"
+    },
+    {
+      "service_key": "azure_translator",
+      "provider_name": "azure",
+      "provider_service": "translate_text",
+      "component": "external",
+      "domains": [
+        "api.cognitive.microsofttranslator.com",
+        "api-nam.cognitive.microsofttranslator.com",
+        "api-apc.cognitive.microsofttranslator.com",
+        "api-eur.cognitive.microsofttranslator.com"
+      ],
+      "domain_suffixes": ["cognitiveservices.azure.com"],
+      "endpoints": ["/translate", "/translator/text/v3.0/translate"],
+      "endpoint_match": "exact",
+      "query_all": [
+        { "parameter": "api-version", "operator": "equals", "value": "3.0" },
+        { "parameter": "to", "operator": "all_non_empty" },
+        { "parameter": "category", "operator": "absent_or_equals", "value": "general" }
+      ],
+      "request_character_count_path": "text",
+      "request_character_count_case_insensitive": true,
+      "character_count_encoding": "utf16_code_units",
+      "quantity_multiplier_query_parameter_count": "to",
+      "usage_metric": "characters",
+      "resource_type": "sku",
+      "fixed_resource_id": "standard_text",
+      "source_url": "https://learn.microsoft.com/en-us/rest/api/translator/translator/translate?view=rest-translator-v3.0"
     },
     {
       "service_key": "google_custom_search",

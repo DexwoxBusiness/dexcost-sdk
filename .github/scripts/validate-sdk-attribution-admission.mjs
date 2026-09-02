@@ -54,10 +54,16 @@ const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
     Object.freeze({ apiRoot: "amazonaws.com", documentationRoot: "amazon.com" }),
     Object.freeze({ apiRoot: "api.aws", documentationRoot: "amazon.com" }),
   ]),
+  azure: Object.freeze([
+    Object.freeze({ apiRoot: "microsofttranslator.com", documentationRoot: "microsoft.com" }),
+    Object.freeze({ apiRoot: "azure.com", documentationRoot: "microsoft.com" }),
+  ]),
   google: Object.freeze([
     Object.freeze({ apiRoot: "googleapis.com", documentationRoot: "google.com" }),
   ]),
 });
+
+const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -121,7 +127,32 @@ function queryPredicateMatches(url, predicate) {
   const values = url.searchParams.getAll(predicate.parameter);
   if (predicate.operator === "present") return url.searchParams.has(predicate.parameter);
   if (predicate.operator === "truthy") return values.some(truthyQueryValue);
+  if (predicate.operator === "all_non_empty") {
+    return values.length > 0 && values.every((value) => value.trim().length > 0);
+  }
+  if (predicate.operator === "equals") {
+    return values.length === 1 && values[0] === predicate.value;
+  }
+  if (predicate.operator === "absent_or_equals") {
+    return !url.searchParams.has(predicate.parameter) ||
+      (values.length === 1 && values[0] === predicate.value);
+  }
   return false;
+}
+
+function validQueryPredicate(predicate) {
+  if (!isObject(predicate) || !isNonEmptyString(predicate.parameter)) return false;
+  if (["present", "truthy", "all_non_empty"].includes(predicate.operator)) {
+    return Object.keys(predicate).length === 2 && predicate.value === undefined;
+  }
+  return ["equals", "absent_or_equals"].includes(predicate.operator) &&
+    Object.keys(predicate).length === 3 && isNonEmptyString(predicate.value);
+}
+
+function observerDomainMatches(observer, hostname) {
+  return (Array.isArray(observer.domains) && observer.domains.includes(hostname)) ||
+    (Array.isArray(observer.domain_suffixes) &&
+      observer.domain_suffixes.some((suffix) => hostname.endsWith(`.${suffix}`)));
 }
 
 function responsePredicateMatches(response, predicate) {
@@ -144,8 +175,7 @@ function caseTargetsObserver(testCase, observer) {
     return false;
   }
 
-  const domainMatches =
-    Array.isArray(observer.domains) && observer.domains.includes(url.hostname);
+  const domainMatches = observerDomainMatches(observer, url.hostname);
   const endpointMatches =
     Array.isArray(observer.endpoints) &&
     observer.endpoints.some(
@@ -189,17 +219,21 @@ function validRequestPredicate(predicate) {
     typeof predicate.value === "number" && Number.isFinite(predicate.value);
 }
 
-function caseExercisesFixedQuantityEndpointBoundary(testCase, observer) {
-  if (observer?.fixed_quantity !== "1") return false;
+function caseExercisesObserverEndpointBoundary(testCase, observer) {
   let url;
   try {
     url = new URL(testCase.url);
   } catch {
     return false;
   }
+  if (
+    Array.isArray(observer.query_all) &&
+    !observer.query_all.every((predicate) => queryPredicateMatches(url, predicate))
+  ) {
+    return false;
+  }
   return (
-    Array.isArray(observer.domains) &&
-    observer.domains.includes(url.hostname) &&
+    observerDomainMatches(observer, url.hostname) &&
     Array.isArray(observer.endpoints) &&
     observer.endpoints.some(
       (endpoint) =>
@@ -259,6 +293,19 @@ function validateObserverShape(observer, issues) {
     issues.push(`observer ${key} has invalid domains`);
   }
   if (
+    observer?.domain_suffixes !== undefined &&
+    (!Array.isArray(observer.domain_suffixes) ||
+      observer.domain_suffixes.length === 0 ||
+      !observer.domain_suffixes.every(
+        (suffix) =>
+          isNonEmptyString(suffix) &&
+          suffix.length <= 253 &&
+          DOMAIN_SUFFIX_PATTERN.test(suffix),
+      ))
+  ) {
+    issues.push(`observer ${key} has invalid domain suffixes`);
+  }
+  if (
     !Array.isArray(observer?.endpoints) ||
     observer.endpoints.length === 0 ||
     !observer.endpoints.every(
@@ -275,6 +322,16 @@ function validateObserverShape(observer, issues) {
   ) {
     issues.push(`observer ${key} has invalid request predicates`);
   }
+  for (const field of ["query_any", "query_all"]) {
+    if (
+      observer?.[field] !== undefined &&
+      (!Array.isArray(observer[field]) ||
+        observer[field].length === 0 ||
+        !observer[field].every(validQueryPredicate))
+    ) {
+      issues.push(`observer ${key} has invalid ${field} predicates`);
+    }
+  }
 
   let sourceUrl;
   try {
@@ -286,7 +343,7 @@ function validateObserverShape(observer, issues) {
     issues.push(`observer ${key} must cite an HTTPS provider API source`);
   } else {
     const providerDomainRoots = new Set(
-      (observer?.domains ?? []).map(domainRoot),
+      [...(observer?.domains ?? []), ...(observer?.domain_suffixes ?? [])].map(domainRoot),
     );
     const sourceRoot = domainRoot(sourceUrl.hostname);
     const documentationMappings = OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS[
@@ -323,6 +380,44 @@ function validateObserverShape(observer, issues) {
     issues.push(
       `observer ${key} fixed_quantity and request_count must be declared together`,
     );
+  }
+  const hasCharacterCount = isNonEmptyString(observer?.request_character_count_path) ||
+    isNonEmptyString(observer?.request_character_count_query_parameter);
+  if (
+    observer?.character_count_encoding !== undefined &&
+    !["unicode_code_points", "utf16_code_units"].includes(
+      observer.character_count_encoding,
+    )
+  ) {
+    issues.push(`observer ${key} has invalid character count encoding`);
+  }
+  if (observer?.character_count_encoding !== undefined && !hasCharacterCount) {
+    issues.push(`observer ${key} character encoding lacks a character quantity source`);
+  }
+  if (
+    observer?.request_character_count_case_insensitive !== undefined &&
+    observer.request_character_count_case_insensitive !== true
+  ) {
+    issues.push(`observer ${key} has invalid case-insensitive character path flag`);
+  }
+  if (
+    observer?.request_character_count_case_insensitive === true &&
+    !isNonEmptyString(observer?.request_character_count_path)
+  ) {
+    issues.push(`observer ${key} case-insensitive character path lacks a body path`);
+  }
+  if (observer?.quantity_multiplier_query_parameter_count !== undefined) {
+    const parameter = observer.quantity_multiplier_query_parameter_count;
+    if (!isNonEmptyString(parameter) || !hasCharacterCount) {
+      issues.push(`observer ${key} has invalid query-count multiplier`);
+    }
+    if (observer.quantity_multiplier_path !== undefined) {
+      issues.push(`observer ${key} combines incompatible quantity multipliers`);
+    }
+    if (!observer.query_all?.some((predicate) =>
+      predicate.parameter === parameter && predicate.operator === "all_non_empty")) {
+      issues.push(`observer ${key} query-count multiplier lacks a non-empty predicate`);
+    }
   }
 
   const resourceSelectors = [
@@ -478,10 +573,10 @@ export function validateSdkAttributionAdmission({
           continue;
         }
         const targetsObserver = caseTargetsObserver(testCase, observer);
-        const exercisesFixedEndpointBoundary =
+        const exercisesEndpointBoundary =
           field === "fail_open_cases" &&
-          caseExercisesFixedQuantityEndpointBoundary(testCase, observer);
-        if (!targetsObserver && !exercisesFixedEndpointBoundary) {
+          caseExercisesObserverEndpointBoundary(testCase, observer);
+        if (!targetsObserver && !exercisesEndpointBoundary) {
           issues.push(`case ${caseName} does not target observer ${serviceKey}`);
         }
         const emitsService = testCase.expected.some(

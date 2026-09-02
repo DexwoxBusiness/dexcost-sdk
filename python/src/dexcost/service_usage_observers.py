@@ -19,6 +19,8 @@ _METRICS = {
     "credit_count",
 }
 _COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
+_DOMAIN_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+_DOMAIN_LABEL_CHARS = _DOMAIN_EDGE_CHARS | {"-"}
 _LOG = logging.getLogger(__name__)
 
 
@@ -29,6 +31,7 @@ class UsageObserver:
     provider_service: str
     component: str
     domains: tuple[str, ...]
+    domain_suffixes: tuple[str, ...]
     endpoints: tuple[str, ...]
     endpoint_match: str
     response_path: str | None
@@ -37,6 +40,8 @@ class UsageObserver:
     request_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
     request_character_count_query_parameter: str | None
+    request_character_count_case_insensitive: bool
+    character_count_encoding: str
     minimum_quantity: str | None
     fixed_quantity: str | None
     usage_metric: str
@@ -50,8 +55,10 @@ class UsageObserver:
     fixed_resource_id: str | None
     resource_variant: dict[str, str] | None
     query_any: tuple[dict[str, str], ...]
+    query_all: tuple[dict[str, str], ...]
     quantity_multiplier_path: str | None
     quantity_multiplier_query_parameter: str | None
+    quantity_multiplier_query_parameter_count: str | None
     record_id_path: str | None
     record_id_header: str | None
     source_url: str
@@ -87,16 +94,113 @@ def _bounded_string(value: Any) -> str | None:
     return value.strip()[:256]
 
 
-def _character_count(value: Any) -> int | None:
+def _resolve_case_insensitive_path(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        matching_keys = [
+            key for key in current if isinstance(key, str) and key.lower() == part.lower()
+        ]
+        if len(matching_keys) != 1:
+            return None
+        current = current[matching_keys[0]]
+    return current
+
+
+def _resolve_character_count_path(
+    value: Any,
+    path: str,
+    *,
+    case_insensitive: bool,
+) -> Any:
+    resolver = _resolve_case_insensitive_path if case_insensitive else _resolve_path
+    if isinstance(value, list):
+        resolved = [resolver(item, path) for item in value]
+        return None if any(item is None for item in resolved) else resolved
+    return resolver(value, path)
+
+
+def _text_character_count(value: str, encoding: str) -> int:
+    if encoding == "utf16_code_units":
+        return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+    return len(value)
+
+
+def _character_count(
+    value: Any,
+    encoding: str = "unicode_code_points",
+) -> int | None:
     if isinstance(value, str):
-        return len(value)
+        return _text_character_count(value, encoding)
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return sum(len(item) for item in value)
+        return sum(_text_character_count(item, encoding) for item in value)
     return None
 
 
 def _query_value_is_truthy(value: str) -> bool:
     return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _query_predicate_matches(
+    query: dict[str, list[str]],
+    predicate: dict[str, str],
+) -> bool:
+    parameter = predicate["parameter"]
+    values = query.get(parameter, [])
+    operator = predicate["operator"]
+    if operator == "present":
+        return parameter in query
+    if operator == "truthy":
+        return any(_query_value_is_truthy(value) for value in values)
+    if operator == "all_non_empty":
+        return bool(values) and all(bool(value.strip()) for value in values)
+    if operator == "equals":
+        return len(values) == 1 and values[0] == predicate["value"]
+    return operator == "absent_or_equals" and (
+        parameter not in query or (len(values) == 1 and values[0] == predicate["value"])
+    )
+
+
+def _valid_query_predicate(predicate: Any) -> bool:
+    if (
+        not isinstance(predicate, dict)
+        or not isinstance(predicate.get("parameter"), str)
+        or not predicate["parameter"]
+    ):
+        return False
+    operator = predicate.get("operator")
+    if operator in {"present", "truthy", "all_non_empty"}:
+        return set(predicate) == {"parameter", "operator"}
+    return (
+        operator in {"equals", "absent_or_equals"}
+        and set(predicate) == {"parameter", "operator", "value"}
+        and isinstance(predicate.get("value"), str)
+        and bool(predicate["value"])
+    )
+
+
+def _domain_matches(
+    hostname: str | None,
+    domains: tuple[str, ...],
+    suffixes: tuple[str, ...],
+) -> bool:
+    if hostname is None:
+        return False
+    return hostname in domains or any(hostname.endswith(f".{suffix}") for suffix in suffixes)
+
+
+def _valid_domain_suffix(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) > 253:
+        return False
+    labels = value.split(".")
+    return len(labels) >= 2 and all(
+        1 <= len(label) <= 63
+        and label[0] in _DOMAIN_EDGE_CHARS
+        and label[-1] in _DOMAIN_EDGE_CHARS
+        and all(character in _DOMAIN_LABEL_CHARS for character in label)
+        for label in labels
+    )
 
 
 def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
@@ -209,6 +313,7 @@ class ServiceUsageObservers:
             ):
                 raise ValueError("usage observer contains an invalid field")
             domains = definition.get("domains")
+            domain_suffixes = definition.get("domain_suffixes", [])
             endpoints = definition.get("endpoints")
             optional_string_fields = (
                 "resource_path",
@@ -224,6 +329,7 @@ class ServiceUsageObservers:
                 "fixed_resource_id",
                 "quantity_multiplier_path",
                 "quantity_multiplier_query_parameter",
+                "quantity_multiplier_query_parameter_count",
                 "record_id_path",
                 "record_id_header",
                 "endpoint_match",
@@ -246,6 +352,12 @@ class ServiceUsageObservers:
             request_character_count_query_parameter = definition.get(
                 "request_character_count_query_parameter"
             )
+            request_character_count_case_insensitive = definition.get(
+                "request_character_count_case_insensitive", False
+            )
+            character_count_encoding = definition.get(
+                "character_count_encoding", "unicode_code_points"
+            )
             minimum_quantity = definition.get("minimum_quantity")
             fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
@@ -257,6 +369,9 @@ class ServiceUsageObservers:
                 or not isinstance(domains, list)
                 or not domains
                 or not all(isinstance(item, str) and item for item in domains)
+                or not isinstance(domain_suffixes, list)
+                or ("domain_suffixes" in definition and not domain_suffixes)
+                or not all(_valid_domain_suffix(item) for item in domain_suffixes)
                 or not isinstance(endpoints, list)
                 or not endpoints
                 or not all(isinstance(item, str) and item.startswith("/") for item in endpoints)
@@ -299,6 +414,31 @@ class ServiceUsageObservers:
                     "quantity_multiplier_query_parameter" in definition
                     and "quantity_multiplier_path" not in definition
                 )
+                or character_count_encoding not in {"unicode_code_points", "utf16_code_units"}
+                or (
+                    "character_count_encoding" in definition
+                    and request_character_count_path is None
+                    and request_character_count_query_parameter is None
+                )
+                or (
+                    "request_character_count_case_insensitive" in definition
+                    and request_character_count_case_insensitive is not True
+                )
+                or (
+                    request_character_count_case_insensitive
+                    and request_character_count_path is None
+                )
+                or (
+                    "quantity_multiplier_query_parameter_count" in definition
+                    and (
+                        request_character_count_path is None
+                        and request_character_count_query_parameter is None
+                    )
+                )
+                or (
+                    "quantity_multiplier_query_parameter_count" in definition
+                    and "quantity_multiplier_path" in definition
+                )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
             if (
@@ -314,17 +454,23 @@ class ServiceUsageObservers:
             ):
                 raise ValueError("usage observer manifest contains an invalid request predicate")
             query_any = definition.get("query_any", [])
+            query_all = definition.get("query_all", [])
             if (
                 not isinstance(query_any, list)
                 or ("query_any" in definition and not query_any)
-                or any(
-                    not isinstance(item, dict)
-                    or not isinstance(item.get("parameter"), str)
-                    or item.get("operator") not in {"present", "truthy"}
-                    for item in query_any
-                )
+                or not all(_valid_query_predicate(item) for item in query_any)
+                or not isinstance(query_all, list)
+                or ("query_all" in definition and not query_all)
+                or not all(_valid_query_predicate(item) for item in query_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid query predicate")
+            multiplier_parameter = definition.get("quantity_multiplier_query_parameter_count")
+            if multiplier_parameter is not None and not any(
+                predicate.get("parameter") == multiplier_parameter
+                and predicate.get("operator") == "all_non_empty"
+                for predicate in query_all
+            ):
+                raise ValueError("query-count multipliers require an all_non_empty predicate")
             resource_variant = definition.get("resource_variant")
             if resource_variant is not None and (
                 not isinstance(resource_variant, dict)
@@ -342,6 +488,7 @@ class ServiceUsageObservers:
                     provider_service=definition["provider_service"],
                     component=definition["component"],
                     domains=tuple(domains),
+                    domain_suffixes=tuple(domain_suffixes),
                     endpoints=tuple(endpoints),
                     endpoint_match=definition.get("endpoint_match", "prefix"),
                     response_path=response_path,
@@ -352,6 +499,10 @@ class ServiceUsageObservers:
                     request_character_count_query_parameter=(
                         request_character_count_query_parameter
                     ),
+                    request_character_count_case_insensitive=(
+                        request_character_count_case_insensitive
+                    ),
+                    character_count_encoding=character_count_encoding,
                     minimum_quantity=minimum_quantity,
                     fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
@@ -367,10 +518,12 @@ class ServiceUsageObservers:
                     fixed_resource_id=definition.get("fixed_resource_id"),
                     resource_variant=resource_variant,
                     query_any=tuple(query_any),
+                    query_all=tuple(query_all),
                     quantity_multiplier_path=definition.get("quantity_multiplier_path"),
                     quantity_multiplier_query_parameter=definition.get(
                         "quantity_multiplier_query_parameter"
                     ),
+                    quantity_multiplier_query_parameter_count=multiplier_parameter,
                     record_id_path=definition.get("record_id_path"),
                     record_id_header=definition.get("record_id_header"),
                     source_url=definition["source_url"],
@@ -387,7 +540,7 @@ class ServiceUsageObservers:
         matched = [
             candidate
             for candidate in self._observers
-            if parsed.hostname in candidate.domains
+            if _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
             and any(
                 parsed.path == endpoint
                 or (
@@ -399,14 +552,12 @@ class ServiceUsageObservers:
             and (
                 not candidate.query_any
                 or any(
-                    predicate["parameter"] in query
-                    if predicate["operator"] == "present"
-                    else any(
-                        _query_value_is_truthy(value)
-                        for value in query.get(predicate["parameter"], [])
-                    )
+                    _query_predicate_matches(query, predicate)
                     for predicate in candidate.query_any
                 )
+            )
+            and all(
+                _query_predicate_matches(query, predicate) for predicate in candidate.query_all
             )
         ]
         return (parsed, matched) if matched else None
@@ -425,7 +576,7 @@ class ServiceUsageObservers:
         """
         parsed = urlparse(url)
         return any(
-            parsed.hostname in candidate.domains
+            _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
             and any(
                 parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
                 for endpoint in candidate.endpoints
@@ -450,7 +601,7 @@ class ServiceUsageObservers:
         url: str,
         response_headers: dict[str, str],
         response_body: dict[str, Any] | None,
-        request_body: dict[str, Any] | None = None,
+        request_body: dict[str, Any] | list[Any] | None = None,
     ) -> list[ServiceUsageObservation]:
         matched = self._lookup(url)
         if matched is None:
@@ -475,17 +626,20 @@ class ServiceUsageObservers:
             ):
                 character_count = (
                     _character_count(
-                        _resolve_path(request_body, observer.request_character_count_path)
+                        _resolve_character_count_path(
+                            request_body,
+                            observer.request_character_count_path,
+                            case_insensitive=(observer.request_character_count_case_insensitive),
+                        ),
+                        observer.character_count_encoding,
                     )
                     if observer.request_character_count_path
                     else None
                 )
-                if (
-                    character_count is None
-                    and observer.request_character_count_query_parameter
-                ):
+                if character_count is None and observer.request_character_count_query_parameter:
                     character_count = _character_count(
-                        query.get(observer.request_character_count_query_parameter)
+                        query.get(observer.request_character_count_query_parameter),
+                        observer.character_count_encoding,
                     )
                 if character_count is None:
                     continue
@@ -516,6 +670,13 @@ class ServiceUsageObservers:
                     continue
             if not quantity.is_finite() or quantity <= 0:
                 continue
+            if observer.quantity_multiplier_query_parameter_count:
+                query_multiplier = len(
+                    query.get(observer.quantity_multiplier_query_parameter_count, [])
+                )
+                if query_multiplier <= 0:
+                    continue
+                quantity *= query_multiplier
             if observer.quantity_multiplier_path and (
                 observer.quantity_multiplier_query_parameter is None
                 or any(
@@ -524,13 +685,13 @@ class ServiceUsageObservers:
                 )
             ):
                 try:
-                    multiplier = Decimal(
+                    response_multiplier = Decimal(
                         str(_resolve_path(response_body, observer.quantity_multiplier_path))
                     )
                 except (InvalidOperation, ValueError):
-                    multiplier = Decimal(0)
-                if multiplier.is_finite() and multiplier > 0:
-                    quantity *= multiplier
+                    response_multiplier = Decimal(0)
+                if response_multiplier.is_finite() and response_multiplier > 0:
+                    quantity *= response_multiplier
             record_id = (
                 _bounded_string(_resolve_path(response_body, observer.record_id_path))
                 if observer.record_id_path

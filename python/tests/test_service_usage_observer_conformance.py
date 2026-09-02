@@ -66,3 +66,20 @@ def test_packaged_observer_manifest_matches_canonical_manifest() -> None:
         (ROOT / "python" / "src" / "dexcost" / "data" / "service_usage_observers.json").read_text()
     )
     assert packaged == canonical
+
+
+def test_azure_observer_owns_invalid_variants_without_trusting_spoofed_suffixes() -> None:
+    observers = ServiceUsageObservers()
+    custom_category = (
+        "https://api.cognitive.microsofttranslator.com/translate?"
+        "api-version=3.0&to=es&category=customer-model"
+    )
+    spoofed = (
+        "https://resource.cognitiveservices.azure.com.evil.example/"
+        "translator/text/v3.0/translate?api-version=3.0&to=es"
+    )
+
+    assert not observers.matches(custom_category)
+    assert observers.owns_endpoint_boundary(custom_category)
+    assert not observers.matches(spoofed)
+    assert not observers.owns_endpoint_boundary(spoofed)

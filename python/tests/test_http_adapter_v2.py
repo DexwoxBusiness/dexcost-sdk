@@ -309,6 +309,37 @@ class TestKnownServiceExtraction:
             for key in ("metric", "quantity", "unit")
         } == {"metric": "characters", "quantity": "13", "unit": "Characters"}
 
+    def test_http_transport_observes_azure_request_arrays_and_target_count(self) -> None:
+        task = _make_task("translation")
+        request_body = json.dumps([{"Text": "A\U0001f600"}, {"text": "é"}])
+
+        with task_context(task):
+            _handle_http_call(
+                "https://api.cognitive.microsofttranslator.com/translate?"
+                "api-version=3.0&to=es&to=ja",
+                method="POST",
+                request_body_len=len(request_body.encode()),
+                request_body=request_body,
+                response=_make_response(body={}),
+            )
+
+        observations = [
+            event
+            for event in get_recorded_events()
+            if event.details.get("attribution_observer_service") == "azure_translator"
+        ]
+        assert len(observations) == 1
+        wire = to_attribution_observation_v3(observations[0])
+        assert wire is not None
+        assert wire["provider"] == {"name": "azure", "service": "translate_text"}
+        assert wire["resource"] == {"type": "sku", "id": "standard_text"}
+        assert len(wire["usage"]) == 1
+        assert {key: wire["usage"][0][key] for key in ("metric", "quantity", "unit")} == {
+            "metric": "characters",
+            "quantity": "8",
+            "unit": "Characters",
+        }
+
     def test_observer_endpoint_boundary_does_not_fall_back_to_legacy_price(self) -> None:
         task = _make_task("search")
         with task_context(task):

@@ -19,10 +19,19 @@
   },
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$" },
+    "queryParameter": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
     "jsonPath": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.\\[\\]-]{0,511}$" },
     "queryPredicate": {
       "type": "object", "additionalProperties": false, "required": ["parameter", "operator"],
-      "properties": { "parameter": { "$ref": "#/$defs/identifier" }, "operator": { "enum": ["present", "truthy"] } }
+      "properties": {
+        "parameter": { "$ref": "#/$defs/queryParameter" },
+        "operator": { "enum": ["present", "truthy", "equals", "absent_or_equals", "all_non_empty"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 256 }
+      },
+      "allOf": [
+        { "if": { "properties": { "operator": { "enum": ["equals", "absent_or_equals"] } } }, "then": { "required": ["value"] } },
+        { "if": { "properties": { "operator": { "enum": ["present", "truthy", "all_non_empty"] } } }, "then": { "not": { "required": ["value"] } } }
+      ]
     },
     "responsePredicate": {
       "type": "object", "additionalProperties": false, "required": ["path", "operator"],
@@ -58,12 +67,15 @@
         "provider_service": { "$ref": "#/$defs/identifier" },
         "component": { "enum": ["external", "speech_to_text", "text_to_speech"] },
         "domains": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" } },
+        "domain_suffixes": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "minLength": 3, "maxLength": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" } },
         "endpoints": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "pattern": "^/[A-Za-z0-9_./{}-]{0,511}$" } },
         "endpoint_match": { "enum": ["exact", "prefix"] },
         "response_path": { "$ref": "#/$defs/jsonPath" },
         "response_quantity_header": { "type": "string", "minLength": 1, "maxLength": 256 },
         "request_character_count_path": { "$ref": "#/$defs/jsonPath" },
-        "request_character_count_query_parameter": { "$ref": "#/$defs/identifier" },
+        "request_character_count_query_parameter": { "$ref": "#/$defs/queryParameter" },
+        "request_character_count_case_insensitive": { "const": true },
+        "character_count_encoding": { "enum": ["unicode_code_points", "utf16_code_units"] },
         "minimum_quantity": { "const": "1" },
         "fixed_quantity": { "const": "1" },
         "usage_metric": { "enum": ["input_tokens", "characters", "audio_seconds", "request_count", "credit_count"] },
@@ -71,7 +83,7 @@
         "resource_path": { "$ref": "#/$defs/jsonPath" },
         "request_resource_path": { "$ref": "#/$defs/jsonPath" },
         "resource_id_prefix_to_strip": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "resource_query_parameter": { "$ref": "#/$defs/identifier" },
+        "resource_query_parameter": { "$ref": "#/$defs/queryParameter" },
         "fixed_resource_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "default_resource_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "allowed_resource_ids": { "type": "array", "minItems": 1, "maxItems": 10000, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
@@ -79,13 +91,15 @@
           "type": "object", "additionalProperties": false,
           "required": ["query_parameter", "equals", "matched_suffix", "default_suffix"],
           "properties": {
-            "query_parameter": { "$ref": "#/$defs/identifier" }, "equals": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "query_parameter": { "$ref": "#/$defs/queryParameter" }, "equals": { "type": "string", "minLength": 1, "maxLength": 256 },
             "matched_suffix": { "type": "string", "minLength": 1, "maxLength": 128 }, "default_suffix": { "type": "string", "minLength": 1, "maxLength": 128 }
           }
         },
         "quantity_multiplier_path": { "$ref": "#/$defs/jsonPath" },
-        "quantity_multiplier_query_parameter": { "$ref": "#/$defs/identifier" },
+        "quantity_multiplier_query_parameter": { "$ref": "#/$defs/queryParameter" },
+        "quantity_multiplier_query_parameter_count": { "$ref": "#/$defs/queryParameter" },
         "query_any": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/queryPredicate" } },
+        "query_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/queryPredicate" } },
         "request_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/requestPredicate" } },
         "response_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/responsePredicate" } },
         "record_id_header": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -98,11 +112,18 @@
         { "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }], "not": { "anyOf": [{ "required": ["response_path"] }, { "required": ["response_quantity_header"] }, { "required": ["fixed_quantity"] }] } },
         { "required": ["fixed_quantity"], "not": { "anyOf": [{ "required": ["response_path"] }, { "required": ["response_quantity_header"] }, { "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } }
       ],
-      "dependentRequired": { "allowed_resource_ids": ["request_resource_path"] },
+      "dependentRequired": {
+        "allowed_resource_ids": ["request_resource_path"],
+        "quantity_multiplier_query_parameter": ["quantity_multiplier_path"]
+      },
       "allOf": [
         { "if": { "required": ["fixed_quantity"] }, "then": { "properties": { "usage_metric": { "const": "request_count" } } } },
         { "if": { "properties": { "usage_metric": { "const": "request_count" } }, "required": ["usage_metric"] }, "then": { "required": ["fixed_quantity"] } },
         { "if": { "required": ["minimum_quantity"] }, "then": { "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } },
+        { "if": { "required": ["character_count_encoding"] }, "then": { "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } },
+        { "if": { "required": ["request_character_count_case_insensitive"] }, "then": { "required": ["request_character_count_path"] } },
+        { "if": { "required": ["quantity_multiplier_query_parameter_count"] }, "then": { "required": ["query_all"], "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } },
+        { "not": { "required": ["quantity_multiplier_query_parameter_count", "quantity_multiplier_path"] } },
         { "if": { "required": ["resource_id_prefix_to_strip"] }, "then": { "anyOf": [{ "required": ["resource_path"] }, { "required": ["request_resource_path"] }, { "required": ["resource_query_parameter"] }, { "required": ["fixed_resource_id"] }] } },
         { "not": { "required": ["resource_path", "request_resource_path"] } },
         { "not": { "required": ["resource_path", "resource_query_parameter"] } },

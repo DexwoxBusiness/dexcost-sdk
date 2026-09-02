@@ -12,9 +12,12 @@ export type ObservedUsageMetric =
 export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
 export type ObservedResourceType = "model" | "sku";
 
+const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 interface QueryPredicate {
   parameter: string;
-  operator: "present" | "truthy";
+  operator: "present" | "truthy" | "equals" | "absent_or_equals" | "all_non_empty";
+  value?: string;
 }
 
 interface ResourceVariant {
@@ -47,6 +50,7 @@ interface UsageObserverDefinition {
   provider_service: string;
   component: ObservedAttributionComponent;
   domains: string[];
+  domain_suffixes?: string[];
   endpoints: string[];
   endpoint_match?: "exact" | "prefix";
   response_path?: string;
@@ -55,6 +59,8 @@ interface UsageObserverDefinition {
   request_all?: RequestPredicate[];
   request_character_count_path?: string;
   request_character_count_query_parameter?: string;
+  request_character_count_case_insensitive?: true;
+  character_count_encoding?: "unicode_code_points" | "utf16_code_units";
   minimum_quantity?: "1";
   fixed_quantity?: "1";
   usage_metric: ObservedUsageMetric;
@@ -68,8 +74,10 @@ interface UsageObserverDefinition {
   fixed_resource_id?: string;
   resource_variant?: ResourceVariant;
   query_any?: QueryPredicate[];
+  query_all?: QueryPredicate[];
   quantity_multiplier_path?: string;
   quantity_multiplier_query_parameter?: string;
+  quantity_multiplier_query_parameter_count?: string;
   record_id_path?: string;
   record_id_header?: string;
   source_url: string;
@@ -120,12 +128,46 @@ function boundedString(value: unknown): string | undefined {
     : undefined;
 }
 
-function characterCount(value: unknown): number | undefined {
-  if (typeof value === "string") return Array.from(value).length;
+function resolveCaseInsensitivePath(value: unknown, path: string): unknown {
+  let current = value;
+  for (const part of path.split(".")) {
+    if (current === null || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    const keys = Object.keys(current).filter((key) => key.toLowerCase() === part.toLowerCase());
+    if (keys.length !== 1) return undefined;
+    current = (current as Record<string, unknown>)[keys[0]];
+  }
+  return current;
+}
+
+function resolveCharacterCountPath(
+  value: unknown,
+  path: string,
+  caseInsensitive: boolean,
+): unknown {
+  const resolver = caseInsensitive ? resolveCaseInsensitivePath : resolvePath;
+  if (!Array.isArray(value)) return resolver(value, path);
+  const resolved = value.map((item) => resolver(item, path));
+  return resolved.some((item) => item === undefined) ? undefined : resolved;
+}
+
+function textCharacterCount(
+  value: string,
+  encoding: "unicode_code_points" | "utf16_code_units",
+): number {
+  return encoding === "utf16_code_units" ? value.length : Array.from(value).length;
+}
+
+function characterCount(
+  value: unknown,
+  encoding: "unicode_code_points" | "utf16_code_units" = "unicode_code_points",
+): number | undefined {
+  if (typeof value === "string") return textCharacterCount(value, encoding);
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
     return undefined;
   }
-  return value.reduce((total, item) => total + Array.from(item).length, 0);
+  return value.reduce((total, item) => total + textCharacterCount(item, encoding), 0);
 }
 
 function positiveDecimal(value: unknown): string | undefined {
@@ -149,9 +191,36 @@ function queryValueIsTruthy(value: string | null): boolean {
 }
 
 function predicateMatches(url: URL, predicate: QueryPredicate): boolean {
-  return predicate.operator === "present"
-    ? url.searchParams.has(predicate.parameter)
-    : url.searchParams.getAll(predicate.parameter).some(queryValueIsTruthy);
+  const values = url.searchParams.getAll(predicate.parameter);
+  if (predicate.operator === "present") return url.searchParams.has(predicate.parameter);
+  if (predicate.operator === "truthy") return values.some(queryValueIsTruthy);
+  if (predicate.operator === "all_non_empty") {
+    return values.length > 0 && values.every((value) => value.trim().length > 0);
+  }
+  if (predicate.operator === "equals") {
+    return values.length === 1 && values[0] === predicate.value;
+  }
+  return predicate.operator === "absent_or_equals" &&
+    (!url.searchParams.has(predicate.parameter) ||
+      (values.length === 1 && values[0] === predicate.value));
+}
+
+function validQueryPredicate(predicate: unknown): predicate is QueryPredicate {
+  if (predicate === null || typeof predicate !== "object") return false;
+  const candidate = predicate as Partial<QueryPredicate>;
+  if (typeof candidate.parameter !== "string" || candidate.parameter.length === 0) return false;
+  if (candidate.operator === "present" || candidate.operator === "truthy" ||
+      candidate.operator === "all_non_empty") {
+    return Object.keys(candidate).length === 2 && candidate.value === undefined;
+  }
+  return (candidate.operator === "equals" || candidate.operator === "absent_or_equals") &&
+    Object.keys(candidate).length === 3 &&
+    typeof candidate.value === "string" && candidate.value.length > 0;
+}
+
+function domainMatches(hostname: string, observer: UsageObserverDefinition): boolean {
+  return observer.domains.includes(hostname) ||
+    observer.domain_suffixes?.some((suffix) => hostname.endsWith(`.${suffix}`)) === true;
 }
 
 function responsePredicateMatches(value: unknown, predicate: ResponsePredicate): boolean {
@@ -248,6 +317,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.fixed_resource_id,
       observer.quantity_multiplier_path,
       observer.quantity_multiplier_query_parameter,
+      observer.quantity_multiplier_query_parameter_count,
       observer.record_id_path,
       observer.record_id_header,
       observer.endpoint_match,
@@ -270,6 +340,13 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.domains) ||
       observer.domains.length === 0 ||
       !observer.domains.every((domain) => typeof domain === "string" && domain.length > 0) ||
+      (observer.domain_suffixes !== undefined && (
+        !Array.isArray(observer.domain_suffixes) ||
+        observer.domain_suffixes.length === 0 ||
+        !observer.domain_suffixes.every((suffix) =>
+          typeof suffix === "string" && suffix.length <= 253 &&
+          DOMAIN_SUFFIX_PATTERN.test(suffix))
+      )) ||
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
@@ -302,6 +379,21 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       (hasResourceSelector && observer.resource_type === undefined) ||
       (observer.quantity_multiplier_query_parameter !== undefined &&
         observer.quantity_multiplier_path === undefined) ||
+      (observer.character_count_encoding !== undefined &&
+        observer.character_count_encoding !== "unicode_code_points" &&
+        observer.character_count_encoding !== "utf16_code_units") ||
+      (observer.character_count_encoding !== undefined &&
+        observer.request_character_count_path === undefined &&
+        observer.request_character_count_query_parameter === undefined) ||
+      (observer.request_character_count_case_insensitive !== undefined &&
+        observer.request_character_count_case_insensitive !== true) ||
+      (observer.request_character_count_case_insensitive === true &&
+        observer.request_character_count_path === undefined) ||
+      (observer.quantity_multiplier_query_parameter_count !== undefined &&
+        observer.request_character_count_path === undefined &&
+        observer.request_character_count_query_parameter === undefined) ||
+      (observer.quantity_multiplier_query_parameter_count !== undefined &&
+        observer.quantity_multiplier_path !== undefined) ||
       (observer.response_all !== undefined && (
         !Array.isArray(observer.response_all) ||
         observer.response_all.length === 0 ||
@@ -314,10 +406,16 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       )) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
-        !observer.query_any.every((predicate) =>
-          typeof predicate.parameter === "string" && predicate.parameter.length > 0 &&
-          (predicate.operator === "present" || predicate.operator === "truthy"))
+        !observer.query_any.every(validQueryPredicate)
       )) ||
+      (observer.query_all !== undefined && (
+        !Array.isArray(observer.query_all) || observer.query_all.length === 0 ||
+        !observer.query_all.every(validQueryPredicate)
+      )) ||
+      (observer.quantity_multiplier_query_parameter_count !== undefined &&
+        !observer.query_all?.some((predicate) =>
+          predicate.parameter === observer.quantity_multiplier_query_parameter_count &&
+          predicate.operator === "all_non_empty")) ||
       (observer.resource_variant !== undefined && (
         typeof observer.resource_variant.query_parameter !== "string" ||
         observer.resource_variant.query_parameter.length === 0 ||
@@ -362,11 +460,13 @@ export class ServiceUsageObservers {
       return undefined;
     }
     const observers = this.observers.filter(
-      (candidate) => candidate.domains.includes(parsed.hostname) &&
+      (candidate) => domainMatches(parsed.hostname, candidate) &&
         candidate.endpoints.some((endpoint) =>
           endpointMatches(parsed.pathname, endpoint, candidate.endpoint_match)) &&
         (candidate.query_any === undefined ||
-          candidate.query_any.some((predicate) => predicateMatches(parsed, predicate))),
+          candidate.query_any.some((predicate) => predicateMatches(parsed, predicate))) &&
+        (candidate.query_all === undefined ||
+          candidate.query_all.every((predicate) => predicateMatches(parsed, predicate))),
     );
     return observers.length === 0 ? undefined : { parsed, observers };
   }
@@ -383,7 +483,7 @@ export class ServiceUsageObservers {
       return false;
     }
     return this.observers.some(
-      (observer) => observer.domains.includes(parsed.hostname) &&
+      (observer) => domainMatches(parsed.hostname, observer) &&
         observer.endpoints.some((endpoint) =>
           parsed.pathname === endpoint || parsed.pathname.startsWith(`${endpoint}/`)),
     );
@@ -438,10 +538,18 @@ export class ServiceUsageObservers {
       ) {
         let counted = observer.request_character_count_path === undefined
           ? undefined
-          : characterCount(resolvePath(requestBody, observer.request_character_count_path));
+          : characterCount(
+            resolveCharacterCountPath(
+              requestBody,
+              observer.request_character_count_path,
+              observer.request_character_count_case_insensitive === true,
+            ),
+            observer.character_count_encoding,
+          );
         if (counted === undefined && observer.request_character_count_query_parameter !== undefined) {
           counted = characterCount(
             matched.parsed.searchParams.getAll(observer.request_character_count_query_parameter),
+            observer.character_count_encoding,
           );
         }
         if (counted === undefined) continue;
@@ -458,6 +566,13 @@ export class ServiceUsageObservers {
         const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path!));
         if (rawQuantity === undefined) continue;
         quantity = new Decimal(rawQuantity);
+      }
+      if (observer.quantity_multiplier_query_parameter_count !== undefined) {
+        const multiplier = matched.parsed.searchParams.getAll(
+          observer.quantity_multiplier_query_parameter_count,
+        ).length;
+        if (multiplier === 0) continue;
+        quantity = quantity.mul(multiplier);
       }
       if (
         observer.quantity_multiplier_path !== undefined &&

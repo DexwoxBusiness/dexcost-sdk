@@ -59,4 +59,18 @@ describe("shared service usage observer conformance", () => {
       },
     )).toBe("2dc521b3-742a-5f61-9942-c4a59e6935f6");
   });
+
+  it("owns invalid Azure variants without trusting spoofed suffixes", () => {
+    const customCategory =
+      "https://api.cognitive.microsofttranslator.com/translate?" +
+      "api-version=3.0&to=es&category=customer-model";
+    const spoofed =
+      "https://resource.cognitiveservices.azure.com.evil.example/" +
+      "translator/text/v3.0/translate?api-version=3.0&to=es";
+
+    expect(observers.matches(customCategory)).toBe(false);
+    expect(observers.ownsEndpointBoundary(customCategory)).toBe(true);
+    expect(observers.matches(spoofed)).toBe(false);
+    expect(observers.ownsEndpointBoundary(spoofed)).toBe(false);
+  });
 });

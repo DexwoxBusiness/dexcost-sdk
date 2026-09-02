@@ -88,6 +88,45 @@ test("rejects an empty not-equals request predicate value", () => {
   );
 });
 
+test("rejects malformed exact query predicates", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "azure_translator",
+  );
+  delete observer.query_all[0].value;
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer azure_translator has invalid query_all predicates",
+  );
+});
+
+test("rejects unsafe dynamic provider-domain suffixes", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "azure_translator",
+  );
+  observer.domain_suffixes = ["com"];
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer azure_translator has invalid domain suffixes",
+  );
+});
+
+test("requires a non-empty predicate for query-count multipliers", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "azure_translator",
+  );
+  observer.quantity_multiplier_query_parameter_count = "target";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer azure_translator query-count multiplier lacks a non-empty predicate",
+  );
+});
+
 test("rejects conformance dimensions that disagree with the observer", () => {
   const candidate = inputs();
   candidate.conformance.cases[0].expected[0].metric = "characters";
