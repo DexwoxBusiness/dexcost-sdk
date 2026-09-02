@@ -1925,6 +1925,14 @@ def _canonical_model(model: Any, provider: str, request_model: Any = None) -> st
     selected = model if isinstance(model, str) and model.strip() else request_model
     name = selected.strip() if isinstance(selected, str) and selected.strip() else "unknown"
     request_name = request_model.strip() if isinstance(request_model, str) else ""
+    if provider == "together":
+        # Preserve Together's provider-published API model ID for the
+        # authoritative server catalog. LiteLLM's routing prefixes identify
+        # the gateway, not a distinct billable model.
+        for routed_prefix in ("together_ai/", "together/"):
+            if name.startswith(routed_prefix):
+                return name[len(routed_prefix) :]
+        return name
     prefix = {
         "openrouter": "openrouter",
         "azure_openai": "azure",
@@ -1936,7 +1944,6 @@ def _canonical_model(model: Any, provider: str, request_model: Any = None) -> st
         "mistral": "mistral",
         "ollama": "ollama",
         "perplexity": "perplexity",
-        "together": "together_ai",
     }.get(provider)
     if provider == "google":
         prefix = "vertex_ai" if request_name.startswith("vertex_ai/") else "gemini"

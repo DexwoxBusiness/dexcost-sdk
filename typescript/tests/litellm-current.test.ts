@@ -108,7 +108,7 @@ describe("current LiteLLM direct-module attribution", () => {
     ["azure", "azure/private-deployment", "gpt-5-mini", "azure_openai", "azure/gpt-5-mini"],
     ["vertex_ai", "vertex_ai/gemini-3-flash", "gemini-3-flash", "google", "vertex_ai/gemini-3-flash"],
     ["cohere", "cohere/command-r", "command-r", "cohere", "command-r"],
-    ["together_ai", "together_ai/meta-llama/model", "meta-llama/model", "together", "together_ai/meta-llama/model"],
+    ["together_ai", "together_ai/meta-llama/model", "meta-llama/model", "together", "meta-llama/model"],
     ["fal_ai", "fal_ai/fal-ai/flux/schnell", "fal-ai/flux/schnell", "fal_ai", "fal_ai/fal-ai/flux/schnell"],
   ])("matches Python identity for %s", async (raw, requested, responseModel, provider, model) => {
     const module = {

@@ -234,6 +234,74 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
 
 
 @pytest.mark.parametrize(
+    "base_url",
+    ["https://api.together.ai/v1", "https://api.together.xyz/v1"],
+)
+def test_together_openai_compatibility_preserves_public_model_and_usage(
+    tmp_path: Path,
+    base_url: str,
+) -> None:
+    model = "deepseek-ai/DeepSeek-V4-Pro-0813"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _chat_response(model)
+        usage = payload["usage"]
+        assert isinstance(usage, dict)
+        usage.pop("prompt_tokens_details", None)
+        usage.pop("completion_tokens_details", None)
+        usage["cached_tokens"] = 4
+        usage["reasoning_tokens"] = 3
+        return httpx.Response(200, json=payload, request=request)
+
+    host_label = "current" if base_url == "https://api.together.ai/v1" else "legacy"
+    storage = SQLiteStorage(tmp_path / f"together-{host_label}.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url=base_url,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="together-openai"):
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "private-query"}],
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "together"
+        assert event.model == model
+        assert event.input_tokens == 20
+        assert event.output_tokens == 10
+        assert event.cached_tokens == 4
+        assert event.cost_usd == Decimal("0")
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "together",
+            "service": "api",
+            "record_id": "chat-provider-1",
+        }
+        assert observation["resource"] == {"type": "model", "id": model}
+        assert {
+            line["metric"]: line["quantity"] for line in observation["usage"]
+        } == {
+            "input_tokens": "16",
+            "cache_read_input_tokens": "4",
+            "output_tokens": "7",
+            "reasoning_output_tokens": "3",
+        }
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
+@pytest.mark.parametrize(
     ("response_tier", "expected_lane"),
     [("standard", "global_standard"), ("priority", None), (None, None)],
 )

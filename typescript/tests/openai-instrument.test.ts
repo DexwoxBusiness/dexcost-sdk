@@ -345,6 +345,61 @@ describe("OpenAI instrumentation", () => {
     expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
   });
 
+  it.each(["https://api.together.ai/v1", "https://api.together.xyz/v1"])(
+    "routes Together OpenAI-compatible calls with disjoint token usage: %s",
+    async (baseURL) => {
+      const model = "deepseek-ai/DeepSeek-V4-Pro-0813";
+      class TogetherCompletions {
+        _client = { baseURL };
+
+        async create(_body?: unknown): Promise<unknown> {
+          return makeMockResponse({
+            model,
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 10,
+              cached_tokens: 4,
+              reasoning_tokens: 3,
+            },
+          });
+        }
+      }
+      _setCompletionsClass(TogetherCompletions);
+      await instrumentOpenai(pricing, buffer);
+      const task = createTask({ taskId: randomUUID(), taskType: "together" });
+
+      await runWithTask(task, async () => {
+        await new TogetherCompletions().create({ model, messages: [] });
+      });
+
+      const [event] = buffer.getAllEvents();
+      expect(event).toMatchObject({
+        provider: "together",
+        model,
+        inputTokens: 20,
+        outputTokens: 10,
+        cachedTokens: 4,
+      });
+      expect(event.costUsd.toString()).toBe("0");
+      const observation = toAttributionObservationV3(event);
+      expect(observation?.provider).toEqual({
+        name: "together",
+        service: "api",
+        record_id: "chatcmpl-abc123",
+      });
+      expect(observation?.resource).toEqual({ type: "model", id: model });
+      expect(Object.fromEntries(observation?.usage.map((line) => [
+        line.metric,
+        line.quantity,
+      ]) ?? [])).toEqual({
+        input_tokens: "16",
+        cache_read_input_tokens: "4",
+        output_tokens: "7",
+        reasoning_output_tokens: "3",
+      });
+    },
+  );
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

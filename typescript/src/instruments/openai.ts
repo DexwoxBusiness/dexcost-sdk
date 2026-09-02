@@ -316,6 +316,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.mistral.ai") {
       return { provider: "mistral" };
     }
+    if (hostname === "api.together.ai" || hostname === "api.together.xyz") {
+      return { provider: "together" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
@@ -342,7 +345,7 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (["openai", "deepseek", "fireworks_ai", "xai", "groq", "mistral"].includes(route.provider) && route.gateway === undefined) {
+  if (["openai", "deepseek", "fireworks_ai", "xai", "groq", "mistral", "together"].includes(route.provider) && route.gateway === undefined) {
     const selected = typeof responseModel === "string" && responseModel.length > 0
       ? responseModel
       : requestedModel;

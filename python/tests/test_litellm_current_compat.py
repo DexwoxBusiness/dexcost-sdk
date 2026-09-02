@@ -125,10 +125,10 @@ def test_current_model_response_preserves_openrouter_exact_attribution(
         ),
         (
             "together_ai",
-            "together_ai/meta-llama/model",
+            "meta-llama/model",
             "meta-llama/model",
             "together",
-            "together_ai/meta-llama/model",
+            "meta-llama/model",
         ),
         ("ollama", "ollama/llama3.1", "llama3.1", "ollama", "ollama/llama3.1"),
         ("mistral", "mistral/mistral-large", "mistral-large", "mistral", "mistral/mistral-large"),

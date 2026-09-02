@@ -299,6 +299,53 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(events[0].costUsd.toString()).toBe("0");
   });
 
+  it("attributes current Together raw chat calls with exact public model identity", async () => {
+    const model = "deepseek-ai/DeepSeek-V4-Pro-0813";
+    const body = {
+      id: "chat-together-1",
+      model,
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        cached_tokens: 4,
+        reasoning_tokens: 3,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "together" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.together.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "together",
+      model,
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
   it.each([
     ["https://api.fireworks.ai/inference/v1/chat/completions", undefined, "default"],
     ["https://us.api.fireworks.ai/inference/v1/chat/completions", "priority", "priority"],

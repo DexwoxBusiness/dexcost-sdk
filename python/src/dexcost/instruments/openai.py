@@ -113,6 +113,8 @@ def _provider_for_instance(instance: Any) -> str:
                 return "groq"
             if hostname == "api.mistral.ai":
                 return "mistral"
+            if hostname in {"api.together.ai", "api.together.xyz"}:
+                return "together"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):

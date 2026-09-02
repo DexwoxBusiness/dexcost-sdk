@@ -273,6 +273,7 @@ const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.moonshot.cn": "openai",
   "api.deepseek.com": "openai",
   "api.groq.com": "openai",
+  "api.together.ai": "openai",
   "api.together.xyz": "openai",
   "api.fireworks.ai": "openai",
   "us.api.fireworks.ai": "openai",
@@ -1687,6 +1688,8 @@ function _recordHttpLlmEvent(
             ? "groq"
             : ctx.hostname === "api.mistral.ai"
               ? "mistral"
+              : ctx.hostname === "api.together.ai" || ctx.hostname === "api.together.xyz"
+                ? "together"
               : ctx.hostname;
   const routedModel = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
@@ -1698,7 +1701,8 @@ function _recordHttpLlmEvent(
       : routedModel;
 
   const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai" ||
-      provider === "xai" || provider === "groq" || provider === "mistral") &&
+      provider === "xai" || provider === "groq" || provider === "mistral" ||
+      provider === "together") &&
       usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
