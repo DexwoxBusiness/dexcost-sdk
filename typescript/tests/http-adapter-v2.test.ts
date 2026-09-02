@@ -152,6 +152,45 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
   });
 
+  it("records final Runway credits once without retaining response content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({
+        id: "runway-task-1",
+        status: "SUCCEEDED",
+        createdAt: "2026-09-03T01:15:00Z",
+        cost: { credits: 37.5 },
+        output: ["private-output-url"],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "runway-generation" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.dev.runwayml.com/v1/tasks/runway-task-1");
+      await fetch("https://api.dev.runwayml.com/v1/tasks/runway-task-1");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("runway_terminal_task_credits");
+    expect(JSON.stringify(event.details)).not.toContain("private-output-url");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "runway",
+        service: "generation",
+        record_id: "runway-task-1",
+      },
+      resource: { type: "sku", id: "generation" },
+      usage: [{ metric: "credit_count", quantity: "37.5", unit: "Credits" }],
+    });
+    expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",

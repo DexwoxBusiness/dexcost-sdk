@@ -268,6 +268,11 @@ def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     resolved = _resolve_path(value, predicate["path"])
     if predicate["operator"] == "equals":
         return resolved == predicate["value"] and type(resolved) is type(predicate["value"])
+    if predicate["operator"] == "one_of":
+        return any(
+            resolved == candidate and type(resolved) is type(candidate)
+            for candidate in predicate["values"]
+        )
     if isinstance(resolved, str):
         return bool(resolved.strip())
     return isinstance(resolved, (list, dict)) and bool(resolved)
@@ -280,11 +285,27 @@ def _valid_response_predicate(predicate: Any) -> bool:
         return False
     if predicate.get("operator") == "non_empty":
         return set(predicate) == {"path", "operator"}
+    if predicate.get("operator") == "one_of":
+        values = predicate.get("values")
+        if (
+            set(predicate) != {"path", "operator", "values"}
+            or not isinstance(values, list)
+            or not 1 <= len(values) <= 20
+            or any(
+                type(value) not in {str, bool, int, float}
+                or (isinstance(value, float) and value != value)
+                for value in values
+            )
+        ):
+            return False
+        typed_values = {(type(value), str(value)) for value in values}
+        return len(typed_values) == len(values)
     value = predicate.get("value")
     return (
         predicate.get("operator") == "equals"
         and set(predicate) == {"path", "operator", "value"}
-        and type(value) in {str, bool}
+        and type(value) in {str, bool, int, float}
+        and (not isinstance(value, float) or value == value)
     )
 
 

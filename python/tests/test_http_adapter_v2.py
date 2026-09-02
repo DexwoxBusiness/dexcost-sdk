@@ -411,6 +411,48 @@ class TestKnownServiceExtraction:
         ]
         assert "cost_evidence" not in wire
 
+    def test_runway_records_final_credits_once_without_response_content(self) -> None:
+        task = _make_task("runway-generation")
+        with task_context(task):
+            for _ in range(2):
+                _handle_http_call(
+                    "https://api.dev.runwayml.com/v1/tasks/runway-task-1",
+                    method="GET",
+                    response=_make_response(
+                        body={
+                            "id": "runway-task-1",
+                            "status": "SUCCEEDED",
+                            "createdAt": "2026-09-03T01:15:00Z",
+                            "cost": {"credits": 37.5},
+                            "output": ["private-output-url"],
+                        }
+                    ),
+                )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        assert (
+            event.details["attribution_observer_service"]
+            == "runway_terminal_task_credits"
+        )
+        assert "private-output-url" not in json.dumps(event.details)
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "runway",
+            "service": "generation",
+            "record_id": "runway-task-1",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "generation"}
+        assert wire["usage"] == [
+            {"metric": "credit_count", "quantity": "37.5", "unit": "Credits"}
+        ]
+        assert "cost_evidence" not in wire
+
     def test_github_rest_api_is_usage_only_without_synthetic_money(self) -> None:
         task = _make_task("github-api")
         with task_context(task):

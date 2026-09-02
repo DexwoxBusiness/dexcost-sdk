@@ -203,6 +203,11 @@ function responsePredicateMatches(response, predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
   const value = resolvePath(response, predicate.path);
   if (predicate.operator === "equals") return value === predicate.value;
+  if (predicate.operator === "one_of") {
+    return Array.isArray(predicate.values) && predicate.values.some(
+      (candidate) => value === candidate,
+    );
+  }
   if (predicate.operator === "non_empty") {
     if (typeof value === "string") return value.trim().length > 0;
     if (Array.isArray(value)) return value.length > 0;

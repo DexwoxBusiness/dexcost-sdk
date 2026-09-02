@@ -38,12 +38,14 @@
     "responsePredicate": {
       "type": "object", "additionalProperties": false, "required": ["path", "operator"],
       "properties": {
-        "path": { "$ref": "#/$defs/jsonPath" }, "operator": { "enum": ["equals", "non_empty"] },
-        "value": { "type": ["string", "number", "boolean"] }
+        "path": { "$ref": "#/$defs/jsonPath" }, "operator": { "enum": ["equals", "one_of", "non_empty"] },
+        "value": { "type": ["string", "number", "boolean"] },
+        "values": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": ["string", "number", "boolean"] } }
       },
       "allOf": [
-        { "if": { "properties": { "operator": { "const": "equals" } } }, "then": { "required": ["value"] } },
-        { "if": { "properties": { "operator": { "const": "non_empty" } } }, "then": { "not": { "required": ["value"] } } }
+        { "if": { "properties": { "operator": { "const": "equals" } } }, "then": { "required": ["value"], "not": { "required": ["values"] } } },
+        { "if": { "properties": { "operator": { "const": "one_of" } } }, "then": { "required": ["values"], "not": { "required": ["value"] } } },
+        { "if": { "properties": { "operator": { "const": "non_empty" } } }, "then": { "not": { "anyOf": [{ "required": ["value"] }, { "required": ["values"] }] } } }
       ]
     },
     "requestPredicate": {

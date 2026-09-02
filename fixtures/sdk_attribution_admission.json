@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.32.0",
-  "conformance_schema_version": "24",
+  "observer_manifest_version": "1.33.0",
+  "conformance_schema_version": "25",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -539,6 +539,21 @@
         "mux_robots_zero_units_fail_open",
         "mux_robots_creation_response_is_not_terminal_usage",
         "mux_robots_failed_http_response_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "runway_terminal_task_credits",
+      "positive_cases": [
+        "runway_succeeded_task_reports_final_charged_credits",
+        "runway_failed_task_preserves_nonrefunded_final_charge",
+        "runway_cancelled_task_preserves_nonrefunded_final_charge"
+      ],
+      "fail_open_cases": [
+        "runway_pending_estimate_is_not_a_final_charge",
+        "runway_refunded_terminal_task_has_no_positive_charge",
+        "runway_unknown_task_status_fails_open",
+        "runway_task_creation_is_not_terminal_cost",
+        "runway_failed_http_response_is_not_observed"
       ]
     }
   ]

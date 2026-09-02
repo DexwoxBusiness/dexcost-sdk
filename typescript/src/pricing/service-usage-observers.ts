@@ -33,8 +33,9 @@ interface ResourceVariant {
 
 interface ResponsePredicate {
   path: string;
-  operator: "equals" | "non_empty";
-  value?: string | boolean;
+  operator: "equals" | "one_of" | "non_empty";
+  value?: string | number | boolean;
+  values?: Array<string | number | boolean>;
 }
 
 interface RequestPredicate {
@@ -382,6 +383,9 @@ function domainMatches(hostname: string, observer: UsageObserverDefinition): boo
 function responsePredicateMatches(value: unknown, predicate: ResponsePredicate): boolean {
   const resolved = resolvePath(value, predicate.path);
   if (predicate.operator === "equals") return resolved === predicate.value;
+  if (predicate.operator === "one_of") {
+    return predicate.values?.some((candidate) => resolved === candidate) === true;
+  }
   if (typeof resolved === "string") return resolved.trim().length > 0;
   if (Array.isArray(resolved)) return resolved.length > 0;
   return resolved !== null && typeof resolved === "object" && Object.keys(resolved).length > 0;
@@ -392,12 +396,24 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
   const candidate = predicate as Partial<ResponsePredicate>;
   if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
   if (candidate.operator === "non_empty") {
-    return Object.keys(candidate).length === 2 && candidate.value === undefined;
+    return Object.keys(candidate).length === 2 &&
+      candidate.value === undefined && candidate.values === undefined;
+  }
+  if (candidate.operator === "one_of") {
+    return Object.keys(candidate).length === 3 && candidate.value === undefined &&
+      Array.isArray(candidate.values) && candidate.values.length > 0 &&
+      candidate.values.length <= 20 &&
+      candidate.values.every((value) =>
+        typeof value === "string" || typeof value === "boolean" ||
+        (typeof value === "number" && Number.isFinite(value))) &&
+      new Set(candidate.values.map((value) => `${typeof value}:${String(value)}`)).size ===
+        candidate.values.length;
   }
   return candidate.operator === "equals" &&
     Object.keys(candidate).length === 3 &&
     (typeof candidate.value === "string" ||
-      typeof candidate.value === "boolean");
+      typeof candidate.value === "boolean" ||
+      (typeof candidate.value === "number" && Number.isFinite(candidate.value)));
 }
 
 function requestPredicateMatches(value: unknown, predicate: RequestPredicate): boolean {

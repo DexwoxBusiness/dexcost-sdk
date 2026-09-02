@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.32.0",
-    "observer_count": 81,
+    "version": "1.33.0",
+    "observer_count": 82,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1698,6 +1698,26 @@
       ],
       "record_id_path": "data.id",
       "source_url": "https://www.mux.com/docs/guides/robots"
+    },
+    {
+      "service_key": "runway_terminal_task_credits",
+      "provider_name": "runway",
+      "provider_service": "generation",
+      "component": "external",
+      "domains": ["api.dev.runwayml.com"],
+      "endpoints": ["/v1/tasks/{id}"],
+      "endpoint_match": "path_template",
+      "methods": ["GET"],
+      "response_all": [
+        { "path": "id", "operator": "non_empty" },
+        { "path": "status", "operator": "one_of", "values": ["SUCCEEDED", "FAILED", "CANCELLED"] }
+      ],
+      "response_path": "cost.credits",
+      "usage_metric": "credit_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "generation",
+      "record_id_path": "id",
+      "source_url": "https://docs.dev.runwayml.com/api/"
     }
   ]
 }

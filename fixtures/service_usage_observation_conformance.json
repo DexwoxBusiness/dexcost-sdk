@@ -1,5 +1,5 @@
 {
-  "schema_version": "24",
+  "schema_version": "25",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1660,6 +1660,72 @@
       "status_code": 500,
       "headers": {},
       "response": { "data": { "id": "rjob-server-error", "workflow": "summarize", "status": "completed", "units_consumed": 650 } },
+      "expected": []
+    },
+    {
+      "name": "runway_succeeded_task_reports_final_charged_credits",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-success-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-success-1", "status": "SUCCEEDED", "createdAt": "2026-09-03T01:15:00Z", "cost": { "credits": 37.5 }, "output": ["private-output-url"] },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "37.5", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-success-1" }]
+    },
+    {
+      "name": "runway_failed_task_preserves_nonrefunded_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-failed-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-failed-1", "status": "FAILED", "createdAt": "2026-09-03T01:16:00Z", "cost": { "credits": 2 }, "failure": "private failure" },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-failed-1" }]
+    },
+    {
+      "name": "runway_cancelled_task_preserves_nonrefunded_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-cancelled-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-cancelled-1", "status": "CANCELLED", "createdAt": "2026-09-03T01:17:00Z", "cost": { "credits": "1.25" } },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "1.25", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-cancelled-1" }]
+    },
+    {
+      "name": "runway_pending_estimate_is_not_a_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-pending-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-pending-1", "status": "PENDING", "createdAt": "2026-09-03T01:18:00Z", "estimatedCost": { "credits": 40 } },
+      "expected": []
+    },
+    {
+      "name": "runway_refunded_terminal_task_has_no_positive_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-refunded-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-refunded-1", "status": "CANCELLED", "createdAt": "2026-09-03T01:19:00Z", "cost": { "credits": 0 } },
+      "expected": []
+    },
+    {
+      "name": "runway_unknown_task_status_fails_open",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-future-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-future-1", "status": "PARTIALLY_REFUNDED", "cost": { "credits": 3 } },
+      "expected": []
+    },
+    {
+      "name": "runway_task_creation_is_not_terminal_cost",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-create-1",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "future-model" },
+      "response": { "id": "runway-create-1", "status": "SUCCEEDED", "cost": { "credits": 10 } },
+      "expected": []
+    },
+    {
+      "name": "runway_failed_http_response_is_not_observed",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-http-error-1",
+      "method": "GET",
+      "status_code": 500,
+      "headers": {},
+      "response": { "id": "runway-http-error-1", "status": "FAILED", "cost": { "credits": 2 } },
       "expected": []
     }
   ]

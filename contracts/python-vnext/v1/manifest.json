@@ -106,9 +106,9 @@
       "sha256": "9bcd0f012cb3bc253834a182ae0a2017b9e1b624f8114efd92a83a6422942639"
     },
     {
-      "byte_size": 15840,
+      "byte_size": 16218,
       "path": "schemas/catalog-observer-rules.v1.schema.json",
-      "sha256": "290eb7bef053dc6af6fad28061da75e220991449a4def1b132e001dc29716fde"
+      "sha256": "30678344e1f60a5ddc5023167894c531348a9e412c244837d2e1903a6c55e746"
     },
     {
       "byte_size": 1410,
@@ -192,9 +192,9 @@
       "sha256": "f46ddf75615835db8d9a27da5334cad6e8d7e1bf85445ad654a71ad207550983"
     },
     {
-      "byte_size": 95250,
+      "byte_size": 98914,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "bc7e7b7fdb7e157b5d30724ef44435b341e446fa2ae4791184a1c241921b72d8"
+      "sha256": "9746709a595d0145435716a547de6945de2884abe198e49448790fcc4726def6"
     }
   ],
   "schema_version": "1",
