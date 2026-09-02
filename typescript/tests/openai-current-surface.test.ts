@@ -282,6 +282,27 @@ describe("current official OpenAI TypeScript surface", () => {
     expect(JSON.stringify(events)).not.toContain("private embedding input");
   });
 
+  it("keeps Moonshot current-model identity on the modern OpenAI surface", async () => {
+    await instrumentOpenai(new PricingEngine(), buffer);
+    const resource = new ChatCompletions() as ChatCompletions & {
+      _client: { baseURL: string };
+    };
+    resource._client = { baseURL: "https://api.moonshot.ai/v1" };
+    await resource.create({ model: "kimi-k2.6", messages: [] });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k2.6",
+      serviceName: "chat",
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "moonshot", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: "kimi-k2.6" });
+  });
+
   it("reconciles Responses, batch, fine-tuning, and video jobs", async () => {
     await instrumentOpenai(new PricingEngine(), buffer);
     const responses = new Responses();

@@ -299,6 +299,50 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(events[0].costUsd.toString()).toBe("0");
   });
 
+  it("attributes raw Moonshot calls and preserves its cache-hit bucket", async () => {
+    const body = {
+      id: "chat-moonshot-1",
+      model: "kimi-k3",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        cached_tokens: 4,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "moonshot" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "kimi-k3", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "10", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
   it("attributes current Together raw chat calls with exact public model identity", async () => {
     const model = "deepseek-ai/DeepSeek-V4-Pro-0813";
     const body = {

@@ -28,6 +28,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlparse
 
 import wrapt
 
@@ -78,6 +79,21 @@ _active_tracker: Any | None = None  # CostTracker (lazy to avoid circular import
 _patched: bool = False
 _originals: dict[str, Any] = {}
 _optional_originals: list[tuple[Any, str, Any]] = []
+
+
+def _provider_for_messages_instance(instance: Any) -> str:
+    """Identify documented Anthropic-compatible providers at the SDK edge."""
+    try:
+        client = getattr(instance, "_client", None)
+        raw_base_url = getattr(client, "base_url", None) or getattr(
+            client, "_base_url", None
+        )
+        hostname = (urlparse(str(raw_base_url)).hostname or "").lower()
+        if hostname == "api.moonshot.ai":
+            return "moonshot"
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return "anthropic"
 
 
 def _patch_optional_method(
@@ -329,6 +345,7 @@ def _record_call_failure(
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
     *,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Event | None:
@@ -340,7 +357,7 @@ def _record_call_failure(
     event = record_call_failure(
         tracker=_active_tracker,
         exc=exc,
-        provider="anthropic",
+        provider=provider,
         model=requested_model(kwargs),
         latency_ms=latency_ms,
         service_name=service_name,
@@ -369,6 +386,7 @@ def _sync_create_wrapper(
     """wrapt wrapper for sync ``Messages.create``."""
     return _sync_message_create_wrapper(
         wrapped,
+        instance,
         args,
         kwargs,
         task_type="anthropic.messages",
@@ -383,6 +401,7 @@ def _sync_beta_create_wrapper(
     """wrapt wrapper for current ``beta.messages.create``."""
     return _sync_message_create_wrapper(
         wrapped,
+        instance,
         args,
         kwargs,
         task_type="anthropic.beta.messages",
@@ -393,6 +412,7 @@ def _sync_beta_create_wrapper(
 
 def _sync_message_create_wrapper(
     wrapped: Any,
+    instance: Any,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     *,
@@ -401,6 +421,7 @@ def _sync_message_create_wrapper(
     operation_name: str,
 ) -> Any:
     """Capture one stable or Beta sync Messages call."""
+    provider = _provider_for_messages_instance(instance)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -429,6 +450,7 @@ def _sync_message_create_wrapper(
                     task or auto_task_obj,
                     capability,
                     idempotency_key,
+                    provider=provider,
                     service_name=service_name,
                     operation_name=operation_name,
                 )
@@ -441,6 +463,7 @@ def _sync_message_create_wrapper(
                 requested_model(kwargs),
                 capability,
                 idempotency_key,
+                provider,
                 service_name,
                 operation_name,
             )
@@ -457,6 +480,7 @@ def _sync_message_create_wrapper(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
             )
@@ -470,6 +494,7 @@ def _sync_message_create_wrapper(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
             )
@@ -501,6 +526,7 @@ def _async_create_wrapper(
     """wrapt wrapper for async ``AsyncMessages.create``."""
     return _async_message_create_wrapper(
         wrapped,
+        instance,
         args,
         kwargs,
         task_type="anthropic.messages",
@@ -515,6 +541,7 @@ def _async_beta_create_wrapper(
     """wrapt wrapper for current async ``beta.messages.create``."""
     return _async_message_create_wrapper(
         wrapped,
+        instance,
         args,
         kwargs,
         task_type="anthropic.beta.messages",
@@ -525,6 +552,7 @@ def _async_beta_create_wrapper(
 
 def _async_message_create_wrapper(
     wrapped: Any,
+    instance: Any,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     *,
@@ -533,6 +561,7 @@ def _async_message_create_wrapper(
     operation_name: str,
 ) -> Any:
     """Capture one stable or Beta async Messages call."""
+    provider = _provider_for_messages_instance(instance)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -557,6 +586,7 @@ def _async_message_create_wrapper(
             task,
             capability,
             idempotency_key,
+            provider,
             service_name,
             operation_name,
         )
@@ -571,6 +601,7 @@ def _async_message_create_wrapper(
         task,
         capability,
         idempotency_key,
+        provider,
         service_name,
         operation_name,
     )
@@ -586,6 +617,7 @@ async def _async_non_stream_handler(
     task: Any = None,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Any:
@@ -605,6 +637,7 @@ async def _async_non_stream_handler(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
             )
@@ -618,6 +651,7 @@ async def _async_non_stream_handler(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
             )
@@ -648,6 +682,7 @@ async def _async_stream_handler(
     task: Any = None,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Any:
@@ -667,6 +702,7 @@ async def _async_stream_handler(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
             )
@@ -679,6 +715,7 @@ async def _async_stream_handler(
             requested_model(kwargs),
             capability,
             idempotency_key,
+            provider,
             service_name,
             operation_name,
         )
@@ -2269,6 +2306,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         requested: str | None = None,
         capability: CapabilityIdentity | None = None,
         idempotency_key: IdempotencyKey | None = None,
+        provider: str = "anthropic",
         service_name: str = "messages",
         operation_name: str = "anthropic.messages.create",
     ) -> None:
@@ -2285,6 +2323,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._auto_task_obj = auto_task_obj
         self._capability = capability
         self._idempotency_key = idempotency_key
+        self._provider = provider
         self._service_name = service_name
         self._operation_name = operation_name
 
@@ -2363,6 +2402,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 tool_calls=self._tool_calls,
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
+                provider=self._provider,
                 service_name=self._service_name,
                 operation_name=self._operation_name,
             )
@@ -2420,6 +2460,7 @@ class _AsyncStreamWrapper:
         requested: str | None = None,
         capability: CapabilityIdentity | None = None,
         idempotency_key: IdempotencyKey | None = None,
+        provider: str = "anthropic",
         service_name: str = "messages",
         operation_name: str = "anthropic.messages.create",
     ) -> None:
@@ -2436,6 +2477,7 @@ class _AsyncStreamWrapper:
         self._auto_task_obj = auto_task_obj
         self._capability = capability
         self._idempotency_key = idempotency_key
+        self._provider = provider
         self._service_name = service_name
         self._operation_name = operation_name
 
@@ -2514,6 +2556,7 @@ class _AsyncStreamWrapper:
                 tool_calls=self._tool_calls,
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
+                provider=self._provider,
                 service_name=self._service_name,
                 operation_name=self._operation_name,
             )
@@ -3075,6 +3118,7 @@ def _record_from_response(
     capability: CapabilityIdentity | None,
     idempotency_key: IdempotencyKey | None,
     *,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Event | None:
@@ -3108,6 +3152,7 @@ def _record_from_response(
         tool_calls=tool_calls,
         capability=capability,
         idempotency_key=idempotency_key,
+        provider=provider,
         service_name=service_name,
         operation_name=operation_name,
     )
@@ -3126,6 +3171,7 @@ def _record_from_stream_data(
     tool_calls: int = 0,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Event | None:
@@ -3163,6 +3209,7 @@ def _record_from_stream_data(
         tool_calls=tool_calls,
         capability=capability,
         idempotency_key=idempotency_key,
+        provider=provider,
         service_name=service_name,
         operation_name=operation_name,
     )
@@ -3183,17 +3230,30 @@ def _insert_llm_event(
     tool_calls: int = 0,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
 ) -> Event:
     """Create and persist an llm_call Event."""
     billable = _billable_usage(usage, stop_reason)
-    pricing = _price_anthropic_usage(
-        tracker,
-        model,
-        usage,
-        billable,
-        has_provider_usage=has_usage,
+    pricing = (
+        _price_anthropic_usage(
+            tracker,
+            model,
+            usage,
+            billable,
+            has_provider_usage=has_usage,
+        )
+        if provider == "anthropic"
+        else _PricingSummary(
+            cost_usd=Decimal(0),
+            cost_confidence="estimated",
+            pricing_source="unknown",
+            pricing_version=None,
+            unpriced_dimensions=(),
+            iteration_details=(),
+            server_tool_breakdown=(),
+        )
     )
 
     # Store cache_read_input_tokens in the standard cached_tokens field.
@@ -3208,6 +3268,7 @@ def _insert_llm_event(
             billable.usage, tool_calls, billable.unbilled_usage
         ),
         "provider_usage_privacy": "quantities_only",
+        "attribution_provider_service": "api" if provider == "moonshot" else service_name,
     }
     if provider_record_id is not None:
         details["provider_record_id"] = provider_record_id
@@ -3253,7 +3314,7 @@ def _insert_llm_event(
         pricing_source=pricing.pricing_source,
         pricing_version=pricing.pricing_version,
         service_name=service_name,
-        provider="anthropic",
+        provider=provider,
         model=model,
         input_tokens=billable.usage.input_tokens,
         output_tokens=billable.usage.output_tokens,

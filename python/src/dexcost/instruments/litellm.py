@@ -1917,6 +1917,8 @@ def _canonical_provider(provider: str) -> str:
         "together_ai": "together",
         "fal": "fal_ai",
         "perplexity_ai": "perplexity",
+        "moonshot_ai": "moonshot",
+        "kimi": "moonshot",
     }
     return aliases.get(normalized, normalized) or "unknown"
 
@@ -1930,6 +1932,11 @@ def _canonical_model(model: Any, provider: str, request_model: Any = None) -> st
         # authoritative server catalog. LiteLLM's routing prefixes identify
         # the gateway, not a distinct billable model.
         for routed_prefix in ("together_ai/", "together/"):
+            if name.startswith(routed_prefix):
+                return name[len(routed_prefix) :]
+        return name
+    if provider == "moonshot":
+        for routed_prefix in ("moonshot/", "moonshot_ai/", "kimi/"):
             if name.startswith(routed_prefix):
                 return name[len(routed_prefix) :]
         return name

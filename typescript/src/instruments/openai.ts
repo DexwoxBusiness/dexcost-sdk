@@ -304,6 +304,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) {
       return { provider: "deepseek" };
     }
+    if (hostname === "api.moonshot.ai") {
+      return { provider: "moonshot" };
+    }
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) {
       return { provider: "fireworks_ai" };
     }
@@ -345,7 +348,7 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (["openai", "deepseek", "fireworks_ai", "xai", "groq", "mistral", "together"].includes(route.provider) && route.gateway === undefined) {
+  if (["openai", "deepseek", "moonshot", "fireworks_ai", "xai", "groq", "mistral", "together"].includes(route.provider) && route.gateway === undefined) {
     const selected = typeof responseModel === "string" && responseModel.length > 0
       ? responseModel
       : requestedModel;

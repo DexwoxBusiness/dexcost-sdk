@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
@@ -315,6 +316,52 @@ class TestSyncNonStreaming:
         assert ev.cached_tokens == 150
         assert ev.details.get("cache_creation_input_tokens") == 200
         assert ev.input_tokens == 500
+
+    def test_moonshot_messages_routes_to_server_pricing_without_sdk_money(
+        self, tracker: CostTracker, storage: SQLiteStorage
+    ) -> None:
+        """Kimi's documented Messages-compatible host is a Moonshot API call."""
+        from anthropic.resources.messages import Messages
+
+        from dexcost.instruments.anthropic import instrument_anthropic
+
+        response = _make_response(
+            model="kimi-k3",
+            input_tokens=16,
+            output_tokens=7,
+            cache_creation_input_tokens=3,
+            cache_read_input_tokens=4,
+        )
+        Messages._client = types.SimpleNamespace(  # type: ignore[attr-defined]
+            base_url="https://api.moonshot.ai/anthropic"
+        )
+        Messages.create = lambda self, **kwargs: response  # type: ignore[assignment]
+
+        instrument_anthropic(tracker)
+
+        with tracker.task(task_type="moonshot-messages") as task:
+            Messages().create(model="kimi-k3", messages=[])
+
+        events = storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "moonshot"
+        assert event.cost_usd == Decimal("0")
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        assert observation["provider"] == {
+            "name": "moonshot",
+            "service": "api",
+        }
+        assert observation["resource"] == {"type": "model", "id": "kimi-k3"}
+        assert {
+            line["metric"]: line["quantity"] for line in observation["usage"]
+        } == {
+            "input_tokens": "16",
+            "output_tokens": "7",
+            "cache_read_input_tokens": "4",
+            "cache_write_input_tokens": "3",
+        }
 
     def test_latency_recorded(self, tracker: CostTracker, storage: SQLiteStorage) -> None:
         """latency_ms is populated on the event."""

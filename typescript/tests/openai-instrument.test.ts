@@ -138,6 +138,52 @@ describe("OpenAI instrumentation", () => {
     });
   });
 
+  it("routes Moonshot-compatible OpenAI calls with exact cache usage", async () => {
+    class MoonshotCompletions {
+      _client = { baseURL: "https://api.moonshot.ai/v1" };
+
+      async create(): Promise<unknown> {
+        return makeMockResponse({
+          model: "kimi-k3",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            cached_tokens: 4,
+          },
+        });
+      }
+    }
+    _setCompletionsClass(MoonshotCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "moonshot" });
+
+    await runWithTask(task, async () => {
+      await new MoonshotCompletions().create();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "moonshot", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "10",
+    });
+  });
+
   it.each([
     ["https://api.fireworks.ai/inference/v1", undefined, "default"],
     ["https://api.fireworks.ai/inference/v1", "priority", "priority"],

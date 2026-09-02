@@ -7,6 +7,7 @@ import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { createTask } from "../src/core/models.js";
 import { runWithTask, setContext, clearContext } from "../src/core/context.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import {
   instrumentAnthropic,
   uninstrumentAnthropic,
@@ -168,6 +169,54 @@ describe("Anthropic instrumentation", () => {
     expect(events).toHaveLength(1);
     expect(events[0].details["cache_creation_input_tokens"]).toBe(300);
     expect(events[0].cachedTokens).toBe(50);
+  });
+
+  it("routes Kimi's Messages-compatible endpoint to Moonshot server pricing", async () => {
+    class MoonshotMessages {
+      _client = { baseURL: "https://api.moonshot.ai/anthropic" };
+
+      async create(): Promise<unknown> {
+        return makeMockResponse({
+          model: "kimi-k3",
+          usage: {
+            input_tokens: 16,
+            output_tokens: 7,
+            cache_creation_input_tokens: 3,
+            cache_read_input_tokens: 4,
+          },
+        });
+      }
+    }
+    _setMessagesClass(MoonshotMessages);
+    await instrumentAnthropic(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "moonshot-messages" });
+
+    await runWithTask(task, async () => {
+      await new MoonshotMessages().create();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k3",
+      inputTokens: 16,
+      outputTokens: 7,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toEqual({ name: "moonshot", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      output_tokens: "7",
+      cache_read_input_tokens: "4",
+      cache_write_input_tokens: "3",
+    });
   });
 
   it("records into an auto-task when no task and no context set", async () => {

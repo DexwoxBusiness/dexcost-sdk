@@ -1787,6 +1787,7 @@ function _recordHttpLlmEvent(
   const provider = ctx.liteLlmProxy
     ? classifyLiteLlmProvider(requestedModel, usage?.model)
     : ctx.hostname === "api.deepseek.com" ? "deepseek"
+      : ctx.hostname === "api.moonshot.ai" ? "moonshot"
       : ctx.hostname === "api.fireworks.ai" || ctx.hostname.endsWith(".api.fireworks.ai")
         ? "fireworks_ai"
         : ctx.hostname === "api.x.ai" || ctx.hostname.endsWith(".api.x.ai")
@@ -1807,7 +1808,7 @@ function _recordHttpLlmEvent(
       ? canonicalMistralModel(routedModel)
       : routedModel;
 
-  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "fireworks_ai" ||
+  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "moonshot" || provider === "fireworks_ai" ||
       provider === "xai" || provider === "groq" || provider === "mistral" ||
       provider === "together") &&
       usage?.rawResponse !== undefined

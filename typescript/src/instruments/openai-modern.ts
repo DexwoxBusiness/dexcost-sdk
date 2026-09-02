@@ -57,6 +57,7 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return "deepseek";
+    if (hostname === "api.moonshot.ai") return "moonshot";
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
     if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) return "xai";
     if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) return "groq";
@@ -70,7 +71,7 @@ function modelFor(provider: string, requested: unknown, response?: any, liteLlm 
     typeof requested === "string" ? requested : "unknown";
   if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
   if (provider === "xai") return canonicalXaiModel(selected);
-  return ["openai", "deepseek", "fireworks_ai", "xai", "groq"].includes(provider)
+  return ["openai", "deepseek", "moonshot", "fireworks_ai", "xai", "groq"].includes(provider)
     ? selected
     : prefixedModel(provider, selected);
 }

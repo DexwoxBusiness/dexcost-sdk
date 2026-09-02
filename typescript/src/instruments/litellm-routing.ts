@@ -33,6 +33,9 @@ const LITELLM_PROVIDERS: Record<string, string> = {
   openrouter_ai: "openrouter",
   perplexity: "perplexity",
   perplexity_ai: "perplexity",
+  moonshot: "moonshot",
+  moonshot_ai: "moonshot",
+  kimi: "moonshot",
   fal: "fal_ai",
   fal_ai: "fal_ai",
 };
@@ -74,6 +77,12 @@ export function canonicalLiteLlmModel(
     // Keep Together's provider-published API model ID. LiteLLM's provider
     // prefix describes the gateway route and must not become a pricing alias.
     for (const routedPrefix of ["together_ai/", "together/"]) {
+      if (name.startsWith(routedPrefix)) return name.slice(routedPrefix.length);
+    }
+    return name;
+  }
+  if (provider === "moonshot") {
+    for (const routedPrefix of ["moonshot/", "moonshot_ai/", "kimi/"]) {
       if (name.startsWith(routedPrefix)) return name.slice(routedPrefix.length);
     }
     return name;
