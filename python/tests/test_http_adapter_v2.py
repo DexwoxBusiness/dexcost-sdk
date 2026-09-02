@@ -362,6 +362,78 @@ class TestKnownServiceExtraction:
             for event in events
         )
 
+    def test_github_graphql_points_are_not_misclassified_as_rest_requests(
+        self,
+    ) -> None:
+        task = _make_task("github-graphql")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.github.com/graphql",
+                method="POST",
+                request_body={"query": "query { viewer { login } }"},
+                response=_make_response(
+                    body={"data": {"viewer": {"login": "octocat"}}}
+                ),
+            )
+
+        assert all(
+            event.details.get("attribution_observer_service") != "github_api"
+            and event.pricing_source != "service_catalog"
+            for event in get_recorded_events()
+        )
+
+    def test_discord_and_gitlab_rest_usage_is_observed_without_synthetic_money(
+        self,
+    ) -> None:
+        task = _make_task("developer-apis")
+        with task_context(task):
+            _handle_http_call(
+                "https://discord.com/api/v10/channels/123/messages",
+                response=_make_response(body={"ok": True}),
+            )
+            _handle_http_call(
+                "https://gitlab.com/api/v4/projects?membership=true",
+                response=_make_response(body=[{"id": 1, "name": "dexcost"}]),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 2
+        assert sorted(
+            event.details["attribution_observer_service"] for event in events
+        ) == ["discord_api", "gitlab_api"]
+        for event in events:
+            wire = to_attribution_event_v2(event)
+            assert event.cost_usd == 0
+            assert event.cost_confidence == "unknown"
+            assert event.pricing_source != "service_catalog"
+            assert wire is not None
+            assert wire["resource"] == {"type": "sku", "id": "rest_api_request"}
+            assert wire["usage"] == [
+                {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+            ]
+            assert "cost_evidence" not in wire
+
+    def test_failed_discord_and_gitlab_requests_do_not_restore_legacy_zero_prices(
+        self,
+    ) -> None:
+        task = _make_task("developer-apis")
+        with task_context(task):
+            _handle_http_call(
+                "https://discord.com/api/v10/channels/123/messages",
+                response=_make_response(body={"message": "Forbidden"}, status_code=403),
+            )
+            _handle_http_call(
+                "https://gitlab.com/api/v4/projects/private",
+                response=_make_response(body={"message": "Forbidden"}, status_code=403),
+            )
+
+        assert all(
+            event.details.get("attribution_observer_service")
+            not in {"discord_api", "gitlab_api"}
+            and event.pricing_source != "service_catalog"
+            for event in get_recorded_events()
+        )
+
     def test_authenticated_jina_reader_usage_does_not_retain_credentials(self) -> None:
         task = _make_task("reader")
         with task_context(task):

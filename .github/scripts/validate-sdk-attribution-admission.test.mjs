@@ -179,6 +179,35 @@ test("rejects unsafe dynamic provider-domain suffixes", () => {
   );
 });
 
+test("rejects malformed endpoint exclusions", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "github_api",
+  );
+  observer.excluded_endpoints = ["graphql"];
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer github_api has invalid excluded endpoints",
+  );
+});
+
+test("does not accept an exact-route descendant as positive coverage", () => {
+  const candidate = inputs();
+  const entry = candidate.admission.observers.find(
+    (item) => item.service_key === "fireworks_embeddings",
+  );
+  const testCase = candidate.conformance.cases.find(
+    (item) => item.name === entry.positive_cases[0],
+  );
+  testCase.url += "/preview";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    `case ${testCase.name} does not target observer fireworks_embeddings`,
+  );
+});
+
 test("requires a non-empty predicate for query-count multipliers", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

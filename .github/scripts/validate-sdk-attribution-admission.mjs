@@ -177,6 +177,16 @@ function observerDomainMatches(observer, hostname) {
       observer.domain_suffixes.some((suffix) => hostname.endsWith(`.${suffix}`)));
 }
 
+function observerEndpointMatches(observer, pathname, boundary = false) {
+  if (!Array.isArray(observer.endpoints)) return false;
+  const matchMode = boundary ? "prefix" : (observer.endpoint_match ?? "prefix");
+  return observer.endpoints.some((endpoint) =>
+    pathname === endpoint ||
+    (matchMode === "prefix" &&
+      (endpoint === "/" || pathname.startsWith(`${endpoint}/`)))
+  );
+}
+
 function responsePredicateMatches(response, predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
   const value = resolvePath(response, predicate.path);
@@ -231,13 +241,9 @@ function caseTargetsObserver(testCase, observer) {
   }
 
   const domainMatches = observerDomainMatches(observer, url.hostname);
-  const endpointMatches =
-    Array.isArray(observer.endpoints) &&
-    observer.endpoints.some(
-      (endpoint) =>
-        url.pathname === endpoint || endpoint === "/" ||
-          url.pathname.startsWith(`${endpoint}/`),
-    );
+  const endpointMatches = observerEndpointMatches(observer, url.pathname) &&
+    !(Array.isArray(observer.excluded_endpoints) &&
+      observer.excluded_endpoints.includes(url.pathname));
   if (!domainMatches || !endpointMatches) return false;
 
   if (
@@ -351,12 +357,7 @@ function caseExercisesObserverEndpointBoundary(testCase, observer) {
   }
   return (
     observerDomainMatches(observer, url.hostname) &&
-    Array.isArray(observer.endpoints) &&
-    observer.endpoints.some(
-      (endpoint) =>
-        url.pathname === endpoint || endpoint === "/" ||
-          url.pathname.startsWith(`${endpoint}/`),
-    ) &&
+    observerEndpointMatches(observer, url.pathname, true) &&
     !caseTargetsObserver(testCase, observer)
   );
 }
@@ -431,6 +432,14 @@ function validateObserverShape(observer, issues) {
     )
   ) {
     issues.push(`observer ${key} has invalid endpoints`);
+  }
+  if (
+    observer?.excluded_endpoints !== undefined &&
+    (!uniqueStrings(observer.excluded_endpoints) ||
+      observer.excluded_endpoints.length === 0 ||
+      !observer.excluded_endpoints.every((endpoint) => endpoint.startsWith("/")))
+  ) {
+    issues.push(`observer ${key} has invalid excluded endpoints`);
   }
   if (
     observer?.request_all !== undefined &&

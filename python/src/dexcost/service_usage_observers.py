@@ -36,6 +36,7 @@ class UsageObserver:
     domains: tuple[str, ...]
     domain_suffixes: tuple[str, ...]
     endpoints: tuple[str, ...]
+    excluded_endpoints: tuple[str, ...]
     endpoint_match: str
     response_path: str | None
     response_quantity_header: str | None
@@ -393,6 +394,7 @@ class ServiceUsageObservers:
             domains = definition.get("domains")
             domain_suffixes = definition.get("domain_suffixes", [])
             endpoints = definition.get("endpoints")
+            excluded_endpoints = definition.get("excluded_endpoints", [])
             optional_string_fields = (
                 "resource_path",
                 "request_resource_path",
@@ -464,6 +466,13 @@ class ServiceUsageObservers:
                 or not isinstance(endpoints, list)
                 or not endpoints
                 or not all(isinstance(item, str) and item.startswith("/") for item in endpoints)
+                or not isinstance(excluded_endpoints, list)
+                or ("excluded_endpoints" in definition and not excluded_endpoints)
+                or not all(
+                    isinstance(item, str) and item.startswith("/")
+                    for item in excluded_endpoints
+                )
+                or len(set(excluded_endpoints)) != len(excluded_endpoints)
                 or definition.get("endpoint_match", "prefix") not in {"exact", "prefix"}
                 or any(
                     field in definition
@@ -618,6 +627,7 @@ class ServiceUsageObservers:
                     domains=tuple(domains),
                     domain_suffixes=tuple(domain_suffixes),
                     endpoints=tuple(endpoints),
+                    excluded_endpoints=tuple(excluded_endpoints),
                     endpoint_match=definition.get("endpoint_match", "prefix"),
                     response_path=response_path,
                     response_quantity_header=response_quantity_header,
@@ -681,6 +691,7 @@ class ServiceUsageObservers:
                 )
                 for endpoint in candidate.endpoints
             )
+            and parsed.path not in candidate.excluded_endpoints
             and (
                 not candidate.query_any
                 or any(

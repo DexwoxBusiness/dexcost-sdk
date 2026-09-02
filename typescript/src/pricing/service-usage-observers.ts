@@ -66,6 +66,7 @@ interface UsageObserverDefinition {
   domains: string[];
   domain_suffixes?: string[];
   endpoints: string[];
+  excluded_endpoints?: string[];
   endpoint_match?: "exact" | "prefix";
   response_path?: string;
   response_quantity_header?: string;
@@ -441,6 +442,13 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
+      (observer.excluded_endpoints !== undefined && (
+        !Array.isArray(observer.excluded_endpoints) ||
+        observer.excluded_endpoints.length === 0 ||
+        !observer.excluded_endpoints.every((endpoint) =>
+          typeof endpoint === "string" && endpoint.startsWith("/")) ||
+        new Set(observer.excluded_endpoints).size !== observer.excluded_endpoints.length
+      )) ||
       (observer.endpoint_match !== undefined &&
         observer.endpoint_match !== "exact" && observer.endpoint_match !== "prefix") ||
       [
@@ -576,6 +584,7 @@ export class ServiceUsageObservers {
       (candidate) => domainMatches(parsed.hostname, candidate) &&
         candidate.endpoints.some((endpoint) =>
           endpointMatches(parsed.pathname, endpoint, candidate.endpoint_match)) &&
+        !candidate.excluded_endpoints?.includes(parsed.pathname) &&
         (candidate.query_any === undefined ||
           candidate.query_any.some((predicate) => predicateMatches(parsed, predicate))) &&
         (candidate.query_all === undefined ||

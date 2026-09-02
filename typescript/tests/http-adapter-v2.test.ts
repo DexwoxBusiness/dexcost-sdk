@@ -142,6 +142,76 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     )).toBe(true);
   });
 
+  it("does not misclassify GitHub GraphQL points as REST request usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { viewer: { login: "octocat" } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-graphql" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        body: JSON.stringify({ query: "query { viewer { login } }" }),
+      });
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => event.details["attribution_observer_service"] !== "github_api" &&
+        event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
+  it("observes Discord and GitLab REST usage without synthesizing money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "developer-apis" });
+    await runWithTask(task, async () => {
+      await fetch("https://discord.com/api/v10/channels/123/messages");
+      await fetch("https://gitlab.com/api/v4/projects?membership=true");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.details["attribution_observer_service"]).sort()).toEqual([
+      "discord_api",
+      "gitlab_api",
+    ]);
+    for (const event of events) {
+      expect(event.costUsd.toString()).toBe("0");
+      expect(event.costConfidence).toBe("unknown");
+      expect(event.pricingSource).not.toBe("service_catalog");
+      expect(toAttributionEventV2(event)).toMatchObject({
+        resource: { type: "sku", id: "rest_api_request" },
+        usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      });
+      expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+    }
+  });
+
+  it("does not restore Discord or GitLab legacy zero prices after failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ message: "Forbidden" }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "developer-apis" });
+    await runWithTask(task, async () => {
+      await fetch("https://discord.com/api/v10/channels/123/messages");
+      await fetch("https://gitlab.com/api/v4/projects/private");
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => !["discord_api", "gitlab_api"].includes(
+        String(event.details["attribution_observer_service"]),
+      ) && event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
   it("observes authenticated Jina Reader tokens without retaining credentials", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
       status: 200,

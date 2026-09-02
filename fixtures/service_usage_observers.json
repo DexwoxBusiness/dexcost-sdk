@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.22.0",
-    "observer_count": 60,
+    "version": "1.24.0",
+    "observer_count": 62,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1096,12 +1096,41 @@
       "component": "external",
       "domains": ["api.github.com"],
       "endpoints": ["/"],
+      "excluded_endpoints": ["/graphql"],
       "endpoint_match": "prefix",
       "fixed_quantity": "1",
       "usage_metric": "request_count",
       "resource_type": "sku",
       "fixed_resource_id": "rest_api_request",
       "source_url": "https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api"
+    },
+    {
+      "service_key": "discord_api",
+      "provider_name": "discord",
+      "provider_service": "rest_api",
+      "component": "external",
+      "domains": ["discord.com"],
+      "endpoints": ["/api"],
+      "endpoint_match": "prefix",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "rest_api_request",
+      "source_url": "https://docs.discord.com/developers/topics/rate-limits"
+    },
+    {
+      "service_key": "gitlab_api",
+      "provider_name": "gitlab",
+      "provider_service": "rest_api",
+      "component": "external",
+      "domains": ["gitlab.com"],
+      "endpoints": ["/api/v4"],
+      "endpoint_match": "prefix",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "rest_api_request",
+      "source_url": "https://docs.gitlab.com/api/rest/"
     }
   ]
 }

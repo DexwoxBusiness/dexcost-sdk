@@ -1,5 +1,5 @@
 {
-  "schema_version": "14",
+  "schema_version": "16",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1117,6 +1117,66 @@
       "status_code": 403,
       "headers": {},
       "response": { "message": "Forbidden" },
+      "expected": []
+    },
+    {
+      "name": "github_graphql_uses_distinct_point_accounting_not_rest_request_count",
+      "url": "https://api.github.com/graphql",
+      "headers": { "x-github-request-id": "github-graphql-1" },
+      "request": { "query": "query { viewer { login } }" },
+      "response": { "data": { "viewer": { "login": "octocat" } } },
+      "expected": []
+    },
+    {
+      "name": "discord_rest_api_successful_request_is_observed",
+      "url": "https://discord.com/api/v10/channels/123/messages",
+      "headers": { "x-ratelimit-bucket": "discord-bucket-1" },
+      "response": { "id": "456", "content": "created" },
+      "expected": [
+        {
+          "service_key": "discord_api",
+          "provider_name": "discord",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "discord_rest_api_failed_request_is_not_observed",
+      "url": "https://discord.com/api/v10/channels/123/messages",
+      "status_code": 429,
+      "headers": { "retry-after": "1" },
+      "response": { "message": "You are being rate limited.", "retry_after": 1 },
+      "expected": []
+    },
+    {
+      "name": "gitlab_rest_api_successful_request_is_observed",
+      "url": "https://gitlab.com/api/v4/projects?membership=true",
+      "headers": { "ratelimit-remaining": "1999" },
+      "response": [{ "id": 1, "name": "dexcost" }],
+      "expected": [
+        {
+          "service_key": "gitlab_api",
+          "provider_name": "gitlab",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "gitlab_rest_api_failed_request_is_not_observed",
+      "url": "https://gitlab.com/api/v4/projects/private",
+      "status_code": 403,
+      "headers": {},
+      "response": { "message": "403 Forbidden" },
       "expected": []
     }
   ]
