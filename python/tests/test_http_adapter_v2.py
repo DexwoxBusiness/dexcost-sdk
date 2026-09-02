@@ -488,6 +488,73 @@ class TestKnownServiceExtraction:
             "confidence": "exact",
         }
 
+    def test_razorpay_live_capture_records_native_fee_once_without_credentials(
+        self,
+    ) -> None:
+        task = _make_task("razorpay-capture")
+        authorization = (
+            "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA=="
+        )
+        response_body = {
+            "id": "pay_http_live_1",
+            "entity": "payment",
+            "amount": 10000,
+            "currency": "INR",
+            "status": "captured",
+            "captured": True,
+            "fee": 236,
+            "tax": 36,
+            "notes": {"private": "do-not-retain"},
+        }
+        with task_context(task):
+            for url, method in (
+                (
+                    "https://api.razorpay.com/v1/payments/pay_http_live_1/capture",
+                    "POST",
+                ),
+                ("https://api.razorpay.com/v1/payments/pay_http_live_1", "GET"),
+            ):
+                _handle_http_call(
+                    url,
+                    method=method,
+                    request_headers={"Authorization": authorization},
+                    response=_make_response(body=response_body),
+                )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        assert (
+            event.details["attribution_observer_service"]
+            == "razorpay_captured_payment_fee"
+        )
+        assert event.details["provider_reported_cost_amount"] == "2.36"
+        assert event.details["provider_reported_cost_currency"] == "INR"
+        retained = json.dumps(event.details)
+        assert "do-not-retain" not in retained
+        assert "fixture_secret" not in retained
+        assert "rzp_live_" not in retained
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "razorpay",
+            "service": "payment_processing",
+            "record_id": "pay_http_live_1",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "payment_capture"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert wire["cost_evidence"] == {
+            "amount": "2.36",
+            "currency": "INR",
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
+
     def test_runway_records_final_credits_once_without_response_content(self) -> None:
         task = _make_task("runway-generation")
         with task_context(task):

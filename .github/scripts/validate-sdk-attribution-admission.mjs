@@ -259,9 +259,23 @@ function requestHeaderPredicateMatches(requestHeaders, predicate) {
   if (predicate.operator === "present") return present;
   if (predicate.operator === "absent") return !present;
   const value = normalized.get(predicate.name);
+  if (predicate.operator === "basic_username_prefix") {
+    return basicUsernameHasPrefix(value, predicate.value);
+  }
   if (predicate.operator === "equals") return present && value === predicate.value;
   return present && typeof value === "string" &&
     Array.isArray(predicate.values) && predicate.values.includes(value);
+}
+
+function basicUsernameHasPrefix(value, prefix) {
+  if (typeof value !== "string" || !value.toLowerCase().startsWith("basic ")) return false;
+  try {
+    const decoded = globalThis.atob(value.slice(6).trim());
+    const separator = decoded.indexOf(":");
+    return separator >= 0 && decoded.slice(0, separator).startsWith(prefix);
+  } catch {
+    return false;
+  }
 }
 
 function collectionPredicateMatches(value, predicate) {
@@ -413,7 +427,7 @@ function validRequestHeaderPredicate(predicate) {
   if (["present", "absent"].includes(predicate.operator)) {
     return Object.keys(predicate).length === 2;
   }
-  if (predicate.operator === "equals") {
+  if (["equals", "basic_username_prefix"].includes(predicate.operator)) {
     return Object.keys(predicate).length === 3 &&
       isNonEmptyString(predicate.value) && predicate.value.length <= 256;
   }
@@ -648,6 +662,24 @@ function validateObserverShape(observer, issues) {
     isNonEmptyString(observer?.provider_cost_usd_collection_sum_path)
   ) {
     issues.push(`observer ${key} declares conflicting provider cost sources`);
+  }
+  const minorCostFields = [
+    observer?.provider_cost_minor_units_path,
+    observer?.provider_cost_currency_path,
+    observer?.provider_cost_minor_unit_exponent,
+  ];
+  if (minorCostFields.some((value) => value !== undefined)) {
+    if (
+      !isNonEmptyString(observer?.provider_cost_minor_units_path) ||
+      !isNonEmptyString(observer?.provider_cost_currency_path) ||
+      !Number.isInteger(observer?.provider_cost_minor_unit_exponent) ||
+      observer.provider_cost_minor_unit_exponent < 0 ||
+      observer.provider_cost_minor_unit_exponent > 6 ||
+      isNonEmptyString(observer?.provider_cost_usd_path) ||
+      isNonEmptyString(observer?.provider_cost_usd_collection_sum_path)
+    ) {
+      issues.push(`observer ${key} has invalid native-currency provider cost fields`);
+    }
   }
   if (observer?.fixed_quantity !== undefined && observer.fixed_quantity !== "1") {
     issues.push(`observer ${key} fixed_quantity must be exactly 1`);

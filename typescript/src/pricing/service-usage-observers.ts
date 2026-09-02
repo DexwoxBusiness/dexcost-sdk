@@ -58,6 +58,10 @@ type RequestHeaderPredicate = {
   value: string;
 } | {
   name: string;
+  operator: "basic_username_prefix";
+  value: string;
+} | {
+  name: string;
   operator: "one_of";
   values: string[];
 };
@@ -123,6 +127,9 @@ interface UsageObserverDefinition {
   record_id_header?: string;
   provider_cost_usd_path?: string;
   provider_cost_usd_collection_sum_path?: string;
+  provider_cost_minor_units_path?: string;
+  provider_cost_currency_path?: string;
+  provider_cost_minor_unit_exponent?: number;
   source_url: string;
 }
 
@@ -143,6 +150,8 @@ export interface ServiceUsageObservation {
   providerRecordId?: string;
   providerRegion?: string;
   providerCostUsd?: string;
+  providerCostAmount?: string;
+  providerCostCurrency?: string;
   dimensions?: ObservedBillingDimension[];
   manifestVersion: string;
 }
@@ -292,8 +301,23 @@ function requestHeaderPredicateMatches(
   if (predicate.operator === "present") return present;
   if (predicate.operator === "absent") return !present;
   const value = requestHeaders.get(name);
+  if (predicate.operator === "basic_username_prefix") {
+    return value === `basic_username_prefix:${predicate.value}` ||
+      basicUsernameHasPrefix(value, predicate.value);
+  }
   if (predicate.operator === "equals") return present && value === predicate.value;
   return present && value !== undefined && predicate.values.includes(value);
+}
+
+function basicUsernameHasPrefix(value: unknown, prefix: string): boolean {
+  if (typeof value !== "string" || !value.toLowerCase().startsWith("basic ")) return false;
+  try {
+    const decoded = globalThis.atob(value.slice(6).trim());
+    const separator = decoded.indexOf(":");
+    return separator >= 0 && decoded.slice(0, separator).startsWith(prefix);
+  } catch {
+    return false;
+  }
 }
 
 function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHeaderPredicate {
@@ -312,7 +336,7 @@ function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHe
   if (candidate.operator === "present" || candidate.operator === "absent") {
     return Object.keys(candidate).length === 2;
   }
-  if (candidate.operator === "equals") {
+  if (candidate.operator === "equals" || candidate.operator === "basic_username_prefix") {
     return Object.keys(candidate).length === 3 &&
       typeof candidate.value === "string" && candidate.value.length > 0 &&
       candidate.value.length <= 256;
@@ -529,6 +553,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.record_id_header,
       observer.provider_cost_usd_path,
       observer.provider_cost_usd_collection_sum_path,
+      observer.provider_cost_minor_units_path,
+      observer.provider_cost_currency_path,
       observer.endpoint_match,
     ];
     const hasResourceSelector = [
@@ -635,6 +661,23 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.quantity_multiplier_path !== undefined) ||
       (observer.provider_cost_usd_path !== undefined &&
         observer.provider_cost_usd_collection_sum_path !== undefined) ||
+      ([
+        observer.provider_cost_minor_units_path,
+        observer.provider_cost_currency_path,
+        observer.provider_cost_minor_unit_exponent,
+      ].filter((value) => value !== undefined).length !== 0 &&
+        [
+          observer.provider_cost_minor_units_path,
+          observer.provider_cost_currency_path,
+          observer.provider_cost_minor_unit_exponent,
+        ].filter((value) => value !== undefined).length !== 3) ||
+      (observer.provider_cost_minor_unit_exponent !== undefined && (
+        !Number.isInteger(observer.provider_cost_minor_unit_exponent) ||
+        observer.provider_cost_minor_unit_exponent < 0 ||
+        observer.provider_cost_minor_unit_exponent > 6 ||
+        observer.provider_cost_usd_path !== undefined ||
+        observer.provider_cost_usd_collection_sum_path !== undefined
+      )) ||
       (observer.response_all !== undefined && (
         !Array.isArray(observer.response_all) ||
         observer.response_all.length === 0 ||
@@ -769,6 +812,8 @@ export class ServiceUsageObservers {
         observer.record_id_path !== undefined ||
         observer.provider_cost_usd_path !== undefined ||
         observer.provider_cost_usd_collection_sum_path !== undefined ||
+        observer.provider_cost_minor_units_path !== undefined ||
+        observer.provider_cost_currency_path !== undefined ||
         observer.response_all !== undefined ||
         observer.paired_response_collection_path !== undefined ||
         observer.quantity_multiplier_path !== undefined,
@@ -796,6 +841,12 @@ export class ServiceUsageObservers {
           continue;
         }
         const raw = source.get(name);
+        if (predicate.operator === "basic_username_prefix") {
+          if (basicUsernameHasPrefix(raw, predicate.value)) {
+            selected[name] = `basic_username_prefix:${predicate.value}`;
+          }
+          continue;
+        }
         const value = Array.isArray(raw) ? raw.join(", ")
           : typeof raw === "string" ? raw
           : typeof raw === "number" ? String(raw)
@@ -971,6 +1022,26 @@ export class ServiceUsageObservers {
         providerCostUsd = providerCost.toFixed()
           .replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1");
       }
+      let providerCostAmount: string | undefined;
+      let providerCostCurrency: string | undefined;
+      if (observer.provider_cost_minor_units_path !== undefined) {
+        const rawMinorCost = resolvePath(responseBody, observer.provider_cost_minor_units_path);
+        const rawCurrency = resolvePath(responseBody, observer.provider_cost_currency_path!);
+        if ((typeof rawMinorCost !== "number" && typeof rawMinorCost !== "string") ||
+            typeof rawCurrency !== "string" || !/^[A-Z]{3}$/.test(rawCurrency)) {
+          continue;
+        }
+        try {
+          const minorCost = new Decimal(rawMinorCost);
+          if (!minorCost.isFinite() || minorCost.lt(0)) continue;
+          providerCostAmount = minorCost.div(
+            new Decimal(10).pow(observer.provider_cost_minor_unit_exponent!),
+          ).toFixed().replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1");
+          providerCostCurrency = rawCurrency;
+        } catch {
+          continue;
+        }
+      }
       if (
         observer.quantity_multiplier_path !== undefined &&
         (observer.quantity_multiplier_query_parameter === undefined ||
@@ -1047,6 +1118,8 @@ export class ServiceUsageObservers {
         providerRecordId: recordFromBody ?? recordFromHeader,
         providerRegion,
         providerCostUsd,
+        providerCostAmount,
+        providerCostCurrency,
         dimensions: pathDimensions(matched.parsed, observer),
         manifestVersion: this.manifestVersion,
       });

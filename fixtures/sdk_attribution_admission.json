@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.34.0",
-  "conformance_schema_version": "26",
+  "observer_manifest_version": "1.35.0",
+  "conformance_schema_version": "27",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -572,6 +572,21 @@
       "fail_open_cases": [
         "paypal_pending_authorization_capture_fails_open",
         "paypal_non_usd_authorization_capture_does_not_invent_conversion"
+      ]
+    },
+    {
+      "service_key": "razorpay_captured_payment_fee",
+      "positive_cases": [
+        "razorpay_live_capture_uses_final_inr_fee",
+        "razorpay_live_fetch_uses_same_final_inr_fee"
+      ],
+      "fail_open_cases": [
+        "razorpay_test_key_capture_is_not_real_cost",
+        "razorpay_authorized_payment_has_no_final_fee",
+        "razorpay_captured_payment_missing_fee_fails_open",
+        "razorpay_non_inr_fee_waits_for_verified_minor_unit_rule",
+        "razorpay_failed_http_capture_is_not_observed",
+        "razorpay_payment_collection_is_not_a_payment_snapshot"
       ]
     }
   ]

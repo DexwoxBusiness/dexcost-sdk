@@ -1,5 +1,5 @@
 {
-  "schema_version": "26",
+  "schema_version": "27",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1799,6 +1799,79 @@
       "method": "POST",
       "headers": {},
       "response": { "id": "CAPTURE-EUR-2", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "EUR", "value": "3.50" } } },
+      "expected": []
+    },
+    {
+      "name": "razorpay_live_capture_uses_final_inr_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_live_1/capture",
+      "method": "POST",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_live_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236, "tax": 36 },
+      "expected": [{ "service_key": "razorpay_captured_payment_fee", "provider_name": "razorpay", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "pay_live_1", "provider_cost_amount": "2.36", "provider_cost_currency": "INR" }]
+    },
+    {
+      "name": "razorpay_live_fetch_uses_same_final_inr_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_live_2",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_live_2", "entity": "payment", "amount": 25000, "currency": "INR", "status": "captured", "captured": true, "fee": 590, "tax": 90 },
+      "expected": [{ "service_key": "razorpay_captured_payment_fee", "provider_name": "razorpay", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "pay_live_2", "provider_cost_amount": "5.9", "provider_cost_currency": "INR" }]
+    },
+    {
+      "name": "razorpay_test_key_capture_is_not_real_cost",
+      "url": "https://api.razorpay.com/v1/payments/pay_test_1/capture",
+      "method": "POST",
+      "request_headers": { "authorization": "Basic cnpwX3Rlc3RfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_test_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236, "tax": 36 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_authorized_payment_has_no_final_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_authorized_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_authorized_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "authorized", "captured": false, "fee": null, "tax": null },
+      "expected": []
+    },
+    {
+      "name": "razorpay_captured_payment_missing_fee_fails_open",
+      "url": "https://api.razorpay.com/v1/payments/pay_no_fee_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_no_fee_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true },
+      "expected": []
+    },
+    {
+      "name": "razorpay_non_inr_fee_waits_for_verified_minor_unit_rule",
+      "url": "https://api.razorpay.com/v1/payments/pay_usd_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_usd_1", "entity": "payment", "amount": 10000, "currency": "USD", "status": "captured", "captured": true, "fee": 300 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_failed_http_capture_is_not_observed",
+      "url": "https://api.razorpay.com/v1/payments/pay_http_fail_1/capture",
+      "method": "POST",
+      "status_code": 500,
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_http_fail_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_payment_collection_is_not_a_payment_snapshot",
+      "url": "https://api.razorpay.com/v1/payments",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "entity": "collection", "count": 1, "items": [{ "id": "pay_collection_1", "entity": "payment", "currency": "INR", "status": "captured", "captured": true, "fee": 236 }] },
       "expected": []
     }
   ]

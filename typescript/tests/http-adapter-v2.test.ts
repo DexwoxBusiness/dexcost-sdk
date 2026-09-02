@@ -259,6 +259,66 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("records a native Razorpay live capture fee once without retaining credentials", async () => {
+    const responseBody = {
+      id: "pay_http_live_1",
+      entity: "payment",
+      amount: 10000,
+      currency: "INR",
+      status: "captured",
+      captured: true,
+      fee: 236,
+      tax: 36,
+      notes: { private: "do-not-retain" },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(responseBody),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "razorpay-capture" });
+    const headers = {
+      authorization: "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==",
+    };
+    await runWithTask(task, async () => {
+      await fetch("https://api.razorpay.com/v1/payments/pay_http_live_1/capture", {
+        method: "POST",
+        headers,
+      });
+      await fetch("https://api.razorpay.com/v1/payments/pay_http_live_1", { headers });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("razorpay_captured_payment_fee");
+    expect(event.details["provider_reported_cost_amount"]).toBe("2.36");
+    expect(event.details["provider_reported_cost_currency"]).toBe("INR");
+    const retained = JSON.stringify(event.details);
+    expect(retained).not.toContain("do-not-retain");
+    expect(retained).not.toContain("fixture_secret");
+    expect(retained).not.toContain("rzp_live_");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "razorpay",
+        service: "payment_processing",
+        record_id: "pay_http_live_1",
+      },
+      resource: { type: "sku", id: "payment_capture" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "2.36",
+        currency: "INR",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",

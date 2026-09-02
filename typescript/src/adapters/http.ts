@@ -2472,13 +2472,24 @@ async function _maybeRecordCost(
             const duration = observation.metric === "audio_seconds"
               ? { attribution_usage_duration_seconds: observation.quantity }
               : {};
+            const nativeProviderCost = observation.providerCostAmount === undefined ||
+                observation.providerCostCurrency === undefined
+              ? {}
+              : {
+                  provider_reported_cost_amount: observation.providerCostAmount,
+                  provider_reported_cost_currency: observation.providerCostCurrency,
+                };
+            const providerCostUsd = observation.providerCostUsd ??
+              (observation.providerCostCurrency === "USD"
+                ? observation.providerCostAmount
+                : undefined);
             const event = createCostEvent({
               eventId: _providerObservationEventId(observation),
               taskId: task.taskId,
               eventType: "external_cost",
-              costUsd: observation.providerCostUsd ?? 0,
-              costConfidence: observation.providerCostUsd === undefined ? "unknown" : "exact",
-              pricingSource: observation.providerCostUsd === undefined
+              costUsd: providerCostUsd ?? 0,
+              costConfidence: providerCostUsd === undefined ? "unknown" : "exact",
+              pricingSource: providerCostUsd === undefined
                 ? "unknown"
                 : "provider_response",
               provider: observation.providerName,
@@ -2498,6 +2509,7 @@ async function _maybeRecordCost(
                 ...(observation.providerRegion === undefined
                   ? {}
                   : { cloud_region: observation.providerRegion }),
+                ...nativeProviderCost,
                 ...duration,
                 ...byteDetailsRequestOnly,
               },

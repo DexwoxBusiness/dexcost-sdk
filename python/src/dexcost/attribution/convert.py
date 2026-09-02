@@ -211,6 +211,23 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
 
 
 def _evidence_for(event: Event) -> AttributionCostEvidenceV2 | None:
+    provider_amount = _positive_quantity(
+        _decimal_detail(event.details, "provider_reported_cost_amount")
+    )
+    provider_currency = _string_detail(
+        event.details, "provider_reported_cost_currency"
+    )
+    if (
+        provider_amount is not None
+        and provider_currency is not None
+        and re.fullmatch(r"[A-Z]{3}", provider_currency)
+    ):
+        return {
+            "amount": provider_amount,
+            "currency": provider_currency,
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
     amount = _positive_quantity(event.cost_usd)
     if amount is None:
         return None

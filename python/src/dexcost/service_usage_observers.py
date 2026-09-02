@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass
@@ -79,6 +81,9 @@ class UsageObserver:
     record_id_header: str | None
     provider_cost_usd_path: str | None
     provider_cost_usd_collection_sum_path: str | None
+    provider_cost_minor_units_path: str | None
+    provider_cost_currency_path: str | None
+    provider_cost_minor_unit_exponent: int | None
     source_url: str
 
 
@@ -96,6 +101,8 @@ class ServiceUsageObservation:
     provider_record_id: str | None = None
     provider_region: str | None = None
     provider_cost_usd: Decimal | None = None
+    provider_cost_amount: Decimal | None = None
+    provider_cost_currency: str | None = None
     dimensions: tuple[dict[str, Any], ...] = ()
 
 
@@ -405,9 +412,26 @@ def _request_header_predicate_matches(
     if operator == "absent":
         return not present
     value = request_headers.get(name)
+    if operator == "basic_username_prefix":
+        expected = predicate["value"]
+        return value == f"basic_username_prefix:{expected}" or _basic_username_has_prefix(
+            value, expected
+        )
     if operator == "equals":
         return present and value == predicate["value"]
     return present and value is not None and value in predicate["values"]
+
+
+def _basic_username_has_prefix(value: Any, prefix: str) -> bool:
+    if not isinstance(value, str) or not value.lower().startswith("basic "):
+        return False
+    encoded = value[6:].strip()
+    try:
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    username, separator, _password = decoded.partition(":")
+    return bool(separator) and username.startswith(prefix)
 
 
 def _valid_request_header_predicate(predicate: Any) -> bool:
@@ -424,7 +448,7 @@ def _valid_request_header_predicate(predicate: Any) -> bool:
     operator = predicate.get("operator")
     if operator in {"present", "absent"}:
         return set(predicate) == {"name", "operator"}
-    if operator == "equals":
+    if operator in {"equals", "basic_username_prefix"}:
         value = predicate.get("value")
         return (
             set(predicate) == {"name", "operator", "value"}
@@ -545,6 +569,8 @@ class ServiceUsageObservers:
                 "record_id_header",
                 "provider_cost_usd_path",
                 "provider_cost_usd_collection_sum_path",
+                "provider_cost_minor_units_path",
+                "provider_cost_currency_path",
                 "endpoint_match",
             )
             has_resource_selector = any(
@@ -588,6 +614,9 @@ class ServiceUsageObservers:
             minimum_quantity = definition.get("minimum_quantity")
             fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
+            provider_cost_minor_unit_exponent = definition.get(
+                "provider_cost_minor_unit_exponent"
+            )
             if (
                 definition["service_key"] in keys
                 or definition["usage_metric"] not in _METRICS
@@ -709,6 +738,32 @@ class ServiceUsageObservers:
                 or (
                     "provider_cost_usd_path" in definition
                     and "provider_cost_usd_collection_sum_path" in definition
+                )
+                or (
+                    sum(
+                        field in definition
+                        for field in (
+                            "provider_cost_minor_units_path",
+                            "provider_cost_currency_path",
+                            "provider_cost_minor_unit_exponent",
+                        )
+                    )
+                    not in {0, 3}
+                )
+                or (
+                    provider_cost_minor_unit_exponent is not None
+                    and (
+                        isinstance(provider_cost_minor_unit_exponent, bool)
+                        or not isinstance(provider_cost_minor_unit_exponent, int)
+                        or not 0 <= provider_cost_minor_unit_exponent <= 6
+                    )
+                )
+                or (
+                    provider_cost_minor_unit_exponent is not None
+                    and (
+                        "provider_cost_usd_path" in definition
+                        or "provider_cost_usd_collection_sum_path" in definition
+                    )
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
@@ -849,6 +904,15 @@ class ServiceUsageObservers:
                     provider_cost_usd_collection_sum_path=definition.get(
                         "provider_cost_usd_collection_sum_path"
                     ),
+                    provider_cost_minor_units_path=definition.get(
+                        "provider_cost_minor_units_path"
+                    ),
+                    provider_cost_currency_path=definition.get(
+                        "provider_cost_currency_path"
+                    ),
+                    provider_cost_minor_unit_exponent=(
+                        provider_cost_minor_unit_exponent
+                    ),
                     source_url=definition["source_url"],
                 )
             )
@@ -928,6 +992,8 @@ class ServiceUsageObservers:
                 or item.record_id_path
                 or item.provider_cost_usd_path
                 or item.provider_cost_usd_collection_sum_path
+                or item.provider_cost_minor_units_path
+                or item.provider_cost_currency_path
                 or item.response_all
                 or item.paired_response_collection_path
                 or item.quantity_multiplier_path
@@ -955,10 +1021,22 @@ class ServiceUsageObservers:
                 name = predicate["name"]
                 if name not in source:
                     continue
-                if predicate["operator"] in {"present", "absent"}:
+                operator = predicate["operator"]
+                if operator in {"present", "absent"}:
                     selected[name] = None
                     continue
                 raw = source[name]
+                if operator == "basic_username_prefix":
+                    if isinstance(raw, bytes):
+                        try:
+                            raw = raw.decode("ascii")
+                        except UnicodeDecodeError:
+                            continue
+                    if _basic_username_has_prefix(raw, predicate["value"]):
+                        selected[name] = (
+                            f"basic_username_prefix:{predicate['value']}"
+                        )
+                    continue
                 if isinstance(raw, bytes):
                     try:
                         selected[name] = raw.decode("ascii")
@@ -1166,6 +1244,33 @@ class ServiceUsageObservers:
                     provider_cost_usd += item_cost
                 if provider_cost_usd is None:
                     continue
+            provider_cost_amount = None
+            provider_cost_currency = None
+            if observer.provider_cost_minor_units_path:
+                raw_minor_cost = _resolve_path(
+                    response_body, observer.provider_cost_minor_units_path
+                )
+                raw_currency = _resolve_path(
+                    response_body, observer.provider_cost_currency_path or ""
+                )
+                if (
+                    isinstance(raw_minor_cost, bool)
+                    or not isinstance(raw_minor_cost, (int, float, str))
+                    or not isinstance(raw_currency, str)
+                    or len(raw_currency) != 3
+                    or not raw_currency.isalpha()
+                    or raw_currency != raw_currency.upper()
+                ):
+                    continue
+                try:
+                    minor_cost = Decimal(str(raw_minor_cost))
+                except (InvalidOperation, ValueError):
+                    continue
+                if not minor_cost.is_finite() or minor_cost < 0:
+                    continue
+                exponent = observer.provider_cost_minor_unit_exponent or 0
+                provider_cost_amount = minor_cost / (Decimal(10) ** exponent)
+                provider_cost_currency = raw_currency
             if observer.quantity_multiplier_query_parameter_count:
                 query_multiplier = len(
                     query.get(observer.quantity_multiplier_query_parameter_count, [])
@@ -1294,6 +1399,8 @@ class ServiceUsageObservers:
                     provider_record_id=record_id,
                     provider_region=provider_region,
                     provider_cost_usd=provider_cost_usd,
+                    provider_cost_amount=provider_cost_amount,
+                    provider_cost_currency=provider_cost_currency,
                     dimensions=tuple(dimensions),
                     manifest_version=self.manifest_version,
                 )

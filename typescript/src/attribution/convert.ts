@@ -164,6 +164,22 @@ export function attributionResourceFor(event: CostEvent): AttributionResourceV2 
 }
 
 export function attributionEvidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
+  const providerAmount = positiveQuantity(
+    stringDetail(event.details, "provider_reported_cost_amount"),
+  );
+  const providerCurrency = stringDetail(
+    event.details,
+    "provider_reported_cost_currency",
+  );
+  if (providerAmount !== undefined && providerCurrency !== undefined &&
+      /^[A-Z]{3}$/.test(providerCurrency)) {
+    return {
+      amount: providerAmount,
+      currency: providerCurrency,
+      source: "provider_reported",
+      confidence: "exact",
+    };
+  }
   const amount = positiveQuantity(event.costUsd);
   if (amount === undefined) return undefined;
   if (event.eventType === "retry_marker") {

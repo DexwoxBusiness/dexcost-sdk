@@ -69,13 +69,14 @@
       "type": "object", "additionalProperties": false, "required": ["name", "operator"],
       "properties": {
         "name": { "$ref": "#/$defs/headerName" },
-        "operator": { "enum": ["present", "absent", "equals", "one_of"] },
+        "operator": { "enum": ["present", "absent", "equals", "one_of", "basic_username_prefix"] },
         "value": { "type": "string", "minLength": 1, "maxLength": 256 },
         "values": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }
       },
       "allOf": [
         { "if": { "properties": { "operator": { "enum": ["present", "absent"] } } }, "then": { "not": { "anyOf": [{ "required": ["value"] }, { "required": ["values"] }] } } },
         { "if": { "properties": { "operator": { "const": "equals" } } }, "then": { "required": ["value"], "not": { "required": ["values"] } } },
+        { "if": { "properties": { "operator": { "const": "basic_username_prefix" } } }, "then": { "required": ["value"], "not": { "required": ["values"] } } },
         { "if": { "properties": { "operator": { "const": "one_of" } } }, "then": { "required": ["values"], "not": { "required": ["value"] } } }
       ]
     },
@@ -145,6 +146,9 @@
         "record_id_path": { "$ref": "#/$defs/jsonPath" },
         "provider_cost_usd_path": { "$ref": "#/$defs/jsonPath" },
         "provider_cost_usd_collection_sum_path": { "$ref": "#/$defs/jsonPath" },
+        "provider_cost_minor_units_path": { "$ref": "#/$defs/jsonPath" },
+        "provider_cost_currency_path": { "$ref": "#/$defs/jsonPath" },
+        "provider_cost_minor_unit_exponent": { "type": "integer", "minimum": 0, "maximum": 6 },
         "source_url": { "type": "string", "format": "uri", "pattern": "^https://" }
       },
       "oneOf": [
@@ -161,11 +165,15 @@
         "request_collection_all": ["request_collection_count_path"],
         "paired_response_collection_path": ["paired_response_all", "request_collection_count_path"],
         "paired_response_all": ["paired_response_collection_path", "request_collection_count_path"],
+        "provider_cost_minor_units_path": ["provider_cost_currency_path", "provider_cost_minor_unit_exponent"],
+        "provider_cost_currency_path": ["provider_cost_minor_units_path", "provider_cost_minor_unit_exponent"],
+        "provider_cost_minor_unit_exponent": ["provider_cost_minor_units_path", "provider_cost_currency_path"],
         "provider_region_domain_label": ["allowed_provider_regions"],
         "allowed_provider_regions": ["provider_region_domain_label"]
       },
       "allOf": [
         { "not": { "required": ["provider_cost_usd_path", "provider_cost_usd_collection_sum_path"] } },
+        { "if": { "required": ["provider_cost_minor_units_path"] }, "then": { "not": { "anyOf": [{ "required": ["provider_cost_usd_path"] }, { "required": ["provider_cost_usd_collection_sum_path"] }] } } },
         { "if": { "required": ["fixed_quantity"] }, "then": { "properties": { "usage_metric": { "const": "request_count" } } } },
         { "if": { "properties": { "usage_metric": { "const": "request_count" } }, "required": ["usage_metric"] }, "then": { "required": ["fixed_quantity"] } },
         { "if": { "required": ["minimum_quantity"] }, "then": { "anyOf": [{ "required": ["request_character_count_path"] }, { "required": ["request_character_count_query_parameter"] }] } },

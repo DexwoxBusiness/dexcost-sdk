@@ -74,6 +74,12 @@ def test_shared_service_usage_observer_conformance() -> None:
                 if actual.provider_cost_usd is not None
                 else None
             ) == wanted.get("provider_cost_usd")
+            assert (
+                str(actual.provider_cost_amount)
+                if actual.provider_cost_amount is not None
+                else None
+            ) == wanted.get("provider_cost_amount")
+            assert actual.provider_cost_currency == wanted.get("provider_cost_currency")
 
 
 def test_packaged_observer_manifest_matches_canonical_manifest() -> None:

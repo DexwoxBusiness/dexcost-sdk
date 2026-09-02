@@ -994,19 +994,35 @@ def _handle_usage_observer(
         }
         if observation.provider_region is not None:
             details["cloud_region"] = observation.provider_region
+        if (
+            observation.provider_cost_amount is not None
+            and observation.provider_cost_currency is not None
+        ):
+            details["provider_reported_cost_amount"] = str(
+                observation.provider_cost_amount
+            )
+            details["provider_reported_cost_currency"] = (
+                observation.provider_cost_currency
+            )
         if observation.metric == "audio_seconds":
             details["attribution_usage_duration_seconds"] = str(observation.quantity)
+        provider_cost_usd = observation.provider_cost_usd
+        if (
+            provider_cost_usd is None
+            and observation.provider_cost_currency == "USD"
+        ):
+            provider_cost_usd = observation.provider_cost_amount
         event = Event(
             event_id=_provider_observation_event_id(observation),
             task_id=task.task_id,
             event_type="external_cost",
-            cost_usd=observation.provider_cost_usd or Decimal("0"),
+            cost_usd=provider_cost_usd or Decimal("0"),
             cost_confidence=(
-                "exact" if observation.provider_cost_usd is not None else "unknown"
+                "exact" if provider_cost_usd is not None else "unknown"
             ),
             pricing_source=(
                 "provider_response"
-                if observation.provider_cost_usd is not None
+                if provider_cost_usd is not None
                 else None
             ),
             provider=observation.provider_name,
