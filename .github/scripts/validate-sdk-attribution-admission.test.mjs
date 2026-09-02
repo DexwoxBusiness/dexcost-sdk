@@ -75,6 +75,19 @@ test("rejects an invalid request predicate", () => {
   );
 });
 
+test("rejects an empty not-equals request predicate value", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "aws_translate",
+  );
+  observer.request_all[0].value = "";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer aws_translate has invalid request predicates",
+  );
+});
+
 test("rejects conformance dimensions that disagree with the observer", () => {
   const candidate = inputs();
   candidate.conformance.cases[0].expected[0].metric = "characters";

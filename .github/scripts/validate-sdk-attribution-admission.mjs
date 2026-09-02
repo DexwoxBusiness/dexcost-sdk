@@ -50,6 +50,10 @@ const FORBIDDEN_MONETARY_KEYS = new Set([
 // from the request endpoint. Keep this allowlist explicit and provider-scoped
 // so a documentation CDN cannot become a generic provenance bypass.
 const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
+  aws: Object.freeze([
+    Object.freeze({ apiRoot: "amazonaws.com", documentationRoot: "amazon.com" }),
+    Object.freeze({ apiRoot: "api.aws", documentationRoot: "amazon.com" }),
+  ]),
   google: Object.freeze([
     Object.freeze({ apiRoot: "googleapis.com", documentationRoot: "google.com" }),
   ]),
@@ -171,6 +175,9 @@ function caseTargetsObserver(testCase, observer) {
 
 function validRequestPredicate(predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
+  if (predicate.operator === "not_equals") {
+    return Object.keys(predicate).length === 3 && isNonEmptyString(predicate.value);
+  }
   if (
     predicate.operator === "absent_or_null" ||
     predicate.operator === "absent_or_false_or_null"
