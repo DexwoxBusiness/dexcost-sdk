@@ -1052,7 +1052,10 @@ function _patchNodeHttp(): void {
                   observerRequestBody,
                 );
               } else {
-                void _maybeRecordCost(urlStr);
+                void _maybeRecordCost(
+                  urlStr,
+                  _nodeResponseAsFetchResponse(response),
+                );
               }
             });
           } else {

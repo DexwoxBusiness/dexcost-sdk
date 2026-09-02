@@ -128,6 +128,56 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     });
   });
 
+  it("forwards Node responses to body-independent observers", async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    setServiceUsageObservers(new ServiceUsageObservers({
+      _meta: {
+        version: "test-node-body-independent",
+        observer_count: 1,
+        purpose: "test",
+      },
+      observers: [{
+        service_key: "google_custom_search",
+        provider_name: "google",
+        provider_service: "custom_search_json",
+        component: "external",
+        domains: ["127.0.0.1"],
+        endpoints: ["/search"],
+        endpoint_match: "exact",
+        fixed_quantity: "1",
+        usage_metric: "request_count",
+        resource_type: "sku",
+        fixed_resource_id: "cse.list",
+        source_url: "https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list",
+      }],
+    }));
+    const task = createTask({ taskId: "t-node-google-search" });
+
+    await runWithTask(task, () => new Promise<void>((resolve, reject) => {
+      const request = http.get(`${server.url}/search`, (response) => {
+        response.resume();
+        response.on("end", resolve);
+      });
+      request.on("error", reject);
+    }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await server.close();
+
+    const observations = getRecordedEvents().filter((event) =>
+      event.details?.attribution_observer_service === "google_custom_search"
+    );
+    expect(observations).toHaveLength(1);
+    expect(observations[0].details).toMatchObject({
+      attribution_usage_metric: "request_count",
+      attribution_usage_quantity: "1",
+      attribution_resource_type: "sku",
+      attribution_resource_id: "cse.list",
+    });
+  });
+
   it("records bytes into the registered accountant", async () => {
     const server = await startServer((req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });

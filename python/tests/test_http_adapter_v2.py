@@ -110,7 +110,7 @@ def _make_response(
 
 class TestKnownServiceExtraction:
     @pytest.mark.asyncio
-    async def test_aiohttp_json_body_is_observed_and_remains_readable(self) -> None:
+    async def test_aiohttp_json_body_is_observed_when_caller_materialises_it(self) -> None:
         task = _make_task("embedding")
 
         class FakeAiohttpResponse:
@@ -143,6 +143,8 @@ class TestKnownServiceExtraction:
             )
 
         assert returned is response
+        assert get_recorded_events() == []
+        assert (await response.json())["usage"]["total_tokens"] == 23
         wire = to_attribution_event_v2(get_recorded_events()[0])
         assert wire is not None
         assert wire["provider"] == {
@@ -154,6 +156,53 @@ class TestKnownServiceExtraction:
             {"metric": "input_tokens", "quantity": "23", "unit": "Tokens"}
         ]
         assert (await response.json())["usage"]["total_tokens"] == 23
+
+    @pytest.mark.asyncio
+    async def test_aiohttp_json_stream_is_not_drained_before_return(self) -> None:
+        task = _make_task("embedding-stream")
+
+        class FakeContent:
+            def __init__(self) -> None:
+                self._chunks = [b'{"usage":', b'{"prompt_tokens":23}}']
+
+            async def iter_chunked(self, size: int) -> Any:
+                del size
+                for chunk in self._chunks:
+                    yield chunk
+
+        class FakeAiohttpResponse:
+            status = 200
+
+            def __init__(self) -> None:
+                self.headers = {
+                    "content-type": "application/json",
+                    "content-length": "30",
+                }
+                self.content = FakeContent()
+                self.json_calls = 0
+
+            async def json(self) -> dict[str, Any]:
+                self.json_calls += 1
+                self.content._chunks.clear()
+                return {"usage": {"prompt_tokens": 23}}
+
+        response = FakeAiohttpResponse()
+
+        async def wrapped(*args: Any, **kwargs: Any) -> FakeAiohttpResponse:
+            return response
+
+        with task_context(task):
+            returned = await _aiohttp_wrapper(
+                wrapped,
+                None,
+                ("POST", "https://api.openai.com/v1/embeddings"),
+                {"json": {"model": "text-embedding-3-small", "input": "hello"}},
+            )
+            chunks = [chunk async for chunk in returned.content.iter_chunked(8)]
+
+        assert response.json_calls == 0
+        assert chunks == [b'{"usage":', b'{"prompt_tokens":23}}']
+        assert get_recorded_events() == []
 
     """HTTP calls to known services extract cost from response."""
 

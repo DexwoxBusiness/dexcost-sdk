@@ -430,7 +430,20 @@ async def _aiohttp_wrapper(
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
-    response_body = await _get_aiohttp_response_body(response)
+    observers = get_service_usage_observers()
+    if (
+        observers is not None
+        and observers.needs_response_body(url)
+        and _aiohttp_response_has_bounded_json(response)
+        and _defer_aiohttp_json_observation(
+            response,
+            url=url,
+            method=method,
+            request_body=request_body,
+            latency_ms=latency_ms,
+        )
+    ):
+        return response
     _handle_http_call(
         url,
         method=method,
@@ -438,7 +451,6 @@ async def _aiohttp_wrapper(
         request_body_len=0,
         request_body=request_body,
         response=response,
-        response_body=response_body,
         latency_ms=latency_ms,
     )
     return response
@@ -600,43 +612,73 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
     return None
 
 
-async def _get_aiohttp_response_body(response: Any) -> dict[str, Any] | None:
-    """Safely materialise a bounded aiohttp JSON response.
-
-    ``aiohttp.ClientResponse.json`` is asynchronous, so the synchronous
-    response helper cannot observe its body.  aiohttp caches ``read()`` in
-    the response object, which means awaiting a bounded JSON body here still
-    leaves it available to the caller.  Unknown-size and streaming responses
-    remain untouched.
-    """
+def _aiohttp_response_has_bounded_json(response: Any) -> bool:
     headers = _get_response_headers(response)
 
-    def _hdr(name: str) -> str:
+    def _header(name: str) -> str:
         target = name.lower()
-        for key, value in headers.items():
-            if key.lower() == target:
-                return value
-        return ""
+        return next(
+            (value for key, value in headers.items() if key.lower() == target),
+            "",
+        )
 
-    content_type = _hdr("content-type").lower()
+    content_type = _header("content-type").lower()
     if "application/json" not in content_type or "text/event-stream" in content_type:
-        return None
-    if "chunked" in _hdr("transfer-encoding").lower():
-        return None
-    content_length_raw = _hdr("content-length")
-    if not content_length_raw:
-        return None
+        return False
+    if "chunked" in _header("transfer-encoding").lower():
+        return False
+    content_length = _header("content-length")
+    if not content_length:
+        return False
     try:
-        if int(content_length_raw) > _MAX_BODY_SIZE:
-            return None
+        return 0 <= int(content_length) <= _MAX_BODY_SIZE
     except (TypeError, ValueError):
-        return None
+        return False
+
+
+def _defer_aiohttp_json_observation(
+    response: Any,
+    *,
+    url: str,
+    method: str,
+    request_body: Any,
+    latency_ms: int,
+) -> bool:
+    """Observe JSON only after the caller explicitly materialises it.
+
+    ``ClientSession._request`` returns before the caller chooses between
+    ``response.json()`` and streaming ``response.content``. Eagerly awaiting
+    JSON here would drain the public stream. Wrapping the response's JSON
+    method preserves that choice and records at most once after the caller
+    has already requested materialisation.
+    """
+    original_json = getattr(response, "json", None)
+    if not callable(original_json):
+        return False
+    recorded = False
+
+    async def observed_json(*json_args: Any, **json_kwargs: Any) -> Any:
+        nonlocal recorded
+        body = await original_json(*json_args, **json_kwargs)
+        if not recorded:
+            recorded = True
+            _handle_http_call(
+                url,
+                method=method,
+                request_headers={},
+                request_body_len=0,
+                request_body=request_body,
+                response=response,
+                response_body=body if isinstance(body, dict) else None,
+                latency_ms=latency_ms,
+            )
+        return body
 
     try:
-        body = await response.json()
+        response.json = observed_json
     except Exception:
-        return None
-    return body if isinstance(body, dict) else None
+        return False
+    return True
 
 
 def _response_body_len(response: Any) -> int:

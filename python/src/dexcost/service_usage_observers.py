@@ -596,6 +596,20 @@ class ServiceUsageObservers:
             )
         )
 
+    def needs_response_body(self, url: str) -> bool:
+        matched = self._lookup(url)
+        return bool(
+            matched
+            and any(
+                item.response_path
+                or item.resource_path
+                or item.record_id_path
+                or item.response_all
+                or item.quantity_multiplier_path
+                for item in matched[1]
+            )
+        )
+
     def observe(
         self,
         url: str,
