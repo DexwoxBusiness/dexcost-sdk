@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.19.0",
-  "conformance_schema_version": "11",
+  "observer_manifest_version": "1.20.0",
+  "conformance_schema_version": "12",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -35,6 +35,16 @@
         "jina_reranker_missing_usage_is_not_invented",
         "jina_reranker_unknown_model_is_not_assumed_to_use_public_pricing"
       ]
+    },
+    {
+      "service_key": "jina_reader",
+      "positive_cases": ["jina_reader_uses_authenticated_provider_reported_tokens"],
+      "fail_open_cases": ["jina_reader_anonymous_free_usage_is_not_priced"]
+    },
+    {
+      "service_key": "jina_search",
+      "positive_cases": ["jina_search_uses_provider_reported_minimum_tokens"],
+      "fail_open_cases": ["jina_search_missing_provider_usage_is_not_invented"]
     },
     {
       "service_key": "nomic_embeddings",

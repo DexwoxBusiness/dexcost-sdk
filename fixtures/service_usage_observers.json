@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.19.0",
-    "observer_count": 45,
+    "version": "1.20.0",
+    "observer_count": 47,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -83,6 +83,36 @@
         "jina-colbert-v2"
       ],
       "source_url": "https://api.jina.ai/openapi.json"
+    },
+    {
+      "service_key": "jina_reader",
+      "provider_name": "jina",
+      "provider_service": "reader",
+      "component": "external",
+      "domains": ["r.jina.ai"],
+      "endpoints": ["/"],
+      "endpoint_match": "prefix",
+      "response_quantity_header": "x-usage-tokens",
+      "request_header_all": [{ "name": "authorization", "operator": "present" }],
+      "usage_metric": "output_tokens",
+      "resource_type": "sku",
+      "fixed_resource_id": "standard_token",
+      "source_url": "https://jina.ai/reader/"
+    },
+    {
+      "service_key": "jina_search",
+      "provider_name": "jina",
+      "provider_service": "search",
+      "component": "external",
+      "domains": ["s.jina.ai"],
+      "endpoints": ["/"],
+      "endpoint_match": "prefix",
+      "response_quantity_header": "x-usage-tokens",
+      "request_header_all": [{ "name": "authorization", "operator": "present" }],
+      "usage_metric": "output_tokens",
+      "resource_type": "sku",
+      "fixed_resource_id": "standard_token",
+      "source_url": "https://jina.ai/reader/"
     },
     {
       "service_key": "nomic_embeddings",

@@ -620,6 +620,9 @@ function _buildInstrumentedFetch(
     const urlStr = scrubUrl(_resolveUrlStr(input));
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
+    const observerRequestHeaderNames = Object.keys(requestHeaders).map((name) =>
+      name.toLowerCase(),
+    );
     const requestBodyLen = _resolveRequestBodyLen(input, init);
     let potentialLlmFormat: LlmFormat | null = null;
     let knownLlmHost = false;
@@ -740,6 +743,7 @@ function _buildInstrumentedFetch(
         ? response.headers.get("llm_provider-x-litellm-response-cost") ?? undefined
         : undefined,
       observerRequestBody,
+      observerRequestHeaderNames,
     };
 
     // Wrap the response body in a TransformStream that counts bytes as
@@ -1044,19 +1048,16 @@ function _patchNodeHttp(): void {
           if (req && typeof req.on === "function") {
             req.on("response", (response: unknown) => {
               const observerRequestBody = readObserverRequestBody?.();
-              if (observerRequestBody !== undefined) {
-                void _maybeRecordCost(
-                  urlStr,
-                  _nodeResponseAsFetchResponse(response),
-                  undefined,
-                  observerRequestBody,
-                );
-              } else {
-                void _maybeRecordCost(
-                  urlStr,
-                  _nodeResponseAsFetchResponse(response),
-                );
-              }
+              const observerRequestHeaderNames = typeof req.getHeaderNames === "function"
+                ? req.getHeaderNames().map((name: string) => name.toLowerCase())
+                : [];
+              void _maybeRecordCost(
+                urlStr,
+                _nodeResponseAsFetchResponse(response),
+                undefined,
+                observerRequestBody,
+                observerRequestHeaderNames,
+              );
             });
           } else {
             void _maybeRecordCost(urlStr);
@@ -1307,6 +1308,8 @@ interface _HttpCallContext {
   liteLlmProviderCost?: string;
   /** Bounded JSON request metadata used only for observer billing identity. */
   observerRequestBody?: unknown;
+  /** Normalized names only; request-header values are never retained. */
+  observerRequestHeaderNames?: readonly string[];
   /** Response BODY bytes, known once the counting stream has drained.
    *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
    *  llm_call path, whose extraction drains the body via clone()) can
@@ -2149,6 +2152,7 @@ async function _maybeRecordCost(
   response?: Response,
   ctx?: _HttpCallContext,
   nodeObserverRequestBody?: unknown,
+  nodeObserverRequestHeaderNames: readonly string[] = [],
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -2389,6 +2393,7 @@ async function _maybeRecordCost(
           response.headers,
           observerResponseBody,
           ctx?.observerRequestBody ?? nodeObserverRequestBody,
+          ctx?.observerRequestHeaderNames ?? nodeObserverRequestHeaderNames,
         ) ?? [];
         if (observations.length > 0) {
           for (const observation of observations) {

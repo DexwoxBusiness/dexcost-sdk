@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
 _METRICS = {
     "input_tokens",
+    "output_tokens",
     "audio_seconds",
     "characters",
     "request_count",
@@ -21,6 +22,7 @@ _METRICS = {
 _COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
 _DOMAIN_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 _DOMAIN_LABEL_CHARS = _DOMAIN_EDGE_CHARS | {"-"}
+_HEADER_NAME_CHARS = _DOMAIN_EDGE_CHARS | frozenset("!#$%&'*+.^_`|~-")
 _LOG = logging.getLogger(__name__)
 
 
@@ -38,6 +40,7 @@ class UsageObserver:
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_all: tuple[dict[str, Any], ...]
+    request_header_all: tuple[dict[str, str], ...]
     request_character_count_path: str | None
     request_character_count_query_parameter: str | None
     request_character_count_case_insensitive: bool
@@ -272,6 +275,26 @@ def _valid_request_predicate(predicate: Any) -> bool:
     )
 
 
+def _request_header_predicate_matches(
+    request_header_names: frozenset[str], predicate: dict[str, str]
+) -> bool:
+    present = predicate["name"] in request_header_names
+    return present if predicate["operator"] == "present" else not present
+
+
+def _valid_request_header_predicate(predicate: Any) -> bool:
+    if not isinstance(predicate, dict) or set(predicate) != {"name", "operator"}:
+        return False
+    name = predicate.get("name")
+    return (
+        isinstance(name, str)
+        and bool(name)
+        and name == name.lower()
+        and all(character in _HEADER_NAME_CHARS for character in name)
+        and predicate.get("operator") in {"present", "absent"}
+    )
+
+
 class ServiceUsageObservers:
     def __init__(
         self,
@@ -350,6 +373,7 @@ class ServiceUsageObservers:
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
             request_all = definition.get("request_all", [])
+            request_header_all = definition.get("request_header_all", [])
             request_character_count_path = definition.get("request_character_count_path")
             request_character_count_query_parameter = definition.get(
                 "request_character_count_query_parameter"
@@ -455,6 +479,16 @@ class ServiceUsageObservers:
                 or not all(_valid_request_predicate(item) for item in request_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid request predicate")
+            if (
+                not isinstance(request_header_all, list)
+                or ("request_header_all" in definition and not request_header_all)
+                or not all(
+                    _valid_request_header_predicate(item) for item in request_header_all
+                )
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid request-header predicate"
+                )
             query_any = definition.get("query_any", [])
             query_all = definition.get("query_all", [])
             if (
@@ -497,6 +531,7 @@ class ServiceUsageObservers:
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
                     request_all=tuple(request_all),
+                    request_header_all=tuple(request_header_all),
                     request_character_count_path=request_character_count_path,
                     request_character_count_query_parameter=(
                         request_character_count_query_parameter
@@ -544,10 +579,9 @@ class ServiceUsageObservers:
             for candidate in self._observers
             if _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
             and any(
-                parsed.path == endpoint
-                or (
+                parsed.path == endpoint or (
                     candidate.endpoint_match == "prefix"
-                    and parsed.path.startswith(f"{endpoint}/")
+                    and (endpoint == "/" or parsed.path.startswith(f"{endpoint}/"))
                 )
                 for endpoint in candidate.endpoints
             )
@@ -581,6 +615,7 @@ class ServiceUsageObservers:
             _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
             and any(
                 parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
+                or endpoint == "/"
                 for endpoint in candidate.endpoints
             )
             for candidate in self._observers
@@ -618,6 +653,7 @@ class ServiceUsageObservers:
         response_headers: dict[str, str],
         response_body: dict[str, Any] | None,
         request_body: dict[str, Any] | list[Any] | None = None,
+        request_header_names: tuple[str, ...] | list[str] = (),
     ) -> list[ServiceUsageObservation]:
         matched = self._lookup(url)
         if matched is None:
@@ -625,10 +661,20 @@ class ServiceUsageObservers:
         parsed, observers = matched
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
+        normalized_request_header_names = frozenset(
+            name.lower() for name in request_header_names
+        )
         for observer in observers:
             if not all(
                 _request_predicate_matches(request_body, predicate)
                 for predicate in observer.request_all
+            ):
+                continue
+            if not all(
+                _request_header_predicate_matches(
+                    normalized_request_header_names, predicate
+                )
+                for predicate in observer.request_header_all
             ):
                 continue
             if not all(

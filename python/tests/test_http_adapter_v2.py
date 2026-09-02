@@ -321,6 +321,41 @@ class TestKnownServiceExtraction:
         ]
         assert "cost_evidence" not in wire
 
+    def test_authenticated_jina_reader_usage_does_not_retain_credentials(self) -> None:
+        task = _make_task("reader")
+        with task_context(task):
+            _handle_http_call(
+                "https://r.jina.ai/https://example.com/article",
+                request_headers={"Authorization": "Bearer must-not-be-recorded"},
+                response=_make_response(headers={"x-usage-tokens": "257"}, body=None),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        assert events[0].details["attribution_observer_service"] == "jina_reader"
+        wire = to_attribution_event_v2(events[0])
+        assert wire is not None
+        assert wire["provider"] == {"name": "jina", "service": "reader"}
+        assert wire["resource"] == {"type": "sku", "id": "standard_token"}
+        assert wire["usage"] == [
+            {"metric": "output_tokens", "quantity": "257", "unit": "Tokens"}
+        ]
+        assert "must-not-be-recorded" not in repr(events)
+
+    def test_anonymous_jina_reader_usage_is_not_priced(self) -> None:
+        task = _make_task("reader")
+        with task_context(task):
+            _handle_http_call(
+                "https://r.jina.ai/http://example.com",
+                response=_make_response(headers={"x-usage-tokens": "29"}, body=None),
+            )
+
+        assert not any(
+            event.details.get("attribution_observer_service") == "jina_reader"
+            or event.pricing_source == "service_catalog"
+            for event in get_recorded_events()
+        )
+
     def test_failed_brave_request_does_not_fall_back_to_legacy_price(self) -> None:
         task = _make_task("search")
         with task_context(task):

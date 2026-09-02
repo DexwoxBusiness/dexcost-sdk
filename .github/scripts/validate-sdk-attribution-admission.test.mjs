@@ -75,6 +75,19 @@ test("rejects an invalid request predicate", () => {
   );
 });
 
+test("rejects request-header predicates that could retain noncanonical names", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "jina_reader",
+  );
+  observer.request_header_all[0].name = "Authorization";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer jina_reader has invalid request-header predicates",
+  );
+});
+
 test("rejects an empty not-equals request predicate value", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

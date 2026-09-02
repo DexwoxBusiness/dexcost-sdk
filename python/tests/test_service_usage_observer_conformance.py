@@ -44,7 +44,11 @@ def test_shared_service_usage_observer_conformance() -> None:
     observers = ServiceUsageObservers()
     for case in fixture["cases"]:
         observed = observers.observe(
-            case["url"], case["headers"], case["response"], case.get("request")
+            case["url"],
+            case["headers"],
+            case["response"],
+            case.get("request"),
+            case.get("request_headers", []),
         )
         expected: list[dict[str, Any]] = case["expected"]
         assert len(observed) == len(expected), case["name"]

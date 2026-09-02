@@ -98,6 +98,47 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("observes authenticated Jina Reader tokens without retaining credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
+      status: 200,
+      headers: { "x-usage-tokens": "257" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "reader" });
+    await runWithTask(task, async () => {
+      await fetch("https://r.jina.ai/https://example.com/article", {
+        headers: { Authorization: "Bearer must-not-be-recorded" },
+      });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].details["attribution_observer_service"]).toBe("jina_reader");
+    expect(toAttributionEventV2(events[0])).toMatchObject({
+      provider: { name: "jina", service: "reader" },
+      resource: { type: "sku", id: "standard_token" },
+      usage: [{ metric: "output_tokens", quantity: "257", unit: "Tokens" }],
+    });
+    expect(JSON.stringify(events)).not.toContain("must-not-be-recorded");
+  });
+
+  it("does not price anonymous Jina Reader usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
+      status: 200,
+      headers: { "x-usage-tokens": "29" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "reader" });
+    await runWithTask(task, async () => {
+      await fetch("https://r.jina.ai/http://example.com");
+    });
+
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "jina_reader" ||
+        event.pricingSource === "service_catalog",
+    )).toBe(false);
+  });
+
   it("does not apply the legacy Brave price to a failed search request", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: "unavailable",

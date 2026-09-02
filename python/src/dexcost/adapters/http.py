@@ -945,6 +945,7 @@ def _handle_usage_observer(
     status_code: int,
     byte_details: dict[str, Any],
     request_body: dict[str, Any] | list[Any] | None,
+    request_header_names: tuple[str, ...],
 ) -> bool:
     """Record provider-owned usage without asserting an SDK-side price."""
     if status_code < 200 or status_code >= 300:
@@ -957,6 +958,7 @@ def _handle_usage_observer(
         response_headers,
         response_body if response_body is not None else _get_response_body(response),
         request_body,
+        request_header_names,
     )
     if not observations:
         return False
@@ -1166,6 +1168,7 @@ def _handle_http_call_inner(
             status_code,
             byte_details,
             request_body,
+            tuple(str(name).lower() for name in request_headers),
         ):
             return
     # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────

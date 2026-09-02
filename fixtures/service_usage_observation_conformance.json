@@ -1,5 +1,5 @@
 {
-  "schema_version": "11",
+  "schema_version": "12",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -90,6 +90,38 @@
       "headers": {},
       "request": { "model": "jina-reranker-v4-unverified", "query": "DexCost", "documents": ["Usage attribution"] },
       "response": { "model": "jina-reranker-v4-unverified", "usage": { "total_tokens": 2813 }, "results": [] },
+      "expected": []
+    },
+    {
+      "name": "jina_reader_uses_authenticated_provider_reported_tokens",
+      "url": "https://r.jina.ai/https://example.com/article",
+      "headers": { "x-usage-tokens": "257" },
+      "request_headers": ["Authorization", "Accept"],
+      "response": null,
+      "expected": [{ "service_key": "jina_reader", "provider_name": "jina", "provider_service": "reader", "component": "external", "metric": "output_tokens", "quantity": "257", "resource_type": "sku", "resource_id": "standard_token" }]
+    },
+    {
+      "name": "jina_reader_anonymous_free_usage_is_not_priced",
+      "url": "https://r.jina.ai/http://example.com",
+      "headers": { "x-usage-tokens": "29" },
+      "request_headers": ["Accept"],
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "jina_search_uses_provider_reported_minimum_tokens",
+      "url": "https://s.jina.ai/DexCost%20pricing",
+      "headers": { "x-usage-tokens": "10000" },
+      "request_headers": ["authorization"],
+      "response": null,
+      "expected": [{ "service_key": "jina_search", "provider_name": "jina", "provider_service": "search", "component": "external", "metric": "output_tokens", "quantity": "10000", "resource_type": "sku", "resource_id": "standard_token" }]
+    },
+    {
+      "name": "jina_search_missing_provider_usage_is_not_invented",
+      "url": "https://s.jina.ai/DexCost%20pricing",
+      "headers": {},
+      "request_headers": ["authorization"],
+      "response": null,
       "expected": []
     },
     {

@@ -183,6 +183,16 @@ function requestPredicateMatches(request, predicate) {
     value <= predicate.value;
 }
 
+function requestHeaderPredicateMatches(requestHeaders, predicate) {
+  const normalized = new Set(
+    (Array.isArray(requestHeaders) ? requestHeaders : [])
+      .filter((name) => typeof name === "string")
+      .map((name) => name.toLowerCase()),
+  );
+  const present = normalized.has(predicate.name);
+  return predicate.operator === "present" ? present : !present;
+}
+
 function caseTargetsObserver(testCase, observer) {
   let url;
   try {
@@ -196,7 +206,8 @@ function caseTargetsObserver(testCase, observer) {
     Array.isArray(observer.endpoints) &&
     observer.endpoints.some(
       (endpoint) =>
-        url.pathname === endpoint || url.pathname.startsWith(`${endpoint}/`),
+        url.pathname === endpoint || endpoint === "/" ||
+          url.pathname.startsWith(`${endpoint}/`),
     );
   if (!domainMatches || !endpointMatches) return false;
 
@@ -204,6 +215,15 @@ function caseTargetsObserver(testCase, observer) {
     Array.isArray(observer.request_all) &&
     !observer.request_all.every((predicate) =>
       requestPredicateMatches(testCase.request, predicate),
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    Array.isArray(observer.request_header_all) &&
+    !observer.request_header_all.every((predicate) =>
+      requestHeaderPredicateMatches(testCase.request_headers, predicate),
     )
   ) {
     return false;
@@ -247,6 +267,14 @@ function validRequestPredicate(predicate) {
     typeof predicate.value === "number" && Number.isFinite(predicate.value);
 }
 
+function validRequestHeaderPredicate(predicate) {
+  return isObject(predicate) &&
+    Object.keys(predicate).length === 2 &&
+    typeof predicate.name === "string" &&
+    /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(predicate.name) &&
+    ["present", "absent"].includes(predicate.operator);
+}
+
 function caseExercisesObserverEndpointBoundary(testCase, observer) {
   let url;
   try {
@@ -265,7 +293,8 @@ function caseExercisesObserverEndpointBoundary(testCase, observer) {
     Array.isArray(observer.endpoints) &&
     observer.endpoints.some(
       (endpoint) =>
-        url.pathname === endpoint || url.pathname.startsWith(`${endpoint}/`),
+        url.pathname === endpoint || endpoint === "/" ||
+          url.pathname.startsWith(`${endpoint}/`),
     ) &&
     !caseTargetsObserver(testCase, observer)
   );
@@ -349,6 +378,14 @@ function validateObserverShape(observer, issues) {
       !observer.request_all.every(validRequestPredicate))
   ) {
     issues.push(`observer ${key} has invalid request predicates`);
+  }
+  if (
+    observer?.request_header_all !== undefined &&
+    (!Array.isArray(observer.request_header_all) ||
+      observer.request_header_all.length === 0 ||
+      !observer.request_header_all.every(validRequestHeaderPredicate))
+  ) {
+    issues.push(`observer ${key} has invalid request-header predicates`);
   }
   for (const field of ["query_any", "query_all"]) {
     if (

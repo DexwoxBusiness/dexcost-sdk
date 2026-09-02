@@ -5,6 +5,7 @@ import { Decimal } from "../core/models.js";
 
 export type ObservedUsageMetric =
   | "input_tokens"
+  | "output_tokens"
   | "audio_seconds"
   | "characters"
   | "request_count"
@@ -40,6 +41,11 @@ interface RequestPredicate {
   value?: number | string;
 }
 
+interface RequestHeaderPredicate {
+  name: string;
+  operator: "present" | "absent";
+}
+
 export interface ObservedBillingDimension {
   key: string;
   value: { type: "string"; value: string };
@@ -58,6 +64,7 @@ interface UsageObserverDefinition {
   response_quantity_header?: string;
   response_all?: ResponsePredicate[];
   request_all?: RequestPredicate[];
+  request_header_all?: RequestHeaderPredicate[];
   request_character_count_path?: string;
   request_character_count_query_parameter?: string;
   request_character_count_case_insensitive?: true;
@@ -106,6 +113,7 @@ export interface ServiceUsageObservation {
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const METRICS = new Set<ObservedUsageMetric>([
   "input_tokens",
+  "output_tokens",
   "audio_seconds",
   "characters",
   "request_count",
@@ -183,7 +191,26 @@ function positiveDecimal(value: unknown): string | undefined {
 }
 
 function endpointMatches(pathname: string, endpoint: string, mode: "exact" | "prefix" = "prefix"): boolean {
-  return pathname === endpoint || (mode === "prefix" && pathname.startsWith(`${endpoint}/`));
+  return pathname === endpoint ||
+    (mode === "prefix" && (endpoint === "/" || pathname.startsWith(`${endpoint}/`)));
+}
+
+function requestHeaderPredicateMatches(
+  requestHeaderNames: ReadonlySet<string>,
+  predicate: RequestHeaderPredicate,
+): boolean {
+  const present = requestHeaderNames.has(predicate.name.toLowerCase());
+  return predicate.operator === "present" ? present : !present;
+}
+
+function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHeaderPredicate {
+  if (predicate === null || typeof predicate !== "object") return false;
+  const candidate = predicate as Partial<RequestHeaderPredicate>;
+  return Object.keys(candidate).length === 2 &&
+    typeof candidate.name === "string" &&
+    /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(candidate.name) &&
+    candidate.name === candidate.name.toLowerCase() &&
+    (candidate.operator === "present" || candidate.operator === "absent");
 }
 
 function queryValueIsTruthy(value: string | null): boolean {
@@ -410,6 +437,11 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.request_all.length === 0 ||
         !observer.request_all.every(validRequestPredicate)
       )) ||
+      (observer.request_header_all !== undefined && (
+        !Array.isArray(observer.request_header_all) ||
+        observer.request_header_all.length === 0 ||
+        !observer.request_header_all.every(validRequestHeaderPredicate)
+      )) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
         !observer.query_any.every(validQueryPredicate)
@@ -491,7 +523,7 @@ export class ServiceUsageObservers {
     return this.observers.some(
       (observer) => domainMatches(parsed.hostname, observer) &&
         observer.endpoints.some((endpoint) =>
-          parsed.pathname === endpoint || parsed.pathname.startsWith(`${endpoint}/`)),
+          endpointMatches(parsed.pathname, endpoint, "prefix")),
     );
   }
 
@@ -518,15 +550,26 @@ export class ServiceUsageObservers {
     headers: Headers,
     responseBody: unknown,
     requestBody?: unknown,
+    requestHeaderNames: readonly string[] = [],
   ): ServiceUsageObservation[] {
     const matched = this.lookup(url);
     if (matched === undefined) return [];
     const observations: ServiceUsageObservation[] = [];
+    const normalizedRequestHeaderNames = new Set(
+      requestHeaderNames.map((name) => name.toLowerCase()),
+    );
     for (const observer of matched.observers) {
       if (
         observer.request_all !== undefined &&
         !observer.request_all.every((predicate) =>
           requestPredicateMatches(requestBody, predicate))
+      ) {
+        continue;
+      }
+      if (
+        observer.request_header_all !== undefined &&
+        !observer.request_header_all.every((predicate) =>
+          requestHeaderPredicateMatches(normalizedRequestHeaderNames, predicate))
       ) {
         continue;
       }
