@@ -191,6 +191,74 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
   });
 
+  it("records a summed PayPal order-capture fee once without retaining response content", async () => {
+    const responseBody = {
+      id: "PAYPAL-ORDER-HTTP-1",
+      status: "COMPLETED",
+      purchase_units: [
+        {
+          private_reference: "do-not-retain",
+          payments: {
+            captures: [{
+              id: "CAPTURE-HTTP-1",
+              status: "COMPLETED",
+              seller_receivable_breakdown: {
+                paypal_fee: { currency_code: "USD", value: "3.98" },
+              },
+            }],
+          },
+        },
+        {
+          payments: {
+            captures: [{
+              id: "CAPTURE-HTTP-2",
+              status: "COMPLETED",
+              seller_receivable_breakdown: {
+                paypal_fee: { currency_code: "USD", value: "1.25" },
+              },
+            }],
+          },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(responseBody),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "paypal-capture" });
+    await runWithTask(task, async () => {
+      const url = "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-HTTP-1/capture";
+      await fetch(url, { method: "POST" });
+      await fetch(url, { method: "POST" });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("5.23");
+    expect(event.costConfidence).toBe("exact");
+    expect(event.pricingSource).toBe("provider_response");
+    expect(event.details["attribution_observer_service"])
+      .toBe("paypal_order_capture_fee");
+    expect(JSON.stringify(event.details)).not.toContain("do-not-retain");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "paypal",
+        service: "payment_processing",
+        record_id: "PAYPAL-ORDER-HTTP-1",
+      },
+      resource: { type: "sku", id: "payment_capture" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "5.23",
+        currency: "USD",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",

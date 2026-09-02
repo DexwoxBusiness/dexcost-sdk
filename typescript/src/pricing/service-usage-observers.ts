@@ -33,7 +33,7 @@ interface ResourceVariant {
 
 interface ResponsePredicate {
   path: string;
-  operator: "equals" | "one_of" | "non_empty";
+  operator: "equals" | "collection_all_equals" | "one_of" | "non_empty";
   value?: string | number | boolean;
   values?: Array<string | number | boolean>;
 }
@@ -122,6 +122,7 @@ interface UsageObserverDefinition {
   record_id_path?: string;
   record_id_header?: string;
   provider_cost_usd_path?: string;
+  provider_cost_usd_collection_sum_path?: string;
   source_url: string;
 }
 
@@ -381,6 +382,11 @@ function domainMatches(hostname: string, observer: UsageObserverDefinition): boo
 }
 
 function responsePredicateMatches(value: unknown, predicate: ResponsePredicate): boolean {
+  if (predicate.operator === "collection_all_equals") {
+    const resolved = resolveCollectionPath(value, predicate.path);
+    return resolved !== undefined && resolved.length > 0 &&
+      resolved.every((candidate) => candidate === predicate.value);
+  }
   const resolved = resolvePath(value, predicate.path);
   if (predicate.operator === "equals") return resolved === predicate.value;
   if (predicate.operator === "one_of") {
@@ -409,7 +415,7 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
       new Set(candidate.values.map((value) => `${typeof value}:${String(value)}`)).size ===
         candidate.values.length;
   }
-  return candidate.operator === "equals" &&
+  return (candidate.operator === "equals" || candidate.operator === "collection_all_equals") &&
     Object.keys(candidate).length === 3 &&
     (typeof candidate.value === "string" ||
       typeof candidate.value === "boolean" ||
@@ -522,6 +528,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.record_id_path,
       observer.record_id_header,
       observer.provider_cost_usd_path,
+      observer.provider_cost_usd_collection_sum_path,
       observer.endpoint_match,
     ];
     const hasResourceSelector = [
@@ -626,6 +633,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.request_character_count_query_parameter === undefined) ||
       (observer.quantity_multiplier_query_parameter_count !== undefined &&
         observer.quantity_multiplier_path !== undefined) ||
+      (observer.provider_cost_usd_path !== undefined &&
+        observer.provider_cost_usd_collection_sum_path !== undefined) ||
       (observer.response_all !== undefined && (
         !Array.isArray(observer.response_all) ||
         observer.response_all.length === 0 ||
@@ -759,6 +768,7 @@ export class ServiceUsageObservers {
         observer.resource_path !== undefined ||
         observer.record_id_path !== undefined ||
         observer.provider_cost_usd_path !== undefined ||
+        observer.provider_cost_usd_collection_sum_path !== undefined ||
         observer.response_all !== undefined ||
         observer.paired_response_collection_path !== undefined ||
         observer.quantity_multiplier_path !== undefined,
@@ -931,19 +941,35 @@ export class ServiceUsageObservers {
         quantity = quantity.mul(multiplier);
       }
       let providerCostUsd: string | undefined;
-      if (observer.provider_cost_usd_path !== undefined) {
-        const rawProviderCost = resolvePath(responseBody, observer.provider_cost_usd_path);
-        if (typeof rawProviderCost !== "number" && typeof rawProviderCost !== "string") {
-          continue;
+      const providerCostValues = observer.provider_cost_usd_path !== undefined
+        ? [resolvePath(responseBody, observer.provider_cost_usd_path)]
+        : observer.provider_cost_usd_collection_sum_path !== undefined
+          ? resolveCollectionPath(responseBody, observer.provider_cost_usd_collection_sum_path)
+          : undefined;
+      if (providerCostValues !== undefined) {
+        if (providerCostValues.length === 0) continue;
+        let providerCost = new Decimal(0);
+        let validProviderCost = true;
+        for (const rawProviderCost of providerCostValues) {
+          if (typeof rawProviderCost !== "number" && typeof rawProviderCost !== "string") {
+            validProviderCost = false;
+            break;
+          }
+          try {
+            const itemCost = new Decimal(rawProviderCost);
+            if (!itemCost.isFinite() || itemCost.lt(0)) {
+              validProviderCost = false;
+              break;
+            }
+            providerCost = providerCost.add(itemCost);
+          } catch {
+            validProviderCost = false;
+            break;
+          }
         }
-        try {
-          const parsedProviderCost = new Decimal(rawProviderCost);
-          if (!parsedProviderCost.isFinite() || parsedProviderCost.lt(0)) continue;
-          providerCostUsd = parsedProviderCost.toFixed()
-            .replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1");
-        } catch {
-          continue;
-        }
+        if (!validProviderCost) continue;
+        providerCostUsd = providerCost.toFixed()
+          .replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1");
       }
       if (
         observer.quantity_multiplier_path !== undefined &&

@@ -78,6 +78,7 @@ class UsageObserver:
     record_id_path: str | None
     record_id_header: str | None
     provider_cost_usd_path: str | None
+    provider_cost_usd_collection_sum_path: str | None
     source_url: str
 
 
@@ -265,6 +266,13 @@ def _valid_domain_suffix(value: Any) -> bool:
 
 
 def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    if predicate["operator"] == "collection_all_equals":
+        resolved = _resolve_collection_path(value, predicate["path"])
+        return bool(resolved) and all(
+            candidate == predicate["value"]
+            and type(candidate) is type(predicate["value"])
+            for candidate in resolved
+        )
     resolved = _resolve_path(value, predicate["path"])
     if predicate["operator"] == "equals":
         return resolved == predicate["value"] and type(resolved) is type(predicate["value"])
@@ -302,7 +310,7 @@ def _valid_response_predicate(predicate: Any) -> bool:
         return len(typed_values) == len(values)
     value = predicate.get("value")
     return (
-        predicate.get("operator") == "equals"
+        predicate.get("operator") in {"equals", "collection_all_equals"}
         and set(predicate) == {"path", "operator", "value"}
         and type(value) in {str, bool, int, float}
         and (not isinstance(value, float) or value == value)
@@ -536,6 +544,7 @@ class ServiceUsageObservers:
                 "record_id_path",
                 "record_id_header",
                 "provider_cost_usd_path",
+                "provider_cost_usd_collection_sum_path",
                 "endpoint_match",
             )
             has_resource_selector = any(
@@ -697,6 +706,10 @@ class ServiceUsageObservers:
                     "quantity_multiplier_query_parameter_count" in definition
                     and "quantity_multiplier_path" in definition
                 )
+                or (
+                    "provider_cost_usd_path" in definition
+                    and "provider_cost_usd_collection_sum_path" in definition
+                )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
             if (
@@ -833,6 +846,9 @@ class ServiceUsageObservers:
                     record_id_path=definition.get("record_id_path"),
                     record_id_header=definition.get("record_id_header"),
                     provider_cost_usd_path=definition.get("provider_cost_usd_path"),
+                    provider_cost_usd_collection_sum_path=definition.get(
+                        "provider_cost_usd_collection_sum_path"
+                    ),
                     source_url=definition["source_url"],
                 )
             )
@@ -911,6 +927,7 @@ class ServiceUsageObservers:
                 or item.resource_path
                 or item.record_id_path
                 or item.provider_cost_usd_path
+                or item.provider_cost_usd_collection_sum_path
                 or item.response_all
                 or item.paired_response_collection_path
                 or item.quantity_multiplier_path
@@ -1121,17 +1138,33 @@ class ServiceUsageObservers:
             if not quantity.is_finite() or quantity <= 0:
                 continue
             provider_cost_usd = None
+            provider_cost_values: list[Any] | None = None
             if observer.provider_cost_usd_path:
-                raw_provider_cost = _resolve_path(
-                    response_body, observer.provider_cost_usd_path
+                provider_cost_values = [
+                    _resolve_path(response_body, observer.provider_cost_usd_path)
+                ]
+            elif observer.provider_cost_usd_collection_sum_path:
+                provider_cost_values = _resolve_collection_path(
+                    response_body, observer.provider_cost_usd_collection_sum_path
                 )
-                if isinstance(raw_provider_cost, bool):
+                if not provider_cost_values:
                     continue
-                try:
-                    provider_cost_usd = Decimal(str(raw_provider_cost))
-                except (InvalidOperation, ValueError):
-                    continue
-                if not provider_cost_usd.is_finite() or provider_cost_usd < 0:
+            if provider_cost_values is not None:
+                provider_cost_usd = Decimal(0)
+                for raw_provider_cost in provider_cost_values:
+                    if isinstance(raw_provider_cost, bool):
+                        provider_cost_usd = None
+                        break
+                    try:
+                        item_cost = Decimal(str(raw_provider_cost))
+                    except (InvalidOperation, ValueError):
+                        provider_cost_usd = None
+                        break
+                    if not item_cost.is_finite() or item_cost < 0:
+                        provider_cost_usd = None
+                        break
+                    provider_cost_usd += item_cost
+                if provider_cost_usd is None:
                     continue
             if observer.quantity_multiplier_query_parameter_count:
                 query_multiplier = len(

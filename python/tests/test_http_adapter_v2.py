@@ -411,6 +411,83 @@ class TestKnownServiceExtraction:
         ]
         assert "cost_evidence" not in wire
 
+    def test_paypal_order_capture_records_summed_fee_once_without_response_content(
+        self,
+    ) -> None:
+        task = _make_task("paypal-capture")
+        response_body = {
+            "id": "PAYPAL-ORDER-HTTP-1",
+            "status": "COMPLETED",
+            "purchase_units": [
+                {
+                    "private_reference": "do-not-retain",
+                    "payments": {
+                        "captures": [
+                            {
+                                "id": "CAPTURE-HTTP-1",
+                                "status": "COMPLETED",
+                                "seller_receivable_breakdown": {
+                                    "paypal_fee": {
+                                        "currency_code": "USD",
+                                        "value": "3.98",
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                },
+                {
+                    "payments": {
+                        "captures": [
+                            {
+                                "id": "CAPTURE-HTTP-2",
+                                "status": "COMPLETED",
+                                "seller_receivable_breakdown": {
+                                    "paypal_fee": {
+                                        "currency_code": "USD",
+                                        "value": "1.25",
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                },
+            ],
+        }
+        with task_context(task):
+            for _ in range(2):
+                _handle_http_call(
+                    "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-HTTP-1/capture",
+                    method="POST",
+                    response=_make_response(body=response_body),
+                )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.cost_usd == Decimal("5.23")
+        assert event.cost_confidence == "exact"
+        assert event.pricing_source == "provider_response"
+        assert event.details["attribution_observer_service"] == "paypal_order_capture_fee"
+        assert "do-not-retain" not in json.dumps(event.details)
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "paypal",
+            "service": "payment_processing",
+            "record_id": "PAYPAL-ORDER-HTTP-1",
+        }
+        assert wire["resource"] == {"type": "sku", "id": "payment_capture"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert wire["cost_evidence"] == {
+            "amount": "5.23",
+            "currency": "USD",
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
+
     def test_runway_records_final_credits_once_without_response_content(self) -> None:
         task = _make_task("runway-generation")
         with task_context(task):

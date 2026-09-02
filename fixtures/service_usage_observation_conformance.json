@@ -1,5 +1,5 @@
 {
-  "schema_version": "25",
+  "schema_version": "26",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1726,6 +1726,79 @@
       "status_code": 500,
       "headers": {},
       "response": { "id": "runway-http-error-1", "status": "FAILED", "cost": { "credits": 2 } },
+      "expected": []
+    },
+    {
+      "name": "paypal_order_capture_sums_completed_usd_fees",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-1/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-1", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-1", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }, { "payments": { "captures": [{ "id": "CAPTURE-2", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "1.25" } } }] } }] },
+      "expected": [{ "service_key": "paypal_order_capture_fee", "provider_name": "paypal", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "PAYPAL-ORDER-1", "provider_cost_usd": "5.23" }]
+    },
+    {
+      "name": "paypal_authorization_capture_uses_completed_usd_fee",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-1/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-3", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } },
+      "expected": [{ "service_key": "paypal_authorization_capture_fee", "provider_name": "paypal", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "CAPTURE-3", "provider_cost_usd": "3.98" }]
+    },
+    {
+      "name": "paypal_pending_order_capture_fails_open",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-PENDING/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-PENDING", "status": "PENDING", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-PENDING", "status": "PENDING" }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_non_usd_order_capture_does_not_invent_conversion",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-EUR/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-EUR", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-EUR", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "EUR", "value": "3.50" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_order_capture_missing_fee_fails_open",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-NOFEE/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-NOFEE", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-NOFEE", "status": "COMPLETED", "seller_receivable_breakdown": {} }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_sandbox_capture_is_not_real_cost",
+      "url": "https://api-m.sandbox.paypal.com/v2/checkout/orders/PAYPAL-SANDBOX/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-SANDBOX", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-SANDBOX", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_failed_http_capture_is_not_observed",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-HTTP-FAIL/capture",
+      "method": "POST",
+      "status_code": 500,
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-HTTP-FAIL", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-HTTP-FAIL", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_pending_authorization_capture_fails_open",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-PENDING/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-PENDING-2", "status": "PENDING", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } },
+      "expected": []
+    },
+    {
+      "name": "paypal_non_usd_authorization_capture_does_not_invent_conversion",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-EUR/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-EUR-2", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "EUR", "value": "3.50" } } },
       "expected": []
     }
   ]

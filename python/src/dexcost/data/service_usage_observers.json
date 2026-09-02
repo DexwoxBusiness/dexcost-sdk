@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.33.0",
-    "observer_count": 82,
+    "version": "1.34.0",
+    "observer_count": 84,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1718,6 +1718,51 @@
       "fixed_resource_id": "generation",
       "record_id_path": "id",
       "source_url": "https://docs.dev.runwayml.com/api/"
+    },
+    {
+      "service_key": "paypal_order_capture_fee",
+      "provider_name": "paypal",
+      "provider_service": "payment_processing",
+      "component": "external",
+      "domains": ["api-m.paypal.com"],
+      "endpoints": ["/v2/checkout/orders/{id}/capture"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "id", "operator": "non_empty" },
+        { "path": "status", "operator": "equals", "value": "COMPLETED" },
+        { "path": "purchase_units[].payments.captures[].status", "operator": "collection_all_equals", "value": "COMPLETED" },
+        { "path": "purchase_units[].payments.captures[].seller_receivable_breakdown.paypal_fee.currency_code", "operator": "collection_all_equals", "value": "USD" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "payment_capture",
+      "record_id_path": "id",
+      "provider_cost_usd_collection_sum_path": "purchase_units[].payments.captures[].seller_receivable_breakdown.paypal_fee.value",
+      "source_url": "https://developer.paypal.com/api/orders/v2/#orders_capture"
+    },
+    {
+      "service_key": "paypal_authorization_capture_fee",
+      "provider_name": "paypal",
+      "provider_service": "payment_processing",
+      "component": "external",
+      "domains": ["api-m.paypal.com"],
+      "endpoints": ["/v2/payments/authorizations/{id}/capture"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "id", "operator": "non_empty" },
+        { "path": "status", "operator": "equals", "value": "COMPLETED" },
+        { "path": "seller_receivable_breakdown.paypal_fee.currency_code", "operator": "equals", "value": "USD" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "payment_capture",
+      "record_id_path": "id",
+      "provider_cost_usd_path": "seller_receivable_breakdown.paypal_fee.value",
+      "source_url": "https://developer.paypal.com/api/payments/v2/authorizations-capture"
     }
   ]
 }

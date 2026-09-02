@@ -201,6 +201,11 @@ function observerEndpointMatches(observer, pathname, boundary = false) {
 
 function responsePredicateMatches(response, predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
+  if (predicate.operator === "collection_all_equals") {
+    const values = resolveCollectionPath(response, predicate.path);
+    return values !== undefined && values.length > 0 &&
+      values.every((value) => value === predicate.value);
+  }
   const value = resolvePath(response, predicate.path);
   if (predicate.operator === "equals") return value === predicate.value;
   if (predicate.operator === "one_of") {
@@ -637,6 +642,12 @@ function validateObserverShape(observer, issues) {
   ].filter(isNonEmptyString);
   if (quantitySources.length !== 1) {
     issues.push(`observer ${key} must declare exactly one usage quantity source`);
+  }
+  if (
+    isNonEmptyString(observer?.provider_cost_usd_path) &&
+    isNonEmptyString(observer?.provider_cost_usd_collection_sum_path)
+  ) {
+    issues.push(`observer ${key} declares conflicting provider cost sources`);
   }
   if (observer?.fixed_quantity !== undefined && observer.fixed_quantity !== "1") {
     issues.push(`observer ${key} fixed_quantity must be exactly 1`);
