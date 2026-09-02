@@ -1000,9 +1000,15 @@ def _handle_usage_observer(
             event_id=_provider_observation_event_id(observation),
             task_id=task.task_id,
             event_type="external_cost",
-            cost_usd=Decimal("0"),
-            cost_confidence="unknown",
-            pricing_source=None,
+            cost_usd=observation.provider_cost_usd or Decimal("0"),
+            cost_confidence=(
+                "exact" if observation.provider_cost_usd is not None else "unknown"
+            ),
+            pricing_source=(
+                "provider_response"
+                if observation.provider_cost_usd is not None
+                else None
+            ),
             provider=observation.provider_name,
             model=observation.resource_id if observation.resource_type == "model" else None,
             service_name=observation.provider_service,

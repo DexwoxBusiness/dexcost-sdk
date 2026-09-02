@@ -120,6 +120,7 @@ interface UsageObserverDefinition {
   quantity_multiplier_query_parameter_count?: string;
   record_id_path?: string;
   record_id_header?: string;
+  provider_cost_usd_path?: string;
   source_url: string;
 }
 
@@ -139,6 +140,7 @@ export interface ServiceUsageObservation {
   resourceId?: string;
   providerRecordId?: string;
   providerRegion?: string;
+  providerCostUsd?: string;
   dimensions?: ObservedBillingDimension[];
   manifestVersion: string;
 }
@@ -503,6 +505,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.quantity_multiplier_query_parameter_count,
       observer.record_id_path,
       observer.record_id_header,
+      observer.provider_cost_usd_path,
       observer.endpoint_match,
     ];
     const hasResourceSelector = [
@@ -739,6 +742,7 @@ export class ServiceUsageObservers {
         observer.response_collection_sum_path !== undefined ||
         observer.resource_path !== undefined ||
         observer.record_id_path !== undefined ||
+        observer.provider_cost_usd_path !== undefined ||
         observer.response_all !== undefined ||
         observer.paired_response_collection_path !== undefined ||
         observer.quantity_multiplier_path !== undefined,
@@ -910,6 +914,21 @@ export class ServiceUsageObservers {
         if (multiplier === 0) continue;
         quantity = quantity.mul(multiplier);
       }
+      let providerCostUsd: string | undefined;
+      if (observer.provider_cost_usd_path !== undefined) {
+        const rawProviderCost = resolvePath(responseBody, observer.provider_cost_usd_path);
+        if (typeof rawProviderCost !== "number" && typeof rawProviderCost !== "string") {
+          continue;
+        }
+        try {
+          const parsedProviderCost = new Decimal(rawProviderCost);
+          if (!parsedProviderCost.isFinite() || parsedProviderCost.lt(0)) continue;
+          providerCostUsd = parsedProviderCost.toFixed()
+            .replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1");
+        } catch {
+          continue;
+        }
+      }
       if (
         observer.quantity_multiplier_path !== undefined &&
         (observer.quantity_multiplier_query_parameter === undefined ||
@@ -985,6 +1004,7 @@ export class ServiceUsageObservers {
         resourceId,
         providerRecordId: recordFromBody ?? recordFromHeader,
         providerRegion,
+        providerCostUsd,
         dimensions: pathDimensions(matched.parsed, observer),
         manifestVersion: this.manifestVersion,
       });

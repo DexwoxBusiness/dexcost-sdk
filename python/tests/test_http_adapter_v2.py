@@ -321,6 +321,54 @@ class TestKnownServiceExtraction:
         ]
         assert "cost_evidence" not in wire
 
+    def test_leonardo_provider_reported_dollar_charge_needs_no_catalog_math(
+        self,
+    ) -> None:
+        task = _make_task("leonardo-generation")
+        with task_context(task):
+            _handle_http_call(
+                "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+                method="POST",
+                request_body={"model": "remove-bg", "parameters": {}},
+                response=_make_response(
+                    body={
+                        "id": "leo-sync-http-1",
+                        "blockedCount": 0,
+                        "cost": {"amount": "0.1047", "unit": "DOLLARS"},
+                        "results": [],
+                    }
+                ),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.cost_usd == Decimal("0.1047")
+        assert event.cost_confidence == "exact"
+        assert event.pricing_source == "provider_response"
+        assert (
+            event.details["attribution_observer_service"]
+            == "leonardo_generation_sync_cost"
+        )
+        assert "results" not in json.dumps(event.details)
+        wire = to_attribution_event_v2(event)
+        assert wire is not None
+        assert wire["provider"] == {
+            "name": "leonardo_ai",
+            "service": "production_api",
+            "record_id": "leo-sync-http-1",
+        }
+        assert wire["resource"] == {"type": "model", "id": "remove-bg"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert wire["cost_evidence"] == {
+            "amount": "0.1047",
+            "currency": "USD",
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
+
     def test_github_rest_api_is_usage_only_without_synthetic_money(self) -> None:
         task = _make_task("github-api")
         with task_context(task):

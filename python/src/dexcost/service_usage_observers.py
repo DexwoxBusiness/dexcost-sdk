@@ -77,6 +77,7 @@ class UsageObserver:
     quantity_multiplier_query_parameter_count: str | None
     record_id_path: str | None
     record_id_header: str | None
+    provider_cost_usd_path: str | None
     source_url: str
 
 
@@ -93,6 +94,7 @@ class ServiceUsageObservation:
     resource_id: str | None = None
     provider_record_id: str | None = None
     provider_region: str | None = None
+    provider_cost_usd: Decimal | None = None
     dimensions: tuple[dict[str, Any], ...] = ()
 
 
@@ -512,6 +514,7 @@ class ServiceUsageObservers:
                 "quantity_multiplier_query_parameter_count",
                 "record_id_path",
                 "record_id_header",
+                "provider_cost_usd_path",
                 "endpoint_match",
             )
             has_resource_selector = any(
@@ -808,6 +811,7 @@ class ServiceUsageObservers:
                     quantity_multiplier_query_parameter_count=multiplier_parameter,
                     record_id_path=definition.get("record_id_path"),
                     record_id_header=definition.get("record_id_header"),
+                    provider_cost_usd_path=definition.get("provider_cost_usd_path"),
                     source_url=definition["source_url"],
                 )
             )
@@ -885,6 +889,7 @@ class ServiceUsageObservers:
                 or item.response_collection_sum_path
                 or item.resource_path
                 or item.record_id_path
+                or item.provider_cost_usd_path
                 or item.response_all
                 or item.paired_response_collection_path
                 or item.quantity_multiplier_path
@@ -1094,6 +1099,19 @@ class ServiceUsageObservers:
                     continue
             if not quantity.is_finite() or quantity <= 0:
                 continue
+            provider_cost_usd = None
+            if observer.provider_cost_usd_path:
+                raw_provider_cost = _resolve_path(
+                    response_body, observer.provider_cost_usd_path
+                )
+                if isinstance(raw_provider_cost, bool):
+                    continue
+                try:
+                    provider_cost_usd = Decimal(str(raw_provider_cost))
+                except (InvalidOperation, ValueError):
+                    continue
+                if not provider_cost_usd.is_finite() or provider_cost_usd < 0:
+                    continue
             if observer.quantity_multiplier_query_parameter_count:
                 query_multiplier = len(
                     query.get(observer.quantity_multiplier_query_parameter_count, [])
@@ -1221,6 +1239,7 @@ class ServiceUsageObservers:
                     resource_id=resource_id,
                     provider_record_id=record_id,
                     provider_region=provider_region,
+                    provider_cost_usd=provider_cost_usd,
                     dimensions=tuple(dimensions),
                     manifest_version=self.manifest_version,
                 )

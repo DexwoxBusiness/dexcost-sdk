@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.30.0",
-    "observer_count": 78,
+    "version": "1.31.0",
+    "observer_count": 80,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1611,6 +1611,46 @@
       "fixed_resource_id": "image_properties",
       "record_id_header": "x-amzn-requestid",
       "source_url": "https://docs.aws.amazon.com/rekognition/latest/APIReference/API_DetectLabels.html"
+    },
+    {
+      "service_key": "leonardo_generation_sync_cost",
+      "provider_name": "leonardo_ai",
+      "provider_service": "production_api",
+      "component": "external",
+      "domains": ["cloud.leonardo.ai"],
+      "endpoints": ["/api/rest/v2/generationssync"],
+      "endpoint_match": "exact",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "cost.unit", "operator": "equals", "value": "DOLLARS" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "record_id_path": "id",
+      "provider_cost_usd_path": "cost.amount",
+      "source_url": "https://docs.leonardo.ai/docs/remove-bg"
+    },
+    {
+      "service_key": "leonardo_generation_async_cost",
+      "provider_name": "leonardo_ai",
+      "provider_service": "production_api",
+      "component": "external",
+      "domains": ["cloud.leonardo.ai"],
+      "endpoints": ["/api/rest/v2/generations"],
+      "endpoint_match": "exact",
+      "methods": ["POST"],
+      "response_all": [
+        { "path": "cost.unit", "operator": "equals", "value": "DOLLARS" }
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "record_id_path": "generationId",
+      "provider_cost_usd_path": "cost.amount",
+      "source_url": "https://docs.leonardo.ai/me/docs/pricing-and-plans-faq"
     }
   ]
 }

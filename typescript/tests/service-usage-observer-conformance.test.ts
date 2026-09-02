@@ -41,6 +41,7 @@ describe("shared service usage observer conformance", () => {
         expect(observed[index].resourceId).toBe(testCase.expected[index].resource_id);
         expect(observed[index].providerRecordId).toBe(testCase.expected[index].provider_record_id);
         expect(observed[index].providerRegion).toBe(testCase.expected[index].provider_region);
+        expect(observed[index].providerCostUsd).toBe(testCase.expected[index].provider_cost_usd);
       }
     });
   }

@@ -72,6 +72,49 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("records Leonardo's provider-reported dollar charge without catalog math", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "leo-sync-http-1",
+      blockedCount: 0,
+      cost: { amount: "0.1047", unit: "DOLLARS" },
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "leonardo-generation" });
+    await runWithTask(task, async () => {
+      await fetch("https://cloud.leonardo.ai/api/rest/v2/generationssync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "remove-bg", parameters: {} }),
+      });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0.1047");
+    expect(event.costConfidence).toBe("exact");
+    expect(event.pricingSource).toBe("provider_response");
+    expect(event.details["attribution_observer_service"])
+      .toBe("leonardo_generation_sync_cost");
+    expect(JSON.stringify(event.details)).not.toContain("results");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "leonardo_ai",
+        service: "production_api",
+        record_id: "leo-sync-http-1",
+      },
+      resource: { type: "model", id: "remove-bg" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "0.1047",
+        currency: "USD",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",

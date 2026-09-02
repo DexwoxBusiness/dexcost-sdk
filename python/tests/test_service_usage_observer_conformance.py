@@ -69,6 +69,11 @@ def test_shared_service_usage_observer_conformance() -> None:
             assert actual.resource_id == wanted.get("resource_id")
             assert actual.provider_record_id == wanted.get("provider_record_id")
             assert actual.provider_region == wanted.get("provider_region")
+            assert (
+                str(actual.provider_cost_usd)
+                if actual.provider_cost_usd is not None
+                else None
+            ) == wanted.get("provider_cost_usd")
 
 
 def test_packaged_observer_manifest_matches_canonical_manifest() -> None:

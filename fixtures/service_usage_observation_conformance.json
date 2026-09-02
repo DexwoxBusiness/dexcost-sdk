@@ -1,5 +1,5 @@
 {
-  "schema_version": "22",
+  "schema_version": "23",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1523,6 +1523,69 @@
       "request_headers": { "x-amz-target": "RekognitionService.DetectFaces" },
       "request": {},
       "response": { "__type": "InvalidImageFormatException" },
+      "expected": []
+    },
+    {
+      "name": "leonardo_sync_uses_provider_reported_dollar_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg", "parameters": {} },
+      "response": { "id": "leo-sync-1", "blockedCount": 0, "cost": { "amount": "0.1047", "unit": "DOLLARS" }, "results": [] },
+      "expected": [{ "service_key": "leonardo_generation_sync_cost", "provider_name": "leonardo_ai", "provider_service": "production_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "remove-bg", "provider_record_id": "leo-sync-1", "provider_cost_usd": "0.1047" }]
+    },
+    {
+      "name": "leonardo_async_uses_provider_reported_dollar_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "lucid-origin", "parameters": {} },
+      "response": { "generationId": "leo-async-1", "cost": { "amount": "0.25", "unit": "DOLLARS" } },
+      "expected": [{ "service_key": "leonardo_generation_async_cost", "provider_name": "leonardo_ai", "provider_service": "production_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "lucid-origin", "provider_record_id": "leo-async-1", "provider_cost_usd": "0.25" }]
+    },
+    {
+      "name": "leonardo_transitional_credit_unit_does_not_invent_usd",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "legacy-model" },
+      "response": { "generationId": "leo-credit-1", "apiCreditCost": 8, "cost": { "amount": "8", "unit": "CREDITS" } },
+      "expected": []
+    },
+    {
+      "name": "leonardo_missing_cost_fails_open",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "id": "leo-no-cost", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "leonardo_negative_cost_fails_open",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "id": "leo-negative", "cost": { "amount": "-1", "unit": "DOLLARS" }, "results": [] },
+      "expected": []
+    },
+    {
+      "name": "leonardo_read_does_not_repeat_generation_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "GET",
+      "headers": {},
+      "response": { "generationId": "leo-read", "cost": { "amount": "0.25", "unit": "DOLLARS" } },
+      "expected": []
+    },
+    {
+      "name": "leonardo_failed_request_is_not_observed",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "status_code": 400,
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "error": "invalid request", "cost": { "amount": "0.1047", "unit": "DOLLARS" } },
       "expected": []
     }
   ]

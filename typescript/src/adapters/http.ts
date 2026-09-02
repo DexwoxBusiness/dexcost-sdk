@@ -2476,9 +2476,11 @@ async function _maybeRecordCost(
               eventId: _providerObservationEventId(observation),
               taskId: task.taskId,
               eventType: "external_cost",
-              costUsd: 0,
-              costConfidence: "unknown",
-              pricingSource: "unknown",
+              costUsd: observation.providerCostUsd ?? 0,
+              costConfidence: observation.providerCostUsd === undefined ? "unknown" : "exact",
+              pricingSource: observation.providerCostUsd === undefined
+                ? "unknown"
+                : "provider_response",
               provider: observation.providerName,
               model: observation.resourceType === "model" ? observation.resourceId : undefined,
               serviceName: observation.providerService,

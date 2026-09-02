@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.30.0",
-  "conformance_schema_version": "22",
+  "observer_manifest_version": "1.31.0",
+  "conformance_schema_version": "23",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -509,6 +509,23 @@
         "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units"
       ],
       "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "leonardo_generation_sync_cost",
+      "positive_cases": ["leonardo_sync_uses_provider_reported_dollar_cost"],
+      "fail_open_cases": [
+        "leonardo_missing_cost_fails_open",
+        "leonardo_negative_cost_fails_open",
+        "leonardo_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "leonardo_generation_async_cost",
+      "positive_cases": ["leonardo_async_uses_provider_reported_dollar_cost"],
+      "fail_open_cases": [
+        "leonardo_transitional_credit_unit_does_not_invent_usd",
+        "leonardo_read_does_not_repeat_generation_cost"
+      ]
     }
   ]
 }
