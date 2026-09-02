@@ -99,6 +99,10 @@ function jobService(kind: JobKind): string {
   return `litellm.${kind === "response" ? "responses" : kind === "video" ? "videos" : kind === "batch" ? "batches" : "fine_tuning"}`;
 }
 
+function providerService(provider: string, fallback: string): string {
+  return provider === "fal_ai" ? "inference" : fallback;
+}
+
 function jobStatus(resource: any, submission: boolean): ProviderJobStatus {
   const value = String(resource?.status ?? "").trim().toLowerCase().replace(/-/g, "_");
   if (["completed", "succeeded", "success"].includes(value)) return "succeeded";
@@ -193,7 +197,7 @@ function finishJob(
   const measurement = status === "submitted" || status === "running"
     ? undefined : jobMeasurement(spec, resource, model, provider);
   if (status === "succeeded" && measurement === undefined) status = "unknown";
-  const service = jobService(spec.kind);
+  const service = providerService(provider, jobService(spec.kind));
   if (session) {
     const now = new Date();
     buffer.insertProviderJobRevision(new ProviderJobRevision({
@@ -238,7 +242,8 @@ function patchJobMethod(owner: any, name: string, spec: JobSpec, pricing: Pricin
     const provider = classifyLiteLlmProvider(body?.custom_llm_provider, body?.provider, requestedModel);
     const model = canonicalLiteLlmModel(provider, undefined, requestedModel);
     const session = spec.phase === "submit" ? new ProviderOperationSession(pricing, buffer, {
-      taskType: `litellm.${name}`, provider, service: jobService(spec.kind), operation: `litellm.${name}`,
+      taskType: `litellm.${name}`, provider,
+      service: providerService(provider, jobService(spec.kind)), operation: `litellm.${name}`,
       component: spec.kind === "response" || spec.kind === "batch" ? "llm" : spec.kind,
       model, eventType: spec.kind === "response" || spec.kind === "batch" ? "llm_call" : "external_cost",
     }) : undefined;
@@ -268,6 +273,7 @@ function resolvedResponse(
   const measurement = operationMeasurement(spec, response, body, model, provider);
   measurement.responseModel = model;
   measurement.billingDimensions = [["gateway", "litellm"]];
+  if (provider === "fal_ai") measurement.providerService = "inference";
 
   // LiteLLM exposes OpenRouter's authoritative response cost in this header
   // when the normalized usage object does not contain `cost` itself.
@@ -405,7 +411,8 @@ function patchMethod(
       const provider = classifyLiteLlmProvider(body?.custom_llm_provider, body?.provider, requestedModel);
       const model = canonicalLiteLlmModel(provider, undefined, requestedModel);
       const jobSession = new ProviderOperationSession(pricing, buffer, {
-        taskType: `litellm.${name}`, provider, service: jobService("response"),
+        taskType: `litellm.${name}`, provider,
+        service: providerService(provider, jobService("response")),
         operation: `litellm.${name}`, component: "llm", model, eventType: "llm_call",
       });
       let jobResult: any;
@@ -423,7 +430,8 @@ function patchMethod(
     );
     const model = canonicalLiteLlmModel(provider, undefined, requestedModel);
     const operation: ProviderOperationOptions = {
-      taskType: `litellm.${name}`, provider, service: spec.service,
+      taskType: `litellm.${name}`, provider,
+      service: providerService(provider, spec.service),
       operation: `litellm.${name}`, component: spec.component, model, eventType: spec.eventType,
     };
     const session = new ProviderOperationSession(pricing, buffer, operation);
@@ -444,6 +452,7 @@ function patchMethod(
             terminal = chunk;
             const resolved = resolvedResponse(chunk, requestedModel, operation.provider, spec, body);
             operation.provider = resolved.provider;
+            operation.service = providerService(resolved.provider, spec.service);
             operation.model = resolved.model;
           },
           () => resolvedResponse(terminal, requestedModel, operation.provider, spec, body).measurement,
@@ -451,6 +460,7 @@ function patchMethod(
       }
       const resolved = resolvedResponse(response, requestedModel, provider, spec, body);
       operation.provider = resolved.provider;
+      operation.service = providerService(resolved.provider, spec.service);
       operation.model = resolved.model;
       session.finish(resolved.measurement);
       return response;

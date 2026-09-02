@@ -21,6 +21,7 @@ import {
   uninstrumentOpenai,
 } from "../src/instruments/openai.js";
 import { installOpenAIModern, uninstallOpenAIModern } from "../src/instruments/openai-modern.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 
 function openRouterResponse(id = "gen-litellm-current") {
   return {
@@ -122,7 +123,15 @@ describe("current LiteLLM direct-module attribution", () => {
     provideLiteLlmModule(module);
     await instrumentLiteLlm(pricing, buffer);
     module.completion({ model: requested });
-    expect(buffer.getAllEvents()[0]).toMatchObject({ provider, model });
+    const event = buffer.getAllEvents()[0];
+    expect(event).toMatchObject({ provider, model });
+    if (provider === "fal_ai") {
+      expect(toAttributionObservationV3(event)?.provider).toEqual({
+        name: "fal_ai",
+        service: "inference",
+        record_id: "provider-fal_ai",
+      });
+    }
   });
 
   it("captures the promise-based acompletion surface without changing its result", async () => {

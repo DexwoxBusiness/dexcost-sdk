@@ -168,6 +168,9 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
                 name = _canonical_name(event.provider, _canonical_name(raw_service, "external"))
                 service = _canonical_name(raw_service, "api")
 
+    explicit_service = _string_detail(event.details, "attribution_provider_service")
+    if explicit_service is not None:
+        service = _canonical_name(explicit_service, service)
     provider: AttributionProviderIdentityV2 = {"name": name, "service": service}
     record_id = _string_detail(event.details, "provider_record_id", "request_id", "call_sid")
     region = _string_detail(event.details, "region", "cloud_region")

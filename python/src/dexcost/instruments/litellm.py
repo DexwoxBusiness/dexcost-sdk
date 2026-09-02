@@ -2261,6 +2261,8 @@ def _insert_llm_event(
         ],
         "provider_usage_privacy": "quantities_only",
     }
+    if provider == "fal_ai":
+        details["attribution_provider_service"] = "inference"
     if provider_cost is not None:
         details["provider_reported_cost_usd"] = canonical_decimal(provider_cost)
     if provider_record_id is not None:

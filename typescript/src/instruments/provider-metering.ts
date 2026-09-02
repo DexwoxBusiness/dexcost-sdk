@@ -33,6 +33,8 @@ export interface OperationMeasurement {
   usageLines?: ProviderUsageLine[];
   /** Exact catalog-billable meters; defaults to the canonical usage lines. */
   pricingUsage?: Readonly<Record<string, string | number | bigint | Decimal>>;
+  /** Canonical provider service used to correlate provider-owned request records. */
+  providerService?: string;
   providerRecordId?: string;
   providerCostUsd?: string | number | Decimal;
   providerUpstreamCostUsd?: string | number | Decimal;
@@ -76,6 +78,9 @@ function providerQuantity(name: string, value: unknown): Decimal {
 
 /** Validate the runtime boundary shared by every provider adapter. */
 export function validateOperationMeasurement(measurement: OperationMeasurement): void {
+  if (measurement.providerService !== undefined && !CANONICAL.test(measurement.providerService)) {
+    throw new TypeError(`invalid provider service '${measurement.providerService}'`);
+  }
   const positiveLines = new Set<string>();
   for (const line of measurement.usageLines ?? []) {
     if (!CANONICAL.test(line.metric)) throw new TypeError(`invalid provider usage metric '${line.metric}'`);
@@ -301,6 +306,9 @@ function recordProviderOperation(
     attribution_usage_lines: normalizedUsage(measurement.usageLines),
     provider_usage_privacy: "quantities_only",
   };
+  if (measurement.providerService !== undefined) {
+    details["attribution_provider_service"] = measurement.providerService;
+  }
   if (measurement.billingDimensions?.length) {
     details["attribution_dimensions"] = measurement.billingDimensions.map(([key, value]) => ({
       key, value: { type: "string", value },

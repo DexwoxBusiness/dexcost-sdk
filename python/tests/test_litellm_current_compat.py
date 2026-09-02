@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.capabilities import capability_context
 from dexcost.idempotency import idempotency_key
 from dexcost.instruments.litellm import instrument_litellm, uninstrument_litellm
@@ -94,6 +95,32 @@ def test_current_model_response_preserves_openrouter_exact_attribution(
     assert event.details["provider_upstream_cost_usd"] == "0.009"
     assert event.details["provider_record_id"] == "gen-current-1"
     assert "messages" not in str(event.details).lower()
+
+
+def test_current_fal_route_uses_request_cost_reconciliation_identity(
+    tracker: CostTracker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_litellm, model_response, _, usage = _load_current_litellm()
+    response = model_response(
+        id="fal-request-current-1",
+        model="fal-ai/flux/schnell",
+        choices=[],
+        usage=usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+    )
+    response._hidden_params = {"custom_llm_provider": "fal_ai"}
+    monkeypatch.setattr(current_litellm, "completion", lambda **_: response)
+    instrument_litellm(tracker)
+
+    with tracker.task(task_type="litellm.fal.current") as task:
+        current_litellm.completion(model="fal_ai/fal-ai/flux/schnell", messages=[])
+
+    event = tracker._storage.query_events(task_id=str(task.task_id))[0]
+    assert to_attribution_observation_v3(event)["provider"] == {
+        "name": "fal_ai",
+        "service": "inference",
+        "record_id": "fal-request-current-1",
+    }
 
 
 @pytest.mark.parametrize(

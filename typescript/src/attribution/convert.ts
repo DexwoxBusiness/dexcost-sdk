@@ -127,6 +127,8 @@ export function attributionProviderFor(event: CostEvent): AttributionProviderIde
     }
   }
 
+  const explicitService = stringDetail(event.details, "attribution_provider_service");
+  if (explicitService !== undefined) service = canonicalName(explicitService, service);
   const provider: AttributionProviderIdentityV2 = { name, service };
   const recordId = stringDetail(event.details, "provider_record_id", "request_id", "call_sid");
   const region = stringDetail(event.details, "region", "cloud_region");
