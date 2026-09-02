@@ -1,5 +1,5 @@
 {
-  "schema_version": "13",
+  "schema_version": "14",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1091,6 +1091,32 @@
       "url": "https://api.jina.ai/v1/embeddings",
       "headers": {},
       "response": { "usage": { "total_tokens": 0 } },
+      "expected": []
+    },
+    {
+      "name": "github_rest_api_successful_request_is_observed",
+      "url": "https://api.github.com/repos/octocat/Hello-World/issues?state=open",
+      "headers": { "x-github-request-id": "github-request-1" },
+      "response": [{ "id": 1, "state": "open" }],
+      "expected": [
+        {
+          "service_key": "github_api",
+          "provider_name": "github",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "github_rest_api_failed_request_is_not_observed",
+      "url": "https://api.github.com/repos/octocat/private",
+      "status_code": 403,
+      "headers": {},
+      "response": { "message": "Forbidden" },
       "expected": []
     }
   ]

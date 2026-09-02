@@ -321,6 +321,47 @@ class TestKnownServiceExtraction:
         ]
         assert "cost_evidence" not in wire
 
+    def test_github_rest_api_is_usage_only_without_synthetic_money(self) -> None:
+        task = _make_task("github-api")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.github.com/search/issues?q=repo:octocat/Hello-World",
+                response=_make_response(body={"total_count": 1, "items": [{"id": 1}]}),
+            )
+
+        events = get_recorded_events()
+        assert len(events) == 1
+        event = events[0]
+        wire = to_attribution_event_v2(event)
+        assert event.cost_usd == 0
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source != "service_catalog"
+        assert event.details["attribution_observer_service"] == "github_api"
+        assert wire is not None
+        assert wire["provider"] == {"name": "github", "service": "rest_api"}
+        assert wire["resource"] == {"type": "sku", "id": "rest_api_request"}
+        assert wire["usage"] == [
+            {"metric": "request_count", "quantity": "1", "unit": "Requests"}
+        ]
+        assert "cost_evidence" not in wire
+
+    def test_failed_github_rest_api_request_does_not_restore_legacy_zero_price(
+        self,
+    ) -> None:
+        task = _make_task("github-api")
+        with task_context(task):
+            _handle_http_call(
+                "https://api.github.com/repos/octocat/private",
+                response=_make_response(body={"message": "Forbidden"}, status_code=403),
+            )
+
+        events = get_recorded_events()
+        assert all(
+            event.details.get("attribution_observer_service") != "github_api"
+            and event.pricing_source != "service_catalog"
+            for event in events
+        )
+
     def test_authenticated_jina_reader_usage_does_not_retain_credentials(self) -> None:
         task = _make_task("reader")
         with task_context(task):

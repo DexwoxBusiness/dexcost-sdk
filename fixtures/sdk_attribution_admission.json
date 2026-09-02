@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.21.0",
-  "conformance_schema_version": "13",
+  "observer_manifest_version": "1.22.0",
+  "conformance_schema_version": "14",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -372,6 +372,11 @@
       "service_key": "assemblyai_content_moderation",
       "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
       "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "github_api",
+      "positive_cases": ["github_rest_api_successful_request_is_observed"],
+      "fail_open_cases": ["github_rest_api_failed_request_is_not_observed"]
     }
   ]
 }

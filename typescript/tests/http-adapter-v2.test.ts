@@ -98,6 +98,50 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("observes GitHub REST requests without synthesizing money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      total_count: 1,
+      items: [{ id: 1 }],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-api" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.github.com/search/issues?q=repo:octocat/Hello-World");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).not.toBe("service_catalog");
+    expect(event.details["attribution_observer_service"]).toBe("github_api");
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "github", service: "rest_api" },
+      resource: { type: "sku", id: "rest_api_request" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("does not restore the legacy GitHub zero price after a failed request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      message: "Forbidden",
+    }), { status: 403, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-api" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.github.com/repos/octocat/private");
+      await response.text();
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => event.details["attribution_observer_service"] !== "github_api" &&
+        event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
   it("observes authenticated Jina Reader tokens without retaining credentials", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
       status: 200,

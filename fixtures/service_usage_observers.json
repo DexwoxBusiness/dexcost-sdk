@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.21.0",
-    "observer_count": 59,
+    "version": "1.22.0",
+    "observer_count": 60,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1088,6 +1088,20 @@
         "fireworks/qwen3-reranker-8b"
       ],
       "source_url": "https://docs.fireworks.ai/api-reference/rerank-documents"
+    },
+    {
+      "service_key": "github_api",
+      "provider_name": "github",
+      "provider_service": "rest_api",
+      "component": "external",
+      "domains": ["api.github.com"],
+      "endpoints": ["/"],
+      "endpoint_match": "prefix",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "sku",
+      "fixed_resource_id": "rest_api_request",
+      "source_url": "https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api"
     }
   ]
 }
