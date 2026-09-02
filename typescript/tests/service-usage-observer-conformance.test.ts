@@ -74,4 +74,13 @@ describe("shared service usage observer conformance", () => {
     expect(observers.matches(spoofed)).toBe(false);
     expect(observers.ownsEndpointBoundary(spoofed)).toBe(false);
   });
+
+  it("captures both sides of paired batch collection observations", () => {
+    const url = "https://vision.googleapis.com/v1/images:annotate";
+    expect(observers.matches(url)).toBe(true);
+    expect(observers.needsRequestBody(url)).toBe(true);
+    expect(observers.needsResponseBody(url)).toBe(true);
+    expect(observers.ownsEndpointBoundary(`${url}/preview`)).toBe(true);
+    expect(observers.matches(`${url}/preview`)).toBe(false);
+  });
 });

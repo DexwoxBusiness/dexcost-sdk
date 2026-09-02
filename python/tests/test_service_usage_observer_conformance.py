@@ -87,3 +87,13 @@ def test_azure_observer_owns_invalid_variants_without_trusting_spoofed_suffixes(
     assert observers.owns_endpoint_boundary(custom_category)
     assert not observers.matches(spoofed)
     assert not observers.owns_endpoint_boundary(spoofed)
+
+
+def test_paired_batch_observers_capture_request_and_response_bodies() -> None:
+    observers = ServiceUsageObservers()
+    url = "https://vision.googleapis.com/v1/images:annotate"
+    assert observers.matches(url)
+    assert observers.needs_request_body(url)
+    assert observers.needs_response_body(url)
+    assert observers.owns_endpoint_boundary(f"{url}/preview")
+    assert not observers.matches(f"{url}/preview")

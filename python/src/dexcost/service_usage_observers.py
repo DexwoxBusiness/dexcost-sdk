@@ -16,6 +16,7 @@ _METRICS = {
     "output_tokens",
     "audio_seconds",
     "characters",
+    "image_count",
     "request_count",
     "credit_count",
 }
@@ -41,6 +42,10 @@ class UsageObserver:
     response_all: tuple[dict[str, Any], ...]
     request_all: tuple[dict[str, Any], ...]
     request_header_all: tuple[dict[str, str], ...]
+    request_collection_count_path: str | None
+    request_collection_all: tuple[dict[str, Any], ...]
+    paired_response_collection_path: str | None
+    paired_response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
     request_character_count_query_parameter: str | None
     request_character_count_case_insensitive: bool
@@ -88,6 +93,28 @@ def _resolve_path(value: Any, path: str) -> Any:
         if not isinstance(current, dict) or part not in current:
             return None
         current = current[part]
+    return current
+
+
+def _resolve_collection_path(value: Any, path: str) -> list[Any] | None:
+    current = [value]
+    for raw_part in path.split("."):
+        expands = raw_part.endswith("[]")
+        part = raw_part[:-2] if expands else raw_part
+        if not part:
+            return None
+        next_values: list[Any] = []
+        for candidate in current:
+            if not isinstance(candidate, dict) or part not in candidate:
+                return None
+            resolved = candidate[part]
+            if expands:
+                if not isinstance(resolved, list):
+                    return None
+                next_values.extend(resolved)
+            else:
+                next_values.append(resolved)
+        current = next_values
     return current
 
 
@@ -295,6 +322,32 @@ def _valid_request_header_predicate(predicate: Any) -> bool:
     )
 
 
+def _collection_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    resolved = _resolve_collection_path(value, predicate["path"])
+    if resolved is None:
+        return False
+    contains = any(
+        item == predicate["value"] and type(item) is type(predicate["value"])
+        for item in resolved
+    )
+    return contains if predicate["operator"] == "contains" else not contains
+
+
+def _valid_collection_predicate(predicate: Any) -> bool:
+    if (
+        not isinstance(predicate, dict)
+        or set(predicate) != {"path", "operator", "value"}
+        or not isinstance(predicate.get("path"), str)
+        or not predicate["path"]
+        or predicate.get("operator") not in {"contains", "not_contains"}
+    ):
+        return False
+    value = predicate.get("value")
+    return type(value) in {str, bool, int, float} and (
+        not isinstance(value, float) or value == value
+    )
+
+
 class ServiceUsageObservers:
     def __init__(
         self,
@@ -345,6 +398,8 @@ class ServiceUsageObservers:
                 "request_resource_path",
                 "request_character_count_path",
                 "request_character_count_query_parameter",
+                "request_collection_count_path",
+                "paired_response_collection_path",
                 "resource_id_prefix_to_strip",
                 "minimum_quantity",
                 "response_quantity_header",
@@ -374,6 +429,14 @@ class ServiceUsageObservers:
             response_all = definition.get("response_all", [])
             request_all = definition.get("request_all", [])
             request_header_all = definition.get("request_header_all", [])
+            request_collection_count_path = definition.get(
+                "request_collection_count_path"
+            )
+            request_collection_all = definition.get("request_collection_all", [])
+            paired_response_collection_path = definition.get(
+                "paired_response_collection_path"
+            )
+            paired_response_all = definition.get("paired_response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
             request_character_count_query_parameter = definition.get(
                 "request_character_count_query_parameter"
@@ -415,6 +478,7 @@ class ServiceUsageObservers:
                         response_quantity_header,
                         request_character_count_path
                         or request_character_count_query_parameter,
+                        request_collection_count_path,
                         fixed_quantity,
                     )
                 )
@@ -489,6 +553,34 @@ class ServiceUsageObservers:
                 raise ValueError(
                     "usage observer manifest contains an invalid request-header predicate"
                 )
+            if (
+                not isinstance(request_collection_all, list)
+                or ("request_collection_all" in definition and not request_collection_all)
+                or not all(
+                    _valid_collection_predicate(item) for item in request_collection_all
+                )
+                or (request_collection_count_path is not None)
+                != ("request_collection_all" in definition)
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid request-collection predicate"
+                )
+            if (
+                not isinstance(paired_response_all, list)
+                or ("paired_response_all" in definition and not paired_response_all)
+                or not all(
+                    _valid_request_predicate(item) for item in paired_response_all
+                )
+                or (paired_response_collection_path is not None)
+                != ("paired_response_all" in definition)
+                or (
+                    paired_response_collection_path is not None
+                    and request_collection_count_path is None
+                )
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid paired-response predicate"
+                )
             query_any = definition.get("query_any", [])
             query_all = definition.get("query_all", [])
             if (
@@ -532,6 +624,10 @@ class ServiceUsageObservers:
                     response_all=tuple(response_all),
                     request_all=tuple(request_all),
                     request_header_all=tuple(request_header_all),
+                    request_collection_count_path=request_collection_count_path,
+                    request_collection_all=tuple(request_collection_all),
+                    paired_response_collection_path=paired_response_collection_path,
+                    paired_response_all=tuple(paired_response_all),
                     request_character_count_path=request_character_count_path,
                     request_character_count_query_parameter=(
                         request_character_count_query_parameter
@@ -628,6 +724,7 @@ class ServiceUsageObservers:
             and any(
                 item.request_resource_path
                 or item.request_character_count_path
+                or item.request_collection_count_path
                 or item.request_all
                 for item in matched[1]
             )
@@ -642,6 +739,7 @@ class ServiceUsageObservers:
                 or item.resource_path
                 or item.record_id_path
                 or item.response_all
+                or item.paired_response_collection_path
                 or item.quantity_multiplier_path
                 for item in matched[1]
             )
@@ -708,6 +806,43 @@ class ServiceUsageObservers:
                 if observer.minimum_quantity == "1":
                     character_count = max(character_count, 1)
                 quantity = Decimal(character_count)
+            elif observer.request_collection_count_path:
+                collection = _resolve_collection_path(
+                    request_body, observer.request_collection_count_path
+                )
+                if collection is None:
+                    continue
+                paired_responses = (
+                    _resolve_collection_path(
+                        response_body, observer.paired_response_collection_path
+                    )
+                    if observer.paired_response_collection_path
+                    else None
+                )
+                if observer.paired_response_collection_path and paired_responses is None:
+                    continue
+                if paired_responses is not None and len(paired_responses) != len(collection):
+                    continue
+                count = sum(
+                    1
+                    for index, item in enumerate(collection)
+                    if all(
+                        _collection_predicate_matches(item, predicate)
+                        for predicate in observer.request_collection_all
+                    )
+                    and (
+                        paired_responses is None
+                        or all(
+                            _request_predicate_matches(
+                                paired_responses[index], predicate
+                            )
+                            for predicate in observer.paired_response_all
+                        )
+                    )
+                )
+                if count <= 0:
+                    continue
+                quantity = Decimal(count)
             elif observer.fixed_quantity:
                 quantity = Decimal(observer.fixed_quantity)
             elif observer.response_quantity_header:

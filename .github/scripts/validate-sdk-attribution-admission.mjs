@@ -113,6 +113,28 @@ function resolvePath(value, dottedPath) {
   return current;
 }
 
+function resolveCollectionPath(value, path) {
+  let current = [value];
+  for (const rawPart of path.split(".")) {
+    const expands = rawPart.endsWith("[]");
+    const part = expands ? rawPart.slice(0, -2) : rawPart;
+    if (!part) return undefined;
+    const next = [];
+    for (const candidate of current) {
+      if (!isObject(candidate) || !(part in candidate)) return undefined;
+      const resolved = candidate[part];
+      if (expands) {
+        if (!Array.isArray(resolved)) return undefined;
+        next.push(...resolved);
+      } else {
+        next.push(resolved);
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
 function truthyQueryValue(value) {
   return !["", "0", "false", "no", "off"].includes(value.trim().toLowerCase());
 }
@@ -193,6 +215,13 @@ function requestHeaderPredicateMatches(requestHeaders, predicate) {
   return predicate.operator === "present" ? present : !present;
 }
 
+function collectionPredicateMatches(value, predicate) {
+  const resolved = resolveCollectionPath(value, predicate.path);
+  if (resolved === undefined) return false;
+  const contains = resolved.some((item) => item === predicate.value);
+  return predicate.operator === "contains" ? contains : !contains;
+}
+
 function caseTargetsObserver(testCase, observer) {
   let url;
   try {
@@ -227,6 +256,29 @@ function caseTargetsObserver(testCase, observer) {
     )
   ) {
     return false;
+  }
+
+  if (isNonEmptyString(observer.request_collection_count_path)) {
+    const collection = resolveCollectionPath(
+      testCase.request,
+      observer.request_collection_count_path,
+    );
+    const pairedResponses = isNonEmptyString(observer.paired_response_collection_path)
+      ? resolveCollectionPath(testCase.response, observer.paired_response_collection_path)
+      : undefined;
+    if (
+      collection === undefined ||
+      !Array.isArray(observer.request_collection_all) ||
+      (isNonEmptyString(observer.paired_response_collection_path) &&
+        (!Array.isArray(observer.paired_response_all) || pairedResponses === undefined ||
+          pairedResponses.length !== collection.length)) ||
+      !collection.some((item, index) => observer.request_collection_all.every((predicate) =>
+        collectionPredicateMatches(item, predicate)) &&
+        (pairedResponses === undefined || observer.paired_response_all.every((predicate) =>
+          requestPredicateMatches(pairedResponses[index], predicate))))
+    ) {
+      return false;
+    }
   }
 
   if (
@@ -273,6 +325,15 @@ function validRequestHeaderPredicate(predicate) {
     typeof predicate.name === "string" &&
     /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(predicate.name) &&
     ["present", "absent"].includes(predicate.operator);
+}
+
+function validCollectionPredicate(predicate) {
+  return isObject(predicate) &&
+    Object.keys(predicate).length === 3 &&
+    isNonEmptyString(predicate.path) &&
+    ["contains", "not_contains"].includes(predicate.operator) &&
+    (typeof predicate.value === "string" || typeof predicate.value === "boolean" ||
+      (typeof predicate.value === "number" && Number.isFinite(predicate.value)));
 }
 
 function caseExercisesObserverEndpointBoundary(testCase, observer) {
@@ -387,6 +448,36 @@ function validateObserverShape(observer, issues) {
   ) {
     issues.push(`observer ${key} has invalid request-header predicates`);
   }
+  if (
+    observer?.request_collection_all !== undefined &&
+    (!Array.isArray(observer.request_collection_all) ||
+      observer.request_collection_all.length === 0 ||
+      !observer.request_collection_all.every(validCollectionPredicate))
+  ) {
+    issues.push(`observer ${key} has invalid request-collection predicates`);
+  }
+  if (
+    isNonEmptyString(observer?.request_collection_count_path) !==
+    Array.isArray(observer?.request_collection_all)
+  ) {
+    issues.push(`observer ${key} must pair collection count and predicates`);
+  }
+  if (
+    observer?.paired_response_all !== undefined &&
+    (!Array.isArray(observer.paired_response_all) ||
+      observer.paired_response_all.length === 0 ||
+      !observer.paired_response_all.every(validRequestPredicate))
+  ) {
+    issues.push(`observer ${key} has invalid paired-response predicates`);
+  }
+  if (
+    isNonEmptyString(observer?.paired_response_collection_path) !==
+    Array.isArray(observer?.paired_response_all) ||
+    (isNonEmptyString(observer?.paired_response_collection_path) &&
+      !isNonEmptyString(observer?.request_collection_count_path))
+  ) {
+    issues.push(`observer ${key} must pair response and request collections`);
+  }
   for (const field of ["query_any", "query_all"]) {
     if (
       observer?.[field] !== undefined &&
@@ -430,6 +521,7 @@ function validateObserverShape(observer, issues) {
     observer?.response_path,
     observer?.response_quantity_header,
     observer?.request_character_count_path,
+    observer?.request_collection_count_path,
     observer?.fixed_quantity,
   ].filter(isNonEmptyString);
   if (quantitySources.length !== 1) {

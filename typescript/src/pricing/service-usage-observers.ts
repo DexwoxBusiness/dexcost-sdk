@@ -8,6 +8,7 @@ export type ObservedUsageMetric =
   | "output_tokens"
   | "audio_seconds"
   | "characters"
+  | "image_count"
   | "request_count"
   | "credit_count";
 export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
@@ -46,6 +47,12 @@ interface RequestHeaderPredicate {
   operator: "present" | "absent";
 }
 
+interface CollectionPredicate {
+  path: string;
+  operator: "contains" | "not_contains";
+  value: string | boolean | number;
+}
+
 export interface ObservedBillingDimension {
   key: string;
   value: { type: "string"; value: string };
@@ -65,6 +72,10 @@ interface UsageObserverDefinition {
   response_all?: ResponsePredicate[];
   request_all?: RequestPredicate[];
   request_header_all?: RequestHeaderPredicate[];
+  request_collection_count_path?: string;
+  request_collection_all?: CollectionPredicate[];
+  paired_response_collection_path?: string;
+  paired_response_all?: RequestPredicate[];
   request_character_count_path?: string;
   request_character_count_query_parameter?: string;
   request_character_count_case_insensitive?: true;
@@ -116,6 +127,7 @@ const METRICS = new Set<ObservedUsageMetric>([
   "output_tokens",
   "audio_seconds",
   "characters",
+  "image_count",
   "request_count",
   "credit_count",
 ]);
@@ -135,6 +147,33 @@ function boundedString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== ""
     ? value.trim().slice(0, 256)
     : undefined;
+}
+
+function resolveCollectionPath(value: unknown, path: string): unknown[] | undefined {
+  let current: unknown[] = [value];
+  for (const rawPart of path.split(".")) {
+    const expands = rawPart.endsWith("[]");
+    const part = expands ? rawPart.slice(0, -2) : rawPart;
+    if (part.length === 0) return undefined;
+    const next: unknown[] = [];
+    for (const candidate of current) {
+      if (
+        candidate === null || typeof candidate !== "object" || Array.isArray(candidate) ||
+        !(part in candidate)
+      ) {
+        return undefined;
+      }
+      const resolved = (candidate as Record<string, unknown>)[part];
+      if (expands) {
+        if (!Array.isArray(resolved)) return undefined;
+        next.push(...resolved);
+      } else {
+        next.push(resolved);
+      }
+    }
+    current = next;
+  }
+  return current;
 }
 
 function resolveCaseInsensitivePath(value: unknown, path: string): unknown {
@@ -211,6 +250,23 @@ function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHe
     /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(candidate.name) &&
     candidate.name === candidate.name.toLowerCase() &&
     (candidate.operator === "present" || candidate.operator === "absent");
+}
+
+function collectionPredicateMatches(value: unknown, predicate: CollectionPredicate): boolean {
+  const resolved = resolveCollectionPath(value, predicate.path);
+  if (resolved === undefined) return false;
+  const contains = resolved.some((item) => item === predicate.value);
+  return predicate.operator === "contains" ? contains : !contains;
+}
+
+function validCollectionPredicate(predicate: unknown): predicate is CollectionPredicate {
+  if (predicate === null || typeof predicate !== "object") return false;
+  const candidate = predicate as Partial<CollectionPredicate>;
+  return Object.keys(candidate).length === 3 &&
+    typeof candidate.path === "string" && candidate.path.length > 0 &&
+    (candidate.operator === "contains" || candidate.operator === "not_contains") &&
+    (typeof candidate.value === "string" || typeof candidate.value === "boolean" ||
+      (typeof candidate.value === "number" && Number.isFinite(candidate.value)));
 }
 
 function queryValueIsTruthy(value: string | null): boolean {
@@ -341,6 +397,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.request_resource_path,
       observer.request_character_count_path,
       observer.request_character_count_query_parameter,
+      observer.request_collection_count_path,
+      observer.paired_response_collection_path,
       observer.resource_id_prefix_to_strip,
       observer.minimum_quantity,
       observer.response_quantity_header,
@@ -389,6 +447,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.response_path,
         observer.response_quantity_header,
         observer.request_character_count_path ?? observer.request_character_count_query_parameter,
+        observer.request_collection_count_path,
         observer.fixed_quantity,
       ].filter((value) => value !== undefined).length !== 1 ||
       (observer.fixed_quantity !== undefined && observer.fixed_quantity !== "1") ||
@@ -442,6 +501,22 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.request_header_all.length === 0 ||
         !observer.request_header_all.every(validRequestHeaderPredicate)
       )) ||
+      (observer.request_collection_all !== undefined && (
+        !Array.isArray(observer.request_collection_all) ||
+        observer.request_collection_all.length === 0 ||
+        !observer.request_collection_all.every(validCollectionPredicate)
+      )) ||
+      ((observer.request_collection_count_path !== undefined) !==
+        (observer.request_collection_all !== undefined)) ||
+      (observer.paired_response_all !== undefined && (
+        !Array.isArray(observer.paired_response_all) ||
+        observer.paired_response_all.length === 0 ||
+        !observer.paired_response_all.every(validRequestPredicate)
+      )) ||
+      ((observer.paired_response_collection_path !== undefined) !==
+        (observer.paired_response_all !== undefined)) ||
+      (observer.paired_response_collection_path !== undefined &&
+        observer.request_collection_count_path === undefined) ||
       (observer.query_any !== undefined && (
         !Array.isArray(observer.query_any) || observer.query_any.length === 0 ||
         !observer.query_any.every(validQueryPredicate)
@@ -531,6 +606,7 @@ export class ServiceUsageObservers {
     return this.lookup(url)?.observers.some(
       (observer) => observer.request_resource_path !== undefined ||
         observer.request_character_count_path !== undefined ||
+        observer.request_collection_count_path !== undefined ||
         observer.request_all !== undefined,
     ) === true;
   }
@@ -541,6 +617,7 @@ export class ServiceUsageObservers {
         observer.resource_path !== undefined ||
         observer.record_id_path !== undefined ||
         observer.response_all !== undefined ||
+        observer.paired_response_collection_path !== undefined ||
         observer.quantity_multiplier_path !== undefined,
     ) === true;
   }
@@ -581,7 +658,27 @@ export class ServiceUsageObservers {
         continue;
       }
       let quantity: Decimal;
-      if (
+      if (observer.request_collection_count_path !== undefined) {
+        const collection = resolveCollectionPath(
+          requestBody,
+          observer.request_collection_count_path,
+        );
+        if (collection === undefined) continue;
+        const pairedResponses = observer.paired_response_collection_path === undefined
+          ? undefined
+          : resolveCollectionPath(responseBody, observer.paired_response_collection_path);
+        if (pairedResponses !== undefined && pairedResponses.length !== collection.length) continue;
+        if (observer.paired_response_collection_path !== undefined && pairedResponses === undefined) {
+          continue;
+        }
+        const count = collection.filter((item, index) =>
+          observer.request_collection_all!.every((predicate) =>
+            collectionPredicateMatches(item, predicate)) &&
+          (pairedResponses === undefined || observer.paired_response_all!.every((predicate) =>
+            requestPredicateMatches(pairedResponses[index], predicate)))).length;
+        if (count === 0) continue;
+        quantity = new Decimal(count);
+      } else if (
         observer.request_character_count_path !== undefined ||
         observer.request_character_count_query_parameter !== undefined
       ) {

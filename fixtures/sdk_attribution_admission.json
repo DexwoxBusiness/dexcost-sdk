@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.20.0",
-  "conformance_schema_version": "12",
+  "observer_manifest_version": "1.21.0",
+  "conformance_schema_version": "13",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -112,6 +112,72 @@
       "fail_open_cases": [
         "google_custom_search_site_restricted_retired_endpoint_fails_open"
       ]
+    },
+    {
+      "service_key": "google_vision_label",
+      "positive_cases": [
+        "google_vision_counts_each_requested_feature_per_image",
+        "google_vision_counts_only_successful_paired_batch_items"
+      ],
+      "fail_open_cases": [
+        "google_vision_unknown_feature_fails_open",
+        "google_vision_mismatched_response_batch_fails_open"
+      ]
+    },
+    {
+      "service_key": "google_vision_text",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_document_text",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_safe_search",
+      "positive_cases": ["google_vision_counts_unbundled_safe_search"],
+      "fail_open_cases": ["google_vision_does_not_double_count_bundled_features"]
+    },
+    {
+      "service_key": "google_vision_face",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_landmark",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_logo",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_image_properties",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_crop_hints",
+      "positive_cases": ["google_vision_counts_unbundled_crop_hints"],
+      "fail_open_cases": ["google_vision_does_not_double_count_bundled_features"]
+    },
+    {
+      "service_key": "google_vision_web",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_object_localization",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_product_search",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
     },
     {
       "service_key": "perplexity_search",

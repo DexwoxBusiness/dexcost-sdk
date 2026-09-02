@@ -88,6 +88,45 @@ test("rejects request-header predicates that could retain noncanonical names", (
   );
 });
 
+test("rejects invalid request-collection predicates", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "google_vision_label",
+  );
+  observer.request_collection_all[0].operator = "assume_contains";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer google_vision_label has invalid request-collection predicates",
+  );
+});
+
+test("requires request-collection paths and predicates together", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "google_vision_label",
+  );
+  delete observer.request_collection_all;
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer google_vision_label must pair collection count and predicates",
+  );
+});
+
+test("requires paired response predicates to be fail-open compatible", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "google_vision_label",
+  );
+  observer.paired_response_all[0].operator = "present";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer google_vision_label has invalid paired-response predicates",
+  );
+});
+
 test("rejects an empty not-equals request predicate value", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

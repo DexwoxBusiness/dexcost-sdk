@@ -1,5 +1,5 @@
 {
-  "schema_version": "12",
+  "schema_version": "13",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -367,6 +367,148 @@
       "url": "https://www.googleapis.com/customsearch/v1/siterestrict?key=demo&cx=engine&q=pricing",
       "headers": {},
       "response": { "kind": "customsearch#search", "items": [] },
+      "expected": []
+    },
+    {
+      "name": "google_vision_counts_each_requested_feature_per_image",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          {
+            "image": { "content": "private-image-one" },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "FACE_DETECTION" },
+              { "type": "SAFE_SEARCH_DETECTION" },
+              { "type": "IMAGE_PROPERTIES" },
+              { "type": "CROP_HINTS" },
+              { "type": "WEB_DETECTION" }
+            ]
+          },
+          {
+            "image": { "source": { "imageUri": "gs://private/image-two.jpg" } },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "TEXT_DETECTION" },
+              { "type": "DOCUMENT_TEXT_DETECTION" },
+              { "type": "LANDMARK_DETECTION" },
+              { "type": "LOGO_DETECTION" },
+              { "type": "OBJECT_LOCALIZATION" },
+              { "type": "PRODUCT_SEARCH" }
+            ]
+          }
+        ]
+      },
+      "response": { "responses": [{}, {}] },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "2", "resource_type": "sku", "resource_id": "label_detection" },
+        { "service_key": "google_vision_text", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "text_detection" },
+        { "service_key": "google_vision_document_text", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "document_text_detection" },
+        { "service_key": "google_vision_face", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "face_detection" },
+        { "service_key": "google_vision_landmark", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "landmark_detection" },
+        { "service_key": "google_vision_logo", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "logo_detection" },
+        { "service_key": "google_vision_image_properties", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties" },
+        { "service_key": "google_vision_web", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "web_detection" },
+        { "service_key": "google_vision_object_localization", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "object_localization" },
+        { "service_key": "google_vision_product_search", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "product_search_prediction" }
+      ]
+    },
+    {
+      "name": "google_vision_counts_unbundled_safe_search",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private-one" }, "features": [{ "type": "SAFE_SEARCH_DETECTION" }] },
+          { "image": { "content": "private-two" }, "features": [{ "type": "SAFE_SEARCH_DETECTION" }] }
+        ]
+      },
+      "response": { "responses": [{}, {}] },
+      "expected": [
+        { "service_key": "google_vision_safe_search", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "2", "resource_type": "sku", "resource_id": "safe_search_detection_standalone" }
+      ]
+    },
+    {
+      "name": "google_vision_counts_only_successful_paired_batch_items",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "valid-private" }, "features": [{ "type": "LABEL_DETECTION" }] },
+          { "image": { "content": "invalid-private" }, "features": [{ "type": "LABEL_DETECTION" }] }
+        ]
+      },
+      "response": {
+        "responses": [
+          { "labelAnnotations": [] },
+          { "error": { "code": 3, "message": "invalid image" } }
+        ]
+      },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "label_detection" }
+      ]
+    },
+    {
+      "name": "google_vision_mismatched_response_batch_fails_open",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private-one" }, "features": [{ "type": "LABEL_DETECTION" }] },
+          { "image": { "content": "private-two" }, "features": [{ "type": "LABEL_DETECTION" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": []
+    },
+    {
+      "name": "google_vision_counts_unbundled_crop_hints",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private" }, "features": [{ "type": "CROP_HINTS" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": [
+        { "service_key": "google_vision_crop_hints", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "crop_hints_standalone" }
+      ]
+    },
+    {
+      "name": "google_vision_does_not_double_count_bundled_features",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          {
+            "image": { "content": "private" },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "SAFE_SEARCH_DETECTION" },
+              { "type": "IMAGE_PROPERTIES" },
+              { "type": "CROP_HINTS" }
+            ]
+          }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "label_detection" },
+        { "service_key": "google_vision_image_properties", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties" }
+      ]
+    },
+    {
+      "name": "google_vision_unknown_feature_fails_open",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private" }, "features": [{ "type": "FUTURE_FEATURE" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
       "expected": []
     },
     {
