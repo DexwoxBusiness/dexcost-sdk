@@ -167,8 +167,9 @@ def test_current_client_sync_stream_and_queue_are_attributed_once(
         image = by_operation["fal_ai.run"]
         assert image.provider == "fal_ai"
         assert image.model == "fal_ai/fal-ai/flux/schnell"
-        assert image.cost_usd == Decimal("0.003")
-        assert image.cost_confidence == "computed"
+        assert image.cost_usd == Decimal("0")
+        assert image.cost_confidence == "unknown"
+        assert image.pricing_source == "unknown"
         image_lines = {
             line["metric"]: line["quantity"] for line in image.details["attribution_usage_lines"]
         }
@@ -190,7 +191,7 @@ def test_current_client_sync_stream_and_queue_are_attributed_once(
         job = storage.get_provider_job("fal_ai", "queue", "fal-job-1")
         assert job is not None
         assert job.status == "succeeded"
-        assert job.cost_amount == Decimal("0.003")
+        assert job.cost_amount is None
         cancelled = storage.get_provider_job("fal_ai", "queue", "fal-job-cancel")
         assert cancelled is not None
         assert cancelled.status == "submitted"

@@ -146,7 +146,6 @@ def _measurement(
     arguments: Mapping[str, Any] | None = None,
 ) -> OperationMeasurement:
     request = arguments or {}
-    pricing: dict[str, Decimal | int] = {}
     lines: list[ProviderUsageLine] = []
     dimensions = list(_request_dimensions(application, request))
     kind = _media_kind(application, result)
@@ -162,7 +161,6 @@ def _measurement(
     )
     if image_items:
         count = len(image_items)
-        pricing["output_image_count"] = count
         lines.append(ProviderUsageLine("output_image_count", count, "Images"))
         first = image_items[0]
         for name in ("width", "height"):
@@ -175,7 +173,6 @@ def _measurement(
     if video_seconds is None:
         video_seconds = _decimal(_value(result, "duration")) if kind == "video" else None
     if video_seconds is not None and video_seconds > 0:
-        pricing["output_video_seconds"] = video_seconds
         lines.append(ProviderUsageLine("output_video_seconds", video_seconds, "Seconds"))
 
     audio = _value(result, "audio")
@@ -183,29 +180,36 @@ def _measurement(
     if audio_seconds is None:
         audio_seconds = _decimal(_value(result, "duration")) if kind == "audio" else None
     if audio_seconds is not None and audio_seconds > 0:
-        pricing["output_audio_seconds"] = audio_seconds
         lines.append(ProviderUsageLine("output_audio_seconds", audio_seconds, "Seconds"))
 
     usage = _value(result, "usage")
     input_tokens = _integer(_value(usage, "prompt_tokens") or _value(usage, "input_tokens"))
     output_tokens = _integer(_value(usage, "completion_tokens") or _value(usage, "output_tokens"))
     cached_tokens = _integer(_value(usage, "cached_tokens")) or 0
+    ordinary_input_tokens = (
+        input_tokens - cached_tokens
+        if input_tokens is not None and cached_tokens <= input_tokens
+        else input_tokens
+    )
     for metric, quantity in (
-        ("input_tokens", input_tokens),
+        ("input_tokens", ordinary_input_tokens),
         ("cache_read_input_tokens", cached_tokens),
         ("output_tokens", output_tokens),
     ):
         if quantity is not None:
-            pricing[metric] = quantity
             item = _line(metric, quantity, "Tokens")
             if item is not None:
                 lines.append(item)
     if not lines:
         lines.append(ProviderUsageLine("request_count", 1, "Requests"))
-        pricing["request_count"] = 1
     record_id = _value(result, "request_id")
     return OperationMeasurement(
-        pricing_usage=pricing,
+        # fal pricing is endpoint- and account-specific.  In particular, image
+        # endpoints may bill per image, per megapixel, or GPU second, while the
+        # provider's billing-events API applies the final account discount.
+        # Preserve every observed meter for server reconciliation without
+        # allowing the bundled legacy cost map to become a second money source.
+        pricing_usage={},
         usage_lines=tuple(lines),
         provider_record_id=(record_id[:256] if isinstance(record_id, str) and record_id else None),
         provider_cost_usd=_provider_cost(result),

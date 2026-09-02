@@ -181,6 +181,16 @@ class TestKnownModels:
 
 
 class TestMeteredCosts:
+    def test_empty_usage_does_not_claim_a_catalog_money_source(
+        self, engine: PricingEngine
+    ) -> None:
+        result = engine.get_metered_cost("gpt-image-test", {})
+        assert result.cost_usd == Decimal(0)
+        assert result.cost_confidence == "unknown"
+        assert result.pricing_source == "unknown"
+        assert result.resolved_model == "gpt-image-test"
+        assert result.lines == ()
+
     def test_prices_disjoint_image_token_modalities(self, engine: PricingEngine) -> None:
         result = engine.get_metered_cost(
             "gpt-image-test",

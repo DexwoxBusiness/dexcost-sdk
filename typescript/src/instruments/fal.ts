@@ -56,8 +56,15 @@ function requestDimensions(app: string, input: Record<string, any>, path?: unkno
 }
 function measurement(result: any, modelId: string, app: string, input: Record<string, any>): OperationMeasurement {
   const lines: NonNullable<OperationMeasurement["usageLines"]> = [];
+  const billingDimensions = requestDimensions(app, input);
   const images = Array.isArray(result?.images) ? result.images : result?.image ? [result.image] : [];
-  if (images.length > 0) lines.push({ metric: "output_image_count", quantity: images.length, unit: "Images" });
+  if (images.length > 0) {
+    lines.push({ metric: "output_image_count", quantity: images.length, unit: "Images" });
+    const width = nonNegativeInteger(images[0]?.width);
+    const height = nonNegativeInteger(images[0]?.height);
+    if (width > 0) billingDimensions.push(["output_width", String(width)]);
+    if (height > 0) billingDimensions.push(["output_height", String(height)]);
+  }
   const kind = mediaKind(app, result);
   const videoSeconds = nonNegativeDecimal(result?.video?.duration ?? (kind === "video" ? result?.duration : undefined));
   const audioSeconds = nonNegativeDecimal(result?.audio?.duration ?? (kind === "audio" ? result?.duration : undefined));
@@ -74,9 +81,13 @@ function measurement(result: any, modelId: string, app: string, input: Record<st
   const cost = nonNegativeDecimal(usage.total_cost ?? usage.cost ?? result?.metrics?.cost ?? result?.cost);
   return {
     usageLines: lines, providerRecordId: result?.request_id ?? result?.requestId,
-    pricingUsage: Object.fromEntries(lines.map((item) => [item.metric, item.quantity])),
+    // fal endpoints may bill per image, megapixel, video second, or GPU second,
+    // and the billing-events API applies account-specific discounts. Keep the
+    // native meters, but do not let the bundled legacy map become a second
+    // monetary authority beside server reconciliation.
+    pricingUsage: {},
     providerCostUsd: cost, responseModel: modelId,
-    billingDimensions: requestDimensions(app, input),
+    billingDimensions,
     inputTokens, outputTokens, cachedTokens,
   };
 }
