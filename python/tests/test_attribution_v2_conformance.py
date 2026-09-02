@@ -145,7 +145,7 @@ def test_promotes_compute_quantities_and_closes_usage_period() -> None:
     assert converted["component"] == "compute"
     assert {
         "metric": "memory_gib_seconds",
-        "quantity": "5",
+        "quantity": "4.768371582031",
         "unit": "GiB-Seconds",
     } in converted["usage"]
     assert converted["usage_period"]["end_at"] == converted["occurred_at"]

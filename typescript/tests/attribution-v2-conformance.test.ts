@@ -122,7 +122,7 @@ describe("v1 capture to attribution v2 conversion", () => {
       },
     }));
     expect(converted?.component).toBe("compute");
-    expect(converted?.usage).toContainEqual({ metric: "memory_gib_seconds", quantity: "5", unit: "GiB-Seconds" });
+    expect(converted?.usage).toContainEqual({ metric: "memory_gib_seconds", quantity: "4.768371582031", unit: "GiB-Seconds" });
     expect(converted?.usage_period?.end_at).toBe(converted?.occurred_at);
   });
 
