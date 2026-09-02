@@ -8,7 +8,7 @@ import { _providerObservationEventId } from "../src/adapters/http.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage_observation_conformance.json"), "utf8")) as {
-  cases: Array<{ name: string; url: string; status_code?: number; headers: Record<string, string>; request_headers?: string[]; request?: unknown; response: unknown; expected: Array<Record<string, string>> }>;
+  cases: Array<{ name: string; url: string; status_code?: number; headers: Record<string, string>; request_headers?: string[] | Record<string, string>; request?: unknown; response: unknown; expected: Array<Record<string, string>> }>;
 };
 
 describe("shared service usage observer conformance", () => {
@@ -39,6 +39,7 @@ describe("shared service usage observer conformance", () => {
         expect(observed[index].resourceType).toBe(testCase.expected[index].resource_type);
         expect(observed[index].resourceId).toBe(testCase.expected[index].resource_id);
         expect(observed[index].providerRecordId).toBe(testCase.expected[index].provider_record_id);
+        expect(observed[index].providerRegion).toBe(testCase.expected[index].provider_region);
       }
     });
   }

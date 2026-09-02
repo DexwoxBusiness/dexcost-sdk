@@ -44,7 +44,9 @@ class UsageObserver:
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_all: tuple[dict[str, Any], ...]
-    request_header_all: tuple[dict[str, str], ...]
+    request_header_all: tuple[dict[str, Any], ...]
+    provider_region_domain_label: int | None
+    allowed_provider_regions: tuple[str, ...]
     request_collection_count_path: str | None
     request_collection_all: tuple[dict[str, Any], ...]
     paired_response_collection_path: str | None
@@ -87,6 +89,7 @@ class ServiceUsageObservation:
     resource_type: str | None = None
     resource_id: str | None = None
     provider_record_id: str | None = None
+    provider_region: str | None = None
     dimensions: tuple[dict[str, Any], ...] = ()
 
 
@@ -279,6 +282,13 @@ def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
         )
     if operator == "string_not_contains":
         return isinstance(resolved, str) and predicate["value"] not in resolved
+    if operator == "array_contains":
+        return isinstance(resolved, list) and any(
+            item == predicate["value"] and type(item) is type(predicate["value"])
+            for item in resolved
+        )
+    if operator == "absent_or_empty_collection":
+        return isinstance(resolved, list) and not resolved
     if operator == "absent_or_false_or_null":
         return resolved is False
     return (
@@ -294,7 +304,11 @@ def _valid_request_predicate(predicate: Any) -> bool:
         return False
     if not predicate["path"]:
         return False
-    if predicate.get("operator") in {"absent_or_null", "absent_or_false_or_null"}:
+    if predicate.get("operator") in {
+        "absent_or_null",
+        "absent_or_false_or_null",
+        "absent_or_empty_collection",
+    }:
         return set(predicate) == {"path", "operator"}
     value = predicate.get("value")
     if predicate.get("operator") in {"equals", "not_equals"}:
@@ -310,6 +324,13 @@ def _valid_request_predicate(predicate: Any) -> bool:
             and isinstance(value, str)
             and bool(value)
         )
+    if predicate.get("operator") == "array_contains":
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and type(value) in {str, bool, int, float}
+            and not (isinstance(value, str) and not value)
+            and not (isinstance(value, float) and not isfinite(value))
+        )
     return (
         predicate.get("operator") == "absent_or_lte"
         and set(predicate) == {"path", "operator", "value"}
@@ -320,22 +341,59 @@ def _valid_request_predicate(predicate: Any) -> bool:
 
 
 def _request_header_predicate_matches(
-    request_header_names: frozenset[str], predicate: dict[str, str]
+    request_headers: dict[str, str | None], predicate: dict[str, Any]
 ) -> bool:
-    present = predicate["name"] in request_header_names
-    return present if predicate["operator"] == "present" else not present
+    name = predicate["name"]
+    present = name in request_headers
+    operator = predicate["operator"]
+    if operator == "present":
+        return present
+    if operator == "absent":
+        return not present
+    value = request_headers.get(name)
+    if operator == "equals":
+        return present and value == predicate["value"]
+    return present and value is not None and value in predicate["values"]
 
 
 def _valid_request_header_predicate(predicate: Any) -> bool:
-    if not isinstance(predicate, dict) or set(predicate) != {"name", "operator"}:
+    if not isinstance(predicate, dict):
         return False
     name = predicate.get("name")
-    return (
+    if not (
         isinstance(name, str)
         and bool(name)
         and name == name.lower()
         and all(character in _HEADER_NAME_CHARS for character in name)
-        and predicate.get("operator") in {"present", "absent"}
+    ):
+        return False
+    operator = predicate.get("operator")
+    if operator in {"present", "absent"}:
+        return set(predicate) == {"name", "operator"}
+    if operator == "equals":
+        value = predicate.get("value")
+        return (
+            set(predicate) == {"name", "operator", "value"}
+            and isinstance(value, str)
+            and 0 < len(value) <= 256
+        )
+    values = predicate.get("values")
+    return (
+        operator == "one_of"
+        and set(predicate) == {"name", "operator", "values"}
+        and isinstance(values, list)
+        and 0 < len(values) <= 100
+        and all(isinstance(value, str) and 0 < len(value) <= 256 for value in values)
+        and len(set(values)) == len(values)
+    )
+
+
+def _valid_canonical_name(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 128
+        and value[0] in _DOMAIN_EDGE_CHARS
+        and all(character in _DOMAIN_LABEL_CHARS | {".", "_"} for character in value)
     )
 
 
@@ -451,6 +509,8 @@ class ServiceUsageObservers:
             response_all = definition.get("response_all", [])
             request_all = definition.get("request_all", [])
             request_header_all = definition.get("request_header_all", [])
+            provider_region_domain_label = definition.get("provider_region_domain_label")
+            allowed_provider_regions = definition.get("allowed_provider_regions", [])
             request_collection_count_path = definition.get(
                 "request_collection_count_path"
             )
@@ -483,6 +543,24 @@ class ServiceUsageObservers:
                 or not isinstance(domain_suffixes, list)
                 or ("domain_suffixes" in definition and not domain_suffixes)
                 or not all(_valid_domain_suffix(item) for item in domain_suffixes)
+                or ("provider_region_domain_label" in definition)
+                != ("allowed_provider_regions" in definition)
+                or (
+                    provider_region_domain_label is not None
+                    and (
+                        isinstance(provider_region_domain_label, bool)
+                        or not isinstance(provider_region_domain_label, int)
+                        or not 0 <= provider_region_domain_label <= 10
+                        or not isinstance(allowed_provider_regions, list)
+                        or not 0 < len(allowed_provider_regions) <= 100
+                        or not all(
+                            _valid_canonical_name(region)
+                            for region in allowed_provider_regions
+                        )
+                        or len(set(allowed_provider_regions))
+                        != len(allowed_provider_regions)
+                    )
+                )
                 or not isinstance(endpoints, list)
                 or not endpoints
                 or not all(isinstance(item, str) and item.startswith("/") for item in endpoints)
@@ -656,6 +734,8 @@ class ServiceUsageObservers:
                     response_all=tuple(response_all),
                     request_all=tuple(request_all),
                     request_header_all=tuple(request_header_all),
+                    provider_region_domain_label=provider_region_domain_label,
+                    allowed_provider_regions=tuple(allowed_provider_regions),
                     request_collection_count_path=request_collection_count_path,
                     request_collection_all=tuple(request_collection_all),
                     paired_response_collection_path=paired_response_collection_path,
@@ -779,13 +859,58 @@ class ServiceUsageObservers:
             )
         )
 
+    def select_request_headers(
+        self,
+        url: str,
+        request_headers: dict[str, Any],
+    ) -> dict[str, str | None]:
+        """Retain only values needed by matching declarative predicates.
+
+        Presence-only predicates use a ``None`` sentinel so authorization
+        credentials and other unrelated header values are never retained.
+        """
+        matched = self._lookup(url)
+        if matched is None:
+            return {}
+        source = {str(name).lower(): value for name, value in request_headers.items()}
+        selected: dict[str, str | None] = {}
+        for observer in matched[1]:
+            for predicate in observer.request_header_all:
+                name = predicate["name"]
+                if name not in source:
+                    continue
+                if predicate["operator"] in {"present", "absent"}:
+                    selected[name] = None
+                    continue
+                raw = source[name]
+                if isinstance(raw, bytes):
+                    try:
+                        selected[name] = raw.decode("ascii")
+                    except UnicodeDecodeError:
+                        continue
+                elif isinstance(raw, str):
+                    selected[name] = raw
+                elif isinstance(raw, (tuple, list)) and all(
+                    isinstance(item, (str, bytes)) for item in raw
+                ):
+                    try:
+                        selected[name] = ", ".join(
+                            item.decode("ascii") if isinstance(item, bytes) else item
+                            for item in raw
+                        )
+                    except UnicodeDecodeError:
+                        continue
+        return selected
+
     def observe(
         self,
         url: str,
         response_headers: dict[str, str],
         response_body: dict[str, Any] | None,
         request_body: dict[str, Any] | list[Any] | None = None,
-        request_header_names: tuple[str, ...] | list[str] = (),
+        request_headers: (
+            tuple[str, ...] | list[str] | dict[str, str | None]
+        ) = (),
     ) -> list[ServiceUsageObservation]:
         matched = self._lookup(url)
         if matched is None:
@@ -793,8 +918,13 @@ class ServiceUsageObservers:
         parsed, observers = matched
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
-        normalized_request_header_names = frozenset(
-            name.lower() for name in request_header_names
+        normalized_request_headers = (
+            {
+                str(name).lower(): value
+                for name, value in request_headers.items()
+            }
+            if isinstance(request_headers, dict)
+            else {str(name).lower(): None for name in request_headers}
         )
         for observer in observers:
             if not all(
@@ -804,7 +934,7 @@ class ServiceUsageObservers:
                 continue
             if not all(
                 _request_header_predicate_matches(
-                    normalized_request_header_names, predicate
+                    normalized_request_headers, predicate
                 )
                 for predicate in observer.request_header_all
             ):
@@ -1014,6 +1144,15 @@ class ServiceUsageObservers:
                     else variant["default_suffix"]
                 )
                 resource_id = f"{resource_id}{suffix}"[:256]
+            provider_region = None
+            if observer.provider_region_domain_label is not None:
+                labels = (parsed.hostname or "").split(".")
+                if observer.provider_region_domain_label >= len(labels):
+                    continue
+                candidate = labels[observer.provider_region_domain_label]
+                if candidate not in observer.allowed_provider_regions:
+                    continue
+                provider_region = candidate
             dimensions: list[dict[str, Any]] = []
             if observer.service_key == "elevenlabs_tts":
                 prefix = "/v1/text-to-speech/"
@@ -1041,6 +1180,7 @@ class ServiceUsageObservers:
                     resource_type=observer.resource_type if resource_id else None,
                     resource_id=resource_id,
                     provider_record_id=record_id,
+                    provider_region=provider_region,
                     dimensions=tuple(dimensions),
                     manifest_version=self.manifest_version,
                 )

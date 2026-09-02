@@ -67,6 +67,7 @@ def test_shared_service_usage_observer_conformance() -> None:
             assert actual.resource_type == wanted.get("resource_type")
             assert actual.resource_id == wanted.get("resource_id")
             assert actual.provider_record_id == wanted.get("provider_record_id")
+            assert actual.provider_region == wanted.get("provider_region")
 
 
 def test_packaged_observer_manifest_matches_canonical_manifest() -> None:

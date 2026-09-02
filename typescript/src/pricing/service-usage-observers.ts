@@ -38,14 +38,28 @@ interface ResponsePredicate {
 interface RequestPredicate {
   path: string;
   operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte" |
-    "equals" | "not_equals" | "string_not_contains";
+    "equals" | "not_equals" | "string_not_contains" | "array_contains" |
+    "absent_or_empty_collection";
   value?: number | string | boolean;
 }
 
-interface RequestHeaderPredicate {
+type RequestHeaderPredicate = {
   name: string;
-  operator: "present" | "absent";
-}
+  operator: "present";
+} | {
+  name: string;
+  operator: "absent";
+} | {
+  name: string;
+  operator: "equals";
+  value: string;
+} | {
+  name: string;
+  operator: "one_of";
+  values: string[];
+};
+
+export type ObservedRequestHeaders = Readonly<Record<string, string | undefined>>;
 
 interface CollectionPredicate {
   path: string;
@@ -74,6 +88,8 @@ interface UsageObserverDefinition {
   response_all?: ResponsePredicate[];
   request_all?: RequestPredicate[];
   request_header_all?: RequestHeaderPredicate[];
+  provider_region_domain_label?: number;
+  allowed_provider_regions?: string[];
   request_collection_count_path?: string;
   request_collection_all?: CollectionPredicate[];
   paired_response_collection_path?: string;
@@ -119,6 +135,7 @@ export interface ServiceUsageObservation {
   resourceType?: ObservedResourceType;
   resourceId?: string;
   providerRecordId?: string;
+  providerRegion?: string;
   dimensions?: ObservedBillingDimension[];
   manifestVersion: string;
 }
@@ -237,21 +254,46 @@ function endpointMatches(pathname: string, endpoint: string, mode: "exact" | "pr
 }
 
 function requestHeaderPredicateMatches(
-  requestHeaderNames: ReadonlySet<string>,
+  requestHeaders: ReadonlyMap<string, string | undefined>,
   predicate: RequestHeaderPredicate,
 ): boolean {
-  const present = requestHeaderNames.has(predicate.name.toLowerCase());
-  return predicate.operator === "present" ? present : !present;
+  const name = predicate.name.toLowerCase();
+  const present = requestHeaders.has(name);
+  if (predicate.operator === "present") return present;
+  if (predicate.operator === "absent") return !present;
+  const value = requestHeaders.get(name);
+  if (predicate.operator === "equals") return present && value === predicate.value;
+  return present && value !== undefined && predicate.values.includes(value);
 }
 
 function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHeaderPredicate {
   if (predicate === null || typeof predicate !== "object") return false;
-  const candidate = predicate as Partial<RequestHeaderPredicate>;
-  return Object.keys(candidate).length === 2 &&
-    typeof candidate.name === "string" &&
-    /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(candidate.name) &&
-    candidate.name === candidate.name.toLowerCase() &&
-    (candidate.operator === "present" || candidate.operator === "absent");
+  const candidate = predicate as {
+    name?: unknown;
+    operator?: unknown;
+    value?: unknown;
+    values?: unknown;
+  };
+  if (
+    typeof candidate.name !== "string" ||
+    !/^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(candidate.name) ||
+    candidate.name !== candidate.name.toLowerCase()
+  ) return false;
+  if (candidate.operator === "present" || candidate.operator === "absent") {
+    return Object.keys(candidate).length === 2;
+  }
+  if (candidate.operator === "equals") {
+    return Object.keys(candidate).length === 3 &&
+      typeof candidate.value === "string" && candidate.value.length > 0 &&
+      candidate.value.length <= 256;
+  }
+  return candidate.operator === "one_of" &&
+    Object.keys(candidate).length === 3 &&
+    Array.isArray(candidate.values) && candidate.values.length > 0 &&
+    candidate.values.length <= 100 &&
+    candidate.values.every((value) =>
+      typeof value === "string" && value.length > 0 && value.length <= 256) &&
+    new Set(candidate.values).size === candidate.values.length;
 }
 
 function collectionPredicateMatches(value: unknown, predicate: CollectionPredicate): boolean {
@@ -343,6 +385,12 @@ function requestPredicateMatches(value: unknown, predicate: RequestPredicate): b
       typeof predicate.value === "string" &&
       !resolved.includes(predicate.value);
   }
+  if (predicate.operator === "array_contains") {
+    return Array.isArray(resolved) && resolved.some((item) => item === predicate.value);
+  }
+  if (predicate.operator === "absent_or_empty_collection") {
+    return Array.isArray(resolved) && resolved.length === 0;
+  }
   if (predicate.operator === "absent_or_false_or_null") return resolved === false;
   return predicate.operator === "absent_or_lte" &&
     typeof resolved === "number" && Number.isFinite(resolved) &&
@@ -353,7 +401,9 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   if (predicate === null || typeof predicate !== "object") return false;
   const candidate = predicate as Partial<RequestPredicate>;
   if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
-  if (candidate.operator === "absent_or_null" || candidate.operator === "absent_or_false_or_null") {
+  if (candidate.operator === "absent_or_null" ||
+      candidate.operator === "absent_or_false_or_null" ||
+      candidate.operator === "absent_or_empty_collection") {
     return Object.keys(candidate).length === 2 && candidate.value === undefined;
   }
   if (candidate.operator === "equals" || candidate.operator === "not_equals") {
@@ -365,6 +415,12 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   if (candidate.operator === "string_not_contains") {
     return Object.keys(candidate).length === 3 &&
       typeof candidate.value === "string" && candidate.value.length > 0;
+  }
+  if (candidate.operator === "array_contains") {
+    return Object.keys(candidate).length === 3 &&
+      (typeof candidate.value === "boolean" ||
+        (typeof candidate.value === "number" && Number.isFinite(candidate.value)) ||
+        (typeof candidate.value === "string" && candidate.value.length > 0));
   }
   return candidate.operator === "absent_or_lte" &&
     Object.keys(candidate).length === 3 &&
@@ -447,6 +503,18 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         !observer.domain_suffixes.every((suffix) =>
           typeof suffix === "string" && suffix.length <= 253 &&
           DOMAIN_SUFFIX_PATTERN.test(suffix))
+      )) ||
+      ((observer.provider_region_domain_label !== undefined) !==
+        (observer.allowed_provider_regions !== undefined)) ||
+      (observer.provider_region_domain_label !== undefined && (
+        !Number.isInteger(observer.provider_region_domain_label) ||
+        observer.provider_region_domain_label < 0 ||
+        observer.provider_region_domain_label > 10 ||
+        !Array.isArray(observer.allowed_provider_regions) ||
+        observer.allowed_provider_regions.length === 0 ||
+        observer.allowed_provider_regions.length > 100 ||
+        !observer.allowed_provider_regions.every((region) => CANONICAL_NAME.test(region)) ||
+        new Set(observer.allowed_provider_regions).size !== observer.allowed_provider_regions.length
       )) ||
       !Array.isArray(observer.endpoints) ||
       observer.endpoints.length === 0 ||
@@ -642,19 +710,57 @@ export class ServiceUsageObservers {
     ) === true;
   }
 
+  /** Keep only headers referenced by matching observer rules. Presence-only
+   * predicates use an undefined sentinel so credential values are not held. */
+  selectRequestHeaders(
+    url: string,
+    requestHeaders: Readonly<Record<string, unknown>>,
+  ): ObservedRequestHeaders {
+    const matched = this.lookup(url);
+    if (matched === undefined) return {};
+    const source = new Map(
+      Object.entries(requestHeaders).map(([name, value]) => [name.toLowerCase(), value]),
+    );
+    const selected: Record<string, string | undefined> = {};
+    for (const observer of matched.observers) {
+      for (const predicate of observer.request_header_all ?? []) {
+        const name = predicate.name.toLowerCase();
+        if (!source.has(name)) continue;
+        if (predicate.operator === "present" || predicate.operator === "absent") {
+          selected[name] = undefined;
+          continue;
+        }
+        const raw = source.get(name);
+        const value = Array.isArray(raw) ? raw.join(", ")
+          : typeof raw === "string" ? raw
+          : typeof raw === "number" ? String(raw)
+          : undefined;
+        if (value !== undefined) selected[name] = value;
+      }
+    }
+    return selected;
+  }
+
   observe(
     url: string,
     headers: Headers,
     responseBody: unknown,
     requestBody?: unknown,
-    requestHeaderNames: readonly string[] = [],
+    requestHeaders: readonly string[] | ObservedRequestHeaders = [],
   ): ServiceUsageObservation[] {
     const matched = this.lookup(url);
     if (matched === undefined) return [];
     const observations: ServiceUsageObservation[] = [];
-    const normalizedRequestHeaderNames = new Set(
-      requestHeaderNames.map((name) => name.toLowerCase()),
-    );
+    const normalizedRequestHeaders = new Map<string, string | undefined>();
+    if (Array.isArray(requestHeaders)) {
+      for (const name of requestHeaders) {
+        normalizedRequestHeaders.set(name.toLowerCase(), undefined);
+      }
+    } else {
+      for (const [name, value] of Object.entries(requestHeaders)) {
+        normalizedRequestHeaders.set(name.toLowerCase(), value);
+      }
+    }
     for (const observer of matched.observers) {
       if (
         observer.request_all !== undefined &&
@@ -666,7 +772,7 @@ export class ServiceUsageObservers {
       if (
         observer.request_header_all !== undefined &&
         !observer.request_header_all.every((predicate) =>
-          requestHeaderPredicateMatches(normalizedRequestHeaderNames, predicate))
+          requestHeaderPredicateMatches(normalizedRequestHeaders, predicate))
       ) {
         continue;
       }
@@ -818,6 +924,16 @@ export class ServiceUsageObservers {
           : variant.default_suffix;
         resourceId = resourceId.slice(0, 256);
       }
+      let providerRegion: string | undefined;
+      if (observer.provider_region_domain_label !== undefined) {
+        const candidate = matched.parsed.hostname.split(".")[
+          observer.provider_region_domain_label
+        ];
+        if (candidate === undefined || !observer.allowed_provider_regions?.includes(candidate)) {
+          continue;
+        }
+        providerRegion = candidate;
+      }
       observations.push({
         serviceKey: observer.service_key,
         providerName: observer.provider_name,
@@ -828,6 +944,7 @@ export class ServiceUsageObservers {
         resourceType: resourceId === undefined ? undefined : observer.resource_type,
         resourceId,
         providerRecordId: recordFromBody ?? recordFromHeader,
+        providerRegion,
         dimensions: pathDimensions(matched.parsed, observer),
         manifestVersion: this.manifestVersion,
       });

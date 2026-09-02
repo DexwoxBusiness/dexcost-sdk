@@ -432,6 +432,7 @@ async def _aiohttp_wrapper(
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
+    request_headers = dict(kwargs.get("headers") or {})
     observers = get_service_usage_observers()
     if (
         observers is not None
@@ -442,6 +443,7 @@ async def _aiohttp_wrapper(
             url=url,
             method=method,
             request_body=request_body,
+            request_headers=request_headers,
             latency_ms=latency_ms,
             request_context=request_context,
         )
@@ -450,7 +452,7 @@ async def _aiohttp_wrapper(
             _handle_http_call,
             url,
             method=method,
-            request_headers={},
+            request_headers=request_headers,
             request_body_len=0,
             request_body=request_body,
             response=response,
@@ -461,7 +463,7 @@ async def _aiohttp_wrapper(
     _handle_http_call(
         url,
         method=method,
-        request_headers={},
+        request_headers=request_headers,
         request_body_len=0,
         request_body=request_body,
         response=response,
@@ -490,10 +492,11 @@ def _botocore_wrapper(
         url = str(getattr(req, "url", "") or "")
         body = getattr(req, "body", None)
         body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
+        headers = dict(getattr(req, "headers", {}) or {})
         _handle_http_call(
             url,
             method=str(getattr(req, "method", "GET")),
-            request_headers={},
+            request_headers=headers,
             request_body_len=body_len,
             request_body=body,
             response=response,
@@ -534,7 +537,7 @@ def _urllib3_wrapper(
     _handle_http_call(
         full_url,
         method=req_method,
-        request_headers={},
+        request_headers=dict(kwargs.get("headers") or {}),
         request_body_len=0,
         request_body=kwargs.get("body"),
         response=response,
@@ -656,6 +659,7 @@ def _defer_aiohttp_json_observation(
     url: str,
     method: str,
     request_body: Any,
+    request_headers: dict[str, Any],
     latency_ms: int,
     request_context: contextvars.Context,
 ) -> bool:
@@ -681,7 +685,7 @@ def _defer_aiohttp_json_observation(
                 _handle_http_call,
                 url,
                 method=method,
-                request_headers={},
+                request_headers=request_headers,
                 request_body_len=0,
                 request_body=request_body,
                 response=response,
@@ -945,7 +949,7 @@ def _handle_usage_observer(
     status_code: int,
     byte_details: dict[str, Any],
     request_body: dict[str, Any] | list[Any] | None,
-    request_header_names: tuple[str, ...],
+    request_headers: dict[str, str | None],
 ) -> bool:
     """Record provider-owned usage without asserting an SDK-side price."""
     if status_code < 200 or status_code >= 300:
@@ -958,7 +962,7 @@ def _handle_usage_observer(
         response_headers,
         response_body if response_body is not None else _get_response_body(response),
         request_body,
-        request_header_names,
+        request_headers,
     )
     if not observations:
         return False
@@ -986,6 +990,8 @@ def _handle_usage_observer(
             "attribution_observer_service": observation.service_key,
             **byte_details,
         }
+        if observation.provider_region is not None:
+            details["cloud_region"] = observation.provider_region
         if observation.metric == "audio_seconds":
             details["attribution_usage_duration_seconds"] = str(observation.quantity)
         event = Event(
@@ -1156,7 +1162,7 @@ def _handle_http_call_inner(
             return
         # Usage-only observers contain no rates and remain active even when
         # notable-network event emission is disabled.
-        if observer_route and _handle_usage_observer(
+        if observers is not None and observer_route and _handle_usage_observer(
             url,
             domain,
             record_network,
@@ -1168,7 +1174,7 @@ def _handle_http_call_inner(
             status_code,
             byte_details,
             request_body,
-            tuple(str(name).lower() for name in request_headers),
+            observers.select_request_headers(url, request_headers),
         ):
             return
     # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────

@@ -236,6 +236,48 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(JSON.stringify(events)).not.toContain("must-not-be-recorded");
   });
 
+  it("observes both Rekognition DetectLabels SKUs with region and no credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      Labels: [],
+      ImageProperties: {},
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amzn-requestid": "rek-http-1",
+      },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "image-analysis" });
+    await runWithTask(task, async () => {
+      await fetch("https://rekognition.us-east-1.amazonaws.com/", {
+        method: "POST",
+        headers: {
+          "X-Amz-Target": "RekognitionService.DetectLabels",
+          Authorization: "AWS4-HMAC-SHA256 must-not-be-recorded",
+        },
+        body: JSON.stringify({ Features: ["GENERAL_LABELS", "IMAGE_PROPERTIES"] }),
+      });
+    });
+
+    const events = getRecordedEvents().filter((event) =>
+      String(event.details["attribution_observer_service"]).startsWith("aws_rekognition_")
+    );
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.details["attribution_resource_id"]))).toEqual(
+      new Set(["group_2", "image_properties"]),
+    );
+    for (const event of events) {
+      expect(toAttributionObservationV3(event)?.provider).toEqual({
+        name: "aws",
+        service: "rekognition_image",
+        region: "us-east-1",
+        record_id: "rek-http-1",
+      });
+    }
+    expect(JSON.stringify(events)).not.toContain("must-not-be-recorded");
+  });
+
   it("does not price anonymous Jina Reader usage", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
       status: 200,

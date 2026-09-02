@@ -57,6 +57,7 @@ import { registerLlmCapture } from "../core/llm-dedup.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import {
   serviceUsageObservers,
+  type ObservedRequestHeaders,
   type ServiceUsageObservation,
 } from "../pricing/service-usage-observers.js";
 import {
@@ -620,9 +621,10 @@ function _buildInstrumentedFetch(
     const urlStr = scrubUrl(_resolveUrlStr(input));
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
-    const observerRequestHeaderNames = Object.keys(requestHeaders).map((name) =>
-      name.toLowerCase(),
-    );
+    const observerRequestHeaders = serviceUsageObservers?.selectRequestHeaders(
+      urlStr,
+      requestHeaders,
+    ) ?? {};
     const requestBodyLen = _resolveRequestBodyLen(input, init);
     let potentialLlmFormat: LlmFormat | null = null;
     let knownLlmHost = false;
@@ -743,7 +745,7 @@ function _buildInstrumentedFetch(
         ? response.headers.get("llm_provider-x-litellm-response-cost") ?? undefined
         : undefined,
       observerRequestBody,
-      observerRequestHeaderNames,
+      observerRequestHeaders,
     };
 
     // Wrap the response body in a TransformStream that counts bytes as
@@ -1048,15 +1050,15 @@ function _patchNodeHttp(): void {
           if (req && typeof req.on === "function") {
             req.on("response", (response: unknown) => {
               const observerRequestBody = readObserverRequestBody?.();
-              const observerRequestHeaderNames = typeof req.getHeaderNames === "function"
-                ? req.getHeaderNames().map((name: string) => name.toLowerCase())
-                : [];
+              const observerRequestHeaders = typeof req.getHeaders === "function"
+                ? serviceUsageObservers?.selectRequestHeaders(urlStr, req.getHeaders()) ?? {}
+                : {};
               void _maybeRecordCost(
                 urlStr,
                 _nodeResponseAsFetchResponse(response),
                 undefined,
                 observerRequestBody,
-                observerRequestHeaderNames,
+                observerRequestHeaders,
               );
             });
           } else {
@@ -1308,8 +1310,8 @@ interface _HttpCallContext {
   liteLlmProviderCost?: string;
   /** Bounded JSON request metadata used only for observer billing identity. */
   observerRequestBody?: unknown;
-  /** Normalized names only; request-header values are never retained. */
-  observerRequestHeaderNames?: readonly string[];
+  /** Only manifest-referenced values are retained; credentials use presence sentinels. */
+  observerRequestHeaders?: ObservedRequestHeaders;
   /** Response BODY bytes, known once the counting stream has drained.
    *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
    *  llm_call path, whose extraction drains the body via clone()) can
@@ -2152,7 +2154,7 @@ async function _maybeRecordCost(
   response?: Response,
   ctx?: _HttpCallContext,
   nodeObserverRequestBody?: unknown,
-  nodeObserverRequestHeaderNames: readonly string[] = [],
+  nodeObserverRequestHeaders: ObservedRequestHeaders = {},
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -2393,7 +2395,7 @@ async function _maybeRecordCost(
           response.headers,
           observerResponseBody,
           ctx?.observerRequestBody ?? nodeObserverRequestBody,
-          ctx?.observerRequestHeaderNames ?? nodeObserverRequestHeaderNames,
+          ctx?.observerRequestHeaders ?? nodeObserverRequestHeaders,
         ) ?? [];
         if (observations.length > 0) {
           for (const observation of observations) {
@@ -2421,6 +2423,9 @@ async function _maybeRecordCost(
                 attribution_dimensions: observation.dimensions,
                 attribution_observer_version: observation.manifestVersion,
                 attribution_observer_service: observation.serviceKey,
+                ...(observation.providerRegion === undefined
+                  ? {}
+                  : { cloud_region: observation.providerRegion }),
                 ...duration,
                 ...byteDetailsRequestOnly,
               },

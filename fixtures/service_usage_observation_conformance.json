@@ -1,5 +1,5 @@
 {
-  "schema_version": "17",
+  "schema_version": "18",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1240,6 +1240,100 @@
       "headers": {},
       "request": { "text": ["private"], "target_lang": "DE" },
       "response": { "message": "Quota exceeded" },
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_group_1_request_captures_region_and_request_id",
+      "url": "https://rekognition.us-east-1.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-group-1" },
+      "request_headers": { "x-amz-target": "RekognitionService.CompareFaces" },
+      "request": { "SourceImage": { "S3Object": { "Bucket": "a", "Name": "one" } }, "TargetImage": { "S3Object": { "Bucket": "a", "Name": "two" } } },
+      "response": { "FaceMatches": [] },
+      "expected": [{ "service_key": "aws_rekognition_image_group_1", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_1", "provider_record_id": "rek-group-1", "provider_region": "us-east-1" }]
+    },
+    {
+      "name": "aws_rekognition_group_2_request_supports_dualstack_endpoint",
+      "url": "https://rekognition.eu-west-2.api.aws/",
+      "headers": { "x-amzn-requestid": "rek-group-2" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectText" },
+      "request": { "Image": { "Bytes": "not-retained-by-adapter-tests" } },
+      "response": { "TextDetections": [] },
+      "expected": [{ "service_key": "aws_rekognition_image_group_2", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-group-2", "provider_region": "eu-west-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_defaults_to_general_labels_when_features_absent",
+      "url": "https://rekognition.ap-southeast-2.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-default" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Image": { "S3Object": { "Bucket": "a", "Name": "one" } } },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_default", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-default", "provider_region": "ap-southeast-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_empty_features_uses_default_group",
+      "url": "https://rekognition.us-west-2.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": [] },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_default", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_region": "us-west-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_general_feature_uses_group_2",
+      "url": "https://rekognition-fips.ca-central-1.api.aws/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["GENERAL_LABELS"] },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_general", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_region": "ca-central-1" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_image_properties_uses_separate_sku",
+      "url": "https://rekognition.eu-central-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["IMAGE_PROPERTIES"] },
+      "response": { "ImageProperties": {} },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_image_properties", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties", "provider_region": "eu-central-1" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units",
+      "url": "https://rekognition.us-west-1.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-both" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["GENERAL_LABELS", "IMAGE_PROPERTIES"] },
+      "response": { "Labels": [], "ImageProperties": {} },
+      "expected": [
+        { "service_key": "aws_rekognition_detect_labels_general", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-both", "provider_region": "us-west-1" },
+        { "service_key": "aws_rekognition_detect_labels_image_properties", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties", "provider_record_id": "rek-both", "provider_region": "us-west-1" }
+      ]
+    },
+    {
+      "name": "aws_rekognition_unknown_operation_fails_open",
+      "url": "https://rekognition.us-east-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.StartLabelDetection" },
+      "request": {},
+      "response": { "JobId": "job" },
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_unverified_region_endpoint_fails_open",
+      "url": "https://rekognition.eu-north-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.CompareFaces" },
+      "request": {},
+      "response": {},
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_failed_request_is_not_observed",
+      "url": "https://rekognition.us-east-2.amazonaws.com/",
+      "status_code": 400,
+      "headers": { "x-amzn-requestid": "rek-failed" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectFaces" },
+      "request": {},
+      "response": { "__type": "InvalidImageFormatException" },
       "expected": []
     }
   ]

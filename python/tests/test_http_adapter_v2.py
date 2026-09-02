@@ -533,6 +533,7 @@ class TestKnownServiceExtraction:
         request = MagicMock()
         request.url = "https://translate.us-east-1.amazonaws.com/"
         request.method = "POST"
+        request.headers = {}
         request.body = json.dumps(
             {
                 "Text": "Hello \ud83d\udc4b world",
@@ -573,6 +574,56 @@ class TestKnownServiceExtraction:
             key: wire["usage"][0][key]
             for key in ("metric", "quantity", "unit")
         } == {"metric": "characters", "quantity": "13", "unit": "Characters"}
+
+    def test_botocore_rekognition_observes_both_detect_labels_skus_and_region(
+        self,
+    ) -> None:
+        task = _make_task("image-analysis")
+        request = MagicMock()
+        request.url = "https://rekognition.us-east-1.amazonaws.com/"
+        request.method = "POST"
+        request.headers = {
+            "X-Amz-Target": "RekognitionService.DetectLabels",
+            "Authorization": "AWS4-HMAC-SHA256 must-not-be-recorded",
+        }
+        request.body = json.dumps(
+            {"Features": ["GENERAL_LABELS", "IMAGE_PROPERTIES"]}
+        ).encode()
+        response = _make_response(
+            headers={"x-amzn-requestid": "rek-http-1"},
+            body={"Labels": [], "ImageProperties": {}},
+            content_type="application/x-amz-json-1.1",
+        )
+
+        with task_context(task):
+            _botocore_wrapper(
+                lambda *_args, **_kwargs: response,
+                None,
+                (request,),
+                {},
+            )
+
+        observations = [
+            event
+            for event in get_recorded_events()
+            if str(event.details.get("attribution_observer_service", "")).startswith(
+                "aws_rekognition_"
+            )
+        ]
+        assert len(observations) == 2
+        assert {
+            event.details["attribution_resource_id"] for event in observations
+        } == {"group_2", "image_properties"}
+        for event in observations:
+            wire = to_attribution_observation_v3(event)
+            assert wire is not None
+            assert wire["provider"] == {
+                "name": "aws",
+                "service": "rekognition_image",
+                "region": "us-east-1",
+                "record_id": "rek-http-1",
+            }
+        assert "must-not-be-recorded" not in repr(observations)
 
     def test_http_transport_observes_azure_request_arrays_and_target_count(self) -> None:
         task = _make_task("translation")
