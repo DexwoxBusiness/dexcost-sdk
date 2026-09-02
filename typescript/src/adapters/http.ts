@@ -908,6 +908,96 @@ function _urlFromRequestArgs(isHttps: boolean, args: any[]): string | null {
 /** CommonJS require, used to obtain the mutable http/https module objects. */
 const _require = createRequire(import.meta.url);
 
+/**
+ * Retain a bounded copy of a Node ClientRequest body only when an active
+ * provider observer needs request JSON. This covers SDKs such as AWS SDK v3
+ * that use node:http instead of fetch, without buffering unrelated traffic.
+ */
+function _captureNodeObserverRequestBody(req: any): () => unknown {
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let overflow = false;
+  let ending = false;
+
+  const append = (chunk: unknown, encoding?: string): void => {
+    if (overflow || chunk === undefined || chunk === null) return;
+    let bytes: Buffer;
+    try {
+      if (typeof chunk === "string") {
+        bytes = Buffer.from(chunk, encoding as BufferEncoding | undefined);
+      } else if (Buffer.isBuffer(chunk)) {
+        bytes = Buffer.from(chunk);
+      } else if (ArrayBuffer.isView(chunk)) {
+        bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      } else if (chunk instanceof ArrayBuffer) {
+        bytes = Buffer.from(chunk);
+      } else {
+        overflow = true;
+        chunks.length = 0;
+        return;
+      }
+    } catch {
+      overflow = true;
+      chunks.length = 0;
+      return;
+    }
+    byteLength += bytes.byteLength;
+    if (byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) {
+      overflow = true;
+      chunks.length = 0;
+      return;
+    }
+    chunks.push(Buffer.from(bytes));
+  };
+
+  const originalWrite = req.write;
+  const originalEnd = req.end;
+  if (typeof originalWrite === "function") {
+    req.write = function wrappedWrite(this: unknown, ...args: any[]): unknown {
+      if (!ending) append(args[0], typeof args[1] === "string" ? args[1] : undefined);
+      return originalWrite.apply(this, args);
+    };
+  }
+  if (typeof originalEnd === "function") {
+    req.end = function wrappedEnd(this: unknown, ...args: any[]): unknown {
+      if (typeof args[0] !== "function") {
+        append(args[0], typeof args[1] === "string" ? args[1] : undefined);
+      }
+      ending = true;
+      try {
+        return originalEnd.apply(this, args);
+      } finally {
+        ending = false;
+      }
+    };
+  }
+
+  return () => {
+    if (overflow || byteLength === 0) return undefined;
+    try {
+      return JSON.parse(Buffer.concat(chunks, byteLength).toString("utf8"));
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+function _nodeResponseAsFetchResponse(response: any): Response {
+  const headers = new Headers();
+  for (const [name, rawValue] of Object.entries(response?.headers ?? {})) {
+    if (Array.isArray(rawValue)) {
+      for (const value of rawValue) headers.append(name, String(value));
+    } else if (rawValue !== undefined) {
+      headers.set(name, String(rawValue));
+    }
+  }
+  const candidateStatus = Number(response?.statusCode);
+  const status = Number.isInteger(candidateStatus) && candidateStatus >= 200 && candidateStatus <= 599
+    ? candidateStatus
+    : 200;
+  return new Response(null, { status, headers });
+}
+
 /** Patch http.request/get and https.request/get to record external costs. */
 function _patchNodeHttp(): void {
   if (_originalHttpRequest !== null) return; // already patched
@@ -945,11 +1035,25 @@ function _patchNodeHttp(): void {
           }
         }
         if (urlStr && !internal) {
-          // Record on response — body is not parsed for Node-level
-          // requests (matches the Python urllib3 wrapper's behaviour).
+          const readObserverRequestBody = serviceUsageObservers?.needsRequestBody(urlStr) === true
+            ? _captureNodeObserverRequestBody(req)
+            : undefined;
+          // Response bodies remain unconsumed. For request-owned observers,
+          // however, a bounded request JSON snapshot plus status/headers is
+          // sufficient to emit the same usage shape as the fetch path.
           if (req && typeof req.on === "function") {
-            req.on("response", () => {
-              void _maybeRecordCost(urlStr);
+            req.on("response", (response: unknown) => {
+              const observerRequestBody = readObserverRequestBody?.();
+              if (observerRequestBody !== undefined) {
+                void _maybeRecordCost(
+                  urlStr,
+                  _nodeResponseAsFetchResponse(response),
+                  undefined,
+                  observerRequestBody,
+                );
+              } else {
+                void _maybeRecordCost(urlStr);
+              }
             });
           } else {
             void _maybeRecordCost(urlStr);
@@ -2040,6 +2144,7 @@ async function _maybeRecordCost(
   urlStr: string,
   response?: Response,
   ctx?: _HttpCallContext,
+  nodeObserverRequestBody?: unknown,
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -2279,7 +2384,7 @@ async function _maybeRecordCost(
           urlStr,
           response.headers,
           observerResponseBody,
-          ctx?.observerRequestBody,
+          ctx?.observerRequestBody ?? nodeObserverRequestBody,
         ) ?? [];
         if (observations.length > 0) {
           for (const observation of observations) {

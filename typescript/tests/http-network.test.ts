@@ -22,6 +22,10 @@ import {
 import { suppressNetworkEvent } from "../src/core/context.js";
 import { runWithTask } from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
+import {
+  ServiceUsageObservers,
+  setServiceUsageObservers,
+} from "../src/pricing/service-usage-observers.js";
 
 // Spin up a tiny in-process server for each test using Node's built-in
 // http module. Avoids external deps.
@@ -55,6 +59,73 @@ describe("HTTP adapter — Task 7 byte accounting + network events", () => {
     clearDomainRates();
     clearRecordedEvents();
     _resetAccountantRegistryForTests();
+    setServiceUsageObservers(new ServiceUsageObservers());
+  });
+
+  it("observes bounded request JSON from Node SDK transports", async () => {
+    const server = await startServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/x-amz-json-1.1" });
+        res.end("{}");
+      });
+    });
+    setServiceUsageObservers(new ServiceUsageObservers({
+      _meta: {
+        version: "test-node-request-body",
+        observer_count: 1,
+        purpose: "test",
+      },
+      observers: [{
+        service_key: "aws_translate",
+        provider_name: "aws",
+        provider_service: "translate_text",
+        component: "external",
+        domains: ["127.0.0.1"],
+        endpoints: ["/"],
+        endpoint_match: "exact",
+        request_character_count_path: "Text",
+        request_all: [{
+          path: "SourceLanguageCode",
+          operator: "not_equals",
+          value: "auto",
+        }],
+        usage_metric: "characters",
+        resource_type: "sku",
+        fixed_resource_id: "standard_text",
+        source_url: "https://docs.aws.amazon.com/translate/latest/APIReference/API_TranslateText.html",
+      }],
+    }));
+    const task = createTask({ taskId: "t-node-aws-translate" });
+
+    await runWithTask(task, () => new Promise<void>((resolve, reject) => {
+      const request = http.request(`${server.url}/`, {
+        method: "POST",
+        headers: { "content-type": "application/x-amz-json-1.1" },
+      }, (response) => {
+        response.resume();
+        response.on("end", resolve);
+      });
+      request.on("error", reject);
+      request.end(JSON.stringify({
+        Text: "Hello \ud83d\udc4b world",
+        SourceLanguageCode: "en",
+        TargetLanguageCode: "es",
+      }));
+    }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await server.close();
+
+    const observations = getRecordedEvents().filter((event) =>
+      event.details?.attribution_observer_service === "aws_translate"
+    );
+    expect(observations).toHaveLength(1);
+    expect(observations[0].details).toMatchObject({
+      attribution_usage_metric: "characters",
+      attribution_usage_quantity: "13",
+      attribution_resource_type: "sku",
+      attribution_resource_id: "standard_text",
+    });
   });
 
   it("records bytes into the registered accountant", async () => {

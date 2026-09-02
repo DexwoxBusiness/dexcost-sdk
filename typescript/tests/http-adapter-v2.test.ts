@@ -157,6 +157,37 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("emits Amazon Translate standard-text characters from fetch request JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      TranslatedText: "Hola mundo",
+      SourceLanguageCode: "en",
+      TargetLanguageCode: "es",
+    }), { status: 200, headers: { "content-type": "application/x-amz-json-1.1" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "translation" });
+    await runWithTask(task, async () => {
+      await fetch("https://translate.us-east-1.amazonaws.com/", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-amz-json-1.1",
+          "x-amz-target": "AWSShineFrontendService_20170701.TranslateText",
+        },
+        body: JSON.stringify({
+          Text: "Hello \ud83d\udc4b world",
+          SourceLanguageCode: "en",
+          TargetLanguageCode: "es",
+        }),
+      });
+    });
+
+    expect(toAttributionObservationV3(getRecordedEvents()[0])).toMatchObject({
+      component: "external",
+      provider: { name: "aws", service: "translate_text" },
+      resource: { type: "sku", id: "standard_text" },
+      usage: [{ metric: "characters", quantity: "13", unit: "Characters" }],
+    });
+  });
+
   it("does not block on unfinished Request streams for observer metadata", async () => {
     const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "cohere-stream",

@@ -202,6 +202,46 @@
       "expected": []
     },
     {
+      "name": "aws_translate_text_counts_unicode_characters",
+      "url": "https://translate.us-east-1.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello \ud83d\udc4b world", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola mundo", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": [{ "service_key": "aws_translate", "provider_name": "aws", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "13", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "aws_translate_text_supports_documented_dual_stack_endpoint",
+      "url": "https://translate.eu-west-1.api.aws/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "\u7a7a", "SourceLanguageCode": "ja", "TargetLanguageCode": "en" },
+      "response": { "TranslatedText": "empty", "SourceLanguageCode": "ja", "TargetLanguageCode": "en" },
+      "expected": [{ "service_key": "aws_translate", "provider_name": "aws", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "1", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "aws_translate_auto_detection_is_not_assumed_to_be_standard_text_only",
+      "url": "https://translate.us-west-2.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "SourceLanguageCode": "auto", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": []
+    },
+    {
+      "name": "aws_translate_missing_source_language_fails_open",
+      "url": "https://translate.us-west-2.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": []
+    },
+    {
+      "name": "aws_translate_unverified_partition_endpoint_fails_open",
+      "url": "https://translate.cn-north-1.amazonaws.com.cn/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
+      "response": { "TranslatedText": "\u4f60\u597d", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
+      "expected": []
+    },
+    {
       "name": "google_custom_search_counts_existing_customer_query",
       "url": "https://customsearch.googleapis.com/customsearch/v1?key=demo&cx=engine&q=pricing",
       "headers": {},

@@ -15,6 +15,7 @@ import pytest
 
 from dexcost.adapters.http import (
     _aiohttp_wrapper,
+    _botocore_wrapper,
     _handle_http_call,
     clear_domain_rates,
     clear_recorded_events,
@@ -261,6 +262,52 @@ class TestKnownServiceExtraction:
             )
 
         assert get_recorded_events() == []
+
+    def test_botocore_transport_observes_amazon_translate_request_characters(self) -> None:
+        task = _make_task("translation")
+        request = MagicMock()
+        request.url = "https://translate.us-east-1.amazonaws.com/"
+        request.method = "POST"
+        request.body = json.dumps(
+            {
+                "Text": "Hello \ud83d\udc4b world",
+                "SourceLanguageCode": "en",
+                "TargetLanguageCode": "es",
+            }
+        ).encode()
+        response = _make_response(
+            body={
+                "TranslatedText": "Hola mundo",
+                "SourceLanguageCode": "en",
+                "TargetLanguageCode": "es",
+            },
+            content_type="application/x-amz-json-1.1",
+        )
+
+        with task_context(task):
+            returned = _botocore_wrapper(
+                lambda *_args, **_kwargs: response,
+                None,
+                (request,),
+                {},
+            )
+
+        assert returned is response
+        observations = [
+            event
+            for event in get_recorded_events()
+            if event.details.get("attribution_observer_service") == "aws_translate"
+        ]
+        assert len(observations) == 1
+        wire = to_attribution_observation_v3(observations[0])
+        assert wire is not None
+        assert wire["provider"] == {"name": "aws", "service": "translate_text"}
+        assert wire["resource"] == {"type": "sku", "id": "standard_text"}
+        assert len(wire["usage"]) == 1
+        assert {
+            key: wire["usage"][0][key]
+            for key in ("metric", "quantity", "unit")
+        } == {"metric": "characters", "quantity": "13", "unit": "Characters"}
 
     def test_observer_endpoint_boundary_does_not_fall_back_to_legacy_price(self) -> None:
         task = _make_task("search")

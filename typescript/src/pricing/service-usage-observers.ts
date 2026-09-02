@@ -32,8 +32,8 @@ interface ResponsePredicate {
 
 interface RequestPredicate {
   path: string;
-  operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte";
-  value?: number;
+  operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte" | "not_equals";
+  value?: number | string;
 }
 
 export interface ObservedBillingDimension {
@@ -178,11 +178,14 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
 function requestPredicateMatches(value: unknown, predicate: RequestPredicate): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const resolved = resolvePath(value, predicate.path);
-  if (resolved === undefined || resolved === null) return true;
+  if (resolved === undefined || resolved === null) {
+    return predicate.operator.startsWith("absent_or_");
+  }
+  if (predicate.operator === "not_equals") return resolved !== predicate.value;
   if (predicate.operator === "absent_or_false_or_null") return resolved === false;
   return predicate.operator === "absent_or_lte" &&
     typeof resolved === "number" && Number.isFinite(resolved) &&
-    predicate.value !== undefined && resolved <= predicate.value;
+    typeof predicate.value === "number" && resolved <= predicate.value;
 }
 
 function validRequestPredicate(predicate: unknown): predicate is RequestPredicate {
@@ -191,6 +194,10 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
   if (candidate.operator === "absent_or_null" || candidate.operator === "absent_or_false_or_null") {
     return Object.keys(candidate).length === 2 && candidate.value === undefined;
+  }
+  if (candidate.operator === "not_equals") {
+    return Object.keys(candidate).length === 3 &&
+      typeof candidate.value === "string" && candidate.value.length > 0;
   }
   return candidate.operator === "absent_or_lte" &&
     Object.keys(candidate).length === 3 &&

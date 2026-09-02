@@ -126,13 +126,18 @@ def _valid_response_predicate(predicate: Any) -> bool:
 def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     if not isinstance(value, dict):
         return False
+    operator = predicate.get("operator")
+    if not isinstance(operator, str):
+        return False
     resolved = _resolve_path(value, predicate["path"])
     if resolved is None:
-        return True
-    if predicate["operator"] == "absent_or_false_or_null":
+        return operator.startswith("absent_or_")
+    if operator == "not_equals":
+        return bool(resolved != predicate["value"])
+    if operator == "absent_or_false_or_null":
         return resolved is False
     return (
-        predicate["operator"] == "absent_or_lte"
+        operator == "absent_or_lte"
         and isinstance(resolved, (int, float))
         and not isinstance(resolved, bool)
         and resolved <= predicate["value"]
@@ -147,6 +152,12 @@ def _valid_request_predicate(predicate: Any) -> bool:
     if predicate.get("operator") in {"absent_or_null", "absent_or_false_or_null"}:
         return set(predicate) == {"path", "operator"}
     value = predicate.get("value")
+    if predicate.get("operator") == "not_equals":
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and isinstance(value, str)
+            and bool(value)
+        )
     return (
         predicate.get("operator") == "absent_or_lte"
         and set(predicate) == {"path", "operator", "value"}
