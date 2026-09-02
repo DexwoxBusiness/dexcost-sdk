@@ -288,9 +288,13 @@ def _groq_pricing_lane(
     return None
 
 
-def _mistral_pricing_lane(usage: Any, provider: str) -> str | None:
-    """Admit only global Standard Tier responses to the first static tariff."""
-    if provider != "mistral" or usage is None:
+def _mistral_pricing_lane(
+    usage: Any,
+    provider: str,
+    surface: str,
+) -> str | None:
+    """Admit only global Standard Tier responses from Mistral chat completions."""
+    if provider != "mistral" or surface != "chat_completions" or usage is None:
         return None
     return "global_standard" if _value(usage, "service_tier") == "standard" else None
 
@@ -1864,7 +1868,11 @@ def _record_from_response(
         service_tier,
         provider,
     )
-    mistral_pricing_lane = _mistral_pricing_lane(usage, provider)
+    mistral_pricing_lane = _mistral_pricing_lane(
+        usage,
+        provider,
+        "chat_completions" if operation_name == "openai.chat" else operation_name,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1969,7 +1977,11 @@ def _record_from_stream_usage(
         resolved_provider,
         tool_execution_seen=groq_tool_execution_seen,
     )
-    mistral_pricing_lane = _mistral_pricing_lane(usage, resolved_provider)
+    mistral_pricing_lane = _mistral_pricing_lane(
+        usage,
+        resolved_provider,
+        "chat_completions" if operation_name == "openai.chat" else operation_name,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,

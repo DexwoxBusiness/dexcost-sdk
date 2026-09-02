@@ -12,12 +12,19 @@ interface LaneCase {
   expected: string | null;
 }
 
+interface SurfaceCase {
+  id: string;
+  surface: string;
+  expected: string | null;
+}
+
 const fixture = JSON.parse(readFileSync(
   new URL("../../fixtures/mistral_pricing_conformance.json", import.meta.url),
   "utf8",
 )) as {
   model_cases: Record<string, string>;
   lane_cases: LaneCase[];
+  surface_cases: SurfaceCase[];
 };
 
 describe("shared Mistral pricing conformance", () => {
@@ -31,7 +38,15 @@ describe("shared Mistral pricing conformance", () => {
     it(testCase.id, () => {
       expect(mistralPricingLane({
         usage: { service_tier: testCase.service_tier },
-      })).toBe(testCase.expected ?? undefined);
+      }, "chat_completions")).toBe(testCase.expected ?? undefined);
+    });
+  }
+
+  for (const testCase of fixture.surface_cases) {
+    it(testCase.id, () => {
+      expect(mistralPricingLane({
+        usage: { service_tier: "standard" },
+      }, testCase.surface)).toBe(testCase.expected ?? undefined);
     });
   }
 

@@ -512,6 +512,46 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
   });
 
+  it("keeps Mistral legacy completions out of the standard pricing lane", async () => {
+    const body = {
+      id: "completion-mistral-legacy-1",
+      model: "mistral-large-latest",
+      choices: [{ index: 0, finish_reason: "stop", text: "private-output" }],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        service_tier: "standard",
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral-legacy" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.mistral.ai/v1/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, prompt: "private-query" }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{
+        key: string;
+        value: { value: string };
+      }> ?? []).map((item) => [item.key, item.value.value]),
+    );
+    expect(events[0]).toMatchObject({ provider: "mistral", model: "mistral-large-2512" });
+    expect(dimensions.mistral_pricing_lane).toBeUndefined();
+    expect(JSON.stringify(events[0])).not.toContain("private-query");
+  });
+
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {
     const sse = [
       `event: message_start\ndata: ${JSON.stringify({

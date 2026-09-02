@@ -550,7 +550,10 @@ function recordUsageEvent(
     }
   }
   if (provider === "mistral") {
-    const pricingLane = mistralPricingLane(rawResponse ?? { usage: rawUsage });
+    const pricingLane = mistralPricingLane(
+      rawResponse ?? { usage: rawUsage },
+      responsesApi ? "responses" : "chat_completions",
+    );
     if (pricingLane !== undefined) {
       const dimensions = Array.isArray(details.attribution_dimensions)
         ? details.attribution_dimensions as Array<Record<string, unknown>>

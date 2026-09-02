@@ -302,6 +302,70 @@ def test_mistral_openai_compatibility_only_admits_confirmed_global_standard_lane
         storage.close()
 
 
+def test_mistral_legacy_completions_fail_open_even_with_standard_response_tier(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/completions"
+        return httpx.Response(
+            200,
+            json={
+                "id": "completion-mistral-legacy-1",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "logprobs": None,
+                        "text": "private-output",
+                    }
+                ],
+                "created": 1,
+                "model": "mistral-large-latest",
+                "object": "text_completion",
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 10,
+                    "total_tokens": 30,
+                    "service_tier": "standard",
+                },
+            },
+            request=request,
+        )
+
+    storage = SQLiteStorage(tmp_path / "mistral-legacy-completions.db")
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    client = OpenAI(
+        api_key="test",
+        base_url="https://api.mistral.ai/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    instrument_openai(tracker)
+    try:
+        with tracker.task(task_type="mistral-openai-legacy"):
+            client.completions.create(
+                model="mistral-large-latest",
+                prompt="private-query",
+            )
+
+        events = storage.query_events()
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider == "mistral"
+        assert event.details["attribution_operation_name"] == "openai.completions.create"
+        observation = to_attribution_observation_v3(event)
+        assert observation is not None
+        dimensions = {
+            item["key"]: item["value"]["value"]
+            for item in observation["usage"][0]["dimensions"]
+        }
+        assert "mistral_pricing_lane" not in dimensions
+        assert "private-query" not in json.dumps(event.to_dict())
+    finally:
+        uninstrument_openai()
+        client.close()
+        storage.close()
+
+
 @pytest.mark.parametrize(
     ("tool_count", "reported_model", "expected_model", "expected_lane"),
     [

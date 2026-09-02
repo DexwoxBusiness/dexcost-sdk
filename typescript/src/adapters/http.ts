@@ -1629,6 +1629,16 @@ function _requestModel(ctx: _HttpCallContext): string | undefined {
   return typeof model === "string" && model.trim().length > 0 ? model.trim() : undefined;
 }
 
+function _mistralPricingSurface(ctx: _HttpCallContext): string {
+  try {
+    const pathname = new URL(ctx.urlStr).pathname;
+    if (/\/chat\/completions(\/|$)/.test(pathname)) return "chat_completions";
+    if (/\/completions(\/|$)/.test(pathname)) return "legacy_completions";
+    if (/\/responses(\/|$)/.test(pathname)) return "responses";
+  } catch { /* an invalid URL cannot identify an approved billing surface */ }
+  return "unknown";
+}
+
 function _fireworksServiceTier(ctx: _HttpCallContext): "default" | "priority" {
   const body = ctx.observerRequestBody;
   if (body === null || typeof body !== "object" || Array.isArray(body)) return "default";
@@ -1787,7 +1797,10 @@ function _recordHttpLlmEvent(
     }
   }
   if (provider === "mistral" && usage?.rawResponse !== undefined) {
-    const pricingLane = mistralPricingLane(usage.rawResponse);
+    const pricingLane = mistralPricingLane(
+      usage.rawResponse,
+      _mistralPricingSurface(ctx),
+    );
     if (pricingLane !== undefined) {
       const dimensions = Array.isArray(details.attribution_dimensions)
         ? details.attribution_dimensions as Array<Record<string, unknown>>

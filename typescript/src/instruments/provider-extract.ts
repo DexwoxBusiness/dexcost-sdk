@@ -91,8 +91,12 @@ export function canonicalMistralModel(model: string): string {
   return MISTRAL_MODEL_ALIASES[model] ?? model;
 }
 
-/** Admit only global Standard Tier responses to the first static tariff. */
-export function mistralPricingLane(response: any): "global_standard" | undefined {
+/** Admit only global Standard Tier responses from Mistral chat completions. */
+export function mistralPricingLane(
+  response: any,
+  surface: string,
+): "global_standard" | undefined {
+  if (surface !== "chat_completions") return undefined;
   const usage = response?.usage ?? response?.meta?.usage;
   return usage?.service_tier === "standard" ? "global_standard" : undefined;
 }

@@ -17,5 +17,11 @@
     {"id":"request-standard-only","service_tier":"standard_only","expected":null},
     {"id":"request-auto","service_tier":"auto","expected":null},
     {"id":"unknown","service_tier":"future","expected":null}
+  ],
+  "surface_cases": [
+    {"id":"chat-completions-surface","surface":"chat_completions","expected":"global_standard"},
+    {"id":"legacy-completions-surface","surface":"legacy_completions","expected":null},
+    {"id":"responses-surface","surface":"responses","expected":null},
+    {"id":"unknown-surface","surface":"future","expected":null}
   ]
 }

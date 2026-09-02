@@ -25,11 +25,24 @@ def test_mistral_model_canonicalization(reported: str, expected: str) -> None:
 @pytest.mark.parametrize("case", _FIXTURE["lane_cases"], ids=lambda case: case["id"])
 def test_mistral_pricing_lanes(case: dict[str, object]) -> None:
     usage = {"service_tier": case["service_tier"]}
-    assert _mistral_pricing_lane(usage, "mistral") == case["expected"]
+    assert _mistral_pricing_lane(usage, "mistral", "chat_completions") == case["expected"]
+
+
+@pytest.mark.parametrize("case", _FIXTURE["surface_cases"], ids=lambda case: case["id"])
+def test_mistral_pricing_surfaces(case: dict[str, object]) -> None:
+    usage = {"service_tier": "standard"}
+    assert _mistral_pricing_lane(usage, "mistral", str(case["surface"])) == case["expected"]
 
 
 def test_mistral_helper_is_provider_scoped() -> None:
-    assert _mistral_pricing_lane({"service_tier": "standard"}, "openai") is None
+    assert (
+        _mistral_pricing_lane(
+            {"service_tier": "standard"},
+            "openai",
+            "chat_completions",
+        )
+        is None
+    )
 
 
 def test_mistral_sdk_maps_retain_no_direct_provider_money() -> None:
