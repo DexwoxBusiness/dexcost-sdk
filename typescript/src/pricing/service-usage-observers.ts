@@ -38,8 +38,8 @@ interface ResponsePredicate {
 interface RequestPredicate {
   path: string;
   operator: "absent_or_null" | "absent_or_false_or_null" | "absent_or_lte" |
-    "not_equals" | "string_not_contains";
-  value?: number | string;
+    "equals" | "not_equals" | "string_not_contains";
+  value?: number | string | boolean;
 }
 
 interface RequestHeaderPredicate {
@@ -69,6 +69,7 @@ interface UsageObserverDefinition {
   excluded_endpoints?: string[];
   endpoint_match?: "exact" | "prefix";
   response_path?: string;
+  response_collection_sum_path?: string;
   response_quantity_header?: string;
   response_all?: ResponsePredicate[];
   request_all?: RequestPredicate[];
@@ -335,6 +336,7 @@ function requestPredicateMatches(value: unknown, predicate: RequestPredicate): b
   if (resolved === undefined || resolved === null) {
     return predicate.operator.startsWith("absent_or_");
   }
+  if (predicate.operator === "equals") return resolved === predicate.value;
   if (predicate.operator === "not_equals") return resolved !== predicate.value;
   if (predicate.operator === "string_not_contains") {
     return typeof resolved === "string" &&
@@ -354,7 +356,13 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   if (candidate.operator === "absent_or_null" || candidate.operator === "absent_or_false_or_null") {
     return Object.keys(candidate).length === 2 && candidate.value === undefined;
   }
-  if (candidate.operator === "not_equals" || candidate.operator === "string_not_contains") {
+  if (candidate.operator === "equals" || candidate.operator === "not_equals") {
+    return Object.keys(candidate).length === 3 &&
+      (typeof candidate.value === "boolean" ||
+        (typeof candidate.value === "number" && Number.isFinite(candidate.value)) ||
+        (typeof candidate.value === "string" && candidate.value.length > 0));
+  }
+  if (candidate.operator === "string_not_contains") {
     return Object.keys(candidate).length === 3 &&
       typeof candidate.value === "string" && candidate.value.length > 0;
   }
@@ -396,6 +404,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
     const optionalStrings = [
       observer.resource_path,
       observer.request_resource_path,
+      observer.response_collection_sum_path,
       observer.request_character_count_path,
       observer.request_character_count_query_parameter,
       observer.request_collection_count_path,
@@ -453,6 +462,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.endpoint_match !== "exact" && observer.endpoint_match !== "prefix") ||
       [
         observer.response_path,
+        observer.response_collection_sum_path,
         observer.response_quantity_header,
         observer.request_character_count_path ?? observer.request_character_count_query_parameter,
         observer.request_collection_count_path,
@@ -623,6 +633,7 @@ export class ServiceUsageObservers {
   needsResponseBody(url: string): boolean {
     return this.lookup(url)?.observers.some(
       (observer) => observer.response_path !== undefined ||
+        observer.response_collection_sum_path !== undefined ||
         observer.resource_path !== undefined ||
         observer.record_id_path !== undefined ||
         observer.response_all !== undefined ||
@@ -717,6 +728,30 @@ export class ServiceUsageObservers {
         const rawQuantity = positiveDecimal(headers.get(observer.response_quantity_header));
         if (rawQuantity === undefined) continue;
         quantity = new Decimal(rawQuantity);
+      } else if (observer.response_collection_sum_path !== undefined) {
+        const values = resolveCollectionPath(responseBody, observer.response_collection_sum_path);
+        if (values === undefined || values.length === 0) continue;
+        let sum = new Decimal(0);
+        let valid = true;
+        for (const value of values) {
+          if (typeof value !== "number" && typeof value !== "string") {
+            valid = false;
+            break;
+          }
+          try {
+            const item = new Decimal(value);
+            if (!item.isFinite() || item.lt(0)) {
+              valid = false;
+              break;
+            }
+            sum = sum.add(item);
+          } catch {
+            valid = false;
+            break;
+          }
+        }
+        if (!valid || !sum.gt(0)) continue;
+        quantity = sum;
       } else {
         const rawQuantity = positiveDecimal(resolvePath(responseBody, observer.response_path!));
         if (rawQuantity === undefined) continue;

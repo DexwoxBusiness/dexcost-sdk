@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.24.0",
-    "observer_count": 62,
+    "version": "1.25.0",
+    "observer_count": 64,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -1131,6 +1131,42 @@
       "resource_type": "sku",
       "fixed_resource_id": "rest_api_request",
       "source_url": "https://docs.gitlab.com/api/rest/"
+    },
+    {
+      "service_key": "deepl_translate_plain_text",
+      "provider_name": "deepl",
+      "provider_service": "translate_text",
+      "component": "external",
+      "domains": ["api.deepl.com", "api-free.deepl.com", "api-us.deepl.com", "api-jp.deepl.com"],
+      "endpoints": ["/v2/translate"],
+      "endpoint_match": "exact",
+      "request_all": [
+        { "path": "show_billed_characters", "operator": "absent_or_false_or_null" },
+        { "path": "tag_handling", "operator": "absent_or_null" }
+      ],
+      "request_character_count_path": "text",
+      "character_count_encoding": "unicode_code_points",
+      "usage_metric": "characters",
+      "resource_type": "sku",
+      "fixed_resource_id": "text_translation",
+      "source_url": "https://developers.deepl.com/api-reference/translate/request-translation"
+    },
+    {
+      "service_key": "deepl_translate_billed_characters",
+      "provider_name": "deepl",
+      "provider_service": "translate_text",
+      "component": "external",
+      "domains": ["api.deepl.com", "api-free.deepl.com", "api-us.deepl.com", "api-jp.deepl.com"],
+      "endpoints": ["/v2/translate"],
+      "endpoint_match": "exact",
+      "request_all": [
+        { "path": "show_billed_characters", "operator": "equals", "value": true }
+      ],
+      "response_collection_sum_path": "translations[].billed_characters",
+      "usage_metric": "characters",
+      "resource_type": "sku",
+      "fixed_resource_id": "text_translation",
+      "source_url": "https://developers.deepl.com/api-reference/translate/request-translation"
     }
   ]
 }

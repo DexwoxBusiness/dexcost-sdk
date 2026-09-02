@@ -205,6 +205,7 @@ function requestPredicateMatches(request, predicate) {
   if (value === undefined || value === null) {
     return predicate.operator.startsWith("absent_or_");
   }
+  if (predicate.operator === "equals") return value === predicate.value;
   if (predicate.operator === "not_equals") return value !== predicate.value;
   if (predicate.operator === "string_not_contains") {
     return typeof value === "string" && !value.includes(predicate.value);
@@ -303,15 +304,37 @@ function caseTargetsObserver(testCase, observer) {
     return false;
   }
 
+  if (isNonEmptyString(observer.response_collection_sum_path)) {
+    const values = resolveCollectionPath(
+      testCase.response,
+      observer.response_collection_sum_path,
+    );
+    if (
+      values === undefined ||
+      values.length === 0 ||
+      values.some((value) =>
+        !["number", "string"].includes(typeof value) ||
+        (typeof value === "string" && value.trim().length === 0) ||
+        !Number.isFinite(Number(value)) ||
+        Number(value) < 0) ||
+      values.reduce((sum, value) => sum + Number(value), 0) <= 0
+    ) {
+      return false;
+    }
+  }
+
   return true;
 }
 
 function validRequestPredicate(predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
-  if (
-    predicate.operator === "not_equals" ||
-    predicate.operator === "string_not_contains"
-  ) {
+  if (predicate.operator === "equals" || predicate.operator === "not_equals") {
+    return Object.keys(predicate).length === 3 &&
+      (typeof predicate.value === "boolean" ||
+        (typeof predicate.value === "number" && Number.isFinite(predicate.value)) ||
+        isNonEmptyString(predicate.value));
+  }
+  if (predicate.operator === "string_not_contains") {
     return Object.keys(predicate).length === 3 && isNonEmptyString(predicate.value);
   }
   if (
@@ -528,6 +551,7 @@ function validateObserverShape(observer, issues) {
 
   const quantitySources = [
     observer?.response_path,
+    observer?.response_collection_sum_path,
     observer?.response_quantity_header,
     observer?.request_character_count_path,
     observer?.request_collection_count_path,

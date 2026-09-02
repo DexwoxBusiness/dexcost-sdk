@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from math import isfinite
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -39,6 +40,7 @@ class UsageObserver:
     excluded_endpoints: tuple[str, ...]
     endpoint_match: str
     response_path: str | None
+    response_collection_sum_path: str | None
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
     request_all: tuple[dict[str, Any], ...]
@@ -267,8 +269,14 @@ def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     resolved = _resolve_path(value, predicate["path"])
     if resolved is None:
         return operator.startswith("absent_or_")
+    if operator == "equals":
+        return resolved == predicate["value"] and type(resolved) is type(
+            predicate["value"]
+        )
     if operator == "not_equals":
-        return bool(resolved != predicate["value"])
+        return resolved != predicate["value"] or type(resolved) is not type(
+            predicate["value"]
+        )
     if operator == "string_not_contains":
         return isinstance(resolved, str) and predicate["value"] not in resolved
     if operator == "absent_or_false_or_null":
@@ -289,7 +297,14 @@ def _valid_request_predicate(predicate: Any) -> bool:
     if predicate.get("operator") in {"absent_or_null", "absent_or_false_or_null"}:
         return set(predicate) == {"path", "operator"}
     value = predicate.get("value")
-    if predicate.get("operator") in {"not_equals", "string_not_contains"}:
+    if predicate.get("operator") in {"equals", "not_equals"}:
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and type(value) in {str, bool, int, float}
+            and not (isinstance(value, str) and not value)
+            and not (isinstance(value, float) and not isfinite(value))
+        )
+    if predicate.get("operator") == "string_not_contains":
         return (
             set(predicate) == {"path", "operator", "value"}
             and isinstance(value, str)
@@ -300,6 +315,7 @@ def _valid_request_predicate(predicate: Any) -> bool:
         and set(predicate) == {"path", "operator", "value"}
         and isinstance(value, (int, float))
         and not isinstance(value, bool)
+        and not (isinstance(value, float) and not isfinite(value))
     )
 
 
@@ -398,6 +414,7 @@ class ServiceUsageObservers:
             optional_string_fields = (
                 "resource_path",
                 "request_resource_path",
+                "response_collection_sum_path",
                 "request_character_count_path",
                 "request_character_count_query_parameter",
                 "request_collection_count_path",
@@ -427,6 +444,9 @@ class ServiceUsageObservers:
                 )
             )
             response_path = definition.get("response_path")
+            response_collection_sum_path = definition.get(
+                "response_collection_sum_path"
+            )
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
             request_all = definition.get("request_all", [])
@@ -484,6 +504,7 @@ class ServiceUsageObservers:
                     value is not None
                     for value in (
                         response_path,
+                        response_collection_sum_path,
                         response_quantity_header,
                         request_character_count_path
                         or request_character_count_query_parameter,
@@ -630,6 +651,7 @@ class ServiceUsageObservers:
                     excluded_endpoints=tuple(excluded_endpoints),
                     endpoint_match=definition.get("endpoint_match", "prefix"),
                     response_path=response_path,
+                    response_collection_sum_path=response_collection_sum_path,
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
                     request_all=tuple(request_all),
@@ -747,6 +769,7 @@ class ServiceUsageObservers:
             matched
             and any(
                 item.response_path
+                or item.response_collection_sum_path
                 or item.resource_path
                 or item.record_id_path
                 or item.response_all
@@ -868,6 +891,29 @@ class ServiceUsageObservers:
                 try:
                     quantity = Decimal(str(raw_quantity))
                 except (InvalidOperation, ValueError):
+                    continue
+            elif observer.response_collection_sum_path:
+                values = _resolve_collection_path(
+                    response_body, observer.response_collection_sum_path
+                )
+                if not values:
+                    continue
+                quantity = Decimal(0)
+                valid = True
+                for value in values:
+                    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                        valid = False
+                        break
+                    try:
+                        item = Decimal(str(value))
+                    except (InvalidOperation, ValueError):
+                        valid = False
+                        break
+                    if not item.is_finite() or item < 0:
+                        valid = False
+                        break
+                    quantity += item
+                if not valid:
                     continue
             else:
                 try:

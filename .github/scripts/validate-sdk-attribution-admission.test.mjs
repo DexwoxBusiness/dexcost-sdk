@@ -75,6 +75,33 @@ test("rejects an invalid request predicate", () => {
   );
 });
 
+test("rejects a non-scalar equals request predicate", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "deepl_translate_billed_characters",
+  );
+  observer.request_all[0].value = { assumed: true };
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer deepl_translate_billed_characters has invalid request predicates",
+  );
+});
+
+test("requires positive finite response collection sums", () => {
+  const candidate = inputs();
+  const testCase = candidate.conformance.cases.find(
+    (entry) =>
+      entry.name === "deepl_uses_provider_reported_billed_characters_when_requested",
+  );
+  testCase.response.translations[0].billed_characters = -1;
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "case deepl_uses_provider_reported_billed_characters_when_requested does not target observer deepl_translate_billed_characters",
+  );
+});
+
 test("rejects request-header predicates that could retain noncanonical names", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

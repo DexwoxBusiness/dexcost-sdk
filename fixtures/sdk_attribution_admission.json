@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.24.0",
-  "conformance_schema_version": "16",
+  "observer_manifest_version": "1.25.0",
+  "conformance_schema_version": "17",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -390,6 +390,22 @@
       "service_key": "gitlab_api",
       "positive_cases": ["gitlab_rest_api_successful_request_is_observed"],
       "fail_open_cases": ["gitlab_rest_api_failed_request_is_not_observed"]
+    },
+    {
+      "service_key": "deepl_translate_plain_text",
+      "positive_cases": ["deepl_plain_text_counts_unicode_characters_on_regional_endpoint"],
+      "fail_open_cases": [
+        "deepl_tag_handling_without_billed_characters_fails_open",
+        "deepl_failed_translation_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "deepl_translate_billed_characters",
+      "positive_cases": ["deepl_uses_provider_reported_billed_characters_when_requested"],
+      "fail_open_cases": [
+        "deepl_missing_provider_billed_characters_fails_open",
+        "deepl_failed_translation_is_not_observed"
+      ]
     }
   ]
 }

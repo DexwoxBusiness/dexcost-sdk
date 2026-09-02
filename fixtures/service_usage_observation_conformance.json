@@ -1,5 +1,5 @@
 {
-  "schema_version": "16",
+  "schema_version": "17",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -1177,6 +1177,69 @@
       "status_code": 403,
       "headers": {},
       "response": { "message": "403 Forbidden" },
+      "expected": []
+    },
+    {
+      "name": "deepl_plain_text_counts_unicode_characters_on_regional_endpoint",
+      "url": "https://api-us.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["Hello", "\u4e16\u754c"], "target_lang": "DE", "context": "not billed" },
+      "response": { "translations": [{ "detected_source_language": "EN", "text": "Hallo" }, { "detected_source_language": "ZH", "text": "Welt" }] },
+      "expected": [
+        {
+          "service_key": "deepl_translate_plain_text",
+          "provider_name": "deepl",
+          "provider_service": "translate_text",
+          "component": "external",
+          "metric": "characters",
+          "quantity": "7",
+          "resource_type": "sku",
+          "resource_id": "text_translation"
+        }
+      ]
+    },
+    {
+      "name": "deepl_uses_provider_reported_billed_characters_when_requested",
+      "url": "https://api.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["private", "private"], "target_lang": "DE", "show_billed_characters": true },
+      "response": { "translations": [{ "text": "privat", "billed_characters": 12 }, { "text": "privat", "billed_characters": 4 }] },
+      "expected": [
+        {
+          "service_key": "deepl_translate_billed_characters",
+          "provider_name": "deepl",
+          "provider_service": "translate_text",
+          "component": "external",
+          "metric": "characters",
+          "quantity": "16",
+          "resource_type": "sku",
+          "resource_id": "text_translation"
+        }
+      ]
+    },
+    {
+      "name": "deepl_tag_handling_without_billed_characters_fails_open",
+      "url": "https://api-jp.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["<p>Hello</p>"], "target_lang": "DE", "tag_handling": "html" },
+      "response": { "translations": [{ "text": "<p>Hallo</p>" }] },
+      "expected": []
+    },
+    {
+      "name": "deepl_missing_provider_billed_characters_fails_open",
+      "url": "https://api.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["private"], "target_lang": "DE", "show_billed_characters": true },
+      "response": { "translations": [{ "text": "privat" }] },
+      "expected": []
+    },
+    {
+      "name": "deepl_failed_translation_is_not_observed",
+      "url": "https://api-free.deepl.com/v2/translate",
+      "status_code": 456,
+      "headers": {},
+      "request": { "text": ["private"], "target_lang": "DE" },
+      "response": { "message": "Quota exceeded" },
       "expected": []
     }
   ]
