@@ -1,60 +1,60 @@
 {
   "_meta": {
     "source": "https://aws.amazon.com/lambda/pricing/",
-    "updated": "2026-02-26",
-    "notes": "Prices in USD. duration_per_gb_second is the cost per 1 GB-second. request_per_invocation is the per-request charge."
+    "updated": "2026-09-02",
+    "notes": "Official AWS Price List first-tier on-demand marginal rates in USD. Free-tier allowances and account/organization aggregate duration tiers are intentionally excluded."
   },
   "regions": {
     "us-east-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "us-east-2": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "us-west-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "us-west-2": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "eu-west-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "eu-west-2": {
-      "duration_per_gb_second": "0.0000175000",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "eu-central-1": {
-      "duration_per_gb_second": "0.0000175000",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "ap-southeast-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "ap-southeast-2": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "ap-northeast-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "ap-south-1": {
-      "duration_per_gb_second": "0.0000133334",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "sa-east-1": {
-      "duration_per_gb_second": "0.0000216667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     },
     "ca-central-1": {
-      "duration_per_gb_second": "0.0000166667",
+      "duration_per_gb_second": {"x86_64": "0.0000166667", "arm64": "0.0000133334"},
       "request_per_invocation": "0.0000002"
     }
   }

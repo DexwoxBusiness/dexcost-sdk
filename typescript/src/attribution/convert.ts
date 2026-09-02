@@ -247,13 +247,19 @@ export function attributionComponentAndUsage(event: CostEvent): {
         || numberDetail(details, "wall_clock_seconds") || 0;
       const memoryBytes = numberDetail(details, "memory_bytes_limit")
         ?? numberDetail(details, "memory_bytes_peak");
+      // Lambda exposes configured memory in MB and bills 1024 configured MB
+      // as one GB. ComputeAccountant stores that value as MB * 1_000_000
+      // bytes, so using a binary-GiB divisor would understate Lambda usage.
+      const memoryUnitBytes = stringDetail(details, "billing_model") === "lambda"
+        ? new Decimal(1_024_000_000)
+        : GIB;
       return {
         component: "compute",
         durationSeconds,
         usage: compactUsage([
           usageLine("compute_seconds", durationSeconds),
           usageLine("vcpu_seconds", numberDetail(details, "vcpu_seconds_used")),
-          usageLine("memory_gib_seconds", memoryBytes === undefined ? undefined : new Decimal(memoryBytes).div(GIB).times(durationSeconds)),
+          usageLine("memory_gib_seconds", memoryBytes === undefined ? undefined : new Decimal(memoryBytes).div(memoryUnitBytes).times(durationSeconds)),
           usageLine("request_count", numberDetail(details, "invocation_count")),
         ]),
       };

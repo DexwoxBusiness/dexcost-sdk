@@ -310,8 +310,15 @@ def _component_and_usage(
         if duration_seconds == 0:
             duration_seconds = _decimal_detail(details, "wall_clock_seconds") or Decimal(0)
         memory_bytes = _decimal_detail(details, "memory_bytes_limit", "memory_bytes_peak")
+        billing_model = _string_detail(details, "billing_model")
+        # Lambda exposes configured memory in MB and bills 1024 configured MB
+        # as one GB. ComputeAccountant stores that value as MB * 1_000_000
+        # bytes, so using a binary-GiB divisor would understate Lambda usage.
+        memory_unit_bytes = Decimal(1_024_000_000) if billing_model == "lambda" else _GIB
         memory_gib_seconds = (
-            None if memory_bytes is None else memory_bytes / _GIB * duration_seconds
+            None
+            if memory_bytes is None
+            else memory_bytes / memory_unit_bytes * duration_seconds
         )
         return (
             "compute",

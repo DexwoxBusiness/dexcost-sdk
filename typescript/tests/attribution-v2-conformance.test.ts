@@ -114,7 +114,8 @@ describe("v1 capture to attribution v2 conversion", () => {
       details: {
         billing_model: "lambda",
         duration_ms: 2500,
-        memory_bytes_limit: 2 * 1024 ** 3,
+        // Lambda capture stores configured MB as MB * 1_000_000 bytes.
+        memory_bytes_limit: 2048 * 1_000_000,
         vcpu_seconds_used: 2.5,
         invocation_count: 1,
         region: "us-east-1",

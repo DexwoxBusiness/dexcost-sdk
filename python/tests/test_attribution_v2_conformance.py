@@ -133,7 +133,8 @@ def test_promotes_compute_quantities_and_closes_usage_period() -> None:
             details={
                 "billing_model": "lambda",
                 "duration_ms": 2500,
-                "memory_bytes_limit": 2 * 1024**3,
+                # Lambda capture stores configured MB as MB * 1_000_000 bytes.
+                "memory_bytes_limit": 2048 * 1_000_000,
                 "vcpu_seconds_used": 2.5,
                 "invocation_count": 1,
                 "region": "us-east-1",

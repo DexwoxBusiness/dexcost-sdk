@@ -983,7 +983,9 @@ def test_runtime_applies_all_overlay_kinds_and_drops_them_on_key_rotation(
             {
                 "billing_model": "lambda",
                 "duration_ms": 1000,
-                "memory_bytes_limit": 1_000_000_000,
+                # The Lambda capture stores configured MB as decimal bytes;
+                # 1024 configured MB is one billed GB.
+                "memory_bytes_limit": 1_024_000_000,
                 "vcpu_count": 1,
                 "vcpu_seconds_used": 0,
                 "invocation_count": 2,

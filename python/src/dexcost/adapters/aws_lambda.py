@@ -59,6 +59,7 @@ def lambda_cost(
     duration_ms: int,
     memory_mb: int,
     region: str,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Calculate the cost of a single AWS Lambda invocation.
 
@@ -69,6 +70,8 @@ def lambda_cost(
         duration_ms: Execution duration in milliseconds (>= 0).
         memory_mb: Allocated memory in MB (> 0).
         region: AWS region code (e.g. ``"us-east-1"``).
+        architecture: Lambda instruction-set architecture, ``"x86_64"`` or
+            ``"arm64"``. Defaults to ``"x86_64"``.
 
     Returns:
         Dict with:
@@ -79,13 +82,18 @@ def lambda_cost(
 
     Raises:
         ValueError: If ``region`` is unknown, ``duration_ms`` < 0,
-            or ``memory_mb`` <= 0.
+            ``memory_mb`` <= 0, or ``architecture`` is unsupported.
     """
     # --- Input validation ---
     if duration_ms < 0:
         raise ValueError(f"duration_ms must be >= 0, got {duration_ms}")
     if memory_mb <= 0:
         raise ValueError(f"memory_mb must be > 0, got {memory_mb}")
+    if architecture not in {"x86_64", "arm64"}:
+        raise ValueError(
+            "architecture must be 'x86_64' or 'arm64', "
+            f"got {architecture!r}"
+        )
 
     data = _load_pricing()
     region_pricing = data["regions"].get(region)
@@ -101,7 +109,9 @@ def lambda_cost(
     gb_seconds = duration_seconds * memory_gb
 
     # --- Look up rates ---
-    rate_per_gb_second = Decimal(region_pricing["duration_per_gb_second"])
+    rate_per_gb_second = Decimal(
+        region_pricing["duration_per_gb_second"][architecture]
+    )
     request_charge = Decimal(region_pricing["request_per_invocation"])
 
     # --- Calculate costs ---
@@ -112,6 +122,7 @@ def lambda_cost(
         "cost_usd": total_cost,
         "details": {
             "region": region,
+            "architecture": architecture,
             "duration_ms": duration_ms,
             "memory_mb": memory_mb,
             "gb_seconds": gb_seconds,
