@@ -194,7 +194,7 @@
     {
       "byte_size": 55671,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "ae64e0e4201ddd3c56456590c22860b01df195c62a5dd1242f623da8c220cd6c"
+      "sha256": "6a1dc733bab289debf8e7e51f32269c04593356479934fae8019a10d2f1aa73b"
     }
   ],
   "schema_version": "1",

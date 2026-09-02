@@ -88,6 +88,19 @@ test("rejects an empty not-equals request predicate value", () => {
   );
 });
 
+test("rejects an empty string-not-contains request predicate value", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "resemble_ai",
+  );
+  observer.request_all[0].value = "";
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer resemble_ai has invalid request predicates",
+  );
+});
+
 test("rejects malformed exact query predicates", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

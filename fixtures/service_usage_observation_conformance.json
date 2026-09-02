@@ -1,5 +1,5 @@
 {
-  "schema_version": "10",
+  "schema_version": "11",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",

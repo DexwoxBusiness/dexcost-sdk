@@ -167,6 +167,22 @@ function responsePredicateMatches(response, predicate) {
   return false;
 }
 
+function requestPredicateMatches(request, predicate) {
+  if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
+  const value = resolvePath(request, predicate.path);
+  if (value === undefined || value === null) {
+    return predicate.operator.startsWith("absent_or_");
+  }
+  if (predicate.operator === "not_equals") return value !== predicate.value;
+  if (predicate.operator === "string_not_contains") {
+    return typeof value === "string" && !value.includes(predicate.value);
+  }
+  if (predicate.operator === "absent_or_false_or_null") return value === false;
+  return predicate.operator === "absent_or_lte" &&
+    typeof value === "number" && Number.isFinite(value) &&
+    value <= predicate.value;
+}
+
 function caseTargetsObserver(testCase, observer) {
   let url;
   try {
@@ -183,6 +199,15 @@ function caseTargetsObserver(testCase, observer) {
         url.pathname === endpoint || url.pathname.startsWith(`${endpoint}/`),
     );
   if (!domainMatches || !endpointMatches) return false;
+
+  if (
+    Array.isArray(observer.request_all) &&
+    !observer.request_all.every((predicate) =>
+      requestPredicateMatches(testCase.request, predicate),
+    )
+  ) {
+    return false;
+  }
 
   if (
     Array.isArray(observer.query_any) &&
@@ -205,7 +230,10 @@ function caseTargetsObserver(testCase, observer) {
 
 function validRequestPredicate(predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
-  if (predicate.operator === "not_equals") {
+  if (
+    predicate.operator === "not_equals" ||
+    predicate.operator === "string_not_contains"
+  ) {
     return Object.keys(predicate).length === 3 && isNonEmptyString(predicate.value);
   }
   if (
