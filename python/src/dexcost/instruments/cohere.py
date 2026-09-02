@@ -537,8 +537,8 @@ def _metered_model(kind: _MeteredKind, kwargs: Mapping[str, Any]) -> str:
     raw = kwargs.get("model")
     if not isinstance(raw, str) or not raw:
         return "unknown"
-    if kind == "embed" and not raw.startswith("cohere/"):
-        return f"cohere/{raw}"
+    if kind == "embed" and raw.startswith("cohere/"):
+        return raw.removeprefix("cohere/")
     return raw
 
 
@@ -549,6 +549,7 @@ def _metered_measurement(
 ) -> OperationMeasurement:
     billed = _billed_units(response)
     input_tokens = _token_count(_value(billed, "input_tokens"))
+    image_tokens = _token_count(_value(billed, "image_tokens"))
     output_tokens = _token_count(_value(billed, "output_tokens"))
     search_units = _non_negative_decimal(_value(billed, "search_units"))
     classifications = _non_negative_decimal(_value(billed, "classifications"))
@@ -556,8 +557,11 @@ def _metered_measurement(
     pricing: dict[str, Decimal | int | str] = {}
     lines: list[ProviderUsageLine] = []
     if input_tokens is not None:
-        pricing["input_tokens"] = input_tokens
+        if kind != "embed":
+            pricing["input_tokens"] = input_tokens
         lines.append(ProviderUsageLine("input_tokens", input_tokens, "Tokens"))
+    if kind == "embed" and image_tokens is not None:
+        lines.append(ProviderUsageLine("input_image_tokens", image_tokens, "Tokens"))
     if output_tokens is not None:
         pricing["output_tokens"] = output_tokens
         lines.append(ProviderUsageLine("output_tokens", output_tokens, "Tokens"))
@@ -576,6 +580,7 @@ def _metered_measurement(
         response_model=model,
         task_input_tokens=input_tokens,
         task_output_tokens=output_tokens,
+        provider_service="embed" if kind == "embed" else None,
     )
 
 
@@ -587,9 +592,9 @@ def _metered_session(kind: _MeteredKind, model: str) -> ProviderOperationSession
         provider="cohere",
         service=service,
         operation=f"cohere.{kind}",
-        component="llm",
+        component="external" if kind == "embed" else "llm",
         model=model,
-        event_type="llm_call",
+        event_type="external_cost" if kind == "embed" else "llm_call",
     )
 
 

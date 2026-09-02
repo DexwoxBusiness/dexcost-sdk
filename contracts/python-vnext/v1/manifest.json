@@ -182,14 +182,14 @@
   "freeze_id": "python-vnext-v1",
   "referenced_artifacts": [
     {
-      "byte_size": 21795,
+      "byte_size": 22057,
       "path": "fixtures/attribution_v3/conformance.json",
-      "sha256": "a737027bed8f70650b2f6f5d10fe48408fcb97c203d0aa78dc406a6035c65f68"
+      "sha256": "5e1b7d8a5852d9dc97ed13376fc37bef694e8c46aae9b3464483ef7cedfa7b58"
     },
     {
-      "byte_size": 41816,
+      "byte_size": 41966,
       "path": "fixtures/attribution_v3/schemas.json",
-      "sha256": "0fc3007cb307a98d6ddb7df53fd394e91411abc75389652c22e0060dcea8e871"
+      "sha256": "f46ddf75615835db8d9a27da5334cad6e8d7e1bf85445ad654a71ad207550983"
     },
     {
       "byte_size": 79409,
