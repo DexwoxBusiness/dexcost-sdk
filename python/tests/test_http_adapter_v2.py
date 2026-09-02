@@ -144,8 +144,13 @@ class TestKnownServiceExtraction:
 
         assert returned is response
         assert get_recorded_events() == []
-        assert (await response.json())["usage"]["total_tokens"] == 23
-        wire = to_attribution_event_v2(get_recorded_events()[0])
+        later_task = _make_task("unrelated-later-task")
+        with task_context(later_task):
+            assert (await response.json())["usage"]["total_tokens"] == 23
+        event = get_recorded_events()[0]
+        assert event.task_id == task.task_id
+        assert task._network.finalize()["call_count"] == 1
+        wire = to_attribution_event_v2(event)
         assert wire is not None
         assert wire["provider"] == {
             "name": "openai",
@@ -203,6 +208,69 @@ class TestKnownServiceExtraction:
         assert response.json_calls == 0
         assert chunks == [b'{"usage":', b'{"prompt_tokens":23}}']
         assert get_recorded_events() == []
+
+    @pytest.mark.asyncio
+    async def test_aiohttp_deferred_body_still_accounts_network_immediately(self) -> None:
+        task = _make_task("embedding-unread-body")
+        response = _make_response(
+            headers={"x-request-id": "req-aiohttp-unread"},
+            body={"usage": {"prompt_tokens": 23}},
+            content_length=128,
+        )
+        original_json = response.json
+
+        async def wrapped(*args: Any, **kwargs: Any) -> MagicMock:
+            return response
+
+        with task_context(task):
+            returned = await _aiohttp_wrapper(
+                wrapped,
+                None,
+                ("POST", "https://api.openai.com/v1/embeddings"),
+                {"json": {"model": "text-embedding-3-small", "input": "hello"}},
+            )
+
+        assert returned is response
+        assert original_json.call_count == 0
+        assert task._network.finalize()["call_count"] == 1
+        assert get_recorded_events() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status_code", "content_length"),
+        [(200, 200_000), (503, 128)],
+        ids=["byte-threshold", "http-error"],
+    )
+    async def test_aiohttp_deferred_body_preserves_notable_network_event(
+        self,
+        status_code: int,
+        content_length: int,
+    ) -> None:
+        task = _make_task("embedding-large-unread-body")
+        response = _make_response(
+            body={"usage": {"prompt_tokens": 23}},
+            content_length=content_length,
+            status_code=status_code,
+        )
+        original_json = response.json
+
+        async def wrapped(*args: Any, **kwargs: Any) -> MagicMock:
+            return response
+
+        with task_context(task):
+            await _aiohttp_wrapper(
+                wrapped,
+                None,
+                ("POST", "https://api.openai.com/v1/embeddings"),
+                {"json": {"model": "text-embedding-3-small", "input": "hello"}},
+            )
+
+        assert original_json.call_count == 0
+        assert task._network.finalize()["call_count"] == 1
+        events = get_recorded_events()
+        assert len(events) == 1
+        assert events[0].event_type == "network"
+        assert events[0].task_id == task.task_id
 
     """HTTP calls to known services extract cost from response."""
 

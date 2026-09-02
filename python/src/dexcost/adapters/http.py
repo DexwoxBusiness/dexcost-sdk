@@ -18,6 +18,7 @@ Implements US-035.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import threading
@@ -423,6 +424,7 @@ async def _aiohttp_wrapper(
     All public methods (get, post, put, etc.) funnel through _request.
     Signature: _request(method, str_or_url, ...) -> ClientResponse.
     """
+    request_context = contextvars.copy_context()
     t0 = time.monotonic()
     response = await wrapped(*args, **kwargs)
     latency_ms = int((time.monotonic() - t0) * 1000)
@@ -441,8 +443,20 @@ async def _aiohttp_wrapper(
             method=method,
             request_body=request_body,
             latency_ms=latency_ms,
+            request_context=request_context,
         )
     ):
+        request_context.run(
+            _handle_http_call,
+            url,
+            method=method,
+            request_headers={},
+            request_body_len=0,
+            request_body=request_body,
+            response=response,
+            latency_ms=latency_ms,
+            network_only=True,
+        )
         return response
     _handle_http_call(
         url,
@@ -643,6 +657,7 @@ def _defer_aiohttp_json_observation(
     method: str,
     request_body: Any,
     latency_ms: int,
+    request_context: contextvars.Context,
 ) -> bool:
     """Observe JSON only after the caller explicitly materialises it.
 
@@ -662,7 +677,8 @@ def _defer_aiohttp_json_observation(
         body = await original_json(*json_args, **json_kwargs)
         if not recorded:
             recorded = True
-            _handle_http_call(
+            request_context.run(
+                _handle_http_call,
                 url,
                 method=method,
                 request_headers={},
@@ -671,6 +687,7 @@ def _defer_aiohttp_json_observation(
                 response=response,
                 response_body=body if isinstance(body, dict) else None,
                 latency_ms=latency_ms,
+                account_network=False,
             )
         return body
 
@@ -715,6 +732,8 @@ def _handle_http_call(
     response: Any = None,
     response_body: dict[str, Any] | None = None,
     latency_ms: int = 0,
+    account_network: bool = True,
+    network_only: bool = False,
 ) -> None:
     """Record cost + network bytes for one instrumented HTTP call.
 
@@ -752,6 +771,8 @@ def _handle_http_call(
             response,
             response_body,
             latency_ms,
+            account_network,
+            network_only,
         )
     except Exception:  # broad catch intentional: must never break the caller's HTTP call
         global _network_error_count
@@ -1045,6 +1066,8 @@ def _handle_http_call_inner(
     response: Any,
     response_body: dict[str, Any] | None,
     latency_ms: int,
+    account_network: bool,
+    network_only: bool,
 ) -> None:
     parsed = urlparse(str(url))
     domain = parsed.hostname or ""
@@ -1052,6 +1075,7 @@ def _handle_http_call_inner(
 
     cfg = _cfg()
     track_network = cfg.track_network
+    record_network = track_network and account_network
 
     bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
         method,
@@ -1075,7 +1099,7 @@ def _handle_http_call_inner(
     # owning task without creating a second attribution row.
     if is_network_event_suppressed() or current_provider_capture_owner() is not None:
         task = get_current_task()
-        if task is not None and track_network:
+        if task is not None and record_network:
             task._network.record(
                 domain,
                 bytes_in=bytes_in,
@@ -1084,8 +1108,23 @@ def _handle_http_call_inner(
             )
         return
 
+    if network_only:
+        if record_network:
+            _handle_uncataloged(
+                url,
+                method,
+                domain,
+                bytes_in,
+                bytes_out,
+                status_code,
+                latency_ms,
+                byte_details,
+                cfg,
+            )
+        return
+
     # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
-    if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
+    if _handle_domain_rate(url, domain, record_network, bytes_in, bytes_out, byte_details):
         return
 
     # Observer-owned endpoint boundaries supersede the bundled legacy catalog.
@@ -1103,7 +1142,7 @@ def _handle_http_call_inner(
         if _handle_catalog_entry(
             url,
             domain,
-            track_network,
+            record_network,
             bytes_in,
             bytes_out,
             response_headers,
@@ -1118,7 +1157,7 @@ def _handle_http_call_inner(
         if observer_route and _handle_usage_observer(
             url,
             domain,
-            track_network,
+            record_network,
             bytes_in,
             bytes_out,
             response_headers,
@@ -1133,7 +1172,7 @@ def _handle_http_call_inner(
     elif _handle_catalog_entry(
         url,
         domain,
-        track_network,
+        record_network,
         bytes_in,
         bytes_out,
         response_headers,
@@ -1144,7 +1183,7 @@ def _handle_http_call_inner(
         return
 
     # ── 3. un-cataloged: skip entirely when track_network=False ────────────
-    if not track_network:
+    if not record_network:
         return
 
     _handle_uncataloged(
