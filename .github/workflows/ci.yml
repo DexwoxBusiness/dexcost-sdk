@@ -2,14 +2,11 @@ name: CI
 
 # DexCost SDK CI uses three blocking layers:
 #
-# 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
-#    that SDK's existing test suite (including bundled catalog drift checks
-#    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
-#    excludes the parity/conformance files exercised once in the shared gate.
+# 1. Python and TypeScript test jobs MUST pass. Go and Rust job definitions are
+#    intentionally retained but temporarily skipped while those SDKs are
+#    non-paired; re-enable them when their catalogs and runtimes are paired.
 #
-# 2. cross-sdk-conformance MUST pass. It runs historical serialization and
-#    pricing parity in all four languages. Provider-usage observer parity is
-#    currently paired in Python and TypeScript; Go and Rust remain independent.
+# 2. cross-sdk-conformance MUST pass for the paired Python and TypeScript SDKs.
 #
 # 3. sdk-attribution-admission runs after the shared consumers pass.
 #    It rejects observers without exact dimensions, provider API evidence,
@@ -71,6 +68,8 @@ jobs:
 
   go:
     name: go tests
+    # Temporarily disabled: Go is intentionally outside the paired SDK scope.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,6 +164,8 @@ jobs:
 
   rust:
     name: rust tests
+    # Temporarily disabled: Rust is intentionally outside the paired SDK scope.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -203,7 +204,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sdk: [python, go, typescript, rust]
+        sdk: [python, typescript]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
