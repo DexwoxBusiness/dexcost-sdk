@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.27.0",
-    "observer_count": 70,
+    "version": "1.28.0",
+    "observer_count": 73,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -48,6 +48,53 @@
       "allowed_resource_ids": ["embed-v4.0"],
       "record_id_path": "id",
       "source_url": "https://docs.cohere.com/reference/embed"
+    },
+    {
+      "service_key": "stability_ai_ultra",
+      "provider_name": "stability_ai",
+      "provider_service": "stable_image",
+      "component": "external",
+      "domains": ["api.stability.ai"],
+      "endpoints": ["/v2beta/stable-image/generate/ultra"],
+      "endpoint_match": "exact",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "model",
+      "fixed_resource_id": "stable-image-ultra",
+      "record_id_header": "x-request-id",
+      "source_url": "https://platform.stability.ai/docs/api-reference#tag/Generate/paths/~1v2beta~1stable-image~1generate~1ultra/post"
+    },
+    {
+      "service_key": "stability_ai_core",
+      "provider_name": "stability_ai",
+      "provider_service": "stable_image",
+      "component": "external",
+      "domains": ["api.stability.ai"],
+      "endpoints": ["/v2beta/stable-image/generate/core"],
+      "endpoint_match": "exact",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "model",
+      "fixed_resource_id": "stable-image-core",
+      "record_id_header": "x-request-id",
+      "source_url": "https://platform.stability.ai/docs/api-reference#tag/Generate/paths/~1v2beta~1stable-image~1generate~1core/post"
+    },
+    {
+      "service_key": "stability_ai_sd3",
+      "provider_name": "stability_ai",
+      "provider_service": "stable_image",
+      "component": "external",
+      "domains": ["api.stability.ai"],
+      "endpoints": ["/v2beta/stable-image/generate/sd3"],
+      "endpoint_match": "exact",
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "model",
+      "request_resource_path": "model",
+      "default_resource_id": "sd3.5-large",
+      "allowed_resource_ids": ["sd3.5-large", "sd3.5-large-turbo", "sd3.5-medium", "sd3.5-flash"],
+      "record_id_header": "x-request-id",
+      "source_url": "https://platform.stability.ai/docs/api-reference#tag/Generate/paths/~1v2beta~1stable-image~1generate~1sd3/post"
     },
     {
       "service_key": "voyage_ai",

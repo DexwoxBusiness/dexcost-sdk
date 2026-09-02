@@ -501,7 +501,16 @@ def _value(owner: Any, name: str, default: Any = None) -> Any:
     if isinstance(attributes, dict):
         # Looking in __dict__ first avoids MagicMock fabricating arbitrary
         # response fields and also matches Cohere's generated Pydantic models.
-        return attributes.get(name, default)
+        if name in attributes:
+            return attributes[name]
+        # Cohere's current Python SDK accepts newly added response fields as
+        # Pydantic extras before its generated type declarations catch up.
+        # For example, Embed 4 ``image_tokens`` is retained here rather than
+        # in ``__dict__``. Preserve that provider-reported billed meter.
+        extras = getattr(owner, "__pydantic_extra__", None)
+        if isinstance(extras, dict):
+            return extras.get(name, default)
+        return default
     return getattr(owner, name, default)
 
 

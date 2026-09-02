@@ -1,5 +1,5 @@
 {
-  "schema_version": "19",
+  "schema_version": "20",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -64,6 +64,64 @@
       "headers": {},
       "request": { "model": "embed-future", "input_type": "search_document" },
       "response": { "id": "cohere-unknown-model", "meta": { "billed_units": { "input_tokens": 29, "image_tokens": 4096 } } },
+      "expected": []
+    },
+    {
+      "name": "stability_ai_ultra_success_is_one_billable_generation",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/ultra",
+      "headers": { "x-request-id": "stability-ultra-1" },
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_ultra", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "stable-image-ultra", "provider_record_id": "stability-ultra-1" }]
+    },
+    {
+      "name": "stability_ai_core_success_is_one_billable_generation",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/core",
+      "headers": { "x-request-id": "stability-core-1" },
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_core", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "stable-image-core", "provider_record_id": "stability-core-1" }]
+    },
+    {
+      "name": "stability_ai_sd3_defaults_to_large",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_sd3", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "sd3.5-large" }]
+    },
+    {
+      "name": "stability_ai_sd3_uses_requested_flash_model",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse", "model": "sd3.5-flash" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_sd3", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "sd3.5-flash" }]
+    },
+    {
+      "name": "stability_ai_unknown_sd3_model_fails_open",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse", "model": "future-model" },
+      "response": {},
+      "expected": []
+    },
+    {
+      "name": "stability_ai_failed_ultra_generation_is_not_observed",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/ultra",
+      "status_code": 403,
+      "headers": {},
+      "request": { "prompt": "rejected" },
+      "response": { "errors": ["content moderation"] },
+      "expected": []
+    },
+    {
+      "name": "stability_ai_failed_core_generation_is_not_observed",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/core",
+      "status_code": 422,
+      "headers": {},
+      "request": { "prompt": "invalid" },
+      "response": { "errors": ["invalid request"] },
       "expected": []
     },
     {
