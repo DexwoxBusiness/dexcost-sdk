@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": "1.36.0",
+    "version": "1.36.1",
     "observer_count": 105,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
@@ -2073,11 +2073,12 @@
       "service_key": "weaviate_cloud_request_count",
       "provider_name": "weaviate_cloud", "provider_service": "vector_database", "component": "storage",
       "domains": [], "domain_suffixes": ["weaviate.network"],
-      "endpoints": ["/v1/search/{collection}/near-text"], "endpoint_match": "path_template", "methods": ["POST"],
+      "endpoints": ["/v1/graphql"], "endpoint_match": "exact", "methods": ["POST"],
+      "response_all": [{ "path": "data", "operator": "non_empty" }],
       "fixed_quantity": "1", "usage_metric": "request_count",
-      "resource_type": "other", "resource_path_parameter": "collection",
+      "resource_type": "endpoint", "fixed_resource_id": "graphql",
       "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
-      "source_url": "https://docs.weaviate.io/weaviate/api/rest"
+      "source_url": "https://docs.weaviate.io/weaviate/api/graphql"
     },
     {
       "service_key": "zilliz_cloud_request_count",
@@ -2085,6 +2086,7 @@
       "domains": [], "domain_suffixes": ["vectordb.zillizcloud.com"],
       "endpoints": ["/v2/vectordb/entities/search", "/v2/vectordb/entities/query", "/v2/vectordb/entities/insert", "/v2/vectordb/entities/upsert", "/v2/vectordb/entities/delete"],
       "endpoint_match": "exact", "methods": ["POST"],
+      "response_all": [{ "path": "code", "operator": "equals", "value": 0 }],
       "fixed_quantity": "1", "usage_metric": "request_count",
       "resource_type": "other", "request_resource_path": "collectionName",
       "billing_dimensions": [

@@ -16,6 +16,25 @@ const fixture = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage
   cases: Array<{ name: string; url: string; method?: string; status_code?: number; headers: Record<string, string>; request_headers?: string[] | Record<string, string>; request?: unknown; response: unknown; expected: Array<Record<string, unknown>> }>;
 };
 
+function numericResponseObserver(value: number): ServiceUsageObservers {
+  return new ServiceUsageObservers({
+    _meta: { version: "test", observer_count: 1 },
+    observers: [{
+      service_key: "numeric_response_test",
+      provider_name: "test_provider",
+      provider_service: "test_service",
+      component: "external",
+      domains: ["numeric.example"],
+      endpoints: ["/v1/check"],
+      endpoint_match: "exact",
+      fixed_quantity: "1",
+      usage_metric: "request_count",
+      response_all: [{ path: "status", operator: "equals", value }],
+      source_url: "https://numeric.example/docs",
+    }],
+  });
+}
+
 describe("shared service usage observer conformance", () => {
   const observers = new ServiceUsageObservers();
 
@@ -60,6 +79,23 @@ describe("shared service usage observer conformance", () => {
     const canonical = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage_observers.json"), "utf8"));
     const packaged = JSON.parse(readFileSync(join(here, "../src/data/service_usage_observers.json"), "utf8"));
     expect(packaged).toEqual(canonical);
+  });
+
+  it("fails open for JSON integers outside the interoperable range", () => {
+    const observer = numericResponseObserver(Number.MAX_SAFE_INTEGER);
+    expect(observer.observe(
+      "https://numeric.example/v1/check",
+      new Headers(),
+      { status: Number.MAX_SAFE_INTEGER },
+    )).toHaveLength(1);
+    expect(observer.observe(
+      "https://numeric.example/v1/check",
+      new Headers(),
+      { status: Number.MAX_SAFE_INTEGER + 1 },
+    )).toHaveLength(0);
+    expect(() => numericResponseObserver(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      "invalid observer",
+    );
   });
 
   it("keeps provider observation IDs stable across SDK languages", () => {

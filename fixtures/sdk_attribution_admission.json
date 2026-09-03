@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.36.0",
+  "observer_manifest_version": "1.36.1",
   "conformance_schema_version": "28",
   "required_sdks": ["typescript", "python"],
   "observers": [
@@ -672,12 +672,12 @@
     {
       "service_key": "weaviate_cloud_request_count",
       "positive_cases": ["weaviate_cloud_success_is_an_allocation_signal_only"],
-      "fail_open_cases": ["weaviate_failed_request_is_not_an_allocation_signal"]
+      "fail_open_cases": ["weaviate_graphql_error_is_not_an_allocation_signal"]
     },
     {
       "service_key": "zilliz_cloud_request_count",
       "positive_cases": ["zilliz_success_carries_cluster_collection_and_database_identity"],
-      "fail_open_cases": ["zilliz_failed_request_is_not_an_allocation_signal"]
+      "fail_open_cases": ["zilliz_application_error_is_not_an_allocation_signal"]
     },
     {
       "service_key": "astra_db_request_count",

@@ -154,6 +154,30 @@ def test_response_one_of_rejects_duplicate_json_numbers() -> None:
         )
 
 
+def test_response_predicates_fail_open_for_unsafe_json_integers() -> None:
+    maximum_safe_integer = 9_007_199_254_740_991
+    observer = _numeric_response_observer(
+        {"path": "status", "operator": "equals", "value": maximum_safe_integer}
+    )
+    assert len(
+        observer.observe(
+            "https://numeric.example/v1/check", {}, {"status": maximum_safe_integer}
+        )
+    ) == 1
+    assert observer.observe(
+        "https://numeric.example/v1/check", {}, {"status": maximum_safe_integer + 1}
+    ) == []
+
+    with pytest.raises(ValueError, match="invalid response predicate"):
+        _numeric_response_observer(
+            {
+                "path": "status",
+                "operator": "equals",
+                "value": maximum_safe_integer + 1,
+            }
+        )
+
+
 def test_azure_observer_owns_invalid_variants_without_trusting_spoofed_suffixes() -> None:
     observers = ServiceUsageObservers()
     custom_category = (

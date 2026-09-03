@@ -34,6 +34,7 @@ _RESOURCE_TYPES = {"model", "sku", "instance", "endpoint", "session", "tool", "o
 _DOMAIN_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 _DOMAIN_LABEL_CHARS = _DOMAIN_EDGE_CHARS | {"-"}
 _HEADER_NAME_CHARS = _DOMAIN_EDGE_CHARS | frozenset("!#$%&'*+.^_`|~-")
+_MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
 _LOG = logging.getLogger(__name__)
 
 
@@ -328,12 +329,31 @@ def _valid_domain_suffix(value: Any) -> bool:
     )
 
 
+def _interoperable_json_number(value: Any) -> bool:
+    """Return whether a JSON number is exact enough for Python/JS parity."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) <= _MAX_SAFE_JSON_INTEGER
+    return (
+        isinstance(value, float)
+        and isfinite(value)
+        and abs(value) <= _MAX_SAFE_JSON_INTEGER
+    )
+
+
+def _valid_json_predicate_scalar(value: Any) -> bool:
+    return isinstance(value, (str, bool)) or _interoperable_json_number(value)
+
+
 def _json_scalar_equals(left: Any, right: Any) -> bool:
-    """Match JSON scalars with JavaScript number semantics, excluding booleans."""
-    if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return left == right
+    """Match JSON scalars without accepting rounded or non-finite numbers."""
+    if isinstance(left, (int, float)) and not isinstance(left, bool):
+        return _interoperable_json_number(left) and _interoperable_json_number(
+            right
+        ) and left == right
+    if isinstance(right, (int, float)) and not isinstance(right, bool):
+        return False
     return type(left) is type(right) and left == right
 
 
@@ -373,8 +393,7 @@ def _valid_response_predicate(predicate: Any) -> bool:
             or not isinstance(values, list)
             or not 1 <= len(values) <= 20
             or any(
-                type(value) not in {str, bool, int, float}
-                or (isinstance(value, float) and not isfinite(value))
+                not _valid_json_predicate_scalar(value)
                 for value in values
             )
         ):
@@ -393,8 +412,7 @@ def _valid_response_predicate(predicate: Any) -> bool:
     return (
         predicate.get("operator") in {"equals", "collection_all_equals"}
         and set(predicate) == {"path", "operator", "value"}
-        and type(value) in {str, bool, int, float}
-        and (not isinstance(value, float) or isfinite(value))
+        and _valid_json_predicate_scalar(value)
     )
 
 
@@ -408,18 +426,14 @@ def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     if resolved is None:
         return operator.startswith("absent_or_")
     if operator == "equals":
-        return resolved == predicate["value"] and type(resolved) is type(
-            predicate["value"]
-        )
+        return _json_scalar_equals(resolved, predicate["value"])
     if operator == "not_equals":
-        return resolved != predicate["value"] or type(resolved) is not type(
-            predicate["value"]
-        )
+        return not _json_scalar_equals(resolved, predicate["value"])
     if operator == "string_not_contains":
         return isinstance(resolved, str) and predicate["value"] not in resolved
     if operator == "array_contains":
         return isinstance(resolved, list) and any(
-            item == predicate["value"] and type(item) is type(predicate["value"])
+            _json_scalar_equals(item, predicate["value"])
             for item in resolved
         )
     if operator == "absent_or_empty_collection":
@@ -428,8 +442,7 @@ def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
         return resolved is False
     return (
         operator == "absent_or_lte"
-        and isinstance(resolved, (int, float))
-        and not isinstance(resolved, bool)
+        and _interoperable_json_number(resolved)
         and resolved <= predicate["value"]
     )
 
@@ -449,9 +462,8 @@ def _valid_request_predicate(predicate: Any) -> bool:
     if predicate.get("operator") in {"equals", "not_equals"}:
         return (
             set(predicate) == {"path", "operator", "value"}
-            and type(value) in {str, bool, int, float}
+            and _valid_json_predicate_scalar(value)
             and not (isinstance(value, str) and not value)
-            and not (isinstance(value, float) and not isfinite(value))
         )
     if predicate.get("operator") == "string_not_contains":
         return (
@@ -462,16 +474,13 @@ def _valid_request_predicate(predicate: Any) -> bool:
     if predicate.get("operator") == "array_contains":
         return (
             set(predicate) == {"path", "operator", "value"}
-            and type(value) in {str, bool, int, float}
+            and _valid_json_predicate_scalar(value)
             and not (isinstance(value, str) and not value)
-            and not (isinstance(value, float) and not isfinite(value))
         )
     return (
         predicate.get("operator") == "absent_or_lte"
         and set(predicate) == {"path", "operator", "value"}
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and not (isinstance(value, float) and not isfinite(value))
+        and _interoperable_json_number(value)
     )
 
 
@@ -611,7 +620,7 @@ def _collection_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool
     if resolved is None:
         return False
     contains = any(
-        item == predicate["value"] and type(item) is type(predicate["value"])
+        _json_scalar_equals(item, predicate["value"])
         for item in resolved
     )
     return contains if predicate["operator"] == "contains" else not contains
@@ -627,9 +636,7 @@ def _valid_collection_predicate(predicate: Any) -> bool:
     ):
         return False
     value = predicate.get("value")
-    return type(value) in {str, bool, int, float} and (
-        not isinstance(value, float) or value == value
-    )
+    return _valid_json_predicate_scalar(value)
 
 
 class ServiceUsageObservers:

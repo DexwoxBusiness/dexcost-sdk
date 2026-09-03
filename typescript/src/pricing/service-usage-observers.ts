@@ -390,7 +390,7 @@ function validRequestHeaderPredicate(predicate: unknown): predicate is RequestHe
 function collectionPredicateMatches(value: unknown, predicate: CollectionPredicate): boolean {
   const resolved = resolveCollectionPath(value, predicate.path);
   if (resolved === undefined) return false;
-  const contains = resolved.some((item) => item === predicate.value);
+  const contains = resolved.some((item) => jsonScalarEquals(item, predicate.value));
   return predicate.operator === "contains" ? contains : !contains;
 }
 
@@ -400,8 +400,7 @@ function validCollectionPredicate(predicate: unknown): predicate is CollectionPr
   return Object.keys(candidate).length === 3 &&
     typeof candidate.path === "string" && candidate.path.length > 0 &&
     (candidate.operator === "contains" || candidate.operator === "not_contains") &&
-    (typeof candidate.value === "string" || typeof candidate.value === "boolean" ||
-      (typeof candidate.value === "number" && Number.isFinite(candidate.value)));
+    validJsonPredicateScalar(candidate.value);
 }
 
 function queryValueIsTruthy(value: string | null): boolean {
@@ -442,16 +441,33 @@ function domainMatches(hostname: string, observer: UsageObserverDefinition): boo
     observer.domain_suffixes?.some((suffix) => hostname.endsWith(`.${suffix}`)) === true;
 }
 
+function interoperableJsonNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) &&
+    Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+}
+
+function validJsonPredicateScalar(value: unknown): value is string | boolean | number {
+  return typeof value === "string" || typeof value === "boolean" ||
+    interoperableJsonNumber(value);
+}
+
+function jsonScalarEquals(left: unknown, right: unknown): boolean {
+  if (typeof left === "number" || typeof right === "number") {
+    return interoperableJsonNumber(left) && interoperableJsonNumber(right) && left === right;
+  }
+  return left === right;
+}
+
 function responsePredicateMatches(value: unknown, predicate: ResponsePredicate): boolean {
   if (predicate.operator === "collection_all_equals") {
     const resolved = resolveCollectionPath(value, predicate.path);
     return resolved !== undefined && resolved.length > 0 &&
-      resolved.every((candidate) => candidate === predicate.value);
+      resolved.every((candidate) => jsonScalarEquals(candidate, predicate.value));
   }
   const resolved = resolvePath(value, predicate.path);
-  if (predicate.operator === "equals") return resolved === predicate.value;
+  if (predicate.operator === "equals") return jsonScalarEquals(resolved, predicate.value);
   if (predicate.operator === "one_of") {
-    return predicate.values?.some((candidate) => resolved === candidate) === true;
+    return predicate.values?.some((candidate) => jsonScalarEquals(resolved, candidate)) === true;
   }
   if (typeof resolved === "string") return resolved.trim().length > 0;
   if (Array.isArray(resolved)) return resolved.length > 0;
@@ -470,17 +486,13 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
     return Object.keys(candidate).length === 3 && candidate.value === undefined &&
       Array.isArray(candidate.values) && candidate.values.length > 0 &&
       candidate.values.length <= 20 &&
-      candidate.values.every((value) =>
-        typeof value === "string" || typeof value === "boolean" ||
-        (typeof value === "number" && Number.isFinite(value))) &&
+      candidate.values.every(validJsonPredicateScalar) &&
       new Set(candidate.values.map((value) => `${typeof value}:${String(value)}`)).size ===
         candidate.values.length;
   }
   return (candidate.operator === "equals" || candidate.operator === "collection_all_equals") &&
     Object.keys(candidate).length === 3 &&
-    (typeof candidate.value === "string" ||
-      typeof candidate.value === "boolean" ||
-      (typeof candidate.value === "number" && Number.isFinite(candidate.value)));
+    validJsonPredicateScalar(candidate.value);
 }
 
 function requestPredicateMatches(value: unknown, predicate: RequestPredicate): boolean {
@@ -489,23 +501,24 @@ function requestPredicateMatches(value: unknown, predicate: RequestPredicate): b
   if (resolved === undefined || resolved === null) {
     return predicate.operator.startsWith("absent_or_");
   }
-  if (predicate.operator === "equals") return resolved === predicate.value;
-  if (predicate.operator === "not_equals") return resolved !== predicate.value;
+  if (predicate.operator === "equals") return jsonScalarEquals(resolved, predicate.value);
+  if (predicate.operator === "not_equals") return !jsonScalarEquals(resolved, predicate.value);
   if (predicate.operator === "string_not_contains") {
     return typeof resolved === "string" &&
       typeof predicate.value === "string" &&
       !resolved.includes(predicate.value);
   }
   if (predicate.operator === "array_contains") {
-    return Array.isArray(resolved) && resolved.some((item) => item === predicate.value);
+    return Array.isArray(resolved) &&
+      resolved.some((item) => jsonScalarEquals(item, predicate.value));
   }
   if (predicate.operator === "absent_or_empty_collection") {
     return Array.isArray(resolved) && resolved.length === 0;
   }
   if (predicate.operator === "absent_or_false_or_null") return resolved === false;
   return predicate.operator === "absent_or_lte" &&
-    typeof resolved === "number" && Number.isFinite(resolved) &&
-    typeof predicate.value === "number" && resolved <= predicate.value;
+    interoperableJsonNumber(resolved) && interoperableJsonNumber(predicate.value) &&
+    resolved <= predicate.value;
 }
 
 function validRequestPredicate(predicate: unknown): predicate is RequestPredicate {
@@ -519,8 +532,7 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   }
   if (candidate.operator === "equals" || candidate.operator === "not_equals") {
     return Object.keys(candidate).length === 3 &&
-      (typeof candidate.value === "boolean" ||
-        (typeof candidate.value === "number" && Number.isFinite(candidate.value)) ||
+      (typeof candidate.value === "boolean" || interoperableJsonNumber(candidate.value) ||
         (typeof candidate.value === "string" && candidate.value.length > 0));
   }
   if (candidate.operator === "string_not_contains") {
@@ -529,13 +541,12 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
   }
   if (candidate.operator === "array_contains") {
     return Object.keys(candidate).length === 3 &&
-      (typeof candidate.value === "boolean" ||
-        (typeof candidate.value === "number" && Number.isFinite(candidate.value)) ||
+      (typeof candidate.value === "boolean" || interoperableJsonNumber(candidate.value) ||
         (typeof candidate.value === "string" && candidate.value.length > 0));
   }
   return candidate.operator === "absent_or_lte" &&
     Object.keys(candidate).length === 3 &&
-    typeof candidate.value === "number" && Number.isFinite(candidate.value);
+    interoperableJsonNumber(candidate.value);
 }
 
 function validBillingDimension(definition: BillingDimensionDefinition): boolean {
