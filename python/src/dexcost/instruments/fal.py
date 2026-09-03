@@ -98,33 +98,40 @@ def _capture_response_request_id(response: Any) -> None:
 def _captured_sync_stream(
     stream: Iterator[Any], capture: Callable[[str], None]
 ) -> Iterator[Any]:
-    inside_token = _inside_fal.set(True)
-    request_token = _nested_request_id.set(None)
-    try:
-        for item in stream:
+    iterator = iter(stream)
+    while True:
+        inside_token = _inside_fal.set(True)
+        request_token = _nested_request_id.set(None)
+        try:
+            item = next(iterator)
             request_id = _nested_request_id.get()
-            if request_id is not None:
-                capture(request_id)
-            yield item
-    finally:
-        _nested_request_id.reset(request_token)
-        _inside_fal.reset(inside_token)
+        except StopIteration:
+            return
+        finally:
+            _nested_request_id.reset(request_token)
+            _inside_fal.reset(inside_token)
+        if request_id is not None:
+            capture(request_id)
+        yield item
 
 
 async def _captured_async_stream(
     stream: AsyncIterator[Any], capture: Callable[[str], None]
 ) -> AsyncIterator[Any]:
-    inside_token = _inside_fal.set(True)
-    request_token = _nested_request_id.set(None)
-    try:
-        async for item in stream:
+    while True:
+        inside_token = _inside_fal.set(True)
+        request_token = _nested_request_id.set(None)
+        try:
+            item = await anext(stream)
             request_id = _nested_request_id.get()
-            if request_id is not None:
-                capture(request_id)
-            yield item
-    finally:
-        _nested_request_id.reset(request_token)
-        _inside_fal.reset(inside_token)
+        except StopAsyncIteration:
+            return
+        finally:
+            _nested_request_id.reset(request_token)
+            _inside_fal.reset(inside_token)
+        if request_id is not None:
+            capture(request_id)
+        yield item
 
 
 def _model(application: str, path: Any = "") -> str:

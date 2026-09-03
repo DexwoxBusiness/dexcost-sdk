@@ -203,6 +203,19 @@ describe("v1 capture to attribution v2 conversion", () => {
     expect(toAttributionEventV2(createCostEvent({ ...base, eventType: "gpu_utilization_signal" }))).toBeNull();
   });
 
+  it("drops custom metrics instead of relabelling them as requests", () => {
+    expect(toAttributionEventV2(createCostEvent({
+      ...base,
+      eventType: "external_cost",
+      provider: "pinecone",
+      details: {
+        attribution_usage_metric: "pinecone.read_units",
+        attribution_usage_quantity: "2",
+        attribution_usage_unit: "ReadUnits",
+      },
+    }))).toBeNull();
+  });
+
   it("preserves retry linkage, reason, usage, and caller-supplied cost", () => {
     const retryOf = randomUUID();
     const converted = toAttributionEventV2(createCostEvent({

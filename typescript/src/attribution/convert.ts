@@ -299,6 +299,9 @@ export function attributionComponentAndUsage(event: CostEvent): {
       const explicitQuantity = numberDetail(details, "attribution_usage_quantity");
       const explicitMetric = stringDetail(details, "attribution_usage_metric");
       const explicitComponent = stringDetail(details, "attribution_component");
+      if (explicitMetric !== undefined && !(explicitMetric in ATTRIBUTION_UNIT_BY_METRIC)) {
+        return null;
+      }
       const per = canonicalName(stringDetail(details, "attribution_usage_per"), "request");
       const inferredMetric: AttributionUsageMetric = per.includes("page") ? "page_count"
         : per.includes("credit") ? "credit_count"
@@ -306,9 +309,9 @@ export function attributionComponentAndUsage(event: CostEvent): {
             : per.includes("call") ? "call_count"
               : per.includes("character") ? "characters"
                 : "request_count";
-      const metric = explicitMetric !== undefined && explicitMetric in ATTRIBUTION_UNIT_BY_METRIC
-        ? explicitMetric as AttributionUsageMetric
-        : inferredMetric;
+      const metric = explicitMetric === undefined
+        ? inferredMetric
+        : explicitMetric as AttributionUsageMetric;
       const component: AttributionComponent = explicitComponent === "speech_to_text" ||
         explicitComponent === "text_to_speech"
         ? explicitComponent

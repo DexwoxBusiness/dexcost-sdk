@@ -378,6 +378,8 @@ def _component_and_usage(
     explicit_quantity = _decimal_detail(details, "attribution_usage_quantity")
     explicit_metric = _string_detail(details, "attribution_usage_metric")
     explicit_component = _string_detail(details, "attribution_component")
+    if explicit_metric is not None and not _is_attribution_usage_metric(explicit_metric):
+        return None
     per = _canonical_name(_string_detail(details, "attribution_usage_per"), "request")
     inferred_metric: AttributionUsageMetric
     if "page" in per:
@@ -392,7 +394,7 @@ def _component_and_usage(
         inferred_metric = "characters"
     else:
         inferred_metric = "request_count"
-    metric = explicit_metric if _is_attribution_usage_metric(explicit_metric) else inferred_metric
+    metric = explicit_metric if explicit_metric is not None else inferred_metric
     component: AttributionComponent = cast(
         AttributionComponent,
         explicit_component

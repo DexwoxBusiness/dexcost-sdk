@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,7 +15,13 @@ import pytest
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.capabilities import capability_context
 from dexcost.idempotency import idempotency_key
-from dexcost.instruments.fal import instrument_fal, uninstrument_fal
+from dexcost.instruments.fal import (
+    _captured_async_stream,
+    _captured_sync_stream,
+    _inside_fal,
+    instrument_fal,
+    uninstrument_fal,
+)
 from dexcost.models.capability import CapabilityIdentity
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
@@ -146,6 +152,33 @@ def _client_with_transport(transport: httpx.MockTransport) -> fal_client.SyncCli
     client = fal_client.SyncClient(key="test")
     client.__dict__["_client"] = httpx.Client(transport=transport)
     return client
+
+
+def test_sync_stream_guard_is_restored_before_user_chunk_code() -> None:
+    def source() -> Generator[str, None, None]:
+        assert _inside_fal.get() is True
+        yield "chunk"
+
+    stream = _captured_sync_stream(source(), lambda _request_id: None)
+    assert next(stream) == "chunk"
+    assert _inside_fal.get() is False
+    stream.close()
+    assert _inside_fal.get() is False
+
+
+def test_async_stream_guard_is_restored_before_user_chunk_code() -> None:
+    async def run() -> None:
+        async def source() -> AsyncIterator[str]:
+            assert _inside_fal.get() is True
+            yield "chunk"
+
+        stream = _captured_async_stream(source(), lambda _request_id: None)
+        assert await anext(stream) == "chunk"
+        assert _inside_fal.get() is False
+        await stream.aclose()
+        assert _inside_fal.get() is False
+
+    asyncio.run(run())
 
 
 def test_current_client_sync_stream_and_queue_are_attributed_once(

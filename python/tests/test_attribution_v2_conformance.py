@@ -320,6 +320,20 @@ def test_drops_unknown_event_types_instead_of_misattributing_external_cost() -> 
     assert to_attribution_event_v2(_event(event_type="future_internal_signal")) is None
 
 
+def test_drops_custom_metrics_instead_of_relabelling_them_as_requests() -> None:
+    assert to_attribution_event_v2(
+        _event(
+            event_type="external_cost",
+            provider="pinecone",
+            details={
+                "attribution_usage_metric": "pinecone.read_units",
+                "attribution_usage_quantity": "2",
+                "attribution_usage_unit": "ReadUnits",
+            },
+        )
+    ) is None
+
+
 def test_conversion_is_stable_and_never_transmits_details() -> None:
     internal = _event(
         event_type="external_cost",
