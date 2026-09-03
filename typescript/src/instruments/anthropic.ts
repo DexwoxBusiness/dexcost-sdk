@@ -44,7 +44,8 @@ function providerForMessagesResource(resource: any): "anthropic" | "moonshot" {
   try {
     const raw = resource?._client?.baseURL ?? resource?._client?.base_url ??
       resource?._client?._baseURL ?? resource?._client?._base_url;
-    if (typeof raw === "string" && new URL(raw).hostname.toLowerCase() === "api.moonshot.ai") {
+    const hostname = typeof raw === "string" ? new URL(raw).hostname.toLowerCase() : "";
+    if (["api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"].includes(hostname)) {
       return "moonshot";
     }
   } catch {

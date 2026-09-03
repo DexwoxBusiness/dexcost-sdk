@@ -61,6 +61,7 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
     if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) return "xai";
     if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) return "groq";
+    if (hostname === "api.mistral.ai") return "mistral";
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) return "azure_openai";
   } catch { /* default client */ }
   return "openai";
@@ -71,7 +72,7 @@ function modelFor(provider: string, requested: unknown, response?: any, liteLlm 
     typeof requested === "string" ? requested : "unknown";
   if (liteLlm) return canonicalLiteLlmModel(provider, response?.model, requested);
   if (provider === "xai") return canonicalXaiModel(selected);
-  return ["openai", "deepseek", "moonshot", "fireworks_ai", "xai", "groq"].includes(provider)
+  return ["openai", "deepseek", "moonshot", "fireworks_ai", "xai", "groq", "mistral"].includes(provider)
     ? selected
     : prefixedModel(provider, selected);
 }

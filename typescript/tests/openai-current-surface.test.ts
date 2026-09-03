@@ -282,6 +282,36 @@ describe("current official OpenAI TypeScript surface", () => {
     expect(JSON.stringify(events)).not.toContain("private embedding input");
   });
 
+  it("routes modern Mistral embeddings without OpenAI identity", async () => {
+    class MistralEmbeddings extends Embeddings {
+      _client = { baseURL: "https://api.mistral.ai/v1" };
+    }
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new MistralEmbeddings().create({
+      model: "mistral-embed",
+      input: "private embedding input",
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "mistral",
+      model: "mistral-embed",
+      serviceName: "embeddings",
+    });
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toEqual({
+      name: "mistral",
+      service: "embeddings",
+      record_id: "emb-1",
+    });
+    expect(observation?.resource).toEqual({
+      type: "model",
+      id: "mistral-embed",
+    });
+    expect(JSON.stringify(events)).not.toContain("private embedding input");
+  });
+
   it("keeps Moonshot current-model identity on the modern OpenAI surface", async () => {
     await instrumentOpenai(new PricingEngine(), buffer);
     const resource = new ChatCompletions() as ChatCompletions & {

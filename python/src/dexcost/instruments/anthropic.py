@@ -89,7 +89,7 @@ def _provider_for_messages_instance(instance: Any) -> str:
             client, "_base_url", None
         )
         hostname = (urlparse(str(raw_base_url)).hostname or "").lower()
-        if hostname == "api.moonshot.ai":
+        if hostname in {"api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"}:
             return "moonshot"
     except (AttributeError, TypeError, ValueError):
         pass

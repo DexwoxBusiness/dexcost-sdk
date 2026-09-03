@@ -171,9 +171,13 @@ describe("Anthropic instrumentation", () => {
     expect(events[0].cachedTokens).toBe(50);
   });
 
-  it("routes Kimi's Messages-compatible endpoint to Moonshot server pricing", async () => {
+  it.each([
+    "https://api.kimi.com/anthropic",
+    "https://api.moonshot.ai/anthropic",
+    "https://api.moonshot.cn/anthropic",
+  ])("routes the Messages-compatible host %s to Moonshot server pricing", async (baseURL) => {
     class MoonshotMessages {
-      _client = { baseURL: "https://api.moonshot.ai/anthropic" };
+      _client = { baseURL };
 
       async create(): Promise<unknown> {
         return makeMockResponse({

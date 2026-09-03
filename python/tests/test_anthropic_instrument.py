@@ -317,8 +317,16 @@ class TestSyncNonStreaming:
         assert ev.details.get("cache_creation_input_tokens") == 200
         assert ev.input_tokens == 500
 
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.kimi.com/anthropic",
+            "https://api.moonshot.ai/anthropic",
+            "https://api.moonshot.cn/anthropic",
+        ],
+    )
     def test_moonshot_messages_routes_to_server_pricing_without_sdk_money(
-        self, tracker: CostTracker, storage: SQLiteStorage
+        self, tracker: CostTracker, storage: SQLiteStorage, base_url: str
     ) -> None:
         """Kimi's documented Messages-compatible host is a Moonshot API call."""
         from anthropic.resources.messages import Messages
@@ -333,7 +341,7 @@ class TestSyncNonStreaming:
             cache_read_input_tokens=4,
         )
         Messages._client = types.SimpleNamespace(  # type: ignore[attr-defined]
-            base_url="https://api.moonshot.ai/anthropic"
+            base_url=base_url
         )
         Messages.create = lambda self, **kwargs: response  # type: ignore[assignment]
 
