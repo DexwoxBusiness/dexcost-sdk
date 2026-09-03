@@ -233,8 +233,13 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
         storage.close()
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://api.moonshot.ai/v1", "https://api.moonshot.cn/v1"],
+)
 def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
     tmp_path: Path,
+    base_url: str,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = _chat_response("kimi-k3")
@@ -249,7 +254,7 @@ def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
     tracker = CostTracker(storage=storage, auto_instrument=[])
     client = OpenAI(
         api_key="test",
-        base_url="https://api.moonshot.ai/v1",
+        base_url=base_url,
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     instrument_openai(tracker)

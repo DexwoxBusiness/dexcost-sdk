@@ -304,7 +304,7 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) {
       return { provider: "deepseek" };
     }
-    if (hostname === "api.moonshot.ai") {
+    if (["api.moonshot.ai", "api.moonshot.cn"].includes(hostname)) {
       return { provider: "moonshot" };
     }
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) {

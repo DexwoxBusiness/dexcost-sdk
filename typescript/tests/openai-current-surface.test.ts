@@ -312,12 +312,15 @@ describe("current official OpenAI TypeScript surface", () => {
     expect(JSON.stringify(events)).not.toContain("private embedding input");
   });
 
-  it("keeps Moonshot current-model identity on the modern OpenAI surface", async () => {
+  it.each([
+    "https://api.moonshot.ai/v1",
+    "https://api.moonshot.cn/v1",
+  ])("keeps Moonshot current-model identity on the modern OpenAI surface for %s", async (baseURL) => {
     await instrumentOpenai(new PricingEngine(), buffer);
     const resource = new ChatCompletions() as ChatCompletions & {
       _client: { baseURL: string };
     };
-    resource._client = { baseURL: "https://api.moonshot.ai/v1" };
+    resource._client = { baseURL };
     await resource.create({ model: "kimi-k2.6", messages: [] });
 
     const events = buffer.getAllEvents();

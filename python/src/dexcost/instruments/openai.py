@@ -105,7 +105,7 @@ def _provider_for_instance(instance: Any) -> str:
                 return "perplexity"
             if hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com"):
                 return "deepseek"
-            if hostname == "api.moonshot.ai":
+            if hostname in {"api.moonshot.ai", "api.moonshot.cn"}:
                 return "moonshot"
             if hostname == "api.fireworks.ai" or hostname.endswith(".api.fireworks.ai"):
                 return "fireworks_ai"

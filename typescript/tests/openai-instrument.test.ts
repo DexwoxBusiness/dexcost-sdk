@@ -138,9 +138,12 @@ describe("OpenAI instrumentation", () => {
     });
   });
 
-  it("routes Moonshot-compatible OpenAI calls with exact cache usage", async () => {
+  it.each([
+    "https://api.moonshot.ai/v1",
+    "https://api.moonshot.cn/v1",
+  ])("routes Moonshot-compatible OpenAI calls with exact cache usage for %s", async (baseURL) => {
     class MoonshotCompletions {
-      _client = { baseURL: "https://api.moonshot.ai/v1" };
+      _client = { baseURL };
 
       async create(): Promise<unknown> {
         return makeMockResponse({
