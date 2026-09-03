@@ -40,6 +40,20 @@ const _batchPatches: Array<{ prototype: any; name: string; original: Function }>
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
 
+function providerForMessagesResource(resource: any): "anthropic" | "moonshot" {
+  try {
+    const raw = resource?._client?.baseURL ?? resource?._client?.base_url ??
+      resource?._client?._baseURL ?? resource?._client?._base_url;
+    const hostname = typeof raw === "string" ? new URL(raw).hostname.toLowerCase() : "";
+    if (["api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"].includes(hostname)) {
+      return "moonshot";
+    }
+  } catch {
+    // Malformed or unavailable client metadata falls back to Anthropic.
+  }
+  return "anthropic";
+}
+
 /** Test helper: inject a mock Messages class so tests avoid importing @anthropic-ai/sdk. */
 export function _setMessagesClass(cls: any): void {
   _messagesClass = cls;
@@ -120,6 +134,8 @@ export async function instrumentAnthropic(
     }
 
     const startTime = performance.now();
+    const provider = providerForMessagesResource(this);
+    const operation = `${provider}.messages.create`;
 
     // Scope the SDK call inside runWithTask so the HTTP adapter's
     // _resolveHttpTask() finds this task via getCurrentTask() during
@@ -130,14 +146,14 @@ export async function instrumentAnthropic(
     if (body?.stream) {
       try {
         const rawStream = await suppressNetworkEvent(() =>
-          runWithProviderCapture("anthropic", () =>
+          runWithProviderCapture(provider, () =>
             runWithTask(task, () => _original!.call(self, body, options))),
         );
-        return wrapStream(rawStream, task, startTime, autoCreated);
+        return wrapStream(rawStream, task, startTime, autoCreated, provider);
       } catch (err) {
         if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-          taskType: "anthropic.messages", provider: "anthropic", service: "messages",
-          operation: "anthropic.messages.create", component: "llm", model: body?.model, eventType: "llm_call",
+          taskType: `${provider}.messages`, provider, service: provider === "moonshot" ? "api" : "messages",
+          operation, component: "llm", model: body?.model, eventType: "llm_call",
         }, err, startTime);
         if (autoCreated) {
           finalizeAutoTask(task, "failed", _buffer);
@@ -148,12 +164,12 @@ export async function instrumentAnthropic(
 
     try {
       const response = await suppressNetworkEvent(() =>
-        runWithProviderCapture("anthropic", () =>
+        runWithProviderCapture(provider, () =>
           runWithTask(task, () => _original!.call(self, body, options))),
       );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
-        recordEvent(response, task, latencyMs);
+        recordEvent(response, task, latencyMs, provider);
       } catch {
         // dexcost errors must never crash user code
       }
@@ -163,8 +179,8 @@ export async function instrumentAnthropic(
       return response;
     } catch (err) {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-        taskType: "anthropic.messages", provider: "anthropic", service: "messages",
-        operation: "anthropic.messages.create", component: "llm", model: body?.model, eventType: "llm_call",
+        taskType: `${provider}.messages`, provider, service: provider === "moonshot" ? "api" : "messages",
+        operation, component: "llm", model: body?.model, eventType: "llm_call",
       }, err, startTime);
       if (autoCreated) {
         finalizeAutoTask(task, "failed", _buffer);
@@ -558,7 +574,12 @@ function patchMessageBatches(prototype: any, service: string): void {
   }
 }
 
-function recordEvent(response: any, task: Task, latencyMs: number): void {
+function recordEvent(
+  response: any,
+  task: Task,
+  latencyMs: number,
+  provider: "anthropic" | "moonshot" = "anthropic",
+): void {
   if (!_buffer || !_pricing) return;
 
   const model: string = response?.model ?? "unknown";
@@ -574,7 +595,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   let costConfidence: CostConfidence = "estimated";
   let pricingSource: PricingSource = "unknown";
 
-  if (hasUsage) {
+  if (hasUsage && provider === "anthropic") {
     const result: CostResult = _pricing.getCost(
       model,
       inputTokens,
@@ -587,7 +608,31 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
     pricingSource = result.pricingSource;
   }
 
-  const details: Record<string, unknown> = {};
+  const usageLines = [
+    ...(inputTokens > 0
+      ? [{ metric: "input_tokens", quantity: String(inputTokens), unit: "Tokens" }]
+      : []),
+    ...(outputTokens > 0
+      ? [{ metric: "output_tokens", quantity: String(outputTokens), unit: "Tokens" }]
+      : []),
+    ...(cachedTokens > 0
+      ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }]
+      : []),
+    ...(cacheCreationTokens > 0
+      ? [{ metric: "cache_write_input_tokens", quantity: String(cacheCreationTokens), unit: "Tokens" }]
+      : []),
+  ];
+  const details: Record<string, unknown> = {
+    attribution_component: "llm",
+    attribution_operation_name: `${provider}.messages.create`,
+    attribution_operation_status: "succeeded",
+    attribution_resource_type: "model",
+    attribution_resource_id: model,
+    attribution_provider_service: provider === "moonshot" ? "api" : "messages",
+    attribution_usage_lines: usageLines.length > 0
+      ? usageLines
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+  };
   if (cacheCreationTokens > 0) {
     details["cache_creation_input_tokens"] = cacheCreationTokens;
   }
@@ -599,7 +644,7 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
     costUsd,
     costConfidence,
     pricingSource,
-    provider: "anthropic",
+    provider,
     model,
     inputTokens,
     outputTokens,
@@ -621,7 +666,13 @@ function recordEvent(response: any, task: Task, latencyMs: number): void {
   _buffer.upsertTask(task);
 }
 
-function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: boolean = false): AsyncIterable<any> {
+function wrapStream(
+  rawStream: any,
+  task: Task,
+  startTime: number,
+  autoCreated: boolean = false,
+  provider: "anthropic" | "moonshot" = "anthropic",
+): AsyncIterable<any> {
   let model = "unknown";
   let inputTokens = 0;
   let outputTokens = 0;
@@ -634,7 +685,7 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
     if (finalized) return;
     finalized = true;
     try {
-      const costResult = hasUsage && _pricing
+      const costResult = hasUsage && _pricing && provider === "anthropic"
         ? _pricing.getCost(model, inputTokens, outputTokens, cachedTokens, cacheCreationTokens)
         : { costUsd: new Decimal(0), costConfidence: "estimated" as const, pricingSource: "unknown" as const };
       const usageLines = [
@@ -646,15 +697,16 @@ function wrapStream(rawStream: any, task: Task, startTime: number, autoCreated: 
       const event = createCostEvent({
         eventId: randomUUID(), taskId: task.taskId, eventType: "llm_call",
         costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
-        pricingSource: costResult.pricingSource, provider: "anthropic", model,
+        pricingSource: costResult.pricingSource, provider, model,
         inputTokens, outputTokens, cachedTokens,
         latencyMs: Math.round(performance.now() - startTime), isRetry: false,
         details: {
           attribution_component: "llm",
-          attribution_operation_name: "anthropic.messages.create",
+          attribution_operation_name: `${provider}.messages.create`,
           attribution_operation_status: status,
           attribution_resource_type: "model",
           attribution_resource_id: model,
+          attribution_provider_service: provider === "moonshot" ? "api" : "messages",
           attribution_usage_lines: usageLines.length > 0
             ? usageLines
             : [{ metric: "request_count", quantity: "1", unit: "Requests" }],

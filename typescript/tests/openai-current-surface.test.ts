@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { provideInstrumentModule } from "../src/instruments/index.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import {
   instrumentOpenai,
   uninstrumentOpenai,
@@ -189,12 +190,14 @@ describe("current official OpenAI TypeScript surface", () => {
     await instrumentOpenai(new PricingEngine(), buffer);
     expect(Images.prototype.generate).not.toBe(originalImage);
     await new Embeddings().create({ model: "text-embedding-3-small", input: "private" });
-    await new Images().generate({ model: "gpt-image-1", prompt: "private" });
+    await new Images().generate({ model: "gpt-image-2", prompt: "private" });
     await new Transcriptions().create({ model: "whisper-1", file: "private" });
+    await new Translations().create({ model: "whisper-1", file: "private" });
     await new Speech().create({ model: "tts-1", input: "do not retain" });
     await new Moderations().create({ model: "omni-moderation-latest", input: "private" });
 
-    const byService = new Map(buffer.getAllEvents().map((event) => [event.serviceName, event]));
+    const allEvents = buffer.getAllEvents();
+    const byService = new Map(allEvents.map((event) => [event.serviceName, event]));
     expect([...byService.keys()]).toEqual(expect.arrayContaining([
       "embeddings", "images", "speech_to_text", "text_to_speech", "moderations",
     ]));
@@ -206,13 +209,131 @@ describe("current official OpenAI TypeScript surface", () => {
       expect.objectContaining({ metric: "output_image_tokens", quantity: "100" }),
       expect.objectContaining({ metric: "image_count", quantity: "1" }),
     ]));
-    expect(byService.get("speech_to_text")?.details.attribution_usage_lines).toEqual([
-      expect.objectContaining({ metric: "audio_seconds", quantity: "60" }),
-    ]);
+    const imageEvent = byService.get("images");
+    expect(imageEvent?.costUsd.toString()).toBe("0");
+    expect(imageEvent?.costConfidence).toBe("unknown");
+    const imageObservation = imageEvent === undefined
+      ? undefined
+      : toAttributionObservationV3(imageEvent);
+    expect(imageObservation?.component).toBe("external");
+    expect(imageObservation?.provider).toEqual({ name: "openai", service: "images" });
+    expect(imageObservation?.resource).toEqual({ type: "model", id: "gpt-image-2" });
+    const whisperEvents = allEvents.filter((event) => event.serviceName === "speech_to_text");
+    expect(whisperEvents).toHaveLength(2);
+    for (const event of whisperEvents) {
+      expect(event.costUsd.toString()).toBe("0");
+      expect(event.costConfidence).toBe("unknown");
+      const observation = toAttributionObservationV3(event);
+      expect(observation?.provider).toEqual({ name: "openai", service: "speech_to_text" });
+      expect(observation?.resource).toEqual({ type: "model", id: "whisper-1" });
+      expect(observation?.usage).toEqual([
+        expect.objectContaining({ metric: "audio_seconds", quantity: "60", unit: "Seconds" }),
+      ]);
+    }
     expect(byService.get("text_to_speech")?.details.attribution_usage_lines).toEqual([
       expect.objectContaining({ metric: "characters", quantity: "13" }),
     ]);
     expect(JSON.stringify(buffer.getAllEvents())).not.toContain("do not retain");
+  });
+
+  it("observes removed DALL-E models without stale local money", async () => {
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new Images().generate({
+      model: "dall-e-3",
+      prompt: "private",
+      quality: "hd",
+      size: "1792x1024",
+    });
+
+    const event = buffer.getAllEvents()[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(toAttributionObservationV3(event)?.resource).toEqual({
+      type: "model",
+      id: "dall-e-3",
+    });
+  });
+
+  it("keeps Fireworks embedding provider and resource identity unprefixed", async () => {
+    class FireworksEmbeddings extends Embeddings {
+      _client = { baseURL: "https://api.fireworks.ai/inference/v1" };
+    }
+    const model = "accounts/fireworks/models/qwen3-embedding-8b";
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new FireworksEmbeddings().create({ model, input: "private embedding input" });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "fireworks_ai",
+      model,
+      serviceName: "embeddings",
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({
+      name: "fireworks_ai",
+      service: "embeddings",
+    });
+    expect(observation?.resource).toEqual({ type: "model", id: model });
+    expect(observation?.usage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metric: "input_tokens", quantity: "12" }),
+    ]));
+    expect(JSON.stringify(events)).not.toContain("private embedding input");
+  });
+
+  it("routes modern Mistral embeddings without OpenAI identity", async () => {
+    class MistralEmbeddings extends Embeddings {
+      _client = { baseURL: "https://api.mistral.ai/v1" };
+    }
+    await instrumentOpenai(new PricingEngine(), buffer);
+    await new MistralEmbeddings().create({
+      model: "mistral-embed",
+      input: "private embedding input",
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "mistral",
+      model: "mistral-embed",
+      serviceName: "embeddings",
+    });
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toEqual({
+      name: "mistral",
+      service: "embeddings",
+      record_id: "emb-1",
+    });
+    expect(observation?.resource).toEqual({
+      type: "model",
+      id: "mistral-embed",
+    });
+    expect(JSON.stringify(events)).not.toContain("private embedding input");
+  });
+
+  it.each([
+    "https://api.moonshot.ai/v1",
+    "https://api.moonshot.cn/v1",
+  ])("keeps Moonshot current-model identity on the modern OpenAI surface for %s", async (baseURL) => {
+    await instrumentOpenai(new PricingEngine(), buffer);
+    const resource = new ChatCompletions() as ChatCompletions & {
+      _client: { baseURL: string };
+    };
+    resource._client = { baseURL };
+    await resource.create({ model: "kimi-k2.6", messages: [] });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k2.6",
+      serviceName: "chat",
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "moonshot", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: "kimi-k2.6" });
   });
 
   it("reconciles Responses, batch, fine-tuning, and video jobs", async () => {

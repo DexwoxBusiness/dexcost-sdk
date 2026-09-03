@@ -22,12 +22,17 @@ def _restore_openai(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, No
     uninstrument_openai()
 
 
-def _chunk(*, usage: bool) -> dict[str, Any]:
+def _chunk(
+    *,
+    usage: bool,
+    model: str = "gpt-4o-mini-2024-07-18",
+    service_tier: object = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": "chatcmpl_stream_123",
         "object": "chat.completion.chunk",
         "created": 1,
-        "model": "gpt-4o-mini-2024-07-18",
+        "model": model,
         "choices": [
             {
                 "index": 0,
@@ -45,6 +50,8 @@ def _chunk(*, usage: bool) -> dict[str, Any]:
             "prompt_tokens_details": {"cached_tokens": 3},
             "completion_tokens_details": {"reasoning_tokens": 1},
         }
+    if service_tier is not None:
+        payload["service_tier"] = service_tier
     return payload
 
 
@@ -68,6 +75,31 @@ def _stream_response(*, usage_on_first_chunk: bool) -> httpx.Response:
     return httpx.Response(
         200,
         headers={"content-type": "text/event-stream", "x-request-id": "req_stream"},
+        content=body.encode(),
+    )
+
+
+def _groq_stream_response(service_tier: object) -> httpx.Response:
+    model = "openai/gpt-oss-120b"
+    events = [
+        _chunk(usage=False, model=model, service_tier=service_tier),
+        {
+            **_chunk(usage=True, model=model, service_tier=service_tier),
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                    "logprobs": None,
+                }
+            ],
+        },
+    ]
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+    body += "data: [DONE]\n\n"
+    return httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream", "x-request-id": "req_groq"},
         content=body.encode(),
     )
 
@@ -144,5 +176,73 @@ async def test_async_close_preserves_only_provider_observed_partial_usage(
     assert event.details["reasoning_output_tokens"] == 1
     assert event.cost_confidence == "computed"
     assert "private" not in json.dumps(event.to_dict(), sort_keys=True)
+    await client.close()
+    storage.close()
+
+
+def test_sync_groq_stream_malformed_response_tier_overrides_request_fallback(
+    tmp_path: Path,
+) -> None:
+    transport = httpx.MockTransport(
+        lambda request: _groq_stream_response({"future": "tier"})
+    )
+    client = OpenAI(
+        api_key="test-key",
+        base_url="https://api.groq.com/openai/v1",
+        http_client=httpx.Client(transport=transport),
+    )
+    storage, tracker = _tracker(tmp_path / "sync-groq-tier.db")
+    instrument_openai(tracker)
+
+    stream = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": "private input"}],
+        service_tier="on_demand",  # type: ignore[arg-type]
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    list(stream)
+
+    [event] = storage.query_events()
+    dimensions = {
+        item["key"]: item["value"]["value"]
+        for item in event.details["attribution_dimensions"]
+    }
+    assert dimensions == {"gateway": "groq"}
+    client.close()
+    storage.close()
+
+
+@pytest.mark.asyncio  # type: ignore[misc]
+async def test_async_groq_stream_malformed_response_tier_overrides_request_fallback(
+    tmp_path: Path,
+) -> None:
+    transport = httpx.MockTransport(
+        lambda request: _groq_stream_response({"future": "tier"})
+    )
+    client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://api.groq.com/openai/v1",
+        http_client=httpx.AsyncClient(transport=transport),
+    )
+    storage, tracker = _tracker(tmp_path / "async-groq-tier.db")
+    instrument_openai(tracker)
+
+    stream = await client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": "private input"}],
+        service_tier="on_demand",  # type: ignore[arg-type]
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    async for _ in stream:
+        pass
+
+    [event] = storage.query_events()
+    dimensions = {
+        item["key"]: item["value"]["value"]
+        for item in event.details["attribution_dimensions"]
+    }
+    assert dimensions == {"gateway": "groq"}
     await client.close()
     storage.close()

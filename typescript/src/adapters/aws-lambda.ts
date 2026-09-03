@@ -17,9 +17,11 @@ const pricingData = JSON.parse(
 );
 
 interface RegionPricing {
-  duration_per_gb_second: string;
+  duration_per_gb_second: Record<LambdaArchitecture, string>;
   request_per_invocation: string;
 }
+
+export type LambdaArchitecture = "x86_64" | "arm64";
 
 interface LambdaPricingData {
   regions: Record<string, RegionPricing>;
@@ -30,6 +32,7 @@ const _pricing = pricingData as unknown as LambdaPricingData;
 /** Breakdown of a Lambda invocation's cost. */
 export interface LambdaCostDetails {
   region: string;
+  architecture: LambdaArchitecture;
   durationMs: number;
   memoryMb: number;
   gbSeconds: number;
@@ -62,18 +65,23 @@ export function getSupportedRegions(): string[] {
  * @param durationMs - Execution duration in milliseconds (>= 0).
  * @param memoryMb - Allocated memory in MB (> 0).
  * @param region - AWS region code (e.g. `"us-east-1"`).
- * @throws Error when `region` is unknown, `durationMs` < 0, or `memoryMb` <= 0.
+ * @param architecture - Lambda architecture. Defaults to `"x86_64"`.
+ * @throws Error when an input is invalid or the region is unknown.
  */
 export function lambdaCost(
   durationMs: number,
   memoryMb: number,
   region: string,
+  architecture: LambdaArchitecture = "x86_64",
 ): LambdaCostResult {
   if (durationMs < 0) {
     throw new Error(`durationMs must be >= 0, got ${durationMs}`);
   }
   if (memoryMb <= 0) {
     throw new Error(`memoryMb must be > 0, got ${memoryMb}`);
+  }
+  if (architecture !== "x86_64" && architecture !== "arm64") {
+    throw new Error(`Unsupported Lambda architecture '${String(architecture)}'`);
   }
 
   const regionPricing = _pricing.regions[region];
@@ -89,7 +97,7 @@ export function lambdaCost(
   const memoryGb = memoryMb / 1024;
   const gbSeconds = durationSeconds * memoryGb;
 
-  const ratePerGbSecond = Number(regionPricing.duration_per_gb_second);
+  const ratePerGbSecond = Number(regionPricing.duration_per_gb_second[architecture]);
   const requestCharge = Number(regionPricing.request_per_invocation);
 
   const durationCost = gbSeconds * ratePerGbSecond;
@@ -99,6 +107,7 @@ export function lambdaCost(
     costUsd: totalCost,
     details: {
       region,
+      architecture,
       durationMs,
       memoryMb,
       gbSeconds,

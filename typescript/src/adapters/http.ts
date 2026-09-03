@@ -22,7 +22,16 @@ import {
   type CapturedIdempotencyKey,
 } from "../core/idempotency.js";
 import { providerCaptureIsClaimed } from "../instruments/provider-capture.js";
-import { nonNegativeDecimal, tokenMeasurement } from "../instruments/provider-extract.js";
+import {
+  canonicalMistralModel,
+  canonicalXaiModel,
+  groqPricingLane,
+  groqToolExecutionBlocksStaticPricing,
+  mistralPricingLane,
+  nonNegativeDecimal,
+  tokenMeasurement,
+  xaiPricingLane,
+} from "../instruments/provider-extract.js";
 import {
   canonicalLiteLlmModel,
   classifyLiteLlmProvider,
@@ -48,6 +57,7 @@ import { registerLlmCapture } from "../core/llm-dedup.js";
 import { ServiceCatalog, type CostExtractionResult } from "../pricing/service-catalog.js";
 import {
   serviceUsageObservers,
+  type ObservedRequestHeaders,
   type ServiceUsageObservation,
 } from "../pricing/service-usage-observers.js";
 import {
@@ -177,6 +187,9 @@ let _pricing: PricingEngine | null = null;
 /** Max response body size to parse (1 MB). */
 const MAX_BODY_SIZE = 1_048_576;
 
+/** Max size of one complete SSE event retained for usage extraction (1 MB). */
+const MAX_SSE_USAGE_EVENT_SIZE = MAX_BODY_SIZE;
+
 // ---------------------------------------------------------------------------
 // Domain rate registration
 // ---------------------------------------------------------------------------
@@ -236,6 +249,22 @@ interface _LlmUsage {
   rawResponse?: unknown;
 }
 
+function _openAiTokenCounts(
+  usage: Record<string, unknown>,
+): { inputTokens: number; outputTokens: number } | null {
+  const input = typeof usage.prompt_tokens === "number"
+    ? usage.prompt_tokens
+    : usage.input_tokens;
+  const output = typeof usage.completion_tokens === "number"
+    ? usage.completion_tokens
+    : usage.output_tokens;
+  if (typeof input !== "number" && typeof output !== "number") return null;
+  return {
+    inputTokens: typeof input === "number" ? input : 0,
+    outputTokens: typeof output === "number" ? output : 0,
+  };
+}
+
 /** Known LLM API domains and their response format. */
 const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.openai.com": "openai",
@@ -245,8 +274,10 @@ const _LLM_DOMAINS: Record<string, LlmFormat> = {
   "api.moonshot.cn": "openai",
   "api.deepseek.com": "openai",
   "api.groq.com": "openai",
+  "api.together.ai": "openai",
   "api.together.xyz": "openai",
   "api.fireworks.ai": "openai",
+  "us.api.fireworks.ai": "openai",
   "api.mistral.ai": "openai",
   "api.x.ai": "openai",
   "generativelanguage.googleapis.com": "gemini",
@@ -264,6 +295,7 @@ const _LLM_ENDPOINTS = [
   "/chat/completions",
   "/v1/complete",
   "/v1/completions",
+  "/v1/responses",
   "/coding",        // Kimi Code Plan
   "/v1beta/models", // Google Gemini generateContent
 ];
@@ -287,6 +319,7 @@ function _formatFromPath(pathname: string): LlmFormat | null {
   if (/\/messages(\/|$)/.test(pathname)) return "anthropic";
   if (/\/chat\/completions(\/|$)/.test(pathname)) return "openai";
   if (/\/completions(\/|$)/.test(pathname)) return "openai";
+  if (/\/responses(\/|$)/.test(pathname)) return "openai";
   // Google Gemini / Vertex AI REST shape (models/<id>:generateContent).
   // Matching by path shape also covers Vertex regional hosts
   // (<region>-aiplatform.googleapis.com) without a domain-map entry.
@@ -373,19 +406,24 @@ function _extractLlmUsage(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const u = usage as Record<string, any>;
-  const inKey = format === "openai" ? "prompt_tokens" : "input_tokens";
-  const outKey = format === "openai" ? "completion_tokens" : "output_tokens";
+  const counts = format === "openai"
+    ? _openAiTokenCounts(u)
+    : typeof u.input_tokens === "number" || typeof u.output_tokens === "number"
+      ? {
+          inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+          outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+        }
+      : null;
 
   // Require at least one numeric token field in the expected format. Path-
   // shape detection now matches unknown hosts too, so a response that merely
   // happens to carry a differently-shaped `usage` object must not produce a
   // phantom $0 llm_call.
-  if (typeof u[inKey] !== "number" && typeof u[outKey] !== "number") return null;
+  if (counts === null) return null;
 
   return {
     model,
-    inputTokens: typeof u[inKey] === "number" ? u[inKey] : 0,
-    outputTokens: typeof u[outKey] === "number" ? u[outKey] : 0,
+    ...counts,
     rawResponse: body,
   };
 }
@@ -441,6 +479,8 @@ function _parseSseUsage(
   let outputTokens = 0;
   let found = false;
   let rawResponse: unknown;
+  let serviceTier: unknown;
+  let groqToolExecutionSeen = false;
 
   for (const event of events) {
     // Extract the data line(s)
@@ -454,6 +494,8 @@ function _parseSseUsage(
         if (typeof data.model === "string" && data.model !== "unknown") {
           model = data.model;
         }
+        if (data.service_tier !== undefined) serviceTier = data.service_tier;
+        if (groqToolExecutionBlocksStaticPricing(data)) groqToolExecutionSeen = true;
         if (format === "gemini") {
           if (typeof data.modelVersion === "string" && data.modelVersion) {
             model = data.modelVersion;
@@ -469,11 +511,24 @@ function _parseSseUsage(
             if (typeof meta.promptTokenCount === "number" || outTok) found = true;
           }
         }
-        if (format === "openai" && data.usage) {
-          inputTokens = data.usage.prompt_tokens ?? inputTokens;
-          outputTokens = data.usage.completion_tokens ?? outputTokens;
-          rawResponse = data;
-          found = true;
+        if (format === "openai") {
+          const payload = data.response !== null && typeof data.response === "object"
+            ? data.response
+            : data;
+          if (typeof payload.model === "string" && payload.model !== "unknown") {
+            model = payload.model;
+          }
+          if (payload.service_tier !== undefined) serviceTier = payload.service_tier;
+          if (groqToolExecutionBlocksStaticPricing(payload)) groqToolExecutionSeen = true;
+          const counts = payload.usage !== null && typeof payload.usage === "object"
+            ? _openAiTokenCounts(payload.usage)
+            : null;
+          if (counts !== null) {
+            inputTokens = counts.inputTokens;
+            outputTokens = counts.outputTokens;
+            rawResponse = payload;
+            found = true;
+          }
         }
         if (format === "anthropic") {
           if (data.type === "message_start" && data.message?.usage) {
@@ -490,6 +545,15 @@ function _parseSseUsage(
     }
   }
 
+  if (found && format === "openai") {
+    rawResponse = {
+      ...(rawResponse !== null && typeof rawResponse === "object"
+        ? rawResponse as Record<string, unknown>
+        : {}),
+      ...(serviceTier === undefined ? {} : { service_tier: serviceTier }),
+      _dexcost_groq_tool_execution_seen: groqToolExecutionSeen,
+    };
+  }
   return found ? { model, inputTokens, outputTokens, rawResponse } : null;
 }
 
@@ -557,6 +621,10 @@ function _buildInstrumentedFetch(
     const urlStr = scrubUrl(_resolveUrlStr(input));
     const method = _resolveMethod(input, init);
     const requestHeaders = _resolveRequestHeaders(input, init);
+    const observerRequestHeaders = serviceUsageObservers?.selectRequestHeaders(
+      urlStr,
+      requestHeaders,
+    ) ?? {};
     const requestBodyLen = _resolveRequestBodyLen(input, init);
     let potentialLlmFormat: LlmFormat | null = null;
     let knownLlmHost = false;
@@ -677,6 +745,7 @@ function _buildInstrumentedFetch(
         ? response.headers.get("llm_provider-x-litellm-response-cost") ?? undefined
         : undefined,
       observerRequestBody,
+      observerRequestHeaders,
     };
 
     // Wrap the response body in a TransformStream that counts bytes as
@@ -845,6 +914,156 @@ function _urlFromRequestArgs(isHttps: boolean, args: any[]): string | null {
 /** CommonJS require, used to obtain the mutable http/https module objects. */
 const _require = createRequire(import.meta.url);
 
+/**
+ * Retain a bounded copy of a Node ClientRequest body only when an active
+ * provider observer needs request JSON. This covers SDKs such as AWS SDK v3
+ * that use node:http instead of fetch, without buffering unrelated traffic.
+ */
+function _captureNodeObserverRequestBody(req: any): () => unknown {
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let overflow = false;
+  let ending = false;
+
+  const append = (chunk: unknown, encoding?: string): void => {
+    if (overflow || chunk === undefined || chunk === null) return;
+    let bytes: Buffer;
+    try {
+      if (typeof chunk === "string") {
+        bytes = Buffer.from(chunk, encoding as BufferEncoding | undefined);
+      } else if (Buffer.isBuffer(chunk)) {
+        bytes = Buffer.from(chunk);
+      } else if (ArrayBuffer.isView(chunk)) {
+        bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      } else if (chunk instanceof ArrayBuffer) {
+        bytes = Buffer.from(chunk);
+      } else {
+        overflow = true;
+        chunks.length = 0;
+        return;
+      }
+    } catch {
+      overflow = true;
+      chunks.length = 0;
+      return;
+    }
+    byteLength += bytes.byteLength;
+    if (byteLength > MAX_OBSERVER_REQUEST_BODY_BYTES) {
+      overflow = true;
+      chunks.length = 0;
+      return;
+    }
+    chunks.push(Buffer.from(bytes));
+  };
+
+  const originalWrite = req.write;
+  const originalEnd = req.end;
+  if (typeof originalWrite === "function") {
+    req.write = function wrappedWrite(this: unknown, ...args: any[]): unknown {
+      if (!ending) append(args[0], typeof args[1] === "string" ? args[1] : undefined);
+      return originalWrite.apply(this, args);
+    };
+  }
+  if (typeof originalEnd === "function") {
+    req.end = function wrappedEnd(this: unknown, ...args: any[]): unknown {
+      if (typeof args[0] !== "function") {
+        append(args[0], typeof args[1] === "string" ? args[1] : undefined);
+      }
+      ending = true;
+      try {
+        return originalEnd.apply(this, args);
+      } finally {
+        ending = false;
+      }
+    };
+  }
+
+  return () => {
+    if (overflow || byteLength === 0) return undefined;
+    try {
+      return JSON.parse(Buffer.concat(chunks, byteLength).toString("utf8"));
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+function _nodeResponseAsFetchResponse(response: any, body?: unknown): Response {
+  const headers = new Headers();
+  for (const [name, rawValue] of Object.entries(response?.headers ?? {})) {
+    if (Array.isArray(rawValue)) {
+      for (const value of rawValue) headers.append(name, String(value));
+    } else if (rawValue !== undefined) {
+      headers.set(name, String(rawValue));
+    }
+  }
+  const candidateStatus = Number(response?.statusCode);
+  const status = Number.isInteger(candidateStatus) && candidateStatus >= 200 && candidateStatus <= 599
+    ? candidateStatus
+    : 200;
+  const serialized = body === undefined || status === 204 || status === 205
+    ? null
+    : JSON.stringify(body);
+  return new Response(serialized, { status, headers });
+}
+
+/** Observe a Node response without taking ownership of its stream. Provider
+ * clients retain their normal data listeners; this listener only keeps a
+ * bounded JSON copy for declarative attribution. */
+function _captureNodeObserverResponseBody(
+  response: any,
+  complete: (body: unknown) => void,
+): void {
+  const contentType = String(response?.headers?.["content-type"] ?? "").toLowerCase();
+  const declaredLength = Number.parseInt(
+    String(response?.headers?.["content-length"] ?? ""),
+    10,
+  );
+  if (!contentType.includes("application/json") ||
+      (Number.isFinite(declaredLength) && declaredLength > MAX_OBSERVER_RESPONSE_BODY_BYTES) ||
+      response === null || typeof response?.on !== "function") {
+    complete(undefined);
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let overflow = false;
+  let settled = false;
+  const finish = (body: unknown): void => {
+    if (settled) return;
+    settled = true;
+    complete(body);
+  };
+  response.on("data", (chunk: unknown) => {
+    if (overflow) return;
+    try {
+      const bytes = Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk as any);
+      byteLength += bytes.byteLength;
+      if (byteLength > MAX_OBSERVER_RESPONSE_BODY_BYTES) {
+        overflow = true;
+        chunks.length = 0;
+      } else {
+        chunks.push(bytes);
+      }
+    } catch {
+      overflow = true;
+      chunks.length = 0;
+    }
+  });
+  response.once("end", () => {
+    if (overflow || byteLength === 0) {
+      finish(undefined);
+      return;
+    }
+    try {
+      finish(JSON.parse(Buffer.concat(chunks, byteLength).toString("utf8")));
+    } catch {
+      finish(undefined);
+    }
+  });
+  response.once("error", () => finish(undefined));
+}
+
 /** Patch http.request/get and https.request/get to record external costs. */
 function _patchNodeHttp(): void {
   if (_originalHttpRequest !== null) return; // already patched
@@ -882,11 +1101,33 @@ function _patchNodeHttp(): void {
           }
         }
         if (urlStr && !internal) {
-          // Record on response — body is not parsed for Node-level
-          // requests (matches the Python urllib3 wrapper's behaviour).
+          const readObserverRequestBody = serviceUsageObservers?.needsRequestBody(urlStr) === true
+            ? _captureNodeObserverRequestBody(req)
+            : undefined;
+          // Response bodies remain unconsumed. For request-owned observers,
+          // however, a bounded request JSON snapshot plus status/headers is
+          // sufficient to emit the same usage shape as the fetch path.
           if (req && typeof req.on === "function") {
-            req.on("response", () => {
-              void _maybeRecordCost(urlStr);
+            req.on("response", (response: unknown) => {
+              const observerRequestBody = readObserverRequestBody?.();
+              const observerRequestHeaders = typeof req.getHeaders === "function"
+                ? serviceUsageObservers?.selectRequestHeaders(urlStr, req.getHeaders()) ?? {}
+                : {};
+              const record = (body?: unknown): void => {
+                void _maybeRecordCost(
+                  urlStr,
+                  _nodeResponseAsFetchResponse(response, body),
+                  undefined,
+                  observerRequestBody,
+                  observerRequestHeaders,
+                  typeof req.method === "string" ? req.method : undefined,
+                );
+              };
+              if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
+                _captureNodeObserverResponseBody(response, record);
+              } else {
+                record();
+              }
             });
           } else {
             void _maybeRecordCost(urlStr);
@@ -1137,6 +1378,8 @@ interface _HttpCallContext {
   liteLlmProviderCost?: string;
   /** Bounded JSON request metadata used only for observer billing identity. */
   observerRequestBody?: unknown;
+  /** Only manifest-referenced values are retained; credentials use presence sentinels. */
+  observerRequestHeaders?: ObservedRequestHeaders;
   /** Response BODY bytes, known once the counting stream has drained.
    *  Stamped by _finaliseHttpCall so late event emission (e.g. the JSON
    *  llm_call path, whose extraction drains the body via clone()) can
@@ -1146,6 +1389,14 @@ interface _HttpCallContext {
   sseTailBuffer?: string;
   /** Head of SSE stream preserved so Anthropic message_start is not lost. */
   sseHeadBuffer?: string;
+  /** Current SSE event, retained only until its terminating blank line. */
+  ssePendingEventBuffer?: string;
+  /** True after the current SSE event exceeds the bounded parse limit. */
+  ssePendingEventOverflow?: boolean;
+  /** Small suffix used to find a blank-line delimiter after an overflow. */
+  sseOverflowDelimiterTail?: string;
+  /** Last complete SSE event that carried parseable token usage. */
+  sseUsageEventBuffer?: string;
   /** Shared TextDecoder for SSE chunk decoding (avoids per-chunk allocation). */
   _sseDecoder?: InstanceType<typeof TextDecoder>;
   /** Task resolved once in _maybeRecordCost, reused in _finaliseHttpCall.
@@ -1375,6 +1626,79 @@ function _isInternalToValue(p: boolean | null): boolean | null {
 }
 
 /**
+ * Incrementally retain complete SSE events that carry token usage.
+ *
+ * A Responses API `response.completed` event includes the full generated
+ * output before its usage object, so it can be much larger than the rolling
+ * 8 KiB stream tail. Keep the current event only until its blank-line
+ * delimiter, cap it at the same 1 MiB boundary used for JSON responses, and
+ * discard oversized events until their delimiter arrives. This preserves a
+ * complete terminal event without retaining an unbounded stream.
+ */
+function _bufferCompleteSseUsageEvent(
+  ctx: _HttpCallContext,
+  text: string,
+  flush = false,
+): void {
+  if (!ctx.llmStreamFormat) return;
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (ctx.ssePendingEventOverflow) {
+      const scan = (ctx.sseOverflowDelimiterTail ?? "") + remaining;
+      const delimiter = /\r?\n\r?\n/.exec(scan);
+      if (delimiter === null) {
+        ctx.sseOverflowDelimiterTail = scan.slice(-3);
+        remaining = "";
+        break;
+      }
+      remaining = scan.slice(delimiter.index + delimiter[0].length);
+      ctx.ssePendingEventOverflow = false;
+      ctx.sseOverflowDelimiterTail = undefined;
+      ctx.ssePendingEventBuffer = undefined;
+      continue;
+    }
+
+    const combined = (ctx.ssePendingEventBuffer ?? "") + remaining;
+    const delimiter = /\r?\n\r?\n/.exec(combined);
+    if (delimiter !== null) {
+      const event = combined.slice(0, delimiter.index);
+      if (
+        Buffer.byteLength(event, "utf-8") <= MAX_SSE_USAGE_EVENT_SIZE &&
+        _parseSseUsage(event, ctx.llmStreamFormat) !== null
+      ) {
+        ctx.sseUsageEventBuffer = event;
+      }
+      ctx.ssePendingEventBuffer = undefined;
+      remaining = combined.slice(delimiter.index + delimiter[0].length);
+      continue;
+    }
+
+    if (Buffer.byteLength(combined, "utf-8") <= MAX_SSE_USAGE_EVENT_SIZE) {
+      ctx.ssePendingEventBuffer = combined;
+    } else {
+      ctx.ssePendingEventBuffer = undefined;
+      ctx.ssePendingEventOverflow = true;
+      ctx.sseOverflowDelimiterTail = combined.slice(-3);
+    }
+    remaining = "";
+  }
+
+  if (flush) {
+    const event = ctx.ssePendingEventBuffer;
+    if (
+      !ctx.ssePendingEventOverflow && event &&
+      _parseSseUsage(event, ctx.llmStreamFormat) !== null
+    ) {
+      ctx.sseUsageEventBuffer = event;
+    }
+    ctx.ssePendingEventBuffer = undefined;
+    ctx.ssePendingEventOverflow = false;
+    ctx.sseOverflowDelimiterTail = undefined;
+  }
+}
+
+/**
  * Wrap a Response in a new Response whose body is piped through a
  * counting TransformStream. The counter is held in the closure; when the
  * stream's flush fires (source ended) — or when the caller drops the
@@ -1423,6 +1747,7 @@ function _wrapResponseForByteCounting(
           if ((ctx.sseHeadBuffer?.length ?? 0) < 4096) {
             ctx.sseHeadBuffer = ((ctx.sseHeadBuffer ?? "") + text).slice(0, 4096);
           }
+          _bufferCompleteSseUsageEvent(ctx, text);
         } catch { /* ignore decode errors */ }
       }
     },
@@ -1434,6 +1759,7 @@ function _wrapResponseForByteCounting(
           if (text) {
             ctx.sseTailBuffer = ((ctx.sseTailBuffer ?? "") + text).slice(-8192);
           }
+          _bufferCompleteSseUsageEvent(ctx, text, true);
         } catch { /* ignore decode errors */ }
       }
       finalise("succeeded");
@@ -1484,6 +1810,41 @@ function _requestModel(ctx: _HttpCallContext): string | undefined {
   return typeof model === "string" && model.trim().length > 0 ? model.trim() : undefined;
 }
 
+function _mistralPricingSurface(ctx: _HttpCallContext): string {
+  try {
+    const pathname = new URL(ctx.urlStr).pathname;
+    if (/\/chat\/completions(\/|$)/.test(pathname)) return "chat_completions";
+    if (/\/completions(\/|$)/.test(pathname)) return "legacy_completions";
+    if (/\/responses(\/|$)/.test(pathname)) return "responses";
+  } catch { /* an invalid URL cannot identify an approved billing surface */ }
+  return "unknown";
+}
+
+function _fireworksServiceTier(ctx: _HttpCallContext): "default" | "priority" {
+  const body = ctx.observerRequestBody;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return "default";
+  const record = body as Record<string, unknown>;
+  const extraBody = record.extra_body;
+  const value = record.service_tier ?? (
+    extraBody !== null && typeof extraBody === "object" && !Array.isArray(extraBody)
+      ? (extraBody as Record<string, unknown>).service_tier
+      : undefined
+  );
+  return value === "priority" ? "priority" : "default";
+}
+
+function _groqRequestServiceTier(ctx: _HttpCallContext): unknown {
+  const body = ctx.observerRequestBody;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const record = body as Record<string, unknown>;
+  const extraBody = record.extra_body;
+  return record.service_tier ?? (
+    extraBody !== null && typeof extraBody === "object" && !Array.isArray(extraBody)
+      ? (extraBody as Record<string, unknown>).service_tier
+      : undefined
+  );
+}
+
 /** Record one HTTP-level LLM observation, with richer LiteLLM proxy identity. */
 function _recordHttpLlmEvent(
   ctx: _HttpCallContext,
@@ -1498,12 +1859,33 @@ function _recordHttpLlmEvent(
   const requestedModel = _requestModel(ctx);
   const provider = ctx.liteLlmProxy
     ? classifyLiteLlmProvider(requestedModel, usage?.model)
-    : ctx.hostname;
-  const model = ctx.liteLlmProxy
+    : ctx.hostname === "api.deepseek.com" ? "deepseek"
+      : ["api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"].includes(ctx.hostname)
+        ? "moonshot"
+      : ctx.hostname === "api.fireworks.ai" || ctx.hostname.endsWith(".api.fireworks.ai")
+        ? "fireworks_ai"
+        : ctx.hostname === "api.x.ai" || ctx.hostname.endsWith(".api.x.ai")
+          ? "xai"
+          : ctx.hostname === "api.groq.com" || ctx.hostname.endsWith(".api.groq.com")
+            ? "groq"
+            : ctx.hostname === "api.mistral.ai"
+              ? "mistral"
+              : ctx.hostname === "api.together.ai" || ctx.hostname === "api.together.xyz"
+                ? "together"
+              : ctx.hostname;
+  const routedModel = ctx.liteLlmProxy
     ? canonicalLiteLlmModel(provider, usage?.model, requestedModel)
     : usage?.model ?? requestedModel ?? "unknown";
+  const model = provider === "xai"
+    ? canonicalXaiModel(routedModel)
+    : provider === "mistral"
+      ? canonicalMistralModel(routedModel)
+      : routedModel;
 
-  const measurement = ctx.liteLlmProxy && usage?.rawResponse !== undefined
+  const measurement = (ctx.liteLlmProxy || provider === "deepseek" || provider === "moonshot" || provider === "fireworks_ai" ||
+      provider === "xai" || provider === "groq" || provider === "mistral" ||
+      provider === "together") &&
+      usage?.rawResponse !== undefined
     ? tokenMeasurement(usage.rawResponse, model, provider)
     : undefined;
   const inputTokens = measurement?.inputTokens ?? usage?.inputTokens ?? 0;
@@ -1556,6 +1938,64 @@ function _recordHttpLlmEvent(
     details.attribution_dimensions = [{
       key: "gateway", value: { type: "string", value: "litellm" },
     }];
+  }
+  if (provider === "fireworks_ai") {
+    const dimensions = Array.isArray(details.attribution_dimensions)
+      ? details.attribution_dimensions as Array<Record<string, unknown>>
+      : [];
+    details.attribution_dimensions = [
+      ...dimensions,
+      { key: "service_tier", value: { type: "string", value: _fireworksServiceTier(ctx) } },
+    ];
+  }
+  if (provider === "xai" && usage?.rawResponse !== undefined) {
+    const pricingLane = xaiPricingLane(usage.rawResponse, inputTokens);
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "xai_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "groq" && usage?.rawResponse !== undefined) {
+    const response = usage.rawResponse !== null && typeof usage.rawResponse === "object"
+      ? usage.rawResponse as Record<string, unknown>
+      : {};
+    const requestTier = _groqRequestServiceTier(ctx);
+    const pricingLane = groqPricingLane({
+      ...response,
+      ...((response.service_tier === undefined || response.service_tier === null) &&
+          requestTier !== undefined
+        ? { service_tier: requestTier }
+        : {}),
+    });
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "mistral" && usage?.rawResponse !== undefined) {
+    const pricingLane = mistralPricingLane(
+      usage.rawResponse,
+      _mistralPricingSurface(ctx),
+    );
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "mistral_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
   }
   if (measurement?.providerRecordId) details.provider_record_id = measurement.providerRecordId;
   if (providerCost !== undefined) details.provider_reported_cost_usd = providerCost.toString();
@@ -1642,15 +2082,14 @@ function _finaliseHttpCall(ctx: _HttpCallContext, responseBodyBytes: number): vo
 
   // LLM streaming fallback — extract usage from accumulated SSE data.
   if (ctx.llmStreamFormat && (ctx.sseTailBuffer || ctx.liteLlmProxy) && _pricing && !ctx.suppressed) {
-    // Merge head + tail buffers so Anthropic message_start (model + input
-    // tokens) survives even when the stream exceeds the 8k tail window.
-    // Only merge when the tail does NOT already start with the head — for
-    // short streams the 8k tail already contains the 4k head, and blind
-    // concatenation would duplicate the overlapping prefix.
-    const sseData =
-      ctx.sseHeadBuffer && ctx.sseTailBuffer && !ctx.sseTailBuffer.startsWith(ctx.sseHeadBuffer)
-        ? ctx.sseHeadBuffer + ctx.sseTailBuffer
-        : (ctx.sseTailBuffer ?? ctx.sseHeadBuffer ?? "");
+    // Parse the bounded head, the last complete usage-bearing event, and the
+    // tail. The head preserves Anthropic message_start while the complete
+    // event preserves large Responses API terminal payloads whose usage lies
+    // beyond the rolling tail window.
+    const sseData = [ctx.sseHeadBuffer, ctx.sseUsageEventBuffer, ctx.sseTailBuffer]
+      .filter((part, index, all): part is string =>
+        typeof part === "string" && part.length > 0 && all.indexOf(part) === index)
+      .join("\n\n");
     const llmUsage = _parseSseUsage(sseData, ctx.llmStreamFormat);
     if (llmUsage || ctx.liteLlmProxy) {
       const status = ctx.llmStreamStatus ?? "unknown";
@@ -1783,6 +2222,9 @@ async function _maybeRecordCost(
   urlStr: string,
   response?: Response,
   ctx?: _HttpCallContext,
+  nodeObserverRequestBody?: unknown,
+  nodeObserverRequestHeaders: ObservedRequestHeaders = {},
+  nodeObserverMethod?: string,
 ): Promise<void> {
   let hostname: string;
   let parsedUrl: URL;
@@ -1806,6 +2248,7 @@ async function _maybeRecordCost(
   }
 
   const domain = hostname.includes(":") ? hostname.split(":")[0] : hostname;
+  const storageUrl = serviceUsageObservers?.redactUrlForStorage(urlStr) ?? urlStr;
 
   // Resolve the task to attribute this cost to. An auto-task is created
   // when none is active so HTTP costs are never silently lost (mirrors
@@ -1867,7 +2310,7 @@ async function _maybeRecordCost(
         pricingSource: "manual",
         serviceName: domain,
         details: {
-          url: urlStr,
+          url: storageUrl,
           attribution_usage_quantity: 1,
           attribution_usage_per: rate.per,
           ...byteDetailsRequestOnly,
@@ -1881,6 +2324,13 @@ async function _maybeRecordCost(
       if (ctx) ctx._matchedCatalog = true;
       return;
     }
+
+    // Observer-owned endpoint boundaries supersede the bundled legacy catalog.
+    // Exact routes still decide whether usage can be emitted, while unsupported
+    // descendants remain fail-open instead of falling through to a broad
+    // legacy prefix. Manual domain rates retain the highest precedence.
+    const observerRoute = serviceUsageObservers?.matches(urlStr) === true;
+    const observerBoundary = serviceUsageObservers?.ownsEndpointBoundary(urlStr) === true;
 
     // 1.5. LLM HTTP fallback â when no LLM instrument suppressed the call,
     // detect known LLM API endpoints and emit llm_call events using the
@@ -1925,7 +2375,7 @@ async function _maybeRecordCost(
               costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
               pricingSource: costResult.pricingSource, provider: domain, model: llmUsage.model,
               inputTokens: llmUsage.inputTokens, outputTokens: llmUsage.outputTokens,
-              details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
+              details: { url: storageUrl, source: "http_llm_fallback", ...byteDetailsRequestOnly },
             });
             _pushRecordedEvent(event);
             if (_buffer) _buffer.addEvent(event);
@@ -1966,7 +2416,12 @@ async function _maybeRecordCost(
           extractionResult = await _extractFromResponse(_catalog, entry, response);
         }
 
-        if (extractionResult) {
+        // An explicit catalog/workspace override remains authoritative. The
+        // bundled base price is ignored throughout an observer-owned endpoint
+        // boundary so unsupported descendants cannot defeat fail-open routing.
+        const observerOwnedBase = observerBoundary
+          && extractionResult?.pricingSource === "service_catalog";
+        if (extractionResult && !observerOwnedBase) {
           const isUserOverride = extractionResult.pricingSource === "user_override";
           const event = createCostEvent({
             eventId: randomUUID(),
@@ -1978,7 +2433,7 @@ async function _maybeRecordCost(
             pricingVersion: isUserOverride ? undefined : _catalog.catalogVersion,
             serviceName: extractionResult.serviceName,
             details: {
-              url: urlStr,
+              url: storageUrl,
               pricingSource: extractionResult.pricingSource,
               catalogService: entry.display_name,
               attribution_usage_quantity: extractionResult.usageQuantity,
@@ -2000,7 +2455,7 @@ async function _maybeRecordCost(
     // 2.5. Usage-only observation for safety-disabled services. These
     // definitions deliberately contain no rates: the SDK reports provider-
     // owned quantities and the control plane decides whether they are priced.
-    if (response?.ok && serviceUsageObservers?.matches(urlStr)) {
+    if (response?.ok && observerRoute) {
       try {
         let observerResponseBody: unknown;
         if (serviceUsageObservers?.needsResponseBody(urlStr) === true) {
@@ -2010,34 +2465,54 @@ async function _maybeRecordCost(
           urlStr,
           response.headers,
           observerResponseBody,
-          ctx?.observerRequestBody,
+          ctx?.observerRequestBody ?? nodeObserverRequestBody,
+          ctx?.observerRequestHeaders ?? nodeObserverRequestHeaders,
+          ctx?.method ?? nodeObserverMethod,
         ) ?? [];
         if (observations.length > 0) {
           for (const observation of observations) {
             const duration = observation.metric === "audio_seconds"
               ? { attribution_usage_duration_seconds: observation.quantity }
               : {};
+            const nativeProviderCost = observation.providerCostAmount === undefined ||
+                observation.providerCostCurrency === undefined
+              ? {}
+              : {
+                  provider_reported_cost_amount: observation.providerCostAmount,
+                  provider_reported_cost_currency: observation.providerCostCurrency,
+                };
+            const providerCostUsd = observation.providerCostUsd ??
+              (observation.providerCostCurrency === "USD"
+                ? observation.providerCostAmount
+                : undefined);
             const event = createCostEvent({
               eventId: _providerObservationEventId(observation),
               taskId: task.taskId,
               eventType: "external_cost",
-              costUsd: 0,
-              costConfidence: "unknown",
-              pricingSource: "unknown",
+              costUsd: providerCostUsd ?? 0,
+              costConfidence: providerCostUsd === undefined ? "unknown" : "exact",
+              pricingSource: providerCostUsd === undefined
+                ? "unknown"
+                : "provider_response",
               provider: observation.providerName,
               model: observation.resourceType === "model" ? observation.resourceId : undefined,
               serviceName: observation.providerService,
               details: {
-                url: urlStr,
+                url: storageUrl,
                 provider_record_id: observation.providerRecordId,
                 attribution_component: observation.component,
                 attribution_resource_type: observation.resourceType,
                 attribution_resource_id: observation.resourceId,
                 attribution_usage_quantity: observation.quantity,
                 attribution_usage_metric: observation.metric,
+                attribution_usage_unit: observation.unit,
                 attribution_dimensions: observation.dimensions,
                 attribution_observer_version: observation.manifestVersion,
                 attribution_observer_service: observation.serviceKey,
+                ...(observation.providerRegion === undefined
+                  ? {}
+                  : { cloud_region: observation.providerRegion }),
+                ...nativeProviderCost,
                 ...duration,
                 ...byteDetailsRequestOnly,
               },
@@ -2072,7 +2547,7 @@ async function _maybeRecordCost(
       costConfidence: "unknown",
       pricingSource: "unknown",
       serviceName: domain,
-      details: { url: urlStr, ...byteDetailsRequestOnly },
+      details: { url: storageUrl, ...byteDetailsRequestOnly },
     });
 
     _pushRecordedEvent(event);

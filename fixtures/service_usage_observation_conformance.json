@@ -1,5 +1,5 @@
 {
-  "schema_version": "5",
+  "schema_version": "28",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -24,11 +24,200 @@
       "expected": [{ "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-1" }]
     },
     {
+      "name": "cohere_embed_uses_provider_billed_image_tokens",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "image" },
+      "response": { "id": "cohere-image-1", "meta": { "billed_units": { "image_tokens": 4096, "images": 1 } } },
+      "expected": [{ "service_key": "cohere_embed_image_tokens", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_image_tokens", "quantity": "4096", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-image-1" }]
+    },
+    {
+      "name": "cohere_embed_mixed_usage_preserves_each_billed_meter",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "search_document" },
+      "response": { "id": "cohere-mixed-1", "meta": { "billed_units": { "input_tokens": 29, "image_tokens": 4096, "images": 1 } } },
+      "expected": [
+        { "service_key": "cohere_embed", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_tokens", "quantity": "29", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-mixed-1" },
+        { "service_key": "cohere_embed_image_tokens", "provider_name": "cohere", "provider_service": "embed", "component": "external", "metric": "input_image_tokens", "quantity": "4096", "resource_type": "model", "resource_id": "embed-v4.0", "provider_record_id": "cohere-mixed-1" }
+      ]
+    },
+    {
       "name": "cohere_embed_missing_billed_units_is_not_invented",
       "url": "https://api.cohere.com/v2/embed",
       "headers": {},
       "request": { "model": "embed-v4.0", "input_type": "search_document" },
       "response": { "id": "cohere-missing-billed-units", "meta": { "tokens": { "input_tokens": 31 } } },
+      "expected": []
+    },
+    {
+      "name": "cohere_embed_image_count_is_not_assumed_to_be_image_tokens",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-v4.0", "input_type": "image" },
+      "response": { "id": "cohere-image-count-only", "meta": { "billed_units": { "images": 1 } } },
+      "expected": []
+    },
+    {
+      "name": "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing",
+      "url": "https://api.cohere.com/v2/embed",
+      "headers": {},
+      "request": { "model": "embed-future", "input_type": "search_document" },
+      "response": { "id": "cohere-unknown-model", "meta": { "billed_units": { "input_tokens": 29, "image_tokens": 4096 } } },
+      "expected": []
+    },
+    {
+      "name": "stability_ai_ultra_success_is_one_billable_generation",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/ultra",
+      "headers": { "x-request-id": "stability-ultra-1" },
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_ultra", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "stable-image-ultra", "provider_record_id": "stability-ultra-1" }]
+    },
+    {
+      "name": "stability_ai_core_success_is_one_billable_generation",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/core",
+      "headers": { "x-request-id": "stability-core-1" },
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_core", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "stable-image-core", "provider_record_id": "stability-core-1" }]
+    },
+    {
+      "name": "stability_ai_sd3_defaults_to_large",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_sd3", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "sd3.5-large" }]
+    },
+    {
+      "name": "stability_ai_sd3_uses_requested_flash_model",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse", "model": "sd3.5-flash" },
+      "response": {},
+      "expected": [{ "service_key": "stability_ai_sd3", "provider_name": "stability_ai", "provider_service": "stable_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "sd3.5-flash" }]
+    },
+    {
+      "name": "stability_ai_unknown_sd3_model_fails_open",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/sd3",
+      "headers": {},
+      "request": { "prompt": "A lighthouse", "model": "future-model" },
+      "response": {},
+      "expected": []
+    },
+    {
+      "name": "stability_ai_failed_ultra_generation_is_not_observed",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/ultra",
+      "status_code": 403,
+      "headers": {},
+      "request": { "prompt": "rejected" },
+      "response": { "errors": ["content moderation"] },
+      "expected": []
+    },
+    {
+      "name": "stability_ai_failed_core_generation_is_not_observed",
+      "url": "https://api.stability.ai/v2beta/stable-image/generate/core",
+      "status_code": 422,
+      "headers": {},
+      "request": { "prompt": "invalid" },
+      "response": { "errors": ["invalid request"] },
+      "expected": []
+    },
+    {
+      "name": "stripe_confirmed_payment_intent_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents",
+      "method": "POST",
+      "headers": { "request-id": "req_stripe_1" },
+      "request": { "amount": 2000, "currency": "usd", "confirm": true },
+      "response": { "id": "pi_1", "status": "succeeded", "latest_charge": "ch_1" },
+      "expected": [{ "service_key": "stripe_payment_intent_create", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_1" }]
+    },
+    {
+      "name": "stripe_payment_intent_confirm_template_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_2/confirm",
+      "method": "POST",
+      "headers": {},
+      "request": {},
+      "response": { "id": "pi_2", "status": "succeeded", "latest_charge": "ch_2" },
+      "expected": [{ "service_key": "stripe_payment_intent_terminal", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_2" }]
+    },
+    {
+      "name": "stripe_manual_capture_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_3/capture",
+      "method": "POST",
+      "headers": {},
+      "request": {},
+      "response": { "id": "pi_3", "status": "succeeded", "latest_charge": "ch_3" },
+      "expected": [{ "service_key": "stripe_payment_intent_terminal", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_3" }]
+    },
+    {
+      "name": "stripe_unconfirmed_or_async_payment_intent_is_not_assumed_billable",
+      "url": "https://api.stripe.com/v1/payment_intents",
+      "method": "POST",
+      "headers": {},
+      "request": { "amount": 2000, "currency": "usd" },
+      "response": { "id": "pi_async", "status": "requires_action", "latest_charge": null },
+      "expected": []
+    },
+    {
+      "name": "stripe_payment_intent_metadata_update_is_not_a_new_charge",
+      "url": "https://api.stripe.com/v1/payment_intents/pi_4",
+      "method": "POST",
+      "headers": {},
+      "request": { "metadata": { "order": "4" } },
+      "response": { "id": "pi_4", "status": "succeeded", "latest_charge": "ch_4" },
+      "expected": []
+    },
+    {
+      "name": "stripe_legacy_charge_create_captures_charge_identity",
+      "url": "https://api.stripe.com/v1/charges",
+      "method": "POST",
+      "headers": {},
+      "request": { "amount": 2000, "currency": "usd" },
+      "response": { "id": "ch_legacy", "status": "succeeded", "paid": true, "balance_transaction": "txn_legacy" },
+      "expected": [{ "service_key": "stripe_charge_create", "provider_name": "stripe", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_charge", "provider_record_id": "ch_legacy" }]
+    },
+    {
+      "name": "stripe_charge_retrieval_is_not_a_new_charge",
+      "url": "https://api.stripe.com/v1/charges",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "ch_existing", "status": "succeeded", "paid": true, "balance_transaction": "txn_existing" },
+      "expected": []
+    },
+    {
+      "name": "twilio_message_create_captures_outbound_message_sid",
+      "url": "https://api.twilio.com/2010-04-01/Accounts/AC11111111111111111111111111111111/Messages.json",
+      "method": "POST",
+      "headers": {},
+      "request": { "To": "+15558675310", "From": "+15557122661", "Body": "hello" },
+      "response": { "sid": "SM11111111111111111111111111111111", "direction": "outbound-api", "status": "queued", "price": null },
+      "expected": [{ "service_key": "twilio_message_create", "provider_name": "twilio", "provider_service": "messaging", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "outbound_message", "provider_record_id": "SM11111111111111111111111111111111" }]
+    },
+    {
+      "name": "twilio_message_list_read_is_not_a_send",
+      "url": "https://api.twilio.com/2010-04-01/Accounts/AC11111111111111111111111111111111/Messages.json",
+      "method": "GET",
+      "headers": {},
+      "response": { "messages": [{ "sid": "SM11111111111111111111111111111111", "direction": "outbound-api" }] },
+      "expected": []
+    },
+    {
+      "name": "twilio_call_create_captures_outbound_call_sid",
+      "url": "https://api.twilio.com/2010-04-01/Accounts/AC11111111111111111111111111111111/Calls.json",
+      "method": "POST",
+      "headers": {},
+      "request": { "To": "+15558675310", "From": "+15557122661", "Url": "https://example.com/twiml" },
+      "response": { "sid": "CA11111111111111111111111111111111", "direction": "outbound-api", "status": "queued", "price": null },
+      "expected": [{ "service_key": "twilio_call_create", "provider_name": "twilio", "provider_service": "voice_connectivity", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "outbound_call", "provider_record_id": "CA11111111111111111111111111111111" }]
+    },
+    {
+      "name": "twilio_call_list_read_is_not_a_new_call",
+      "url": "https://api.twilio.com/2010-04-01/Accounts/AC11111111111111111111111111111111/Calls.json",
+      "method": "GET",
+      "headers": {},
+      "response": { "calls": [{ "sid": "CA11111111111111111111111111111111", "direction": "outbound-api" }] },
       "expected": []
     },
     {
@@ -51,6 +240,616 @@
       "headers": {},
       "response": { "model": "jina-embeddings-v3", "usage": { "total_tokens": 53, "prompt_tokens": 53 } },
       "expected": [{ "service_key": "jina_embeddings", "provider_name": "jina", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "53", "resource_type": "model", "resource_id": "jina-embeddings-v3" }]
+    },
+    {
+      "name": "jina_reranker_v3_5_uses_provider_total_tokens",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v3.5", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v3.5", "usage": { "total_tokens": 2813 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "2813", "resource_type": "model", "resource_id": "jina-reranker-v3.5" }]
+    },
+    {
+      "name": "jina_reranker_v2_uses_provider_total_tokens",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v2-base-multilingual", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v2-base-multilingual", "usage": { "total_tokens": 253, "prompt_tokens": 253 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "253", "resource_type": "model", "resource_id": "jina-reranker-v2-base-multilingual" }]
+    },
+    {
+      "name": "jina_reranker_full_model_id_is_canonicalized",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-ai/jina-reranker-v3", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-ai/jina-reranker-v3", "usage": { "total_tokens": 377 }, "results": [] },
+      "expected": [{ "service_key": "jina_reranker", "provider_name": "jina", "provider_service": "rerank", "component": "external", "metric": "input_tokens", "quantity": "377", "resource_type": "model", "resource_id": "jina-reranker-v3" }]
+    },
+    {
+      "name": "jina_reranker_missing_usage_is_not_invented",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v3.5", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v3.5", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "jina_reranker_unknown_model_is_not_assumed_to_use_public_pricing",
+      "url": "https://api.jina.ai/v1/rerank",
+      "headers": {},
+      "request": { "model": "jina-reranker-v4-unverified", "query": "DexCost", "documents": ["Usage attribution"] },
+      "response": { "model": "jina-reranker-v4-unverified", "usage": { "total_tokens": 2813 }, "results": [] },
+      "expected": []
+    },
+    {
+      "name": "jina_reader_uses_authenticated_provider_reported_tokens",
+      "url": "https://r.jina.ai/https://example.com/article",
+      "headers": { "x-usage-tokens": "257" },
+      "request_headers": ["Authorization", "Accept"],
+      "response": null,
+      "expected": [{ "service_key": "jina_reader", "provider_name": "jina", "provider_service": "reader", "component": "external", "metric": "output_tokens", "quantity": "257", "resource_type": "sku", "resource_id": "standard_token" }]
+    },
+    {
+      "name": "jina_reader_anonymous_free_usage_is_not_priced",
+      "url": "https://r.jina.ai/http://example.com",
+      "headers": { "x-usage-tokens": "29" },
+      "request_headers": ["Accept"],
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "jina_search_uses_provider_reported_minimum_tokens",
+      "url": "https://s.jina.ai/DexCost%20pricing",
+      "headers": { "x-usage-tokens": "10000" },
+      "request_headers": ["authorization"],
+      "response": null,
+      "expected": [{ "service_key": "jina_search", "provider_name": "jina", "provider_service": "search", "component": "external", "metric": "output_tokens", "quantity": "10000", "resource_type": "sku", "resource_id": "standard_token" }]
+    },
+    {
+      "name": "jina_search_missing_provider_usage_is_not_invented",
+      "url": "https://s.jina.ai/DexCost%20pricing",
+      "headers": {},
+      "request_headers": ["authorization"],
+      "response": null,
+      "expected": []
+    },
+    {
+      "name": "nomic_embeddings_v1_5_use_provider_total_tokens",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1.5", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1.5", "usage": { "prompt_tokens": 37, "total_tokens": 37 } },
+      "expected": [{ "service_key": "nomic_embeddings", "provider_name": "nomic", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "37", "resource_type": "model", "resource_id": "nomic-embed-text-v1.5" }]
+    },
+    {
+      "name": "nomic_embeddings_v1_use_provider_total_tokens",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1", "usage": { "prompt_tokens": 31, "total_tokens": 31 } },
+      "expected": [{ "service_key": "nomic_embeddings", "provider_name": "nomic", "provider_service": "embeddings", "component": "external", "metric": "input_tokens", "quantity": "31", "resource_type": "model", "resource_id": "nomic-embed-text-v1" }]
+    },
+    {
+      "name": "nomic_embeddings_missing_usage_is_not_invented",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v1.5", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v1.5", "embeddings": [[0.1, 0.2]] },
+      "expected": []
+    },
+    {
+      "name": "nomic_embeddings_v2_is_not_assumed_to_use_atlas_pricing",
+      "url": "https://api-atlas.nomic.ai/v1/embedding/text",
+      "headers": {},
+      "request": { "model": "nomic-embed-text-v2-moe", "texts": ["search_document: DexCost"] },
+      "response": { "model": "nomic-embed-text-v2-moe", "usage": { "prompt_tokens": 37, "total_tokens": 37 } },
+      "expected": []
+    },
+    {
+      "name": "brave_web_search_counts_one_successful_request",
+      "url": "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+      "headers": {},
+      "response": { "type": "search", "web": { "type": "search", "results": [] } },
+      "expected": [{ "service_key": "brave_search", "provider_name": "brave", "provider_service": "web_search", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "search" }]
+    },
+    {
+      "name": "brave_web_search_error_response_fails_open",
+      "url": "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+      "headers": {},
+      "response": { "type": "error", "message": "rate limited" },
+      "expected": []
+    },
+    {
+      "name": "google_translate_v2_counts_unicode_characters_across_queries",
+      "url": "https://translation.googleapis.com/language/translate/v2",
+      "headers": {},
+      "request": { "q": ["Hi \ud83c\udf0d", "\u7a7a"], "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola mundo" }, { "translatedText": "vac\u00edo" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
+      "name": "google_translate_v2_counts_repeated_url_query_values",
+      "url": "https://translation.googleapis.com/language/translate/v2?q=Hi%20%F0%9F%8C%8D&q=%E7%A9%BA&target=es&model=base",
+      "headers": {},
+      "response": { "data": { "translations": [{ "translatedText": "Hola mundo" }, { "translatedText": "vacío" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "base" }]
+    },
+    {
+      "name": "google_translate_v2_prefers_body_quantity_over_url_fallback",
+      "url": "https://translation.googleapis.com/language/translate/v2?q=do-not-count-this&target=es",
+      "headers": {},
+      "request": { "q": "Body", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Cuerpo" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "4", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
+      "name": "google_translate_v2_accepts_the_documented_base_nmt_alias",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=base",
+      "headers": {},
+      "request": { "q": "Alias", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Alias", "model": "base" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "model", "resource_id": "base" }]
+    },
+    {
+      "name": "google_translate_v2_applies_the_documented_one_character_minimum",
+      "url": "https://translation.googleapis.com/language/translate/v2",
+      "headers": {},
+      "request": { "q": "", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "" }] } },
+      "expected": [{ "service_key": "google_translate", "provider_name": "google", "provider_service": "cloud_translation_basic", "component": "external", "metric": "characters", "quantity": "1", "resource_type": "model", "resource_id": "nmt" }]
+    },
+    {
+      "name": "google_translate_v2_does_not_price_translation_llm",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=projects/demo/locations/us-central1/models/general/translation-llm",
+      "headers": {},
+      "request": { "q": "Hello", "target": "es" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola" }] } },
+      "expected": []
+    },
+    {
+      "name": "google_translate_v2_conflicting_model_sources_fail_open",
+      "url": "https://translation.googleapis.com/language/translate/v2?model=base",
+      "headers": {},
+      "request": { "q": "Hello", "target": "es", "model": "nmt" },
+      "response": { "data": { "translations": [{ "translatedText": "Hola" }] } },
+      "expected": []
+    },
+    {
+      "name": "google_translate_detect_is_not_assumed_to_be_translation",
+      "url": "https://translation.googleapis.com/language/translate/v2/detect",
+      "headers": {},
+      "request": { "q": "Hello" },
+      "response": { "data": { "detections": [[{ "language": "en" }]] } },
+      "expected": []
+    },
+    {
+      "name": "aws_translate_text_counts_unicode_characters",
+      "url": "https://translate.us-east-1.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello \ud83d\udc4b world", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola mundo", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": [{ "service_key": "aws_translate", "provider_name": "aws", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "13", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "aws_translate_text_supports_documented_dual_stack_endpoint",
+      "url": "https://translate.eu-west-1.api.aws/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "\u7a7a", "SourceLanguageCode": "ja", "TargetLanguageCode": "en" },
+      "response": { "TranslatedText": "empty", "SourceLanguageCode": "ja", "TargetLanguageCode": "en" },
+      "expected": [{ "service_key": "aws_translate", "provider_name": "aws", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "1", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "aws_translate_auto_detection_is_not_assumed_to_be_standard_text_only",
+      "url": "https://translate.us-west-2.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "SourceLanguageCode": "auto", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": []
+    },
+    {
+      "name": "aws_translate_missing_source_language_fails_open",
+      "url": "https://translate.us-west-2.amazonaws.com/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "TargetLanguageCode": "es" },
+      "response": { "TranslatedText": "Hola", "SourceLanguageCode": "en", "TargetLanguageCode": "es" },
+      "expected": []
+    },
+    {
+      "name": "aws_translate_unverified_partition_endpoint_fails_open",
+      "url": "https://translate.cn-north-1.amazonaws.com.cn/",
+      "headers": { "x-amz-target": "AWSShineFrontendService_20170701.TranslateText" },
+      "request": { "Text": "Hello", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
+      "response": { "TranslatedText": "\u4f60\u597d", "SourceLanguageCode": "en", "TargetLanguageCode": "zh" },
+      "expected": []
+    },
+    {
+      "name": "azure_translator_counts_utf16_units_for_each_target",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es&to=ja",
+      "headers": {},
+      "request": [{ "Text": "A\ud83d\ude00" }, { "text": "\u00e9" }],
+      "response": [
+        { "translations": [{ "text": "A feliz", "to": "es" }, { "text": "A happy", "to": "ja" }] },
+        { "translations": [{ "text": "e", "to": "es" }, { "text": "e", "to": "ja" }] }
+      ],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "8", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_supports_documented_geography_endpoint",
+      "url": "https://api-eur.cognitive.microsofttranslator.com/translate?api-version=3.0&to=fr&category=general",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Bonjour", "to": "fr" }] }],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_supports_documented_resource_endpoint",
+      "url": "https://dexcost-translator.cognitiveservices.azure.com/translator/text/v3.0/translate?api-version=3.0&to=de",
+      "headers": {},
+      "request": [{ "text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hallo", "to": "de" }] }],
+      "expected": [{ "service_key": "azure_translator", "provider_name": "azure", "provider_service": "translate_text", "component": "external", "metric": "characters", "quantity": "5", "resource_type": "sku", "resource_id": "standard_text" }]
+    },
+    {
+      "name": "azure_translator_custom_category_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es&category=customer-model",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_missing_api_version_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_missing_target_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_ambiguous_text_casing_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello", "text": "Different" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_spoofed_resource_suffix_fails_open",
+      "url": "https://dexcost-translator.cognitiveservices.azure.com.evil.example/translator/text/v3.0/translate?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "azure_translator_endpoint_descendant_fails_open",
+      "url": "https://api.cognitive.microsofttranslator.com/translate/preview?api-version=3.0&to=es",
+      "headers": {},
+      "request": [{ "Text": "Hello" }],
+      "response": [{ "translations": [{ "text": "Hola", "to": "es" }] }],
+      "expected": []
+    },
+    {
+      "name": "google_custom_search_counts_existing_customer_query",
+      "url": "https://customsearch.googleapis.com/customsearch/v1?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": [{ "service_key": "google_custom_search", "provider_name": "google", "provider_service": "custom_search_json", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "cse.list" }]
+    },
+    {
+      "name": "google_custom_search_supports_documented_www_endpoint",
+      "url": "https://www.googleapis.com/customsearch/v1?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": [{ "service_key": "google_custom_search", "provider_name": "google", "provider_service": "custom_search_json", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "cse.list" }]
+    },
+    {
+      "name": "google_custom_search_site_restricted_retired_endpoint_fails_open",
+      "url": "https://www.googleapis.com/customsearch/v1/siterestrict?key=demo&cx=engine&q=pricing",
+      "headers": {},
+      "response": { "kind": "customsearch#search", "items": [] },
+      "expected": []
+    },
+    {
+      "name": "google_vision_counts_each_requested_feature_per_image",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          {
+            "image": { "content": "private-image-one" },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "FACE_DETECTION" },
+              { "type": "SAFE_SEARCH_DETECTION" },
+              { "type": "IMAGE_PROPERTIES" },
+              { "type": "CROP_HINTS" },
+              { "type": "WEB_DETECTION" }
+            ]
+          },
+          {
+            "image": { "source": { "imageUri": "gs://private/image-two.jpg" } },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "TEXT_DETECTION" },
+              { "type": "DOCUMENT_TEXT_DETECTION" },
+              { "type": "LANDMARK_DETECTION" },
+              { "type": "LOGO_DETECTION" },
+              { "type": "OBJECT_LOCALIZATION" },
+              { "type": "PRODUCT_SEARCH" }
+            ]
+          }
+        ]
+      },
+      "response": { "responses": [{}, {}] },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "2", "resource_type": "sku", "resource_id": "label_detection" },
+        { "service_key": "google_vision_text", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "text_detection" },
+        { "service_key": "google_vision_document_text", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "document_text_detection" },
+        { "service_key": "google_vision_face", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "face_detection" },
+        { "service_key": "google_vision_landmark", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "landmark_detection" },
+        { "service_key": "google_vision_logo", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "logo_detection" },
+        { "service_key": "google_vision_image_properties", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties" },
+        { "service_key": "google_vision_web", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "web_detection" },
+        { "service_key": "google_vision_object_localization", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "object_localization" },
+        { "service_key": "google_vision_product_search", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "product_search_prediction" }
+      ]
+    },
+    {
+      "name": "google_vision_counts_unbundled_safe_search",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private-one" }, "features": [{ "type": "SAFE_SEARCH_DETECTION" }] },
+          { "image": { "content": "private-two" }, "features": [{ "type": "SAFE_SEARCH_DETECTION" }] }
+        ]
+      },
+      "response": { "responses": [{}, {}] },
+      "expected": [
+        { "service_key": "google_vision_safe_search", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "2", "resource_type": "sku", "resource_id": "safe_search_detection_standalone" }
+      ]
+    },
+    {
+      "name": "google_vision_counts_only_successful_paired_batch_items",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "valid-private" }, "features": [{ "type": "LABEL_DETECTION" }] },
+          { "image": { "content": "invalid-private" }, "features": [{ "type": "LABEL_DETECTION" }] }
+        ]
+      },
+      "response": {
+        "responses": [
+          { "labelAnnotations": [] },
+          { "error": { "code": 3, "message": "invalid image" } }
+        ]
+      },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "label_detection" }
+      ]
+    },
+    {
+      "name": "google_vision_mismatched_response_batch_fails_open",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private-one" }, "features": [{ "type": "LABEL_DETECTION" }] },
+          { "image": { "content": "private-two" }, "features": [{ "type": "LABEL_DETECTION" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": []
+    },
+    {
+      "name": "google_vision_counts_unbundled_crop_hints",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private" }, "features": [{ "type": "CROP_HINTS" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": [
+        { "service_key": "google_vision_crop_hints", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "crop_hints_standalone" }
+      ]
+    },
+    {
+      "name": "google_vision_does_not_double_count_bundled_features",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          {
+            "image": { "content": "private" },
+            "features": [
+              { "type": "LABEL_DETECTION" },
+              { "type": "SAFE_SEARCH_DETECTION" },
+              { "type": "IMAGE_PROPERTIES" },
+              { "type": "CROP_HINTS" }
+            ]
+          }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": [
+        { "service_key": "google_vision_label", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "label_detection" },
+        { "service_key": "google_vision_image_properties", "provider_name": "google", "provider_service": "cloud_vision_image_annotation", "component": "external", "metric": "image_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties" }
+      ]
+    },
+    {
+      "name": "google_vision_unknown_feature_fails_open",
+      "url": "https://vision.googleapis.com/v1/images:annotate",
+      "headers": {},
+      "request": {
+        "requests": [
+          { "image": { "content": "private" }, "features": [{ "type": "FUTURE_FEATURE" }] }
+        ]
+      },
+      "response": { "responses": [{}] },
+      "expected": []
+    },
+    {
+      "name": "perplexity_raw_search_counts_one_successful_request",
+      "url": "https://api.perplexity.ai/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "max_results": 10 },
+      "response": { "id": "search-123", "results": [], "server_time": "2026-09-01T16:00:00Z" },
+      "expected": [{ "service_key": "perplexity_search", "provider_name": "perplexity", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "raw_web_search", "provider_record_id": "search-123" }]
+    },
+    {
+      "name": "perplexity_search_error_response_fails_open",
+      "url": "https://api.perplexity.ai/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "max_results": 10 },
+      "response": { "error": { "message": "rate limited" } },
+      "expected": []
+    },
+    {
+      "name": "tavily_search_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "search_depth": "advanced", "include_usage": true },
+      "response": { "results": [], "usage": { "credits": 2 }, "request_id": "tvly-search-1" },
+      "expected": [{ "service_key": "tavily_search", "provider_name": "tavily", "provider_service": "search_api", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-search-1" }]
+    },
+    {
+      "name": "tavily_search_missing_usage_is_not_invented",
+      "url": "https://api.tavily.com/search",
+      "headers": {},
+      "request": { "query": "latest pricing", "search_depth": "basic" },
+      "response": { "results": [], "request_id": "tvly-search-no-usage" },
+      "expected": []
+    },
+    {
+      "name": "tavily_extract_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/extract",
+      "headers": {},
+      "request": { "urls": ["https://example.com"], "extract_depth": "advanced", "include_usage": true },
+      "response": { "results": [{ "url": "https://example.com", "raw_content": "Example" }], "failed_results": [], "usage": { "credits": 2 }, "request_id": "tvly-extract-1" },
+      "expected": [{ "service_key": "tavily_extract", "provider_name": "tavily", "provider_service": "extract_api", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-extract-1" }]
+    },
+    {
+      "name": "tavily_extract_zero_threshold_usage_is_not_invented",
+      "url": "https://api.tavily.com/extract",
+      "headers": {},
+      "request": { "urls": ["https://example.com"], "include_usage": true },
+      "response": { "results": [{ "url": "https://example.com", "raw_content": "Example" }], "failed_results": [], "usage": { "credits": 0 }, "request_id": "tvly-extract-zero" },
+      "expected": []
+    },
+    {
+      "name": "tavily_crawl_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/crawl",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": [], "usage": { "credits": "3" }, "request_id": "tvly-crawl-1" },
+      "expected": [{ "service_key": "tavily_crawl", "provider_name": "tavily", "provider_service": "crawl_api", "component": "external", "metric": "credit_count", "quantity": "3", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-crawl-1" }]
+    },
+    {
+      "name": "tavily_crawl_missing_usage_is_not_invented",
+      "url": "https://api.tavily.com/crawl",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com" },
+      "response": { "base_url": "docs.tavily.com", "results": [], "request_id": "tvly-crawl-no-usage" },
+      "expected": []
+    },
+    {
+      "name": "tavily_map_uses_provider_reported_credits",
+      "url": "https://api.tavily.com/map",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "instructions": "Find pricing pages", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": ["https://docs.tavily.com/documentation/api-credits"], "usage": { "credits": 1 }, "request_id": "tvly-map-1" },
+      "expected": [{ "service_key": "tavily_map", "provider_name": "tavily", "provider_service": "map_api", "component": "external", "metric": "credit_count", "quantity": "1", "resource_type": "sku", "resource_id": "api_credit", "provider_record_id": "tvly-map-1" }]
+    },
+    {
+      "name": "tavily_map_zero_threshold_usage_is_not_invented",
+      "url": "https://api.tavily.com/map",
+      "headers": {},
+      "request": { "url": "https://docs.tavily.com", "include_usage": true },
+      "response": { "base_url": "docs.tavily.com", "results": [], "usage": { "credits": 0 }, "request_id": "tvly-map-zero" },
+      "expected": []
+    },
+    {
+      "name": "exa_search_defaults_to_the_standard_auto_tariff",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost public pricing" },
+      "response": { "requestId": "exa-auto-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "auto", "provider_record_id": "exa-auto-1" }]
+    },
+    {
+      "name": "exa_deep_search_uses_the_requested_tariff_variant",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost attribution", "type": "deep", "numResults": 10, "contents": null, "context": false },
+      "response": { "requestId": "exa-deep-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "deep", "provider_record_id": "exa-deep-1" }]
+    },
+    {
+      "name": "exa_deep_reasoning_uses_the_requested_tariff_variant",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost allocation", "type": "deep-reasoning", "numResults": 5 },
+      "response": { "requestId": "exa-deep-reasoning-1", "results": [] },
+      "expected": [{ "service_key": "exa_search", "provider_name": "exa", "provider_service": "search_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "deep-reasoning", "provider_record_id": "exa-deep-reasoning-1" }]
+    },
+    {
+      "name": "exa_search_over_ten_results_fails_open_until_incremental_results_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "auto", "numResults": 11 },
+      "response": { "requestId": "exa-extra-results", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_content_addons_fails_open_until_pages_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "fast", "contents": { "text": true } },
+      "response": { "requestId": "exa-content-addon", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_legacy_context_fails_open_until_pages_are_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "auto", "context": true },
+      "response": { "requestId": "exa-context-addon", "results": [], "context": "page text" },
+      "expected": []
+    },
+    {
+      "name": "exa_search_with_synthesized_output_fails_open_until_synthesis_is_metered",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "fast", "outputSchema": { "type": "text" } },
+      "response": { "requestId": "exa-synthesized-output", "results": [], "output": { "content": "summary" } },
+      "expected": []
+    },
+    {
+      "name": "exa_search_unknown_type_is_not_assumed_to_use_public_pricing",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "request": { "query": "DexCost", "type": "future-mode", "numResults": 10 },
+      "response": { "requestId": "exa-future-mode", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "exa_search_without_captured_request_metadata_fails_open",
+      "url": "https://api.exa.ai/search",
+      "headers": {},
+      "response": { "requestId": "exa-unreadable-request", "results": [] },
+      "expected": []
     },
     {
       "name": "openai_tts_counts_unicode_characters_from_the_successful_request",
@@ -77,12 +876,36 @@
       "expected": []
     },
     {
+      "name": "resemble_tts_uses_provider_reported_generated_audio_duration",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "Hello from DexCost" },
+      "response": { "success": true, "duration": 1.68, "synth_duration": 1.64, "audio_content": "private" },
+      "expected": [{ "service_key": "resemble_ai", "provider_name": "resemble", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "audio_seconds", "quantity": "1.68", "resource_type": "sku", "resource_id": "text_to_speech" }]
+    },
+    {
+      "name": "resemble_speech_to_speech_does_not_use_the_tts_tariff",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "<speak><resemble:convert src=\"https://example.invalid/donor.wav\" /></speak>" },
+      "response": { "success": true, "duration": 12.5, "synth_duration": 2.1 },
+      "expected": []
+    },
+    {
+      "name": "resemble_failed_or_durationless_synthesis_fails_open",
+      "url": "https://f.cluster.resemble.ai/synthesize",
+      "headers": {},
+      "request": { "voice_uuid": "voice-private", "data": "Hello" },
+      "response": { "success": false, "issues": ["generation failed"] },
+      "expected": []
+    },
+    {
       "name": "elevenlabs_tts_uses_provider_billed_character_header",
       "url": "https://api.elevenlabs.io/v1/text-to-speech/voice_123/stream",
       "headers": { "Character-Cost": "11", "Request-Id": "el_req_123" },
       "request": { "model_id": "eleven_flash_v2_5", "text": "This raw text is deliberately not eleven characters." },
       "response": null,
-      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "11", "resource_type": "model", "resource_id": "eleven_flash_v2_5", "provider_record_id": "el_req_123" }]
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "11", "resource_type": "model", "resource_id": "eleven_flash_v2_5", "provider_record_id": "el_req_123", "dimensions": [{ "key": "voice_id", "value": { "type": "string", "value": "voice_123" } }] }]
     },
     {
       "name": "elevenlabs_tts_defaults_to_multilingual_v2",
@@ -90,7 +913,7 @@
       "headers": { "character-cost": "7.5", "request-id": "el_req_default" },
       "request": { "text": "Hello" },
       "response": null,
-      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "7.5", "resource_type": "model", "resource_id": "eleven_multilingual_v2", "provider_record_id": "el_req_default" }]
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "7.5", "resource_type": "model", "resource_id": "eleven_multilingual_v2", "provider_record_id": "el_req_default", "dimensions": [{ "key": "voice_id", "value": { "type": "string", "value": "voice_456" } }] }]
     },
     {
       "name": "elevenlabs_tts_missing_character_cost_is_not_invented",
@@ -139,22 +962,30 @@
     },
     {
       "name": "deepgram_emits_base_and_billable_addons_with_channel_seconds",
-      "url": "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&language=multi&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-2", "duration": 10, "channels": 2 } },
       "expected": [
         { "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "nova-3:multilingual", "provider_record_id": "dg-2" },
         { "service_key": "deepgram_diarization", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "speaker_diarization", "provider_record_id": "dg-2" },
         { "service_key": "deepgram_redaction", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "redaction", "provider_record_id": "dg-2" },
-        { "service_key": "deepgram_keyterm_prompting", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "keyterm_prompting", "provider_record_id": "dg-2" }
+        { "service_key": "deepgram_keyterm_prompting", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "keyterm_prompting", "provider_record_id": "dg-2" },
+        { "service_key": "deepgram_entity_detection", "provider_name": "deepgram", "provider_service": "speech_to_text_addon", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "20", "resource_type": "sku", "resource_id": "entity_detection", "provider_record_id": "dg-2" }
       ]
     },
     {
       "name": "false_deepgram_addon_flags_do_not_create_lines",
-      "url": "https://api.deepgram.com/v1/listen?model=nova-3&diarize=false&redact=false",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&diarize=false&redact=false&detect_entities=false",
       "headers": {},
       "response": { "metadata": { "request_id": "dg-3", "duration": 4, "channels": 2 } },
       "expected": [{ "service_key": "deepgram_transcription", "provider_name": "deepgram", "provider_service": "speech_to_text_pre_recorded", "component": "speech_to_text", "metric": "audio_seconds", "quantity": "4", "resource_type": "sku", "resource_id": "nova-3:monolingual", "provider_record_id": "dg-3" }]
+    },
+    {
+      "name": "deepgram_entity_detection_missing_duration_is_not_invented",
+      "url": "https://api.deepgram.com/v1/listen?model=nova-3&detect_entities=true",
+      "headers": {},
+      "response": { "metadata": { "request_id": "dg-entity-pending" } },
+      "expected": []
     },
     {
       "name": "assemblyai_completed_transcript_uses_provider_duration_and_model",
@@ -325,6 +1156,112 @@
       "expected": []
     },
     {
+      "name": "fireworks_embeddings_uses_provider_reported_prompt_tokens",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": {
+        "model": "accounts/fireworks/models/qwen3-embedding-8b",
+        "input": ["private embedding input"]
+      },
+      "response": {
+        "data": [],
+        "usage": { "prompt_tokens": 125, "total_tokens": 125 }
+      },
+      "expected": [
+        {
+          "service_key": "fireworks_embeddings",
+          "provider_name": "fireworks_ai",
+          "provider_service": "embeddings",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "125",
+          "resource_type": "model",
+          "resource_id": "accounts/fireworks/models/qwen3-embedding-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_embeddings_accepts_the_documented_shorthand",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": { "model": "fireworks/qwen3-embedding-8b", "input": "private" },
+      "response": { "data": [], "usage": { "prompt_tokens": 21 } },
+      "expected": [
+        {
+          "service_key": "fireworks_embeddings",
+          "provider_name": "fireworks_ai",
+          "provider_service": "embeddings",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "21",
+          "resource_type": "model",
+          "resource_id": "fireworks/qwen3-embedding-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_embeddings_unknown_model_fails_open",
+      "url": "https://api.fireworks.ai/inference/v1/embeddings",
+      "headers": {},
+      "request": { "model": "accounts/fireworks/models/future-embedding", "input": "private" },
+      "response": { "data": [], "usage": { "prompt_tokens": 21 } },
+      "expected": []
+    },
+    {
+      "name": "fireworks_rerank_uses_provider_reported_prompt_tokens",
+      "url": "https://api.fireworks.ai/inference/v1/rerank",
+      "headers": {},
+      "request": {
+        "model": "accounts/fireworks/models/qwen3-reranker-8b",
+        "query": "private query",
+        "documents": ["private document"]
+      },
+      "response": { "results": [], "usage": { "prompt_tokens": 89 } },
+      "expected": [
+        {
+          "service_key": "fireworks_rerank",
+          "provider_name": "fireworks_ai",
+          "provider_service": "rerank",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "89",
+          "resource_type": "model",
+          "resource_id": "accounts/fireworks/models/qwen3-reranker-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_rerank_accepts_the_documented_shorthand",
+      "url": "https://api.fireworks.ai/inference/v1/rerank",
+      "headers": {},
+      "request": {
+        "model": "fireworks/qwen3-reranker-8b",
+        "query": "private",
+        "documents": ["private"]
+      },
+      "response": { "results": [], "usage": { "prompt_tokens": 34 } },
+      "expected": [
+        {
+          "service_key": "fireworks_rerank",
+          "provider_name": "fireworks_ai",
+          "provider_service": "rerank",
+          "component": "external",
+          "metric": "input_tokens",
+          "quantity": "34",
+          "resource_type": "model",
+          "resource_id": "fireworks/qwen3-reranker-8b"
+        }
+      ]
+    },
+    {
+      "name": "fireworks_rerank_endpoint_descendant_is_not_observed",
+      "url": "https://api.fireworks.ai/inference/v1/rerank/preview",
+      "headers": {},
+      "request": { "model": "fireworks/qwen3-reranker-8b" },
+      "response": { "usage": { "prompt_tokens": 34 } },
+      "expected": []
+    },
+    {
       "name": "endpoint_prefix_collision_is_not_observed",
       "url": "https://api.openai.com/v1/embeddings-preview",
       "headers": {},
@@ -344,6 +1281,839 @@
       "headers": {},
       "response": { "usage": { "total_tokens": 0 } },
       "expected": []
+    },
+    {
+      "name": "github_rest_api_successful_request_is_observed",
+      "url": "https://api.github.com/repos/octocat/Hello-World/issues?state=open",
+      "headers": { "x-github-request-id": "github-request-1" },
+      "response": [{ "id": 1, "state": "open" }],
+      "expected": [
+        {
+          "service_key": "github_api",
+          "provider_name": "github",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "github_rest_api_failed_request_is_not_observed",
+      "url": "https://api.github.com/repos/octocat/private",
+      "status_code": 403,
+      "headers": {},
+      "response": { "message": "Forbidden" },
+      "expected": []
+    },
+    {
+      "name": "github_graphql_uses_distinct_point_accounting_not_rest_request_count",
+      "url": "https://api.github.com/graphql",
+      "headers": { "x-github-request-id": "github-graphql-1" },
+      "request": { "query": "query { viewer { login } }" },
+      "response": { "data": { "viewer": { "login": "octocat" } } },
+      "expected": []
+    },
+    {
+      "name": "discord_rest_api_successful_request_is_observed",
+      "url": "https://discord.com/api/v10/channels/123/messages",
+      "headers": { "x-ratelimit-bucket": "discord-bucket-1" },
+      "response": { "id": "456", "content": "created" },
+      "expected": [
+        {
+          "service_key": "discord_api",
+          "provider_name": "discord",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "discord_rest_api_failed_request_is_not_observed",
+      "url": "https://discord.com/api/v10/channels/123/messages",
+      "status_code": 429,
+      "headers": { "retry-after": "1" },
+      "response": { "message": "You are being rate limited.", "retry_after": 1 },
+      "expected": []
+    },
+    {
+      "name": "gitlab_rest_api_successful_request_is_observed",
+      "url": "https://gitlab.com/api/v4/projects?membership=true",
+      "headers": { "ratelimit-remaining": "1999" },
+      "response": [{ "id": 1, "name": "dexcost" }],
+      "expected": [
+        {
+          "service_key": "gitlab_api",
+          "provider_name": "gitlab",
+          "provider_service": "rest_api",
+          "component": "external",
+          "metric": "request_count",
+          "quantity": "1",
+          "resource_type": "sku",
+          "resource_id": "rest_api_request"
+        }
+      ]
+    },
+    {
+      "name": "gitlab_rest_api_failed_request_is_not_observed",
+      "url": "https://gitlab.com/api/v4/projects/private",
+      "status_code": 403,
+      "headers": {},
+      "response": { "message": "403 Forbidden" },
+      "expected": []
+    },
+    {
+      "name": "deepl_plain_text_counts_unicode_characters_on_regional_endpoint",
+      "url": "https://api-us.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["Hello", "\u4e16\u754c"], "target_lang": "DE", "context": "not billed" },
+      "response": { "translations": [{ "detected_source_language": "EN", "text": "Hallo" }, { "detected_source_language": "ZH", "text": "Welt" }] },
+      "expected": [
+        {
+          "service_key": "deepl_translate_plain_text",
+          "provider_name": "deepl",
+          "provider_service": "translate_text",
+          "component": "external",
+          "metric": "characters",
+          "quantity": "7",
+          "resource_type": "sku",
+          "resource_id": "text_translation"
+        }
+      ]
+    },
+    {
+      "name": "deepl_uses_provider_reported_billed_characters_when_requested",
+      "url": "https://api.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["private", "private"], "target_lang": "DE", "show_billed_characters": true },
+      "response": { "translations": [{ "text": "privat", "billed_characters": 12 }, { "text": "privat", "billed_characters": 4 }] },
+      "expected": [
+        {
+          "service_key": "deepl_translate_billed_characters",
+          "provider_name": "deepl",
+          "provider_service": "translate_text",
+          "component": "external",
+          "metric": "characters",
+          "quantity": "16",
+          "resource_type": "sku",
+          "resource_id": "text_translation"
+        }
+      ]
+    },
+    {
+      "name": "deepl_tag_handling_without_billed_characters_fails_open",
+      "url": "https://api-jp.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["<p>Hello</p>"], "target_lang": "DE", "tag_handling": "html" },
+      "response": { "translations": [{ "text": "<p>Hallo</p>" }] },
+      "expected": []
+    },
+    {
+      "name": "deepl_missing_provider_billed_characters_fails_open",
+      "url": "https://api.deepl.com/v2/translate",
+      "headers": {},
+      "request": { "text": ["private"], "target_lang": "DE", "show_billed_characters": true },
+      "response": { "translations": [{ "text": "privat" }] },
+      "expected": []
+    },
+    {
+      "name": "deepl_failed_translation_is_not_observed",
+      "url": "https://api-free.deepl.com/v2/translate",
+      "status_code": 456,
+      "headers": {},
+      "request": { "text": ["private"], "target_lang": "DE" },
+      "response": { "message": "Quota exceeded" },
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_group_1_request_captures_region_and_request_id",
+      "url": "https://rekognition.us-east-1.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-group-1" },
+      "request_headers": { "x-amz-target": "RekognitionService.CompareFaces" },
+      "request": { "SourceImage": { "S3Object": { "Bucket": "a", "Name": "one" } }, "TargetImage": { "S3Object": { "Bucket": "a", "Name": "two" } } },
+      "response": { "FaceMatches": [] },
+      "expected": [{ "service_key": "aws_rekognition_image_group_1", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_1", "provider_record_id": "rek-group-1", "provider_region": "us-east-1" }]
+    },
+    {
+      "name": "aws_rekognition_group_2_request_supports_dualstack_endpoint",
+      "url": "https://rekognition.eu-west-2.api.aws/",
+      "headers": { "x-amzn-requestid": "rek-group-2" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectText" },
+      "request": { "Image": { "Bytes": "not-retained-by-adapter-tests" } },
+      "response": { "TextDetections": [] },
+      "expected": [{ "service_key": "aws_rekognition_image_group_2", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-group-2", "provider_region": "eu-west-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_defaults_to_general_labels_when_features_absent",
+      "url": "https://rekognition.ap-southeast-2.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-default" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Image": { "S3Object": { "Bucket": "a", "Name": "one" } } },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_default", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-default", "provider_region": "ap-southeast-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_empty_features_uses_default_group",
+      "url": "https://rekognition.us-west-2.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": [] },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_default", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_region": "us-west-2" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_general_feature_uses_group_2",
+      "url": "https://rekognition-fips.ca-central-1.api.aws/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["GENERAL_LABELS"] },
+      "response": { "Labels": [] },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_general", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_region": "ca-central-1" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_image_properties_uses_separate_sku",
+      "url": "https://rekognition.eu-central-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["IMAGE_PROPERTIES"] },
+      "response": { "ImageProperties": {} },
+      "expected": [{ "service_key": "aws_rekognition_detect_labels_image_properties", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties", "provider_region": "eu-central-1" }]
+    },
+    {
+      "name": "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units",
+      "url": "https://rekognition.us-west-1.amazonaws.com/",
+      "headers": { "x-amzn-requestid": "rek-both" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectLabels" },
+      "request": { "Features": ["GENERAL_LABELS", "IMAGE_PROPERTIES"] },
+      "response": { "Labels": [], "ImageProperties": {} },
+      "expected": [
+        { "service_key": "aws_rekognition_detect_labels_general", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "group_2", "provider_record_id": "rek-both", "provider_region": "us-west-1" },
+        { "service_key": "aws_rekognition_detect_labels_image_properties", "provider_name": "aws", "provider_service": "rekognition_image", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "image_properties", "provider_record_id": "rek-both", "provider_region": "us-west-1" }
+      ]
+    },
+    {
+      "name": "aws_rekognition_unknown_operation_fails_open",
+      "url": "https://rekognition.us-east-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.StartLabelDetection" },
+      "request": {},
+      "response": { "JobId": "job" },
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_unverified_region_endpoint_fails_open",
+      "url": "https://rekognition.eu-north-1.amazonaws.com/",
+      "headers": {},
+      "request_headers": { "x-amz-target": "RekognitionService.CompareFaces" },
+      "request": {},
+      "response": {},
+      "expected": []
+    },
+    {
+      "name": "aws_rekognition_failed_request_is_not_observed",
+      "url": "https://rekognition.us-east-2.amazonaws.com/",
+      "status_code": 400,
+      "headers": { "x-amzn-requestid": "rek-failed" },
+      "request_headers": { "x-amz-target": "RekognitionService.DetectFaces" },
+      "request": {},
+      "response": { "__type": "InvalidImageFormatException" },
+      "expected": []
+    },
+    {
+      "name": "leonardo_sync_uses_provider_reported_dollar_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg", "parameters": {} },
+      "response": { "id": "leo-sync-1", "blockedCount": 0, "cost": { "amount": "0.1047", "unit": "DOLLARS" }, "results": [] },
+      "expected": [{ "service_key": "leonardo_generation_sync_cost", "provider_name": "leonardo_ai", "provider_service": "production_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "remove-bg", "provider_record_id": "leo-sync-1", "provider_cost_usd": "0.1047" }]
+    },
+    {
+      "name": "leonardo_async_uses_provider_reported_dollar_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "lucid-origin", "parameters": {} },
+      "response": { "generationId": "leo-async-1", "cost": { "amount": "0.25", "unit": "DOLLARS" } },
+      "expected": [{ "service_key": "leonardo_generation_async_cost", "provider_name": "leonardo_ai", "provider_service": "production_api", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "model", "resource_id": "lucid-origin", "provider_record_id": "leo-async-1", "provider_cost_usd": "0.25" }]
+    },
+    {
+      "name": "leonardo_transitional_credit_unit_does_not_invent_usd",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "legacy-model" },
+      "response": { "generationId": "leo-credit-1", "apiCreditCost": 8, "cost": { "amount": "8", "unit": "CREDITS" } },
+      "expected": []
+    },
+    {
+      "name": "leonardo_missing_cost_fails_open",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "id": "leo-no-cost", "results": [] },
+      "expected": []
+    },
+    {
+      "name": "leonardo_negative_cost_fails_open",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "id": "leo-negative", "cost": { "amount": "-1", "unit": "DOLLARS" }, "results": [] },
+      "expected": []
+    },
+    {
+      "name": "leonardo_read_does_not_repeat_generation_cost",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generations",
+      "method": "GET",
+      "headers": {},
+      "response": { "generationId": "leo-read", "cost": { "amount": "0.25", "unit": "DOLLARS" } },
+      "expected": []
+    },
+    {
+      "name": "leonardo_failed_request_is_not_observed",
+      "url": "https://cloud.leonardo.ai/api/rest/v2/generationssync",
+      "method": "POST",
+      "status_code": 400,
+      "headers": {},
+      "request": { "model": "remove-bg" },
+      "response": { "error": "invalid request", "cost": { "amount": "0.1047", "unit": "DOLLARS" } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_completed_summarize_reports_final_units",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-summary-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-summary-1", "workflow": "summarize", "status": "completed", "units_consumed": 650, "outputs": { "title": "private output" } } },
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "650", "resource_type": "sku", "resource_id": "summarize", "provider_record_id": "rjob-summary-1" }]
+    },
+    {
+      "name": "mux_robots_completed_multiword_workflow_reports_final_units",
+      "url": "https://api.mux.com/robots/v0/jobs/translate-captions/rjob-translate-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-translate-1", "workflow": "translate-captions", "status": "completed", "units_consumed": "1600", "outputs": { "temporary_vtt_url": "private" } } },
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "1600", "resource_type": "sku", "resource_id": "translate-captions", "provider_record_id": "rjob-translate-1" }]
+    },
+    {
+      "name": "mux_robots_pending_job_is_not_billed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-pending",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-pending", "workflow": "summarize", "status": "pending", "units_consumed": 650 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_errored_job_is_not_billed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-error",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-error", "workflow": "summarize", "status": "errored", "units_consumed": 650, "errors": [{ "message": "failed" }] } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_zero_units_fail_open",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-zero",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-zero", "workflow": "summarize", "status": "completed", "units_consumed": 0 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_unknown_workflow_fails_open",
+      "url": "https://api.mux.com/robots/v0/jobs/future-workflow/rjob-future",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": { "id": "rjob-future", "workflow": "future-workflow", "status": "completed", "units_consumed": 1000 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_creation_response_is_not_terminal_usage",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize",
+      "method": "POST",
+      "headers": {},
+      "request": { "parameters": { "asset_id": "asset-private" } },
+      "response": { "data": { "id": "rjob-new", "workflow": "summarize", "status": "pending", "units_consumed": 1 } },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_list_response_is_not_a_single_charge",
+      "url": "https://api.mux.com/robots/v0/jobs?status=completed",
+      "method": "GET",
+      "headers": {},
+      "response": { "data": [{ "id": "rjob-list", "workflow": "summarize", "status": "completed", "units_consumed": 650 }] },
+      "expected": []
+    },
+    {
+      "name": "mux_robots_failed_http_response_is_not_observed",
+      "url": "https://api.mux.com/robots/v0/jobs/summarize/rjob-server-error",
+      "method": "GET",
+      "status_code": 500,
+      "headers": {},
+      "response": { "data": { "id": "rjob-server-error", "workflow": "summarize", "status": "completed", "units_consumed": 650 } },
+      "expected": []
+    },
+    {
+      "name": "runway_succeeded_task_reports_final_charged_credits",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-success-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-success-1", "status": "SUCCEEDED", "createdAt": "2026-09-03T01:15:00Z", "cost": { "credits": 37.5 }, "output": ["private-output-url"] },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "37.5", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-success-1" }]
+    },
+    {
+      "name": "runway_failed_task_preserves_nonrefunded_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-failed-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-failed-1", "status": "FAILED", "createdAt": "2026-09-03T01:16:00Z", "cost": { "credits": 2 }, "failure": "private failure" },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "2", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-failed-1" }]
+    },
+    {
+      "name": "runway_cancelled_task_preserves_nonrefunded_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-cancelled-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-cancelled-1", "status": "CANCELLED", "createdAt": "2026-09-03T01:17:00Z", "cost": { "credits": "1.25" } },
+      "expected": [{ "service_key": "runway_terminal_task_credits", "provider_name": "runway", "provider_service": "generation", "component": "external", "metric": "credit_count", "quantity": "1.25", "resource_type": "sku", "resource_id": "generation", "provider_record_id": "runway-cancelled-1" }]
+    },
+    {
+      "name": "runway_pending_estimate_is_not_a_final_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-pending-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-pending-1", "status": "PENDING", "createdAt": "2026-09-03T01:18:00Z", "estimatedCost": { "credits": 40 } },
+      "expected": []
+    },
+    {
+      "name": "runway_refunded_terminal_task_has_no_positive_charge",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-refunded-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-refunded-1", "status": "CANCELLED", "createdAt": "2026-09-03T01:19:00Z", "cost": { "credits": 0 } },
+      "expected": []
+    },
+    {
+      "name": "runway_unknown_task_status_fails_open",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-future-1",
+      "method": "GET",
+      "headers": {},
+      "response": { "id": "runway-future-1", "status": "PARTIALLY_REFUNDED", "cost": { "credits": 3 } },
+      "expected": []
+    },
+    {
+      "name": "runway_task_creation_is_not_terminal_cost",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-create-1",
+      "method": "POST",
+      "headers": {},
+      "request": { "model": "future-model" },
+      "response": { "id": "runway-create-1", "status": "SUCCEEDED", "cost": { "credits": 10 } },
+      "expected": []
+    },
+    {
+      "name": "runway_failed_http_response_is_not_observed",
+      "url": "https://api.dev.runwayml.com/v1/tasks/runway-http-error-1",
+      "method": "GET",
+      "status_code": 500,
+      "headers": {},
+      "response": { "id": "runway-http-error-1", "status": "FAILED", "cost": { "credits": 2 } },
+      "expected": []
+    },
+    {
+      "name": "paypal_order_capture_sums_completed_usd_fees",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-1/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-1", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-1", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }, { "payments": { "captures": [{ "id": "CAPTURE-2", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "1.25" } } }] } }] },
+      "expected": [{ "service_key": "paypal_order_capture_fee", "provider_name": "paypal", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "PAYPAL-ORDER-1", "provider_cost_usd": "5.23" }]
+    },
+    {
+      "name": "paypal_authorization_capture_uses_completed_usd_fee",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-1/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-3", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } },
+      "expected": [{ "service_key": "paypal_authorization_capture_fee", "provider_name": "paypal", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "CAPTURE-3", "provider_cost_usd": "3.98" }]
+    },
+    {
+      "name": "paypal_pending_order_capture_fails_open",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-PENDING/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-PENDING", "status": "PENDING", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-PENDING", "status": "PENDING" }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_non_usd_order_capture_does_not_invent_conversion",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-EUR/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-EUR", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-EUR", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "EUR", "value": "3.50" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_order_capture_missing_fee_fails_open",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-NOFEE/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-NOFEE", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-NOFEE", "status": "COMPLETED", "seller_receivable_breakdown": {} }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_sandbox_capture_is_not_real_cost",
+      "url": "https://api-m.sandbox.paypal.com/v2/checkout/orders/PAYPAL-SANDBOX/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "PAYPAL-SANDBOX", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-SANDBOX", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_failed_http_capture_is_not_observed",
+      "url": "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-HTTP-FAIL/capture",
+      "method": "POST",
+      "status_code": 500,
+      "headers": {},
+      "response": { "id": "PAYPAL-ORDER-HTTP-FAIL", "status": "COMPLETED", "purchase_units": [{ "payments": { "captures": [{ "id": "CAPTURE-HTTP-FAIL", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } }] } }] },
+      "expected": []
+    },
+    {
+      "name": "paypal_pending_authorization_capture_fails_open",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-PENDING/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-PENDING-2", "status": "PENDING", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "USD", "value": "3.98" } } },
+      "expected": []
+    },
+    {
+      "name": "paypal_non_usd_authorization_capture_does_not_invent_conversion",
+      "url": "https://api-m.paypal.com/v2/payments/authorizations/AUTH-EUR/capture",
+      "method": "POST",
+      "headers": {},
+      "response": { "id": "CAPTURE-EUR-2", "status": "COMPLETED", "seller_receivable_breakdown": { "paypal_fee": { "currency_code": "EUR", "value": "3.50" } } },
+      "expected": []
+    },
+    {
+      "name": "razorpay_live_capture_uses_final_inr_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_live_1/capture",
+      "method": "POST",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_live_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236, "tax": 36 },
+      "expected": [{ "service_key": "razorpay_captured_payment_fee", "provider_name": "razorpay", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "pay_live_1", "provider_cost_amount": "2.36", "provider_cost_currency": "INR" }]
+    },
+    {
+      "name": "razorpay_live_fetch_uses_same_final_inr_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_live_2",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_live_2", "entity": "payment", "amount": 25000, "currency": "INR", "status": "captured", "captured": true, "fee": 590, "tax": 90 },
+      "expected": [{ "service_key": "razorpay_captured_payment_fee", "provider_name": "razorpay", "provider_service": "payment_processing", "component": "external", "metric": "request_count", "quantity": "1", "resource_type": "sku", "resource_id": "payment_capture", "provider_record_id": "pay_live_2", "provider_cost_amount": "5.9", "provider_cost_currency": "INR" }]
+    },
+    {
+      "name": "razorpay_test_key_capture_is_not_real_cost",
+      "url": "https://api.razorpay.com/v1/payments/pay_test_1/capture",
+      "method": "POST",
+      "request_headers": { "authorization": "Basic cnpwX3Rlc3RfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_test_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236, "tax": 36 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_authorized_payment_has_no_final_fee",
+      "url": "https://api.razorpay.com/v1/payments/pay_authorized_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_authorized_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "authorized", "captured": false, "fee": null, "tax": null },
+      "expected": []
+    },
+    {
+      "name": "razorpay_captured_payment_missing_fee_fails_open",
+      "url": "https://api.razorpay.com/v1/payments/pay_no_fee_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_no_fee_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true },
+      "expected": []
+    },
+    {
+      "name": "razorpay_non_inr_fee_waits_for_verified_minor_unit_rule",
+      "url": "https://api.razorpay.com/v1/payments/pay_usd_1",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_usd_1", "entity": "payment", "amount": 10000, "currency": "USD", "status": "captured", "captured": true, "fee": 300 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_failed_http_capture_is_not_observed",
+      "url": "https://api.razorpay.com/v1/payments/pay_http_fail_1/capture",
+      "method": "POST",
+      "status_code": 500,
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "id": "pay_http_fail_1", "entity": "payment", "amount": 10000, "currency": "INR", "status": "captured", "captured": true, "fee": 236 },
+      "expected": []
+    },
+    {
+      "name": "razorpay_payment_collection_is_not_a_payment_snapshot",
+      "url": "https://api.razorpay.com/v1/payments",
+      "method": "GET",
+      "request_headers": { "authorization": "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==" },
+      "headers": {},
+      "response": { "entity": "collection", "count": 1, "items": [{ "id": "pay_collection_1", "entity": "payment", "currency": "INR", "status": "captured", "captured": true, "fee": 236 }] },
+      "expected": []
+    },
+    {
+      "name": "pinecone_query_preserves_rounded_read_units_as_usage_not_money",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "namespace": "agent-memory", "topK": 5, "vector": [0.1, 0.2] },
+      "response": { "matches": [], "usage": { "readUnits": 2 } },
+      "expected": [{
+        "service_key": "pinecone_query_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "2",
+        "resource_type": "endpoint", "resource_id": "demo-abc.svc.us-east-1.pinecone.io",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "turbopuffer_query_preserves_both_provider_billing_meters",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent%20memory/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "rank_by": ["vector", "ANN", [0.1, 0.2]], "top_k": 10 },
+      "response": { "rows": [], "billing": { "billable_logical_bytes_queried": 4096, "billable_logical_bytes_returned": 512 } },
+      "expected": [
+        {
+          "service_key": "turbopuffer_query_bytes_queried", "provider_name": "turbopuffer", "provider_service": "vector_database",
+          "component": "storage", "metric": "turbopuffer.logical_bytes_queried", "unit": "Bytes", "quantity": "4096",
+          "resource_type": "other", "resource_id": "agent memory",
+          "dimensions": [
+            { "key": "namespace", "value": { "type": "string", "value": "agent memory" } },
+            { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }
+          ]
+        },
+        {
+          "service_key": "turbopuffer_query_bytes_returned", "provider_name": "turbopuffer", "provider_service": "vector_database",
+          "component": "network", "metric": "turbopuffer.logical_bytes_returned", "unit": "Bytes", "quantity": "512",
+          "resource_type": "other", "resource_id": "agent memory",
+          "dimensions": [
+            { "key": "namespace", "value": { "type": "string", "value": "agent memory" } },
+            { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qdrant_query_preserves_hardware_allocation_counters",
+      "url": "https://cluster-1.us-east.aws.cloud.qdrant.io/collections/agent-memory/points/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "query": [0.1, 0.2], "limit": 5 },
+      "response": { "result": { "points": [] }, "usage": { "hardware": { "cpu": 3, "payload_io_read": 4, "payload_io_write": 5, "payload_index_io_read": 6, "payload_index_io_write": 7, "vector_io_read": 8, "vector_io_write": 9 } } },
+      "expected": [
+        {
+          "service_key": "qdrant_request_count", "provider_name": "qdrant_cloud", "provider_service": "vector_database",
+          "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "agent-memory",
+          "dimensions": [
+            { "key": "collection", "value": { "type": "string", "value": "agent-memory" } },
+            { "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }
+          ]
+        },
+        { "service_key": "qdrant_hardware_cpu", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "compute", "metric": "qdrant.hardware.cpu", "unit": "Units", "quantity": "3", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_io_read", "unit": "Units", "quantity": "4", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_io_write", "unit": "Units", "quantity": "5", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_index_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_index_io_read", "unit": "Units", "quantity": "6", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_index_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_index_io_write", "unit": "Units", "quantity": "7", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_vector_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.vector_io_read", "unit": "Units", "quantity": "8", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_vector_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.vector_io_write", "unit": "Units", "quantity": "9", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] }
+      ]
+    },
+    {
+      "name": "weaviate_cloud_success_is_an_allocation_signal_only",
+      "url": "https://agent-memory.weaviate.network/v1/graphql",
+      "method": "POST", "headers": {},
+      "request": { "query": "{ Get { Memory(nearText: { concepts: [\"contract terms\"] }) { text } } }" },
+      "response": { "data": { "Get": { "Memory": [] } } },
+      "expected": [{
+        "service_key": "weaviate_cloud_request_count", "provider_name": "weaviate_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "endpoint", "resource_id": "graphql",
+        "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "agent-memory.weaviate.network" } }]
+      }]
+    },
+    {
+      "name": "zilliz_success_carries_cluster_collection_and_database_identity",
+      "url": "https://in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com/v2/vectordb/entities/search",
+      "method": "POST", "headers": {}, "request": { "collectionName": "memory", "dbName": "prod", "data": [[0.1, 0.2]] }, "response": { "code": 0, "data": [] },
+      "expected": [{
+        "service_key": "zilliz_cloud_request_count", "provider_name": "milvus_zilliz", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "memory",
+        "dimensions": [
+          { "key": "cluster_host", "value": { "type": "string", "value": "in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com" } },
+          { "key": "collection", "value": { "type": "string", "value": "memory" } },
+          { "key": "database", "value": { "type": "string", "value": "prod" } }
+        ]
+      }]
+    },
+    {
+      "name": "astra_success_carries_database_keyspace_and_collection_identity",
+      "url": "https://123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com/api/json/v1/default_keyspace/memory",
+      "method": "POST", "headers": {}, "request": { "find": { "filter": {} } }, "response": { "data": { "documents": [] } },
+      "expected": [{
+        "service_key": "astra_db_request_count", "provider_name": "astra_db", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "memory",
+        "dimensions": [
+          { "key": "database_host", "value": { "type": "string", "value": "123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com" } },
+          { "key": "keyspace", "value": { "type": "string", "value": "default_keyspace" } },
+          { "key": "collection", "value": { "type": "string", "value": "memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "chroma_cloud_read_success_carries_tenant_database_and_collection_identity",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query",
+      "method": "POST", "headers": {}, "request": { "query_embeddings": [[0.1, 0.2]], "n_results": 3 }, "response": { "ids": [[]] },
+      "expected": [{
+        "service_key": "chroma_cloud_read_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "chroma.read_requests", "unit": "Requests", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
+        "dimensions": [
+          { "key": "tenant", "value": { "type": "string", "value": "tenant-1" } },
+          { "key": "database", "value": { "type": "string", "value": "agent-prod" } },
+          { "key": "collection", "value": { "type": "string", "value": "11111111-1111-1111-1111-111111111111" } }
+        ]
+      }]
+    },
+    {
+      "name": "chroma_cloud_write_success_carries_tenant_database_and_collection_identity",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/add",
+      "method": "POST", "status_code": 201, "headers": {},
+      "request": { "ids": ["memory-1"], "documents": ["contract terms"] }, "response": {},
+      "expected": [{
+        "service_key": "chroma_cloud_write_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "chroma.write_requests", "unit": "Requests", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
+        "dimensions": [
+          { "key": "tenant", "value": { "type": "string", "value": "tenant-1" } },
+          { "key": "database", "value": { "type": "string", "value": "agent-prod" } },
+          { "key": "collection", "value": { "type": "string", "value": "11111111-1111-1111-1111-111111111111" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_query_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/query", "method": "POST", "headers": {},
+      "request": { "namespace": "agent-memory", "topK": 5, "vector": [0.1, 0.2] }, "response": { "matches": [] }, "expected": []
+    },
+    {
+      "name": "pinecone_fetch_preserves_rounded_read_units",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/vectors/fetch?ids=id-1&namespace=agent-memory", "method": "GET", "headers": {},
+      "response": { "namespace": "agent-memory", "vectors": {}, "usage": { "readUnits": 1 } },
+      "expected": [{
+        "service_key": "pinecone_fetch_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "1",
+        "resource_type": "endpoint", "resource_id": "demo-abc.svc.us-east-1.pinecone.io",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_fetch_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/vectors/fetch?ids=id-1", "method": "GET", "headers": {},
+      "response": { "vectors": {} }, "expected": []
+    },
+    {
+      "name": "pinecone_documents_search_preserves_namespace_and_rounded_units",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/namespaces/agent-memory/documents/search", "method": "POST", "headers": {},
+      "request": { "top_k": 5, "score_by": [{ "type": "text", "field": "body", "query": "terms" }] },
+      "response": { "matches": [], "namespace": "agent-memory", "usage": { "read_units": 3 } },
+      "expected": [{
+        "service_key": "pinecone_documents_search_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "3",
+        "resource_type": "other", "resource_id": "agent-memory",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_documents_search_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/namespaces/agent-memory/documents/search", "method": "POST", "headers": {},
+      "request": { "top_k": 5 }, "response": { "matches": [], "namespace": "agent-memory" }, "expected": []
+    },
+    {
+      "name": "turbopuffer_query_missing_billing_fails_open",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory/query", "method": "POST", "headers": {},
+      "request": { "top_k": 10 }, "response": { "rows": [] }, "expected": []
+    },
+    {
+      "name": "turbopuffer_write_preserves_write_and_nested_query_meters",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory", "method": "POST", "headers": {},
+      "request": { "upsert_rows": [{ "id": "1", "text": "hello" }] },
+      "response": { "rows_affected": 1, "billing": { "billable_logical_bytes_written": 1024, "query": { "billable_logical_bytes_queried": 2048, "billable_logical_bytes_returned": 128 } } },
+      "expected": [
+        { "service_key": "turbopuffer_write_bytes_written", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "storage", "metric": "turbopuffer.logical_bytes_written", "unit": "Bytes", "quantity": "1024", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] },
+        { "service_key": "turbopuffer_write_query_bytes_queried", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "storage", "metric": "turbopuffer.logical_bytes_queried", "unit": "Bytes", "quantity": "2048", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] },
+        { "service_key": "turbopuffer_write_query_bytes_returned", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "network", "metric": "turbopuffer.logical_bytes_returned", "unit": "Bytes", "quantity": "128", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] }
+      ]
+    },
+    {
+      "name": "turbopuffer_write_missing_billing_fails_open",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory", "method": "POST", "headers": {},
+      "request": { "upsert_rows": [{ "id": "1" }] }, "response": { "rows_affected": 1 }, "expected": []
+    },
+    {
+      "name": "qdrant_failed_request_is_not_an_allocation_signal",
+      "url": "https://cluster-1.us-east.aws.cloud.qdrant.io/collections/agent-memory/points/query", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "query": [0.1, 0.2] }, "response": { "status": { "error": "failed" } }, "expected": []
+    },
+    {
+      "name": "weaviate_graphql_error_is_not_an_allocation_signal",
+      "url": "https://agent-memory.weaviate.network/v1/graphql", "method": "POST", "headers": {},
+      "request": { "query": "{ Get { MissingCollection { text } } }" },
+      "response": { "data": null, "errors": [{ "message": "collection not found" }] }, "expected": []
+    },
+    {
+      "name": "weaviate_partial_graphql_error_is_not_an_allocation_signal",
+      "url": "https://agent-memory.weaviate.network/v1/graphql", "method": "POST", "headers": {},
+      "request": { "query": "{ Get { AgentMemory { text } } }" },
+      "response": { "data": { "Get": null }, "errors": [{ "message": "partial execution failure" }] }, "expected": []
+    },
+    {
+      "name": "zilliz_application_error_is_not_an_allocation_signal",
+      "url": "https://in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com/v2/vectordb/entities/search", "method": "POST", "headers": {},
+      "request": { "collectionName": "missing" }, "response": { "code": 100, "message": "collection not found" }, "expected": []
+    },
+    {
+      "name": "astra_failed_request_is_not_an_allocation_signal",
+      "url": "https://123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com/api/json/v1/default_keyspace/memory", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "find": { "filter": {} } }, "response": { "errors": [{ "message": "failed" }] }, "expected": []
+    },
+    {
+      "name": "chroma_failed_read_request_is_not_an_allocation_signal",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "query_embeddings": [[0.1, 0.2]] }, "response": { "error": "failed" }, "expected": []
+    },
+    {
+      "name": "chroma_failed_write_request_is_not_an_allocation_signal",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/add", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "ids": ["memory-1"] }, "response": { "error": "failed" }, "expected": []
     }
   ]
 }

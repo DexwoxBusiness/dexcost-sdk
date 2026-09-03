@@ -35,7 +35,7 @@ class TestCatalogLoading:
         entries = catalog.entries
         assert len(entries) > 0
         assert "tavily_search" in entries
-        assert "pinecone_query" in entries
+        assert "pinecone_query" not in entries
 
     def test_entries_have_required_fields(self, catalog: ServiceCatalog) -> None:
         for key, entry in catalog.entries.items():
@@ -100,18 +100,15 @@ class TestDomainMatching:
         assert entry is not None
         assert entry.key == "tavily_search"
 
-    def test_wildcard_domain_match(self, catalog: ServiceCatalog) -> None:
+    def test_unverified_pinecone_rate_is_not_loaded(self, catalog: ServiceCatalog) -> None:
         entry = catalog.lookup(
             "https://my-index-abc123.svc.us-east1-gcp.pinecone.io/query"
         )
-        assert entry is not None
-        assert entry.key == "pinecone_query"
+        assert entry is None
 
-    def test_wildcard_exact_suffix(self, catalog: ServiceCatalog) -> None:
-        """*.pinecone.io should match just 'index.pinecone.io'."""
+    def test_unverified_pinecone_suffix_is_not_loaded(self, catalog: ServiceCatalog) -> None:
         entry = catalog.lookup("https://index.pinecone.io/query")
-        assert entry is not None
-        assert entry.key == "pinecone_query"
+        assert entry is None
 
     def test_endpoint_matching_geocode(self, catalog: ServiceCatalog) -> None:
         entry = catalog.lookup(
@@ -225,27 +222,16 @@ class TestCostExtractionResponseBody:
 class TestCostExtractionResponseHeader:
     """Extraction type: response_header."""
 
-    def test_pinecone_read_units_from_body(self, catalog: ServiceCatalog) -> None:
+    def test_pinecone_read_units_do_not_create_sdk_money(
+        self, catalog: ServiceCatalog
+    ) -> None:
         entry = catalog.lookup(
             "https://my-index.svc.us-east1-gcp.pinecone.io/query"
         )
-        assert entry is not None
-
-        result = catalog.extract_cost(
-            entry,
-            response_headers={},
-            response_body={"usage": {"readUnits": 5}},
-        )
-        assert result is not None
-        # 5 * $0.000016 = $0.000080
-        assert result.amount == Decimal("5") * Decimal("0.000016")
-        assert result.confidence == "computed"
+        assert entry is None
 
     def test_body_missing_returns_none(self, catalog: ServiceCatalog) -> None:
-        """Pinecone uses response_body extraction; None body returns None."""
-        entry = catalog.lookup(
-            "https://my-index.svc.us-east1-gcp.pinecone.io/query"
-        )
+        entry = catalog.lookup("https://app.scrapingbee.com/api/v1")
         assert entry is not None
 
         result = catalog.extract_cost(
@@ -468,7 +454,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
                 "version": "test",
                 "service_count": 1,
                 "disabled_service_count": 1,
-                "safety_policy_version": "2026-07-14.2",
+                "safety_policy_version": "2026-09-03.26",
             },
             "custom_search": {
                 "display_name": "Custom Search",
@@ -483,7 +469,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
         },
         "meta": {
             "catalog_version": "test",
-            "safety_policy_version": "2026-07-14.2",
+            "safety_policy_version": "2026-09-03.26",
             "source": "bundled",
             "service_count": 1,
             "disabled_service_count": 1,

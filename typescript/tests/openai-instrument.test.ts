@@ -87,6 +87,368 @@ describe("OpenAI instrumentation", () => {
     expect(events[0].latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("routes DeepSeek-compatible OpenAI calls with exact cache usage", async () => {
+    class DeepSeekCompletions {
+      _client = { baseURL: "https://api.deepseek.com" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: "deepseek-v4-flash",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            prompt_cache_hit_tokens: 4,
+            prompt_cache_miss_tokens: 16,
+            completion_tokens_details: { reasoning_tokens: 3 },
+          },
+        });
+      }
+    }
+    _setCompletionsClass(DeepSeekCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "deepseek" });
+
+    await runWithTask(task, async () => {
+      await new DeepSeekCompletions().create();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    // DeepSeek's scheduled tariff is evaluated by the server catalog.
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "deepseek", service: "api" });
+    expect(observation?.provider.record_id).toBe("chatcmpl-abc123");
+    expect(observation?.resource).toEqual({ type: "model", id: "deepseek-v4-flash" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "7",
+      reasoning_output_tokens: "3",
+    });
+  });
+
+  it.each([
+    "https://api.moonshot.ai/v1",
+    "https://api.moonshot.cn/v1",
+  ])("routes Moonshot-compatible OpenAI calls with exact cache usage for %s", async (baseURL) => {
+    class MoonshotCompletions {
+      _client = { baseURL };
+
+      async create(): Promise<unknown> {
+        return makeMockResponse({
+          model: "kimi-k3",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            cached_tokens: 4,
+          },
+        });
+      }
+    }
+    _setCompletionsClass(MoonshotCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "moonshot" });
+
+    await runWithTask(task, async () => {
+      await new MoonshotCompletions().create();
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "moonshot", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "10",
+    });
+  });
+
+  it.each([
+    ["https://api.fireworks.ai/inference/v1", undefined, "default"],
+    ["https://api.fireworks.ai/inference/v1", "priority", "priority"],
+    ["https://us.api.fireworks.ai/inference/v1", "standard", "default"],
+  ])("routes Fireworks calls and normalizes the serving tier", async (baseURL, tier, expectedTier) => {
+    const model = "accounts/fireworks/models/kimi-k3";
+    class FireworksCompletions {
+      _client = { baseURL };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({ model });
+      }
+    }
+    _setCompletionsClass(FireworksCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "fireworks" });
+
+    await runWithTask(task, async () => {
+      await new FireworksCompletions().create({
+        model,
+        messages: [],
+        ...(tier === undefined ? {} : { service_tier: tier }),
+      });
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "fireworks_ai", model });
+    expect(events[0].costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "fireworks_ai", service: "api" });
+    expect(observation?.resource).toEqual({ type: "model", id: model });
+    expect(Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? [])).toMatchObject({ service_tier: expectedTier });
+  });
+
+  it.each([
+    [0, "grok-4.6", "grok-4.6", "priority_short"],
+    [1, "grok-4-1-fast-reasoning", "grok-4.3", undefined],
+  ])("captures xAI exact cost and only admits tool-free catalog lanes", async (
+    toolCount,
+    reportedModel,
+    expectedModel,
+    expectedLane,
+  ) => {
+    class XaiCompletions {
+      _client = { baseURL: "https://api.x.ai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: reportedModel,
+          service_tier: "priority",
+          usage: {
+            prompt_tokens: 800,
+            completion_tokens: 150,
+            prompt_tokens_details: { cached_tokens: 50 },
+            cost_in_usd_ticks: 12_345_678,
+            num_server_side_tools_used: toolCount,
+          },
+        });
+      }
+    }
+    _setCompletionsClass(XaiCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "xai" });
+
+    await runWithTask(task, async () => {
+      await new XaiCompletions().create({ model: reportedModel, messages: [] });
+    });
+
+    const events = buffer.getAllEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "xai",
+      model: expectedModel,
+      costConfidence: "exact",
+      pricingSource: "provider_response",
+    });
+    expect(events[0].costUsd.toString()).toBe("0.0012345678");
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toMatchObject({ name: "xai", service: "api" });
+    expect(observation?.cost_evidence).toEqual({
+      amount: "0.0012345678",
+      currency: "USD",
+      source: "provider_reported",
+      confidence: "exact",
+    });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.xai_pricing_lane).toBe(expectedLane);
+  });
+
+  it.each([
+    ["on_demand", "on_demand", [], "public_sync"],
+    ["flex", "flex", [], "public_sync"],
+    ["performance", "performance", [], undefined],
+    ["performance", undefined, [], undefined],
+    ["auto", "auto", [], undefined],
+    ["on_demand", "on_demand", [{ type: "browser_search" }], undefined],
+  ])("routes Groq calls only into the public synchronous pricing lane", async (
+    requestTier,
+    responseTier,
+    executedTools,
+    expectedLane,
+  ) => {
+    class GroqCompletions {
+      _client = { baseURL: "https://api.groq.com/openai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: "openai/gpt-oss-120b",
+          service_tier: responseTier,
+          choices: [{ message: { executed_tools: executedTools } }],
+        });
+      }
+    }
+    _setCompletionsClass(GroqCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "groq" });
+
+    await runWithTask(task, async () => {
+      await new GroqCompletions().create({
+        model: "openai/gpt-oss-120b",
+        service_tier: requestTier,
+        messages: [],
+      });
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event).toMatchObject({ provider: "groq", model: "openai/gpt-oss-120b" });
+    const observation = toAttributionObservationV3(event);
+    expect(observation?.provider).toMatchObject({ name: "groq", service: "api" });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.groq_pricing_lane).toBe(expectedLane);
+  });
+
+  it.each([
+    ["standard", "global_standard"],
+    ["priority", undefined],
+    [undefined, undefined],
+  ])("routes Mistral calls only into the confirmed global Standard lane", async (
+    responseTier,
+    expectedLane,
+  ) => {
+    class MistralCompletions {
+      _client = { baseURL: "https://api.mistral.ai/v1" };
+
+      async create(_body?: unknown): Promise<unknown> {
+        return makeMockResponse({
+          model: "mistral-large-latest",
+          usage: {
+            prompt_tokens: 20,
+            completion_tokens: 10,
+            prompt_tokens_details: { cached_tokens: 4 },
+            completion_tokens_details: { reasoning_tokens: 3 },
+            ...(responseTier === undefined ? {} : { service_tier: responseTier }),
+          },
+        });
+      }
+    }
+    _setCompletionsClass(MistralCompletions);
+    await instrumentOpenai(pricing, buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral" });
+
+    await runWithTask(task, async () => {
+      await new MistralCompletions().create({
+        model: "mistral-large-latest",
+        messages: [],
+      });
+    });
+
+    const [event] = buffer.getAllEvents();
+    expect(event).toMatchObject({
+      provider: "mistral",
+      model: "mistral-large-2512",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(event.costUsd.toString()).toBe("0");
+    const observation = toAttributionObservationV3(event);
+    expect(observation?.provider).toMatchObject({ name: "mistral", service: "api" });
+    expect(observation?.provider.record_id).toBe("chatcmpl-abc123");
+    expect(observation?.resource).toEqual({ type: "model", id: "mistral-large-2512" });
+    expect(Object.fromEntries(observation?.usage.map((line) => [
+      line.metric,
+      line.quantity,
+    ]) ?? [])).toEqual({
+      input_tokens: "16",
+      cache_read_input_tokens: "4",
+      output_tokens: "7",
+      reasoning_output_tokens: "3",
+    });
+    const dimensions = Object.fromEntries(observation?.usage[0]?.dimensions.map((item) => [
+      item.key,
+      item.value.value,
+    ]) ?? []);
+    expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
+  });
+
+  it.each(["https://api.together.ai/v1", "https://api.together.xyz/v1"])(
+    "routes Together OpenAI-compatible calls with disjoint token usage: %s",
+    async (baseURL) => {
+      const model = "deepseek-ai/DeepSeek-V4-Pro-0813";
+      class TogetherCompletions {
+        _client = { baseURL };
+
+        async create(_body?: unknown): Promise<unknown> {
+          return makeMockResponse({
+            model,
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 10,
+              cached_tokens: 4,
+              reasoning_tokens: 3,
+            },
+          });
+        }
+      }
+      _setCompletionsClass(TogetherCompletions);
+      await instrumentOpenai(pricing, buffer);
+      const task = createTask({ taskId: randomUUID(), taskType: "together" });
+
+      await runWithTask(task, async () => {
+        await new TogetherCompletions().create({ model, messages: [] });
+      });
+
+      const [event] = buffer.getAllEvents();
+      expect(event).toMatchObject({
+        provider: "together",
+        model,
+        inputTokens: 20,
+        outputTokens: 10,
+        cachedTokens: 4,
+      });
+      expect(event.costUsd.toString()).toBe("0");
+      const observation = toAttributionObservationV3(event);
+      expect(observation?.provider).toEqual({
+        name: "together",
+        service: "api",
+        record_id: "chatcmpl-abc123",
+      });
+      expect(observation?.resource).toEqual({ type: "model", id: model });
+      expect(Object.fromEntries(observation?.usage.map((line) => [
+        line.metric,
+        line.quantity,
+      ]) ?? [])).toEqual({
+        input_tokens: "16",
+        cache_read_input_tokens: "4",
+        output_tokens: "7",
+        reasoning_output_tokens: "3",
+      });
+    },
+  );
+
   it("records into an auto-task when no task and no context set", async () => {
     await instrumentOpenai(pricing, buffer);
     const fake = new FakeCompletions();

@@ -83,6 +83,21 @@ def test_lambda_has_both_architectures():
         Decimal(default[arch]["gb_second_usd"])
 
 
+def test_lambda_regions_match_verified_price_list_scope():
+    data, _ = _load()
+    regions = data["aws"]["lambda"]["regions"]
+    assert set(regions) == {
+        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+        "eu-west-1", "eu-west-2", "eu-central-1",
+        "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-south-1",
+        "sa-east-1", "ca-central-1",
+    }
+    for rates in regions.values():
+        assert Decimal(rates["x86_64"]["gb_second_usd"]) == Decimal("0.0000166667")
+        assert Decimal(rates["arm64"]["gb_second_usd"]) == Decimal("0.0000133334")
+        assert Decimal(rates["x86_64"]["request_usd"]) == Decimal("0.0000002")
+
+
 def test_fargate_has_both_architectures():
     data, _ = _load()
     default = data["aws"]["fargate"]["default"]
@@ -147,15 +162,16 @@ def test_every_rate_is_decimal_parseable():
         if isinstance(node, dict):
             for k, v in node.items():
                 _walk(v, f"{path}.{k}")
-        elif isinstance(node, str):
+        elif isinstance(node, str) and (
+            path.endswith("_usd") or path.endswith("vcpu_count")
+        ):
             # Heuristic: paths ending in _usd or vcpu_count must parse as Decimal.
-            if path.endswith("_usd") or path.endswith("vcpu_count"):
-                try:
-                    Decimal(node)
-                except Exception as e:  # noqa: BLE001
-                    raise AssertionError(
-                        f"{path} not Decimal-parseable: {node!r}"
-                    ) from e
+            try:
+                Decimal(node)
+            except Exception as e:
+                raise AssertionError(
+                    f"{path} not Decimal-parseable: {node!r}"
+                ) from e
 
     _walk(data, "")
 

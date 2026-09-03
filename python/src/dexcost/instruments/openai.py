@@ -103,11 +103,204 @@ def _provider_for_instance(instance: Any) -> str:
                 return "openrouter"
             if hostname == "api.perplexity.ai" or hostname.endswith(".perplexity.ai"):
                 return "perplexity"
+            if hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com"):
+                return "deepseek"
+            if hostname in {"api.moonshot.ai", "api.moonshot.cn"}:
+                return "moonshot"
+            if hostname == "api.fireworks.ai" or hostname.endswith(".api.fireworks.ai"):
+                return "fireworks_ai"
+            if hostname == "api.x.ai" or hostname.endswith(".api.x.ai"):
+                return "xai"
+            if hostname == "api.groq.com" or hostname.endswith(".api.groq.com"):
+                return "groq"
+            if hostname == "api.mistral.ai":
+                return "mistral"
+            if hostname in {"api.together.ai", "api.together.xyz"}:
+                return "together"
             if hostname.endswith(".openai.azure.com") or hostname.endswith(
                 ".services.ai.azure.com"
             ):
                 return "azure_openai"
     return "openai"
+
+
+def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | None:
+    """Normalize Fireworks' only billable serving-tier selector.
+
+    Fireworks documents ``priority`` as the sole special value and treats every
+    other value (including omission) as standard/default serving.  Keeping that
+    normalization at capture time gives the server an exact, low-cardinality
+    billing dimension without retaining the request body.
+    """
+    if provider != "fireworks_ai":
+        return None
+    value = kwargs.get("service_tier")
+    if value is None:
+        extra_body = kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            value = extra_body.get("service_tier")
+    return "priority" if value == "priority" else "default"
+
+
+def _request_service_tier(provider: str, kwargs: Mapping[str, Any]) -> object:
+    """Retain only the request tier needed to select a verified pricing lane."""
+    if provider == "fireworks_ai":
+        return _fireworks_service_tier(provider, kwargs)
+    if provider != "groq":
+        return None
+    value = kwargs.get("service_tier")
+    extra_body = kwargs.get("extra_body")
+    if value is None and isinstance(extra_body, Mapping):
+        value = extra_body.get("service_tier")
+    return value
+
+
+_XAI_USD_TICKS_PER_USD = Decimal("10000000000")
+_MISTRAL_MODEL_ALIASES = {
+    "mistral-large-latest": "mistral-large-2512",
+    "mistral-medium-latest": "mistral-medium-3-5",
+    "mistral-small-latest": "mistral-small-2603",
+    "ministral-14b-latest": "ministral-14b-2512",
+    "ministral-8b-latest": "ministral-8b-2512",
+    "ministral-3b-latest": "ministral-3b-2512",
+    "codestral-latest": "codestral-2508",
+}
+_XAI_MODEL_ALIASES = {
+    "grok-4.3-latest": "grok-4.3",
+    "grok-code-fast-1": "grok-build-0.1",
+    "grok-code-fast": "grok-build-0.1",
+    "grok-code-fast-1-0825": "grok-build-0.1",
+    "grok-4.5-latest": "grok-4.5",
+    "grok-build-latest": "grok-4.5",
+    "grok-4.20-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning-gv2": "grok-4.20-0309-reasoning",
+    "grok-4.20-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-latest-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-0309-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-gv2": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-multi-agent": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-0304": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-0309": "grok-4.20-multi-agent-0309",
+    "grok-4-1-fast-reasoning": "grok-4.3",
+    "grok-4-1-fast-non-reasoning": "grok-4.3",
+    "grok-4-fast-reasoning": "grok-4.3",
+    "grok-4-fast-non-reasoning": "grok-4.3",
+    "grok-4-0709": "grok-4.3",
+    "grok-3": "grok-4.3",
+}
+
+
+def _xai_provider_cost(usage: Any, provider: str) -> Decimal | None:
+    """Return xAI's exact per-request charge without losing tick precision."""
+    if provider != "xai":
+        return None
+    ticks = _decimal_quantity(_value(usage, "cost_in_usd_ticks"))
+    if ticks is None or ticks != ticks.to_integral_value():
+        return None
+    return ticks / _XAI_USD_TICKS_PER_USD
+
+
+def _xai_pricing_lane(
+    usage: Any,
+    total_input_tokens: int,
+    service_tier: object,
+    provider: str,
+) -> str | None:
+    """Classify only the xAI surface the static server catalog can price exactly."""
+    if provider != "xai" or usage is None:
+        return None
+    raw_tool_count = _value(usage, "num_server_side_tools_used")
+    if raw_tool_count is not None:
+        tool_count = _count(raw_tool_count)
+        if tool_count is None or tool_count > 0:
+            return None
+    if service_tier is None or service_tier == "default":
+        tier = "default"
+    elif service_tier == "priority":
+        tier = "priority"
+    else:
+        return None
+    context = "long" if total_input_tokens >= 200_000 else "short"
+    return f"{tier}_{context}"
+
+
+def _groq_tool_execution_blocks_static_pricing(response: Any) -> bool:
+    """Return true when Groq may have charged for a provider-executed tool.
+
+    Groq exposes built-in execution on the response rather than in token usage.
+    Static token pricing must fail open when execution is present or malformed;
+    ordinary client-side function calls are intentionally not included here.
+    """
+    if response is None:
+        return False
+    if bool(_value(response, "_dexcost_groq_tool_execution_seen")):
+        return True
+    candidates = [_value(response, "executed_tools")]
+    choices = _value(response, "choices")
+    if isinstance(choices, Sequence) and not isinstance(choices, (str, bytes, bytearray)):
+        for choice in choices:
+            for container_name in ("message", "delta"):
+                container = _value(choice, container_name)
+                if container is not None:
+                    candidates.append(_value(container, "executed_tools"))
+    for executed in candidates:
+        if executed is None:
+            continue
+        if not isinstance(executed, Sequence) or isinstance(executed, (str, bytes, bytearray)):
+            return True
+        if len(executed) > 0:
+            return True
+    return False
+
+
+def _groq_pricing_lane(
+    response: Any,
+    service_tier: object,
+    provider: str,
+    *,
+    tool_execution_seen: bool = False,
+) -> str | None:
+    """Classify only publicly priced synchronous Groq token inference."""
+    if provider != "groq" or response is None:
+        return None
+    if tool_execution_seen or _groq_tool_execution_blocks_static_pricing(response):
+        return None
+    response_tier = _value(response, "service_tier")
+    raw_tier = response_tier if response_tier is not None else service_tier
+    if raw_tier in (None, "default", "on_demand", "flex"):
+        return "public_sync"
+    return None
+
+
+def _mistral_pricing_lane(
+    usage: Any,
+    provider: str,
+    surface: str,
+) -> str | None:
+    """Admit only global Standard Tier responses from Mistral chat completions."""
+    if provider != "mistral" or surface != "chat_completions" or usage is None:
+        return None
+    return "global_standard" if _value(usage, "service_tier") == "standard" else None
 
 
 def _routed_wrapper(wrapper: Any) -> Any:
@@ -743,6 +936,7 @@ def _sync_create_common(
                 capability,
                 idempotency_key,
                 task_type,
+                _request_service_tier(_current_provider(), kwargs),
             )
 
         try:
@@ -771,6 +965,7 @@ def _sync_create_common(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=task_type,
+                service_tier=_request_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -922,6 +1117,7 @@ async def _async_non_stream_handler(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=operation_name,
+                service_tier=_request_service_tier(_current_provider(), kwargs),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -983,6 +1179,7 @@ async def _async_stream_handler(
             capability,
             idempotency_key,
             operation_name,
+            _request_service_tier(_current_provider(), kwargs),
         )
     finally:
         if auto_token is not None:
@@ -1008,6 +1205,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
+        service_tier: object = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1024,6 +1222,8 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._capability = capability
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
+        self._service_tier = service_tier
+        self._groq_tool_execution_seen = False
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -1088,6 +1288,12 @@ class _SyncStreamWrapper(Iterator[Any]):
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
+        if self._provider in {"xai", "groq"}:
+            response_tier = _value(chunk, "service_tier")
+            if response_tier is not None:
+                self._service_tier = response_tier
+        if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
+            self._groq_tool_execution_seen = True
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1108,6 +1314,8 @@ class _SyncStreamWrapper(Iterator[Any]):
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1132,6 +1340,8 @@ class _SyncStreamWrapper(Iterator[Any]):
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1176,6 +1386,7 @@ class _AsyncStreamWrapper:
         capability: Any = None,
         idempotency_key: IdempotencyKey | None = None,
         operation_name: str = "openai.chat",
+        service_tier: object = None,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -1192,6 +1403,8 @@ class _AsyncStreamWrapper:
         self._capability = capability
         self._idempotency_key = idempotency_key
         self._operation_name = operation_name
+        self._service_tier = service_tier
+        self._groq_tool_execution_seen = False
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -1256,6 +1469,12 @@ class _AsyncStreamWrapper:
             self._record_id = record_id[:256]
         if hasattr(chunk, "usage") and chunk.usage is not None:
             self._usage = chunk.usage
+        if self._provider in {"xai", "groq"}:
+            response_tier = _value(chunk, "service_tier")
+            if response_tier is not None:
+                self._service_tier = response_tier
+        if self._provider == "groq" and _groq_tool_execution_blocks_static_pricing(chunk):
+            self._groq_tool_execution_seen = True
 
     def _finalize(self) -> None:
         """Record the event after the stream is fully consumed."""
@@ -1276,6 +1495,8 @@ class _AsyncStreamWrapper:
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event)
         except Exception:
@@ -1300,6 +1521,8 @@ class _AsyncStreamWrapper:
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
                 operation_name=self._operation_name,
+                service_tier=self._service_tier,
+                groq_tool_execution_seen=self._groq_tool_execution_seen,
             )
             _finalize_stream_auto_task(self._auto_task_obj, event, succeeded=False)
         except Exception:
@@ -1402,10 +1625,13 @@ def _record_response_tool_events(
     task: Any,
     latency_ms: int,
     *,
+    provider: str,
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
 ) -> None:
     """Persist provider-observed built-in tool calls without tool payloads."""
+    if provider != "openai":
+        return
     tracker = _active_tracker
     if tracker is None:
         return
@@ -1477,7 +1703,7 @@ def _record_response_tool_events(
             record_provider_operation(
                 tracker=tracker,
                 task=task,
-                provider=_current_provider(),
+                provider=provider,
                 service=service,
                 operation=operation,
                 component="external",
@@ -1502,6 +1728,10 @@ def _record_response_tool_events(
 
 
 def _provider_model(model: str, provider: str) -> str:
+    if provider == "xai":
+        return _XAI_MODEL_ALIASES.get(model, model)
+    if provider == "mistral":
+        return _MISTRAL_MODEL_ALIASES.get(model, model)
     prefixes = {
         "openrouter": "openrouter/",
         "perplexity": "perplexity/",
@@ -1590,6 +1820,7 @@ def _record_from_response(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: object = None,
 ) -> Event | None:
     """Extract fields from a Chat Completion or Responses response."""
     tracker = _active_tracker
@@ -1607,6 +1838,8 @@ def _record_from_response(
     provider_cost, upstream_cost, is_byok = _openrouter_costs(usage, provider)
     if provider_cost is None:
         provider_cost = _perplexity_cost(usage, provider)
+    if provider_cost is None:
+        provider_cost = _xai_provider_cost(usage, provider)
 
     if usage is not None:
         try:
@@ -1627,6 +1860,23 @@ def _record_from_response(
         input_tokens = output_tokens = cached_tokens = cache_write_tokens = reasoning_tokens = 0
         usage_error = None
         has_usage = False
+
+    xai_pricing_lane = _xai_pricing_lane(
+        usage,
+        input_tokens,
+        _value(response, "service_tier"),
+        provider,
+    )
+    groq_pricing_lane = _groq_pricing_lane(
+        response,
+        service_tier,
+        provider,
+    )
+    mistral_pricing_lane = _mistral_pricing_lane(
+        usage,
+        provider,
+        "chat_completions" if operation_name == "openai.chat" else operation_name,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1650,11 +1900,16 @@ def _record_from_response(
         capability=capability,
         idempotency_key=idempotency_key,
         operation_name=operation_name,
+        service_tier=service_tier,
+        xai_pricing_lane=xai_pricing_lane,
+        groq_pricing_lane=groq_pricing_lane,
+        mistral_pricing_lane=mistral_pricing_lane,
     )
     _record_response_tool_events(
         response,
         resolved_task,
         latency_ms,
+        provider=provider,
         capability=capability,
         idempotency_key=idempotency_key,
     )
@@ -1674,6 +1929,8 @@ def _record_from_stream_usage(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: object = None,
+    groq_tool_execution_seen: bool = False,
 ) -> Event | None:
     """Record an event from accumulated stream data."""
     tracker = _active_tracker
@@ -1689,6 +1946,8 @@ def _record_from_stream_usage(
     provider_cost, upstream_cost, is_byok = _openrouter_costs(usage, resolved_provider)
     if provider_cost is None:
         provider_cost = _perplexity_cost(usage, resolved_provider)
+    if provider_cost is None:
+        provider_cost = _xai_provider_cost(usage, resolved_provider)
 
     if usage is not None:
         try:
@@ -1709,6 +1968,24 @@ def _record_from_stream_usage(
         input_tokens = output_tokens = cached_tokens = cache_write_tokens = reasoning_tokens = 0
         usage_error = None
         has_usage = False
+
+    xai_pricing_lane = _xai_pricing_lane(
+        usage,
+        input_tokens,
+        service_tier,
+        resolved_provider,
+    )
+    groq_pricing_lane = _groq_pricing_lane(
+        response if response is not None else {"usage": usage},
+        service_tier,
+        resolved_provider,
+        tool_execution_seen=groq_tool_execution_seen,
+    )
+    mistral_pricing_lane = _mistral_pricing_lane(
+        usage,
+        resolved_provider,
+        "chat_completions" if operation_name == "openai.chat" else operation_name,
+    )
 
     event = _insert_llm_event(
         tracker=tracker,
@@ -1733,12 +2010,17 @@ def _record_from_stream_usage(
         capability=capability,
         idempotency_key=idempotency_key,
         operation_name=operation_name,
+        service_tier=service_tier,
+        xai_pricing_lane=xai_pricing_lane,
+        groq_pricing_lane=groq_pricing_lane,
+        mistral_pricing_lane=mistral_pricing_lane,
     )
     if response is not None:
         _record_response_tool_events(
             response,
             resolved_task,
             latency_ms,
+            provider=resolved_provider,
             capability=capability,
             idempotency_key=idempotency_key,
         )
@@ -1783,6 +2065,10 @@ def _insert_llm_event(
     capability: Any = None,
     idempotency_key: IdempotencyKey | None = None,
     operation_name: str = "openai.chat",
+    service_tier: object = None,
+    xai_pricing_lane: str | None = None,
+    groq_pricing_lane: str | None = None,
+    mistral_pricing_lane: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -1857,6 +2143,34 @@ def _insert_llm_event(
             }
         ]
     dimensions = list(details.get("attribution_dimensions", []))
+    if provider == "fireworks_ai" and service_tier in {"default", "priority"}:
+        dimensions.append(
+            {
+                "key": "service_tier",
+                "value": {"type": "string", "value": service_tier},
+            }
+        )
+    if provider == "xai" and xai_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "xai_pricing_lane",
+                "value": {"type": "string", "value": xai_pricing_lane},
+            }
+        )
+    if provider == "groq" and groq_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "groq_pricing_lane",
+                "value": {"type": "string", "value": groq_pricing_lane},
+            }
+        )
+    if provider == "mistral" and mistral_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "mistral_pricing_lane",
+                "value": {"type": "string", "value": mistral_pricing_lane},
+            }
+        )
     if provider == "azure_openai" and isinstance(requested_model, str) and requested_model:
         dimensions.append(
             {
@@ -2345,7 +2659,7 @@ def _observe_realtime_event(connection: object, event: object) -> None:
     event_record = session.finish(measurement, status)
     tool_counts = _response_tool_counts(response)
     if tool_counts:
-        _record_response_tool_events(response, session.task, 0)
+        _record_response_tool_events(response, session.task, 0, provider="openai")
         if session.auto_task and event_record is not None:
             _active_tracker._aggregate_costs(session.task)
             _active_tracker._storage.insert_task(session.task)

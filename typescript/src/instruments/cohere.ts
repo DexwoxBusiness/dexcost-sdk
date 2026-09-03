@@ -231,6 +231,7 @@ function cohereBilledUnits(response: any): any {
 function meteredMeasurement(kind: "embed" | "rerank", response: any, model: string): any {
   const billed = cohereBilledUnits(response);
   const inputTokens = nonNegativeNumber(billed?.inputTokens ?? billed?.input_tokens);
+  const imageTokens = nonNegativeNumber(billed?.imageTokens ?? billed?.image_tokens);
   const outputTokens = nonNegativeNumber(billed?.outputTokens ?? billed?.output_tokens);
   const searchUnits = nonNegativeNumber(billed?.searchUnits ?? billed?.search_units);
   const classifications = nonNegativeNumber(billed?.classifications);
@@ -238,7 +239,10 @@ function meteredMeasurement(kind: "embed" | "rerank", response: any, model: stri
   const pricingUsage: Record<string, number> = {};
   if (inputTokens !== undefined && inputTokens > 0) {
     usageLines.push({ metric: "input_tokens", quantity: inputTokens, unit: "Tokens" });
-    pricingUsage.input_tokens = inputTokens;
+    if (kind !== "embed") pricingUsage.input_tokens = inputTokens;
+  }
+  if (kind === "embed" && imageTokens !== undefined && imageTokens > 0) {
+    usageLines.push({ metric: "input_image_tokens", quantity: imageTokens, unit: "Tokens" });
   }
   if (outputTokens !== undefined && outputTokens > 0) {
     usageLines.push({ metric: "output_tokens", quantity: outputTokens, unit: "Tokens" });
@@ -264,6 +268,7 @@ function meteredMeasurement(kind: "embed" | "rerank", response: any, model: stri
     responseModel: model,
     inputTokens,
     outputTokens,
+    providerService: kind === "embed" ? "embed" : undefined,
   };
 }
 
@@ -275,8 +280,8 @@ function patchMeteredMethods(prototype: any): void {
     prototype[name] = async function (this: any, body: any, options?: any): Promise<any> {
       if (currentProviderCaptureOwner() !== undefined) return original.call(this, body, options);
       const requested = typeof body?.model === "string" && body.model.length > 0 ? body.model : "unknown";
-      const model = name === "embed" && !requested.startsWith("cohere/")
-        ? `cohere/${requested}`
+      const model = name === "embed" && requested.startsWith("cohere/")
+        ? requested.slice("cohere/".length)
         : requested;
       const service = name === "embed" ? "embeddings" : "rerank";
       const session = new ProviderOperationSession(_pricing!, _buffer!, {
@@ -284,7 +289,7 @@ function patchMeteredMethods(prototype: any): void {
         provider: "cohere",
         service,
         operation: `cohere.${name}`,
-        component: "llm",
+        component: name === "embed" ? "external" : "llm",
         model,
         eventType: "external_cost",
       });

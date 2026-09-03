@@ -72,6 +72,520 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(wire?.cost_evidence).toBeUndefined();
   });
 
+  it("records Leonardo's provider-reported dollar charge without catalog math", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "leo-sync-http-1",
+      blockedCount: 0,
+      cost: { amount: "0.1047", unit: "DOLLARS" },
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "leonardo-generation" });
+    await runWithTask(task, async () => {
+      await fetch("https://cloud.leonardo.ai/api/rest/v2/generationssync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "remove-bg", parameters: {} }),
+      });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0.1047");
+    expect(event.costConfidence).toBe("exact");
+    expect(event.pricingSource).toBe("provider_response");
+    expect(event.details["attribution_observer_service"])
+      .toBe("leonardo_generation_sync_cost");
+    expect(JSON.stringify(event.details)).not.toContain("results");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "leonardo_ai",
+        service: "production_api",
+        record_id: "leo-sync-http-1",
+      },
+      resource: { type: "model", id: "remove-bg" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "0.1047",
+        currency: "USD",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
+  it("records terminal Mux Robots units without retaining response content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        id: "rjob-summary-1",
+        workflow: "summarize",
+        status: "completed",
+        units_consumed: 650,
+        outputs: { title: "private output" },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "mux-robots" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.mux.com/robots/v0/jobs/summarize/rjob-summary-1");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("mux_robots_terminal_units");
+    expect(JSON.stringify(event.details)).not.toContain("private output");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "mux",
+        service: "robots",
+        record_id: "rjob-summary-1",
+      },
+      resource: { type: "sku", id: "summarize" },
+      usage: [{ metric: "credit_count", quantity: "650", unit: "Credits" }],
+    });
+    expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+  });
+
+  it("records final Runway credits once without retaining response content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({
+        id: "runway-task-1",
+        status: "SUCCEEDED",
+        createdAt: "2026-09-03T01:15:00Z",
+        cost: { credits: 37.5 },
+        output: ["private-output-url"],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "runway-generation" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.dev.runwayml.com/v1/tasks/runway-task-1");
+      await fetch("https://api.dev.runwayml.com/v1/tasks/runway-task-1");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("runway_terminal_task_credits");
+    expect(JSON.stringify(event.details)).not.toContain("private-output-url");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "runway",
+        service: "generation",
+        record_id: "runway-task-1",
+      },
+      resource: { type: "sku", id: "generation" },
+      usage: [{ metric: "credit_count", quantity: "37.5", unit: "Credits" }],
+    });
+    expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+  });
+
+  it("records a summed PayPal order-capture fee once without retaining response content", async () => {
+    const responseBody = {
+      id: "PAYPAL-ORDER-HTTP-1",
+      status: "COMPLETED",
+      purchase_units: [
+        {
+          private_reference: "do-not-retain",
+          payments: {
+            captures: [{
+              id: "CAPTURE-HTTP-1",
+              status: "COMPLETED",
+              seller_receivable_breakdown: {
+                paypal_fee: { currency_code: "USD", value: "3.98" },
+              },
+            }],
+          },
+        },
+        {
+          payments: {
+            captures: [{
+              id: "CAPTURE-HTTP-2",
+              status: "COMPLETED",
+              seller_receivable_breakdown: {
+                paypal_fee: { currency_code: "USD", value: "1.25" },
+              },
+            }],
+          },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(responseBody),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "paypal-capture" });
+    await runWithTask(task, async () => {
+      const url = "https://api-m.paypal.com/v2/checkout/orders/PAYPAL-ORDER-HTTP-1/capture";
+      await fetch(url, { method: "POST" });
+      await fetch(url, { method: "POST" });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("5.23");
+    expect(event.costConfidence).toBe("exact");
+    expect(event.pricingSource).toBe("provider_response");
+    expect(event.details["attribution_observer_service"])
+      .toBe("paypal_order_capture_fee");
+    expect(JSON.stringify(event.details)).not.toContain("do-not-retain");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "paypal",
+        service: "payment_processing",
+        record_id: "PAYPAL-ORDER-HTTP-1",
+      },
+      resource: { type: "sku", id: "payment_capture" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "5.23",
+        currency: "USD",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
+  it("records a native Razorpay live capture fee once without retaining credentials", async () => {
+    const responseBody = {
+      id: "pay_http_live_1",
+      entity: "payment",
+      amount: 10000,
+      currency: "INR",
+      status: "captured",
+      captured: true,
+      fee: 236,
+      tax: 36,
+      notes: { private: "do-not-retain" },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(responseBody),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ))));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "razorpay-capture" });
+    const headers = {
+      authorization: "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA==",
+    };
+    await runWithTask(task, async () => {
+      await fetch("https://api.razorpay.com/v1/payments/pay_http_live_1/capture", {
+        method: "POST",
+        headers,
+      });
+      await fetch("https://api.razorpay.com/v1/payments/pay_http_live_1", { headers });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).toBe("unknown");
+    expect(event.details["attribution_observer_service"])
+      .toBe("razorpay_captured_payment_fee");
+    expect(event.details["provider_reported_cost_amount"]).toBe("2.36");
+    expect(event.details["provider_reported_cost_currency"]).toBe("INR");
+    const retained = JSON.stringify(event.details);
+    expect(retained).not.toContain("do-not-retain");
+    expect(retained).not.toContain("fixture_secret");
+    expect(retained).not.toContain("rzp_live_");
+    expect(toAttributionEventV2(event)).toMatchObject({
+      provider: {
+        name: "razorpay",
+        service: "payment_processing",
+        record_id: "pay_http_live_1",
+      },
+      resource: { type: "sku", id: "payment_capture" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      cost_evidence: {
+        amount: "2.36",
+        currency: "INR",
+        source: "provider_reported",
+        confidence: "exact",
+      },
+    });
+  });
+
+  it("meters translation query text and redacts it before storage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "google-translate" });
+    const privateText = "private customer text";
+    await runWithTask(task, async () => {
+      await fetch(
+        "https://translation.googleapis.com/language/translate/v2" +
+          `?q=${encodeURIComponent(privateText)}&q=two&model=nmt`,
+      );
+    });
+
+    const event = getRecordedEvents()[0];
+    expect(event.details["attribution_usage_quantity"])
+      .toBe(String(privateText.length + "two".length));
+    expect(String(event.details["url"]).match(/q=REDACTED/g)).toHaveLength(2);
+    expect(event.details["url"]).toContain("model=nmt");
+    expect(JSON.stringify(event.details)).not.toContain(privateText);
+    expect(JSON.stringify(event.details)).not.toContain("private%20customer%20text");
+  });
+
+  it("lets the Brave observer supersede the legacy domain catalog", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      type: "search",
+      web: { results: [] },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.search.brave.com/res/v1/web/search?q=dexcost");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.details["attribution_observer_service"]).toBe("brave_search");
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "brave", service: "web_search" },
+      resource: { type: "sku", id: "search" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("observes GitHub REST requests without synthesizing money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      total_count: 1,
+      items: [{ id: 1 }],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-api" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.github.com/search/issues?q=repo:octocat/Hello-World");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingSource).not.toBe("service_catalog");
+    expect(event.details["attribution_observer_service"]).toBe("github_api");
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "github", service: "rest_api" },
+      resource: { type: "sku", id: "rest_api_request" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("does not restore the legacy GitHub zero price after a failed request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      message: "Forbidden",
+    }), { status: 403, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-api" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.github.com/repos/octocat/private");
+      await response.text();
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => event.details["attribution_observer_service"] !== "github_api" &&
+        event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
+  it("does not misclassify GitHub GraphQL points as REST request usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { viewer: { login: "octocat" } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "github-graphql" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        body: JSON.stringify({ query: "query { viewer { login } }" }),
+      });
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => event.details["attribution_observer_service"] !== "github_api" &&
+        event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
+  it("observes Discord and GitLab REST usage without synthesizing money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "developer-apis" });
+    await runWithTask(task, async () => {
+      await fetch("https://discord.com/api/v10/channels/123/messages");
+      await fetch("https://gitlab.com/api/v4/projects?membership=true");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.details["attribution_observer_service"]).sort()).toEqual([
+      "discord_api",
+      "gitlab_api",
+    ]);
+    for (const event of events) {
+      expect(event.costUsd.toString()).toBe("0");
+      expect(event.costConfidence).toBe("unknown");
+      expect(event.pricingSource).not.toBe("service_catalog");
+      expect(toAttributionEventV2(event)).toMatchObject({
+        resource: { type: "sku", id: "rest_api_request" },
+        usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      });
+      expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+    }
+  });
+
+  it("does not restore Discord or GitLab legacy zero prices after failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ message: "Forbidden" }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "developer-apis" });
+    await runWithTask(task, async () => {
+      await fetch("https://discord.com/api/v10/channels/123/messages");
+      await fetch("https://gitlab.com/api/v4/projects/private");
+    });
+
+    expect(getRecordedEvents().every(
+      (event) => !["discord_api", "gitlab_api"].includes(
+        String(event.details["attribution_observer_service"]),
+      ) && event.pricingSource !== "service_catalog",
+    )).toBe(true);
+  });
+
+  it("observes authenticated Jina Reader tokens without retaining credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
+      status: 200,
+      headers: { "x-usage-tokens": "257" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "reader" });
+    await runWithTask(task, async () => {
+      await fetch("https://r.jina.ai/https://example.com/article", {
+        headers: { Authorization: "Bearer must-not-be-recorded" },
+      });
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].details["attribution_observer_service"]).toBe("jina_reader");
+    expect(toAttributionEventV2(events[0])).toMatchObject({
+      provider: { name: "jina", service: "reader" },
+      resource: { type: "sku", id: "standard_token" },
+      usage: [{ metric: "output_tokens", quantity: "257", unit: "Tokens" }],
+    });
+    expect(JSON.stringify(events)).not.toContain("must-not-be-recorded");
+  });
+
+  it("observes both Rekognition DetectLabels SKUs with region and no credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      Labels: [],
+      ImageProperties: {},
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amzn-requestid": "rek-http-1",
+      },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "image-analysis" });
+    await runWithTask(task, async () => {
+      await fetch("https://rekognition.us-east-1.amazonaws.com/", {
+        method: "POST",
+        headers: {
+          "X-Amz-Target": "RekognitionService.DetectLabels",
+          Authorization: "AWS4-HMAC-SHA256 must-not-be-recorded",
+        },
+        body: JSON.stringify({ Features: ["GENERAL_LABELS", "IMAGE_PROPERTIES"] }),
+      });
+    });
+
+    const events = getRecordedEvents().filter((event) =>
+      String(event.details["attribution_observer_service"]).startsWith("aws_rekognition_")
+    );
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.details["attribution_resource_id"]))).toEqual(
+      new Set(["group_2", "image_properties"]),
+    );
+    for (const event of events) {
+      expect(toAttributionObservationV3(event)?.provider).toEqual({
+        name: "aws",
+        service: "rekognition_image",
+        region: "us-east-1",
+        record_id: "rek-http-1",
+      });
+    }
+    expect(JSON.stringify(events)).not.toContain("must-not-be-recorded");
+  });
+
+  it("does not price anonymous Jina Reader usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
+      status: 200,
+      headers: { "x-usage-tokens": "29" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "reader" });
+    await runWithTask(task, async () => {
+      await fetch("https://r.jina.ai/http://example.com");
+    });
+
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "jina_reader" ||
+        event.pricingSource === "service_catalog",
+    )).toBe(false);
+  });
+
+  it("does not apply the legacy Brave price to a failed search request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: "unavailable",
+    }), { status: 503, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+    await runWithTask(task, async () => {
+      const response = await fetch(
+        "https://api.search.brave.com/res/v1/web/search?q=dexcost",
+      );
+      await response.text();
+    });
+
+    const events = getRecordedEvents();
+    expect(events.every(
+      (event) => event.details["attribution_observer_service"] === undefined,
+    )).toBe(true);
+    expect(events.every((event) => event.pricingSource !== "service_catalog")).toBe(true);
+  });
+
   it("does not observe usage from failed provider responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       model: "text-embedding-3-small",
@@ -111,7 +625,65 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
-  it("does not block on unfinished Request streams for observer metadata", async () => {
+  it("emits distinct Cohere text and image token events for mixed usage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "cohere-mixed-1",
+      meta: { billed_units: { input_tokens: 29, image_tokens: 4096, images: 1 } },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "embedding" });
+    await runWithTask(task, async () => {
+      await fetch("https://api.cohere.com/v2/embed", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "embed-v4.0", inputs: [] }),
+      });
+    });
+
+    const events = getRecordedEvents().sort((left, right) =>
+      String(left.details["attribution_observer_service"])
+        .localeCompare(String(right.details["attribution_observer_service"]))
+    );
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.eventId)).size).toBe(2);
+    expect(events.map((event) => toAttributionEventV2(event)?.usage[0])).toEqual([
+      { metric: "input_tokens", quantity: "29", unit: "Tokens" },
+      { metric: "input_image_tokens", quantity: "4096", unit: "Tokens" },
+    ]);
+  });
+
+  it("emits Amazon Translate standard-text characters from fetch request JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      TranslatedText: "Hola mundo",
+      SourceLanguageCode: "en",
+      TargetLanguageCode: "es",
+    }), { status: 200, headers: { "content-type": "application/x-amz-json-1.1" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "translation" });
+    await runWithTask(task, async () => {
+      await fetch("https://translate.us-east-1.amazonaws.com/", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-amz-json-1.1",
+          "x-amz-target": "AWSShineFrontendService_20170701.TranslateText",
+        },
+        body: JSON.stringify({
+          Text: "Hello \ud83d\udc4b world",
+          SourceLanguageCode: "en",
+          TargetLanguageCode: "es",
+        }),
+      });
+    });
+
+    expect(toAttributionObservationV3(getRecordedEvents()[0])).toMatchObject({
+      component: "external",
+      provider: { name: "aws", service: "translate_text" },
+      resource: { type: "sku", id: "standard_text" },
+      usage: [{ metric: "characters", quantity: "13", unit: "Characters" }],
+    });
+  });
+
+  it("does not block or assume Embed 4 pricing for unfinished Request streams", async () => {
     const baseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "cohere-stream",
       meta: { billed_units: { input_tokens: 11 } },
@@ -137,13 +709,9 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     await request.body?.cancel();
 
     expect(baseFetch).toHaveBeenCalledOnce();
-    const wire = toAttributionEventV2(getRecordedEvents()[0]);
-    expect(wire).toMatchObject({
-      provider: { name: "cohere", service: "embed", record_id: "cohere-stream" },
-      usage: [{ metric: "input_tokens", quantity: "11", unit: "Tokens" }],
-    });
-    expect(wire?.resource).toBeUndefined();
-    expect(wire?.cost_evidence).toBeUndefined();
+    expect(getRecordedEvents().some(
+      (event) => event.details["attribution_observer_service"] === "cohere_embed",
+    )).toBe(false);
   });
 
   it("emits Deepgram duration as speech-to-text seconds", async () => {
@@ -384,16 +952,17 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     trackHttp(buffer);
     const task = createTask({ taskId: randomUUID(), taskType: "transcription" });
     const url = "https://api.deepgram.com/v1/listen?model=nova-3&language=multi" +
-      "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme";
+      "&multichannel=true&diarize_model=v2&redact=pci&keyterm=Acme&detect_entities=true";
     await runWithTask(task, async () => { await fetch(url, { method: "POST" }); });
 
     const wires = getRecordedEvents().map(toAttributionEventV2);
-    expect(wires).toHaveLength(4);
+    expect(wires).toHaveLength(5);
     expect(wires.map((wire) => wire?.resource?.id)).toEqual([
       "nova-3:multilingual",
       "speaker_diarization",
       "redaction",
       "keyterm_prompting",
+      "entity_detection",
     ]);
     expect(wires.every((wire) => wire?.usage[0].quantity === "20")).toBe(true);
     expect(wires.every((wire) => wire?.cost_evidence === undefined)).toBe(true);
@@ -411,9 +980,12 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     expect(toAttributionEventV2(event)?.cost_evidence).toMatchObject({ source: "manual", amount: "0.05" });
   });
 
-  it("extracts cost from response body for known service", async () => {
-    // Mock fetch returning Tavily-like response with credits used
-    const responseBody = { results: [], usage: { credits: 2 } };
+  it("observes Tavily credits without SDK-side money", async () => {
+    const responseBody = {
+      request_id: "tavily-2",
+      results: [],
+      usage: { credits: 2 },
+    };
     const mockResponse = new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -430,10 +1002,100 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    expect(events[0].serviceName).toBe("Tavily Search");
-    // 2 credits * $0.008 = $0.016
-    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.016, 6);
-    expect(events[0].costConfidence).toBe("exact");
+    expect(events[0].serviceName).toBe("search_api");
+    expect(events[0].costUsd.toNumber()).toBe(0);
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(events[0].pricingSource).toBe("unknown");
+    const wire = toAttributionEventV2(events[0]);
+    expect(wire).toMatchObject({
+      provider: { name: "tavily", service: "search_api", record_id: "tavily-2" },
+      resource: { type: "sku", id: "api_credit" },
+      usage: [{ metric: "credit_count", quantity: "2", unit: "Credits" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("observes the Exa search variant without SDK-side money", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: "exa-deep-http-1",
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "DexCost", type: "deep", numResults: 10 }),
+      });
+    });
+
+    const event = getRecordedEvents()[0];
+    expect(event.costUsd.toString()).toBe("0");
+    expect(event.costConfidence).toBe("unknown");
+    expect(event.pricingVersion).toBeUndefined();
+    const wire = toAttributionEventV2(event);
+    expect(wire).toMatchObject({
+      provider: { name: "exa", service: "search_api", record_id: "exa-deep-http-1" },
+      resource: { type: "sku", id: "deep" },
+      usage: [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+    });
+    expect(wire?.cost_evidence).toBeUndefined();
+  });
+
+  it("fails open when Exa request metadata cannot be captured", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      requestId: "exa-unreadable-http",
+      results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.exa.ai/search", { method: "POST" });
+      await response.text();
+    });
+
+    expect(getRecordedEvents()).toEqual([]);
+  });
+
+  it("does not fall back to legacy pricing inside an observer endpoint boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      kind: "customsearch#search",
+      items: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch(
+        "https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost",
+      );
+      await response.text();
+    });
+
+    expect(getRecordedEvents()).toEqual([]);
+  });
+
+  it("keeps a user override authoritative inside an observer endpoint boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      kind: "customsearch#search",
+      items: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    getServiceCatalog()?.registerOverride("google_custom_search", 0.05, "request");
+    const task = createTask({ taskId: randomUUID(), taskType: "search" });
+
+    await runWithTask(task, async () => {
+      await fetch("https://www.googleapis.com/customsearch/v1/siterestrict?q=dexcost");
+    });
+
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].costUsd.toString()).toBe("0.05");
+    expect(events[0].pricingSource).toBe("manual");
+    expect(events[0].pricingVersion).toBeUndefined();
   });
 
   it("extracts cost from response header for known service", async () => {
@@ -585,19 +1247,20 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
 
     trackHttp(buffer);
+    registerDomainRate("fixed.example.test", 0.007, "request");
 
     const task = createTask({ taskId: randomUUID(), taskType: "test" });
 
     await runWithTask(task, async () => {
-      // Exa is a fixed-price service, so non-JSON body is fine
-      await fetch("https://api.exa.ai/search");
+      await fetch("https://fixed.example.test/search");
     });
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    // Should still get the fixed cost even without JSON body
+    // A user-authored fixed rate does not depend on a JSON response body.
     expect(events[0].costUsd.toNumber()).toBe(0.007);
-    expect(events[0].serviceName).toBe("Exa Search");
+    expect(events[0].pricingSource).toBe("manual");
+    expect(events[0].serviceName).toBe("fixed.example.test");
   });
 
   it("handles large response body by skipping body parse", async () => {
@@ -621,9 +1284,9 @@ describe("HTTP adapter v2 — response handling edge cases", () => {
 
     const events = getRecordedEvents();
     expect(events).toHaveLength(1);
-    // Should fall back to estimated cost (fallback_credits=1 * $0.008)
-    expect(events[0].costUsd.toNumber()).toBeCloseTo(0.008, 6);
-    expect(events[0].costConfidence).toBe("estimated");
+    expect(events[0].costUsd.toNumber()).toBe(0);
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(events[0].pricingSource).not.toBe("service_catalog");
   });
 
   it("returns original response unchanged", async () => {

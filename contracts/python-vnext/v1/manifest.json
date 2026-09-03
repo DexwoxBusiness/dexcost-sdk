@@ -41,9 +41,9 @@
       "sha256": "29330670687827d6b2847ffefacba093f3ffad0e32ed5f1f7b2c4d9eb4f699fa"
     },
     {
-      "byte_size": 3606,
+      "byte_size": 3608,
       "path": "golden/catalog-release.v1.json",
-      "sha256": "50bb34e0703ff7323b927987d113fbf02c8760a46d59a77c7823765f15cabb84"
+      "sha256": "760c134fdb2da0b5c0e313ac592c840012e16a3ea93b43a22f3b700de2e1bac1"
     },
     {
       "byte_size": 4683,
@@ -86,9 +86,9 @@
       "sha256": "cd2a9b0b22f68b06d7bd15050659c15257c52acc3c9e74030af9b31133b5187e"
     },
     {
-      "byte_size": 60664,
+      "byte_size": 60980,
       "path": "public-api.json",
-      "sha256": "495899563a8a9159ff6679ef25fd3c2191b3aa946594940f8c2ac0effc03636f"
+      "sha256": "32ca436c156f1faea5eaf34df51a00812ad484042cd79e5bbe912115a05fd613"
     },
     {
       "byte_size": 2375,
@@ -106,9 +106,9 @@
       "sha256": "9bcd0f012cb3bc253834a182ae0a2017b9e1b624f8114efd92a83a6422942639"
     },
     {
-      "byte_size": 5824,
+      "byte_size": 18922,
       "path": "schemas/catalog-observer-rules.v1.schema.json",
-      "sha256": "b3cb54f898adbdde7786fd314a7229ee1a1caa2ea2be7044111d629101dfc2bb"
+      "sha256": "7e2965fbfc3f5c4725ab1195025293270c75e3a9c66838fee9793da212028076"
     },
     {
       "byte_size": 1410,
@@ -156,14 +156,14 @@
       "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
-      "byte_size": 38346,
+      "byte_size": 38766,
       "path": "typescript-api-map.json",
-      "sha256": "b77fcb4d984922d6a8c717690cb813d827da2b602415fbf9533b3aab37c90385"
+      "sha256": "f7b24b7f58b68441f86981e755d4839be1f2370bc3a8c32aab6a7c9543c17c5d"
     },
     {
-      "byte_size": 8522,
+      "byte_size": 8568,
       "path": "typescript-public-api.json",
-      "sha256": "3f120776eaf9984885a7ac3a6e528ff61a7180c4b413feb084215966aaad421f"
+      "sha256": "c1096cef7648a5ca6ae73d5a2d7a54503f2bdad066e1102f22444ccd96dec1d0"
     },
     {
       "byte_size": 2460,
@@ -182,19 +182,19 @@
   "freeze_id": "python-vnext-v1",
   "referenced_artifacts": [
     {
-      "byte_size": 21795,
+      "byte_size": 22057,
       "path": "fixtures/attribution_v3/conformance.json",
-      "sha256": "a737027bed8f70650b2f6f5d10fe48408fcb97c203d0aa78dc406a6035c65f68"
+      "sha256": "5e1b7d8a5852d9dc97ed13376fc37bef694e8c46aae9b3464483ef7cedfa7b58"
     },
     {
-      "byte_size": 41816,
+      "byte_size": 41966,
       "path": "fixtures/attribution_v3/schemas.json",
-      "sha256": "0fc3007cb307a98d6ddb7df53fd394e91411abc75389652c22e0060dcea8e871"
+      "sha256": "f46ddf75615835db8d9a27da5334cad6e8d7e1bf85445ad654a71ad207550983"
     },
     {
-      "byte_size": 24054,
+      "byte_size": 127629,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "a40d4d02c23805b04c2887eda20328d9d4bcb632972f14abde7b54174533de1f"
+      "sha256": "eec826100078fe1775d4db05c14d1a0bcfca2be37c2a969b7019b2ece94e26c9"
     }
   ],
   "schema_version": "1",

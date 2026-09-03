@@ -55,7 +55,8 @@ export function normalizeOpenAIUsage(value: unknown): NormalizedOpenAIUsage {
   const inputDetails = record(usage.prompt_tokens_details ?? usage.input_tokens_details);
   const outputDetails = record(usage.completion_tokens_details ?? usage.output_tokens_details);
   const cacheReadInputTokens = optionalCounter(
-    inputDetails?.cached_tokens ?? inputDetails?.cache_read_input_tokens ?? usage.cached_tokens,
+    inputDetails?.cached_tokens ?? inputDetails?.cache_read_input_tokens ??
+      usage.cached_tokens ?? usage.prompt_cache_hit_tokens,
   );
   const cacheWriteInputTokens = optionalCounter(
     inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens,

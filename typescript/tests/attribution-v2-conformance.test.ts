@@ -114,14 +114,15 @@ describe("v1 capture to attribution v2 conversion", () => {
       details: {
         billing_model: "lambda",
         duration_ms: 2500,
-        memory_bytes_limit: 2 * 1024 ** 3,
+        // Lambda capture stores configured MB as MB * 1_000_000 bytes.
+        memory_bytes_limit: 2048 * 1_000_000,
         vcpu_seconds_used: 2.5,
         invocation_count: 1,
         region: "us-east-1",
       },
     }));
     expect(converted?.component).toBe("compute");
-    expect(converted?.usage).toContainEqual({ metric: "memory_gib_seconds", quantity: "5", unit: "GiB-Seconds" });
+    expect(converted?.usage).toContainEqual({ metric: "memory_gib_seconds", quantity: "4.768371582031", unit: "GiB-Seconds" });
     expect(converted?.usage_period?.end_at).toBe(converted?.occurred_at);
   });
 
@@ -200,6 +201,19 @@ describe("v1 capture to attribution v2 conversion", () => {
 
   it("drops observability-only GPU signals", () => {
     expect(toAttributionEventV2(createCostEvent({ ...base, eventType: "gpu_utilization_signal" }))).toBeNull();
+  });
+
+  it("drops custom metrics instead of relabelling them as requests", () => {
+    expect(toAttributionEventV2(createCostEvent({
+      ...base,
+      eventType: "external_cost",
+      provider: "pinecone",
+      details: {
+        attribution_usage_metric: "pinecone.read_units",
+        attribution_usage_quantity: "2",
+        attribution_usage_unit: "ReadUnits",
+      },
+    }))).toBeNull();
   });
 
   it("preserves retry linkage, reason, usage, and caller-supplied cost", () => {

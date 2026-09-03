@@ -2,17 +2,39 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from math import isfinite
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
-_METRICS = {"input_tokens", "audio_seconds", "characters"}
-_COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
+_DEFAULT_UNITS = {
+    "input_tokens": "Tokens",
+    "input_image_tokens": "Tokens",
+    "output_image_tokens": "Tokens",
+    "output_tokens": "Tokens",
+    "audio_seconds": "Seconds",
+    "characters": "Characters",
+    "image_count": "Images",
+    "request_count": "Requests",
+    "credit_count": "Credits",
+}
+_COMPONENTS = {
+    "llm", "telephony", "voice_platform", "speech_to_text", "text_to_speech",
+    "realtime_transport", "recording", "post_call_analysis", "compute", "gpu",
+    "network", "storage", "external",
+}
+_RESOURCE_TYPES = {"model", "sku", "instance", "endpoint", "session", "tool", "other"}
+_DOMAIN_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+_DOMAIN_LABEL_CHARS = _DOMAIN_EDGE_CHARS | {"-"}
+_HEADER_NAME_CHARS = _DOMAIN_EDGE_CHARS | frozenset("!#$%&'*+.^_`|~-")
+_MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
 _LOG = logging.getLogger(__name__)
 
 
@@ -23,25 +45,55 @@ class UsageObserver:
     provider_service: str
     component: str
     domains: tuple[str, ...]
+    domain_suffixes: tuple[str, ...]
     endpoints: tuple[str, ...]
+    excluded_endpoints: tuple[str, ...]
+    endpoint_match: str
+    methods: tuple[str, ...]
     response_path: str | None
+    response_collection_sum_path: str | None
     response_quantity_header: str | None
     response_all: tuple[dict[str, Any], ...]
+    request_all: tuple[dict[str, Any], ...]
+    request_header_all: tuple[dict[str, Any], ...]
+    provider_region_domain_label: int | None
+    allowed_provider_regions: tuple[str, ...]
+    request_collection_count_path: str | None
+    request_collection_all: tuple[dict[str, Any], ...]
+    paired_response_collection_path: str | None
+    paired_response_all: tuple[dict[str, Any], ...]
     request_character_count_path: str | None
+    request_character_count_query_parameter: str | None
+    request_character_count_case_insensitive: bool
+    character_count_encoding: str
+    minimum_quantity: str | None
+    fixed_quantity: str | None
     usage_metric: str
+    usage_unit: str
     resource_type: str | None
     resource_path: str | None
     request_resource_path: str | None
     allowed_resource_ids: tuple[str, ...]
+    resource_id_prefix_to_strip: str | None
     resource_query_parameter: str | None
+    resource_path_parameter: str | None
+    resource_hostname: bool
     default_resource_id: str | None
     fixed_resource_id: str | None
     resource_variant: dict[str, str] | None
     query_any: tuple[dict[str, str], ...]
+    query_all: tuple[dict[str, str], ...]
     quantity_multiplier_path: str | None
     quantity_multiplier_query_parameter: str | None
+    quantity_multiplier_query_parameter_count: str | None
     record_id_path: str | None
     record_id_header: str | None
+    provider_cost_usd_path: str | None
+    provider_cost_usd_collection_sum_path: str | None
+    provider_cost_minor_units_path: str | None
+    provider_cost_currency_path: str | None
+    provider_cost_minor_unit_exponent: int | None
+    billing_dimensions: tuple[dict[str, str], ...]
     source_url: str
 
 
@@ -52,20 +104,51 @@ class ServiceUsageObservation:
     provider_service: str
     component: str
     metric: str
+    unit: str
     quantity: Decimal
     manifest_version: str
     resource_type: str | None = None
     resource_id: str | None = None
     provider_record_id: str | None = None
+    provider_region: str | None = None
+    provider_cost_usd: Decimal | None = None
+    provider_cost_amount: Decimal | None = None
+    provider_cost_currency: str | None = None
     dimensions: tuple[dict[str, Any], ...] = ()
 
 
-def _resolve_path(value: Any, path: str) -> Any:
+def _resolve_path_with_presence(value: Any, path: str) -> tuple[bool, Any]:
     current = value
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
-            return None
+            return False, None
         current = current[part]
+    return True, current
+
+
+def _resolve_path(value: Any, path: str) -> Any:
+    return _resolve_path_with_presence(value, path)[1]
+
+
+def _resolve_collection_path(value: Any, path: str) -> list[Any] | None:
+    current = [value]
+    for raw_part in path.split("."):
+        expands = raw_part.endswith("[]")
+        part = raw_part[:-2] if expands else raw_part
+        if not part:
+            return None
+        next_values: list[Any] = []
+        for candidate in current:
+            if not isinstance(candidate, dict) or part not in candidate:
+                return None
+            resolved = candidate[part]
+            if expands:
+                if not isinstance(resolved, list):
+                    return None
+                next_values.extend(resolved)
+            else:
+                next_values.append(resolved)
+        current = next_values
     return current
 
 
@@ -75,14 +158,228 @@ def _bounded_string(value: Any) -> str | None:
     return value.strip()[:256]
 
 
+def _resolve_case_insensitive_path(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        matching_keys = [
+            key for key in current if isinstance(key, str) and key.lower() == part.lower()
+        ]
+        if len(matching_keys) != 1:
+            return None
+        current = current[matching_keys[0]]
+    return current
+
+
+def _resolve_character_count_path(
+    value: Any,
+    path: str,
+    *,
+    case_insensitive: bool,
+) -> Any:
+    resolver = _resolve_case_insensitive_path if case_insensitive else _resolve_path
+    if isinstance(value, list):
+        resolved = [resolver(item, path) for item in value]
+        return None if any(item is None for item in resolved) else resolved
+    return resolver(value, path)
+
+
+def _text_character_count(value: str, encoding: str) -> int:
+    if encoding == "utf16_code_units":
+        return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+    return len(value)
+
+
+def _character_count(
+    value: Any,
+    encoding: str = "unicode_code_points",
+) -> int | None:
+    if isinstance(value, str):
+        return _text_character_count(value, encoding)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return sum(_text_character_count(item, encoding) for item in value)
+    return None
+
+
 def _query_value_is_truthy(value: str) -> bool:
     return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _query_predicate_matches(
+    query: dict[str, list[str]],
+    predicate: dict[str, str],
+) -> bool:
+    parameter = predicate["parameter"]
+    values = query.get(parameter, [])
+    operator = predicate["operator"]
+    if operator == "present":
+        return parameter in query
+    if operator == "truthy":
+        return any(_query_value_is_truthy(value) for value in values)
+    if operator == "all_non_empty":
+        return bool(values) and all(bool(value.strip()) for value in values)
+    if operator == "equals":
+        return len(values) == 1 and values[0] == predicate["value"]
+    return operator == "absent_or_equals" and (
+        parameter not in query or (len(values) == 1 and values[0] == predicate["value"])
+    )
+
+
+def _valid_query_predicate(predicate: Any) -> bool:
+    if (
+        not isinstance(predicate, dict)
+        or not isinstance(predicate.get("parameter"), str)
+        or not predicate["parameter"]
+    ):
+        return False
+    operator = predicate.get("operator")
+    if operator in {"present", "truthy", "all_non_empty"}:
+        return set(predicate) == {"parameter", "operator"}
+    return (
+        operator in {"equals", "absent_or_equals"}
+        and set(predicate) == {"parameter", "operator", "value"}
+        and isinstance(predicate.get("value"), str)
+        and bool(predicate["value"])
+    )
+
+
+def _domain_matches(
+    hostname: str | None,
+    domains: tuple[str, ...],
+    suffixes: tuple[str, ...],
+) -> bool:
+    if hostname is None:
+        return False
+    return hostname in domains or any(hostname.endswith(f".{suffix}") for suffix in suffixes)
+
+
+def _endpoint_matches(path: str, endpoint: str, mode: str) -> bool:
+    if mode == "path_template":
+        path_parts = path.split("/")
+        template_parts = endpoint.split("/")
+        return len(path_parts) == len(template_parts) and all(
+            actual == expected
+            or (
+                expected.startswith("{")
+                and expected.endswith("}")
+                and _valid_path_parameter_name(expected[1:-1])
+                and bool(actual)
+            )
+            for actual, expected in zip(path_parts, template_parts, strict=True)
+        )
+    return path == endpoint or (
+        mode == "prefix" and (endpoint == "/" or path.startswith(f"{endpoint}/"))
+    )
+
+
+def _endpoint_boundary_matches(path: str, endpoint: str, mode: str) -> bool:
+    if mode != "path_template":
+        return _endpoint_matches(path, endpoint, "prefix")
+    segments = endpoint.split("/")
+    first_parameter = next(
+        (
+            index
+            for index, segment in enumerate(segments)
+            if segment.startswith("{")
+            and segment.endswith("}")
+            and _valid_path_parameter_name(segment[1:-1])
+        ),
+        len(segments),
+    )
+    boundary = "/".join(segments[:first_parameter])
+    return path == boundary or path.startswith(f"{boundary}/")
+
+
+def _valid_path_parameter_name(value: str) -> bool:
+    return bool(value) and value[0].islower() and all(
+        character.islower() or character.isdigit() or character == "_"
+        for character in value
+    )
+
+
+def _path_parameters(path: str, observer: UsageObserver) -> dict[str, str]:
+    if observer.endpoint_match != "path_template":
+        return {}
+    for endpoint in observer.endpoints:
+        if not _endpoint_matches(path, endpoint, "path_template"):
+            continue
+        parameters: dict[str, str] = {}
+        for actual, template in zip(path.split("/"), endpoint.split("/"), strict=True):
+            if not (
+                template.startswith("{")
+                and template.endswith("}")
+                and _valid_path_parameter_name(template[1:-1])
+            ):
+                continue
+            try:
+                parameters[template[1:-1]] = unquote(actual, errors="strict")
+            except UnicodeDecodeError:
+                return {}
+        return parameters
+    return {}
+
+
+def _valid_domain_suffix(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) > 253:
+        return False
+    labels = value.split(".")
+    return len(labels) >= 2 and all(
+        1 <= len(label) <= 63
+        and label[0] in _DOMAIN_EDGE_CHARS
+        and label[-1] in _DOMAIN_EDGE_CHARS
+        and all(character in _DOMAIN_LABEL_CHARS for character in label)
+        for label in labels
+    )
+
+
+def _interoperable_json_number(value: Any) -> bool:
+    """Return whether a JSON number is exact enough for Python/JS parity."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) <= _MAX_SAFE_JSON_INTEGER
+    return (
+        isinstance(value, float)
+        and isfinite(value)
+        and abs(value) <= _MAX_SAFE_JSON_INTEGER
+    )
+
+
+def _valid_json_predicate_scalar(value: Any) -> bool:
+    return isinstance(value, (str, bool)) or _interoperable_json_number(value)
+
+
+def _json_scalar_equals(left: Any, right: Any) -> bool:
+    """Match JSON scalars without accepting rounded or non-finite numbers."""
+    if isinstance(left, (int, float)) and not isinstance(left, bool):
+        return _interoperable_json_number(left) and _interoperable_json_number(
+            right
+        ) and left == right
+    if isinstance(right, (int, float)) and not isinstance(right, bool):
+        return False
+    return type(left) is type(right) and left == right
+
+
 def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
-    resolved = _resolve_path(value, predicate["path"])
+    if predicate["operator"] == "collection_all_equals":
+        resolved = _resolve_collection_path(value, predicate["path"])
+        if not resolved:
+            return False
+        return all(
+            _json_scalar_equals(candidate, predicate["value"])
+            for candidate in resolved
+        )
+    present, resolved = _resolve_path_with_presence(value, predicate["path"])
+    if predicate["operator"] == "absent_or_empty_collection":
+        return not present or (isinstance(resolved, list) and not resolved)
     if predicate["operator"] == "equals":
-        return resolved == predicate["value"] and type(resolved) is type(predicate["value"])
+        return _json_scalar_equals(resolved, predicate["value"])
+    if predicate["operator"] == "one_of":
+        return any(
+            _json_scalar_equals(resolved, candidate)
+            for candidate in predicate["values"]
+        )
     if isinstance(resolved, str):
         return bool(resolved.strip())
     return isinstance(resolved, (list, dict)) and bool(resolved)
@@ -93,14 +390,279 @@ def _valid_response_predicate(predicate: Any) -> bool:
         return False
     if not predicate["path"]:
         return False
-    if predicate.get("operator") == "non_empty":
+    if predicate.get("operator") in {"non_empty", "absent_or_empty_collection"}:
         return set(predicate) == {"path", "operator"}
+    if predicate.get("operator") == "one_of":
+        values = predicate.get("values")
+        if (
+            set(predicate) != {"path", "operator", "values"}
+            or not isinstance(values, list)
+            or not 1 <= len(values) <= 20
+            or any(
+                not _valid_json_predicate_scalar(value)
+                for value in values
+            )
+        ):
+            return False
+        typed_values = {
+            (
+                "number",
+                Decimal(str(value)),
+            )
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else (type(value).__name__, value)
+            for value in values
+        }
+        return len(typed_values) == len(values)
     value = predicate.get("value")
     return (
-        predicate.get("operator") == "equals"
+        predicate.get("operator") in {"equals", "collection_all_equals"}
         and set(predicate) == {"path", "operator", "value"}
-        and type(value) in {str, bool}
+        and _valid_json_predicate_scalar(value)
     )
+
+
+def _request_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    operator = predicate.get("operator")
+    if not isinstance(operator, str):
+        return False
+    resolved = _resolve_path(value, predicate["path"])
+    if resolved is None:
+        return operator.startswith("absent_or_")
+    if operator == "equals":
+        return _json_scalar_equals(resolved, predicate["value"])
+    if operator == "not_equals":
+        return not _json_scalar_equals(resolved, predicate["value"])
+    if operator == "string_not_contains":
+        return isinstance(resolved, str) and predicate["value"] not in resolved
+    if operator == "array_contains":
+        return isinstance(resolved, list) and any(
+            _json_scalar_equals(item, predicate["value"])
+            for item in resolved
+        )
+    if operator == "absent_or_empty_collection":
+        return isinstance(resolved, list) and not resolved
+    if operator == "absent_or_false_or_null":
+        return resolved is False
+    return (
+        operator == "absent_or_lte"
+        and _interoperable_json_number(resolved)
+        and resolved <= predicate["value"]
+    )
+
+
+def _valid_request_predicate(predicate: Any) -> bool:
+    if not isinstance(predicate, dict) or not isinstance(predicate.get("path"), str):
+        return False
+    if not predicate["path"]:
+        return False
+    if predicate.get("operator") in {
+        "absent_or_null",
+        "absent_or_false_or_null",
+        "absent_or_empty_collection",
+    }:
+        return set(predicate) == {"path", "operator"}
+    value = predicate.get("value")
+    if predicate.get("operator") in {"equals", "not_equals"}:
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and _valid_json_predicate_scalar(value)
+            and not (isinstance(value, str) and not value)
+        )
+    if predicate.get("operator") == "string_not_contains":
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and isinstance(value, str)
+            and bool(value)
+        )
+    if predicate.get("operator") == "array_contains":
+        return (
+            set(predicate) == {"path", "operator", "value"}
+            and _valid_json_predicate_scalar(value)
+            and not (isinstance(value, str) and not value)
+        )
+    return (
+        predicate.get("operator") == "absent_or_lte"
+        and set(predicate) == {"path", "operator", "value"}
+        and _interoperable_json_number(value)
+    )
+
+
+def _request_header_predicate_matches(
+    request_headers: dict[str, str | None], predicate: dict[str, Any]
+) -> bool:
+    name = predicate["name"]
+    present = name in request_headers
+    operator = predicate["operator"]
+    if operator == "present":
+        return present
+    if operator == "absent":
+        return not present
+    value = request_headers.get(name)
+    if operator == "basic_username_prefix":
+        expected = predicate["value"]
+        return value == f"basic_username_prefix:{expected}" or _basic_username_has_prefix(
+            value, expected
+        )
+    if operator == "equals":
+        return present and value == predicate["value"]
+    return present and value is not None and value in predicate["values"]
+
+
+def _basic_username_has_prefix(value: Any, prefix: str) -> bool:
+    if not isinstance(value, str) or not value.lower().startswith("basic "):
+        return False
+    encoded = value[6:].strip()
+    try:
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    username, separator, _password = decoded.partition(":")
+    return bool(separator) and username.startswith(prefix)
+
+
+def _valid_request_header_predicate(predicate: Any) -> bool:
+    if not isinstance(predicate, dict):
+        return False
+    name = predicate.get("name")
+    if not (
+        isinstance(name, str)
+        and bool(name)
+        and name == name.lower()
+        and all(character in _HEADER_NAME_CHARS for character in name)
+    ):
+        return False
+    operator = predicate.get("operator")
+    if operator in {"present", "absent"}:
+        return set(predicate) == {"name", "operator"}
+    if operator in {"equals", "basic_username_prefix"}:
+        value = predicate.get("value")
+        return (
+            set(predicate) == {"name", "operator", "value"}
+            and isinstance(value, str)
+            and 0 < len(value) <= 256
+        )
+    values = predicate.get("values")
+    return (
+        operator == "one_of"
+        and set(predicate) == {"name", "operator", "values"}
+        and isinstance(values, list)
+        and 0 < len(values) <= 100
+        and all(isinstance(value, str) and 0 < len(value) <= 256 for value in values)
+        and len(set(values)) == len(values)
+    )
+
+
+def _valid_canonical_name(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 128
+        and value[0] in _DOMAIN_EDGE_CHARS
+        and all(character in _DOMAIN_LABEL_CHARS | {".", "_"} for character in value)
+    )
+
+
+def _valid_unit(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 64
+        and value[0].isalpha()
+        and all(character.isalnum() or character in {".", "_", "-"} for character in value)
+        and not any(separator * 2 in value for separator in ".-_")
+        and value[-1].isalnum()
+    )
+
+
+def _valid_billing_dimension(value: Any) -> bool:
+    if not isinstance(value, dict) or not _valid_canonical_name(value.get("key")):
+        return False
+    source = value.get("source")
+    if source not in {
+        "request_body", "response_body", "query_parameter", "path_parameter", "hostname"
+    }:
+        return False
+    selector = value.get("selector")
+    if source == "hostname":
+        if selector is not None:
+            return False
+    elif not isinstance(selector, str) or not selector:
+        return False
+    default = value.get("default_value")
+    return default is None or (isinstance(default, str) and bool(default))
+
+
+def _billing_dimensions(
+    parsed: Any,
+    request_body: Any,
+    response_body: Any,
+    observer: UsageObserver,
+    parameters: dict[str, str],
+) -> tuple[dict[str, Any], ...]:
+    observed: list[dict[str, Any]] = []
+    for dimension in observer.billing_dimensions:
+        source = dimension["source"]
+        selector = dimension.get("selector", "")
+        if source == "request_body":
+            raw = _resolve_path(request_body, selector)
+        elif source == "response_body":
+            raw = _resolve_path(response_body, selector)
+        elif source == "query_parameter":
+            values = parse_qs(parsed.query, keep_blank_values=True).get(selector, [])
+            raw = next(iter(values), None)
+        elif source == "path_parameter":
+            raw = parameters.get(selector)
+        else:
+            raw = parsed.hostname
+        value = _bounded_string(raw) or _bounded_string(dimension.get("default_value"))
+        if value is not None:
+            observed.append({"key": dimension["key"], "value": {"type": "string", "value": value}})
+    return tuple(observed)
+
+
+def _collection_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
+    resolved = _resolve_collection_path(value, predicate["path"])
+    if resolved is None:
+        return False
+    contains = any(
+        _json_scalar_equals(item, predicate["value"])
+        for item in resolved
+    )
+    return contains if predicate["operator"] == "contains" else not contains
+
+
+def _valid_collection_predicate(predicate: Any) -> bool:
+    if (
+        not isinstance(predicate, dict)
+        or set(predicate) != {"path", "operator", "value"}
+        or not isinstance(predicate.get("path"), str)
+        or not predicate["path"]
+        or predicate.get("operator") not in {"contains", "not_contains"}
+    ):
+        return False
+    value = predicate.get("value")
+    return _valid_json_predicate_scalar(value)
+
+
+def _redact_query_parameters(url: str, names: set[str]) -> str:
+    """Redact selected query values without changing the URL's wire shape."""
+    if not names or "?" not in url:
+        return url
+    before_fragment, separator, fragment = url.partition("#")
+    base, query_separator, query = before_fragment.partition("?")
+    if not query_separator:
+        return url
+    redacted: list[str] = []
+    for part in query.split("&"):
+        raw_name, _, _ = part.partition("=")
+        try:
+            name = unquote(raw_name, errors="strict").lower()
+        except UnicodeDecodeError:
+            name = ""
+        redacted.append(f"{raw_name}=REDACTED" if name in names else part)
+    suffix = f"#{fragment}" if separator else ""
+    return f"{base}?{'&'.join(redacted)}{suffix}"
 
 
 class ServiceUsageObservers:
@@ -146,19 +708,36 @@ class ServiceUsageObservers:
             ):
                 raise ValueError("usage observer contains an invalid field")
             domains = definition.get("domains")
+            domain_suffixes = definition.get("domain_suffixes", [])
             endpoints = definition.get("endpoints")
+            excluded_endpoints = definition.get("excluded_endpoints", [])
             optional_string_fields = (
                 "resource_path",
                 "request_resource_path",
+                "response_collection_sum_path",
                 "request_character_count_path",
+                "request_character_count_query_parameter",
+                "request_collection_count_path",
+                "paired_response_collection_path",
+                "resource_id_prefix_to_strip",
+                "minimum_quantity",
                 "response_quantity_header",
+                "fixed_quantity",
                 "resource_query_parameter",
+                "resource_path_parameter",
+                "usage_unit",
                 "default_resource_id",
                 "fixed_resource_id",
                 "quantity_multiplier_path",
                 "quantity_multiplier_query_parameter",
+                "quantity_multiplier_query_parameter_count",
                 "record_id_path",
                 "record_id_header",
+                "provider_cost_usd_path",
+                "provider_cost_usd_collection_sum_path",
+                "provider_cost_minor_units_path",
+                "provider_cost_currency_path",
+                "endpoint_match",
             )
             has_resource_selector = any(
                 field in definition
@@ -166,41 +745,160 @@ class ServiceUsageObservers:
                     "resource_path",
                     "request_resource_path",
                     "resource_query_parameter",
+                    "resource_path_parameter",
+                    "resource_hostname",
                     "default_resource_id",
                     "fixed_resource_id",
                 )
             )
             response_path = definition.get("response_path")
+            response_collection_sum_path = definition.get(
+                "response_collection_sum_path"
+            )
             response_quantity_header = definition.get("response_quantity_header")
             response_all = definition.get("response_all", [])
+            request_all = definition.get("request_all", [])
+            request_header_all = definition.get("request_header_all", [])
+            provider_region_domain_label = definition.get("provider_region_domain_label")
+            allowed_provider_regions = definition.get("allowed_provider_regions", [])
+            request_collection_count_path = definition.get(
+                "request_collection_count_path"
+            )
+            request_collection_all = definition.get("request_collection_all", [])
+            paired_response_collection_path = definition.get(
+                "paired_response_collection_path"
+            )
+            paired_response_all = definition.get("paired_response_all", [])
             request_character_count_path = definition.get("request_character_count_path")
+            request_character_count_query_parameter = definition.get(
+                "request_character_count_query_parameter"
+            )
+            request_character_count_case_insensitive = definition.get(
+                "request_character_count_case_insensitive", False
+            )
+            character_count_encoding = definition.get(
+                "character_count_encoding", "unicode_code_points"
+            )
+            minimum_quantity = definition.get("minimum_quantity")
+            fixed_quantity = definition.get("fixed_quantity")
             allowed_resource_ids = definition.get("allowed_resource_ids", [])
+            provider_cost_minor_unit_exponent = definition.get(
+                "provider_cost_minor_unit_exponent"
+            )
+            raw_usage_unit = definition.get("usage_unit")
+            usage_unit: str | None
+            if isinstance(raw_usage_unit, str):
+                usage_unit = raw_usage_unit
+            elif raw_usage_unit is None:
+                usage_unit = _DEFAULT_UNITS.get(definition["usage_metric"])
+            else:
+                usage_unit = None
+            billing_dimensions = definition.get("billing_dimensions", [])
             if (
                 definition["service_key"] in keys
-                or definition["usage_metric"] not in _METRICS
+                or not _valid_canonical_name(definition["usage_metric"])
+                or not _valid_unit(usage_unit)
                 or definition["component"] not in _COMPONENTS
                 or not definition["source_url"].startswith("https://")
                 or not isinstance(domains, list)
-                or not domains
+                or (not domains and not domain_suffixes)
                 or not all(isinstance(item, str) and item for item in domains)
+                or not isinstance(domain_suffixes, list)
+                or ("domain_suffixes" in definition and not domain_suffixes)
+                or not all(_valid_domain_suffix(item) for item in domain_suffixes)
+                or ("provider_region_domain_label" in definition)
+                != ("allowed_provider_regions" in definition)
+                or (
+                    provider_region_domain_label is not None
+                    and (
+                        isinstance(provider_region_domain_label, bool)
+                        or not isinstance(provider_region_domain_label, int)
+                        or not 0 <= provider_region_domain_label <= 10
+                        or not isinstance(allowed_provider_regions, list)
+                        or not 0 < len(allowed_provider_regions) <= 100
+                        or not all(
+                            _valid_canonical_name(region)
+                            for region in allowed_provider_regions
+                        )
+                        or len(set(allowed_provider_regions))
+                        != len(allowed_provider_regions)
+                    )
+                )
                 or not isinstance(endpoints, list)
                 or not endpoints
                 or not all(isinstance(item, str) and item.startswith("/") for item in endpoints)
+                or not isinstance(excluded_endpoints, list)
+                or ("excluded_endpoints" in definition and not excluded_endpoints)
+                or not all(
+                    isinstance(item, str) and item.startswith("/")
+                    for item in excluded_endpoints
+                )
+                or len(set(excluded_endpoints)) != len(excluded_endpoints)
+                or definition.get("endpoint_match", "prefix")
+                not in {"exact", "prefix", "path_template"}
+                or (
+                    definition.get("endpoint_match") == "path_template"
+                    and not all(
+                        (
+                            placeholders := [
+                                segment
+                                for segment in item.split("/")
+                                if segment.startswith("{")
+                                and segment.endswith("}")
+                                and _valid_path_parameter_name(segment[1:-1])
+                            ]
+                        )
+                        and len(placeholders) == len(set(placeholders))
+                        and not any(
+                            "{" in segment
+                            and not (
+                                segment.startswith("{")
+                                and segment.endswith("}")
+                                and _valid_path_parameter_name(segment[1:-1])
+                            )
+                            for segment in item.split("/")
+                        )
+                        for item in endpoints
+                    )
+                )
+                or not isinstance(definition.get("methods", []), list)
+                or ("methods" in definition and not definition["methods"])
+                or any(
+                    not isinstance(item, str) or not item.isalpha() or not item.isupper()
+                    for item in definition.get("methods", [])
+                )
+                or len(set(definition.get("methods", [])))
+                != len(definition.get("methods", []))
                 or any(
                     field in definition
                     and (not isinstance(definition[field], str) or not definition[field])
                     for field in optional_string_fields
                 )
-                or definition.get("resource_type") not in {None, "model", "sku"}
+                or definition.get("resource_type") not in {None, *_RESOURCE_TYPES}
                 or sum(
                     value is not None
                     for value in (
                         response_path,
+                        response_collection_sum_path,
                         response_quantity_header,
-                        request_character_count_path,
+                        request_character_count_path
+                        or request_character_count_query_parameter,
+                        request_collection_count_path,
+                        fixed_quantity,
                     )
                 )
                 != 1
+                or fixed_quantity not in {None, "1"}
+                or minimum_quantity not in {None, "1"}
+                or (
+                    minimum_quantity is not None
+                    and request_character_count_path is None
+                    and request_character_count_query_parameter is None
+                )
+                or (
+                    definition["usage_metric"] == "request_count"
+                    and fixed_quantity is None
+                )
                 or (
                     response_path is not None
                     and (not isinstance(response_path, str) or not response_path)
@@ -210,29 +908,154 @@ class ServiceUsageObservers:
                 or (allowed_resource_ids and definition.get("resource_type") is None)
                 or (has_resource_selector and definition.get("resource_type") is None)
                 or (
+                    "resource_path_parameter" in definition
+                    and definition.get("endpoint_match") != "path_template"
+                )
+                or (
+                    "resource_hostname" in definition
+                    and definition.get("resource_hostname") is not True
+                )
+                or (
                     "quantity_multiplier_query_parameter" in definition
                     and "quantity_multiplier_path" not in definition
                 )
+                or character_count_encoding not in {"unicode_code_points", "utf16_code_units"}
+                or (
+                    "character_count_encoding" in definition
+                    and request_character_count_path is None
+                    and request_character_count_query_parameter is None
+                )
+                or (
+                    "request_character_count_case_insensitive" in definition
+                    and request_character_count_case_insensitive is not True
+                )
+                or (
+                    request_character_count_case_insensitive
+                    and request_character_count_path is None
+                )
+                or (
+                    "quantity_multiplier_query_parameter_count" in definition
+                    and (
+                        request_character_count_path is None
+                        and request_character_count_query_parameter is None
+                    )
+                )
+                or (
+                    "quantity_multiplier_query_parameter_count" in definition
+                    and "quantity_multiplier_path" in definition
+                )
+                or (
+                    "provider_cost_usd_path" in definition
+                    and "provider_cost_usd_collection_sum_path" in definition
+                )
+                or (
+                    sum(
+                        field in definition
+                        for field in (
+                            "provider_cost_minor_units_path",
+                            "provider_cost_currency_path",
+                            "provider_cost_minor_unit_exponent",
+                        )
+                    )
+                    not in {0, 3}
+                )
+                or (
+                    provider_cost_minor_unit_exponent is not None
+                    and (
+                        isinstance(provider_cost_minor_unit_exponent, bool)
+                        or not isinstance(provider_cost_minor_unit_exponent, int)
+                        or not 0 <= provider_cost_minor_unit_exponent <= 6
+                    )
+                )
+                or (
+                    provider_cost_minor_unit_exponent is not None
+                    and (
+                        "provider_cost_usd_path" in definition
+                        or "provider_cost_usd_collection_sum_path" in definition
+                    )
+                )
+                or not isinstance(billing_dimensions, list)
+                or ("billing_dimensions" in definition and not billing_dimensions)
+                or len(billing_dimensions) > 32
+                or not all(_valid_billing_dimension(item) for item in billing_dimensions)
+                or len({item["key"] for item in billing_dimensions}) != len(billing_dimensions)
+                or any(
+                    item["source"] == "path_parameter"
+                    and definition.get("endpoint_match") != "path_template"
+                    for item in billing_dimensions
+                )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
+            if usage_unit is None:
+                raise ValueError("usage observer manifest contains an invalid usage unit")
             if (
                 not isinstance(response_all, list)
                 or ("response_all" in definition and not response_all)
                 or not all(_valid_response_predicate(item) for item in response_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid response predicate")
+            if (
+                not isinstance(request_all, list)
+                or ("request_all" in definition and not request_all)
+                or not all(_valid_request_predicate(item) for item in request_all)
+            ):
+                raise ValueError("usage observer manifest contains an invalid request predicate")
+            if (
+                not isinstance(request_header_all, list)
+                or ("request_header_all" in definition and not request_header_all)
+                or not all(
+                    _valid_request_header_predicate(item) for item in request_header_all
+                )
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid request-header predicate"
+                )
+            if (
+                not isinstance(request_collection_all, list)
+                or ("request_collection_all" in definition and not request_collection_all)
+                or not all(
+                    _valid_collection_predicate(item) for item in request_collection_all
+                )
+                or (request_collection_count_path is not None)
+                != ("request_collection_all" in definition)
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid request-collection predicate"
+                )
+            if (
+                not isinstance(paired_response_all, list)
+                or ("paired_response_all" in definition and not paired_response_all)
+                or not all(
+                    _valid_request_predicate(item) for item in paired_response_all
+                )
+                or (paired_response_collection_path is not None)
+                != ("paired_response_all" in definition)
+                or (
+                    paired_response_collection_path is not None
+                    and request_collection_count_path is None
+                )
+            ):
+                raise ValueError(
+                    "usage observer manifest contains an invalid paired-response predicate"
+                )
             query_any = definition.get("query_any", [])
+            query_all = definition.get("query_all", [])
             if (
                 not isinstance(query_any, list)
                 or ("query_any" in definition and not query_any)
-                or any(
-                    not isinstance(item, dict)
-                    or not isinstance(item.get("parameter"), str)
-                    or item.get("operator") not in {"present", "truthy"}
-                    for item in query_any
-                )
+                or not all(_valid_query_predicate(item) for item in query_any)
+                or not isinstance(query_all, list)
+                or ("query_all" in definition and not query_all)
+                or not all(_valid_query_predicate(item) for item in query_all)
             ):
                 raise ValueError("usage observer manifest contains an invalid query predicate")
+            multiplier_parameter = definition.get("quantity_multiplier_query_parameter_count")
+            if multiplier_parameter is not None and not any(
+                predicate.get("parameter") == multiplier_parameter
+                and predicate.get("operator") == "all_non_empty"
+                for predicate in query_all
+            ):
+                raise ValueError("query-count multipliers require an all_non_empty predicate")
             resource_variant = definition.get("resource_variant")
             if resource_variant is not None and (
                 not isinstance(resource_variant, dict)
@@ -250,27 +1073,71 @@ class ServiceUsageObservers:
                     provider_service=definition["provider_service"],
                     component=definition["component"],
                     domains=tuple(domains),
+                    domain_suffixes=tuple(domain_suffixes),
                     endpoints=tuple(endpoints),
+                    excluded_endpoints=tuple(excluded_endpoints),
+                    endpoint_match=definition.get("endpoint_match", "prefix"),
+                    methods=tuple(definition.get("methods", [])),
                     response_path=response_path,
+                    response_collection_sum_path=response_collection_sum_path,
                     response_quantity_header=response_quantity_header,
                     response_all=tuple(response_all),
+                    request_all=tuple(request_all),
+                    request_header_all=tuple(request_header_all),
+                    provider_region_domain_label=provider_region_domain_label,
+                    allowed_provider_regions=tuple(allowed_provider_regions),
+                    request_collection_count_path=request_collection_count_path,
+                    request_collection_all=tuple(request_collection_all),
+                    paired_response_collection_path=paired_response_collection_path,
+                    paired_response_all=tuple(paired_response_all),
                     request_character_count_path=request_character_count_path,
+                    request_character_count_query_parameter=(
+                        request_character_count_query_parameter
+                    ),
+                    request_character_count_case_insensitive=(
+                        request_character_count_case_insensitive
+                    ),
+                    character_count_encoding=character_count_encoding,
+                    minimum_quantity=minimum_quantity,
+                    fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
+                    usage_unit=usage_unit,
                     resource_type=definition.get("resource_type"),
                     resource_path=definition.get("resource_path"),
                     request_resource_path=definition.get("request_resource_path"),
                     allowed_resource_ids=tuple(allowed_resource_ids),
+                    resource_id_prefix_to_strip=definition.get(
+                        "resource_id_prefix_to_strip"
+                    ),
                     resource_query_parameter=definition.get("resource_query_parameter"),
+                    resource_path_parameter=definition.get("resource_path_parameter"),
+                    resource_hostname=definition.get("resource_hostname", False),
                     default_resource_id=definition.get("default_resource_id"),
                     fixed_resource_id=definition.get("fixed_resource_id"),
                     resource_variant=resource_variant,
                     query_any=tuple(query_any),
+                    query_all=tuple(query_all),
                     quantity_multiplier_path=definition.get("quantity_multiplier_path"),
                     quantity_multiplier_query_parameter=definition.get(
                         "quantity_multiplier_query_parameter"
                     ),
+                    quantity_multiplier_query_parameter_count=multiplier_parameter,
                     record_id_path=definition.get("record_id_path"),
                     record_id_header=definition.get("record_id_header"),
+                    provider_cost_usd_path=definition.get("provider_cost_usd_path"),
+                    provider_cost_usd_collection_sum_path=definition.get(
+                        "provider_cost_usd_collection_sum_path"
+                    ),
+                    provider_cost_minor_units_path=definition.get(
+                        "provider_cost_minor_units_path"
+                    ),
+                    provider_cost_currency_path=definition.get(
+                        "provider_cost_currency_path"
+                    ),
+                    provider_cost_minor_unit_exponent=(
+                        provider_cost_minor_unit_exponent
+                    ),
+                    billing_dimensions=tuple(billing_dimensions),
                     source_url=definition["source_url"],
                 )
             )
@@ -285,22 +1152,19 @@ class ServiceUsageObservers:
         matched = [
             candidate
             for candidate in self._observers
-            if parsed.hostname in candidate.domains
-            and any(
-                parsed.path == endpoint or parsed.path.startswith(f"{endpoint}/")
-                for endpoint in candidate.endpoints
-            )
+            if _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
+            and any(_endpoint_matches(parsed.path, endpoint, candidate.endpoint_match)
+                    for endpoint in candidate.endpoints)
+            and parsed.path not in candidate.excluded_endpoints
             and (
                 not candidate.query_any
                 or any(
-                    predicate["parameter"] in query
-                    if predicate["operator"] == "present"
-                    else any(
-                        _query_value_is_truthy(value)
-                        for value in query.get(predicate["parameter"], [])
-                    )
+                    _query_predicate_matches(query, predicate)
                     for predicate in candidate.query_any
                 )
+            )
+            and all(
+                _query_predicate_matches(query, predicate) for predicate in candidate.query_all
             )
         ]
         return (parsed, matched) if matched else None
@@ -308,22 +1172,144 @@ class ServiceUsageObservers:
     def matches(self, url: str) -> bool:
         return self._lookup(url) is not None
 
+    def owns_endpoint_boundary(self, url: str) -> bool:
+        """Return whether an observer owns this provider endpoint boundary.
+
+        Exact observer routes deliberately reject descendants and unsupported
+        query variants, but those requests must not fall back to a broader
+        bundled money catalog. Treat the declared endpoint and its descendants
+        as observer-owned while leaving unrelated paths on the same domain
+        available to other instrumentation.
+        """
+        parsed = urlparse(url)
+        return any(
+            _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
+            and any(
+                _endpoint_boundary_matches(
+                    parsed.path, endpoint, candidate.endpoint_match
+                )
+                for endpoint in candidate.endpoints
+            )
+            for candidate in self._observers
+        )
+
+    def redact_url_for_storage(self, url: str) -> str:
+        """Hide query values used as character-count sources before persistence."""
+        parsed = urlparse(url)
+        sensitive_names = {
+            candidate.request_character_count_query_parameter.lower()
+            for candidate in self._observers
+            if candidate.request_character_count_query_parameter
+            and _domain_matches(
+                parsed.hostname, candidate.domains, candidate.domain_suffixes
+            )
+            and any(
+                _endpoint_boundary_matches(
+                    parsed.path, endpoint, candidate.endpoint_match
+                )
+                for endpoint in candidate.endpoints
+            )
+        }
+        return _redact_query_parameters(url, sensitive_names)
+
     def needs_request_body(self, url: str) -> bool:
         matched = self._lookup(url)
         return bool(
             matched
             and any(
-                item.request_resource_path or item.request_character_count_path
+                item.request_resource_path
+                or item.request_character_count_path
+                or item.request_collection_count_path
+                or item.request_all
                 for item in matched[1]
             )
         )
+
+    def needs_response_body(self, url: str) -> bool:
+        matched = self._lookup(url)
+        return bool(
+            matched
+            and any(
+                item.response_path
+                or item.response_collection_sum_path
+                or item.resource_path
+                or item.record_id_path
+                or item.provider_cost_usd_path
+                or item.provider_cost_usd_collection_sum_path
+                or item.provider_cost_minor_units_path
+                or item.provider_cost_currency_path
+                or item.response_all
+                or item.paired_response_collection_path
+                or item.quantity_multiplier_path
+                for item in matched[1]
+            )
+        )
+
+    def select_request_headers(
+        self,
+        url: str,
+        request_headers: dict[str, Any],
+    ) -> dict[str, str | None]:
+        """Retain only values needed by matching declarative predicates.
+
+        Presence-only predicates use a ``None`` sentinel so authorization
+        credentials and other unrelated header values are never retained.
+        """
+        matched = self._lookup(url)
+        if matched is None:
+            return {}
+        source = {str(name).lower(): value for name, value in request_headers.items()}
+        selected: dict[str, str | None] = {}
+        for observer in matched[1]:
+            for predicate in observer.request_header_all:
+                name = predicate["name"]
+                if name not in source:
+                    continue
+                operator = predicate["operator"]
+                if operator in {"present", "absent"}:
+                    selected[name] = None
+                    continue
+                raw = source[name]
+                if operator == "basic_username_prefix":
+                    if isinstance(raw, bytes):
+                        try:
+                            raw = raw.decode("ascii")
+                        except UnicodeDecodeError:
+                            continue
+                    if _basic_username_has_prefix(raw, predicate["value"]):
+                        selected[name] = (
+                            f"basic_username_prefix:{predicate['value']}"
+                        )
+                    continue
+                if isinstance(raw, bytes):
+                    try:
+                        selected[name] = raw.decode("ascii")
+                    except UnicodeDecodeError:
+                        continue
+                elif isinstance(raw, str):
+                    selected[name] = raw
+                elif isinstance(raw, (tuple, list)) and all(
+                    isinstance(item, (str, bytes)) for item in raw
+                ):
+                    try:
+                        selected[name] = ", ".join(
+                            item.decode("ascii") if isinstance(item, bytes) else item
+                            for item in raw
+                        )
+                    except UnicodeDecodeError:
+                        continue
+        return selected
 
     def observe(
         self,
         url: str,
         response_headers: dict[str, str],
         response_body: dict[str, Any] | None,
-        request_body: dict[str, Any] | None = None,
+        request_body: dict[str, Any] | list[Any] | None = None,
+        request_headers: (
+            tuple[str, ...] | list[str] | dict[str, str | None]
+        ) = (),
+        method: str | None = None,
     ) -> list[ServiceUsageObservation]:
         matched = self._lookup(url)
         if matched is None:
@@ -331,17 +1317,104 @@ class ServiceUsageObservers:
         parsed, observers = matched
         query = parse_qs(parsed.query, keep_blank_values=True)
         observations: list[ServiceUsageObservation] = []
+        normalized_request_headers: dict[str, str | None]
+        if isinstance(request_headers, dict):
+            normalized_request_headers = {
+                str(name).lower(): value
+                for name, value in request_headers.items()
+            }
+        else:
+            normalized_request_headers = {
+                str(name).lower(): None for name in request_headers
+        }
         for observer in observers:
+            parameters = _path_parameters(parsed.path, observer)
+            if observer.methods and (
+                method is None or method.upper() not in observer.methods
+            ):
+                continue
+            if not all(
+                _request_predicate_matches(request_body, predicate)
+                for predicate in observer.request_all
+            ):
+                continue
+            if not all(
+                _request_header_predicate_matches(
+                    normalized_request_headers, predicate
+                )
+                for predicate in observer.request_header_all
+            ):
+                continue
             if not all(
                 _response_predicate_matches(response_body, predicate)
                 for predicate in observer.response_all
             ):
                 continue
-            if observer.request_character_count_path:
-                text = _resolve_path(request_body, observer.request_character_count_path)
-                if not isinstance(text, str) or not text:
+            if (
+                observer.request_character_count_path
+                or observer.request_character_count_query_parameter
+            ):
+                character_count = (
+                    _character_count(
+                        _resolve_character_count_path(
+                            request_body,
+                            observer.request_character_count_path,
+                            case_insensitive=(observer.request_character_count_case_insensitive),
+                        ),
+                        observer.character_count_encoding,
+                    )
+                    if observer.request_character_count_path
+                    else None
+                )
+                if character_count is None and observer.request_character_count_query_parameter:
+                    character_count = _character_count(
+                        query.get(observer.request_character_count_query_parameter),
+                        observer.character_count_encoding,
+                    )
+                if character_count is None:
                     continue
-                quantity = Decimal(len(text))
+                if observer.minimum_quantity == "1":
+                    character_count = max(character_count, 1)
+                quantity = Decimal(character_count)
+            elif observer.request_collection_count_path:
+                collection = _resolve_collection_path(
+                    request_body, observer.request_collection_count_path
+                )
+                if collection is None:
+                    continue
+                paired_responses = (
+                    _resolve_collection_path(
+                        response_body, observer.paired_response_collection_path
+                    )
+                    if observer.paired_response_collection_path
+                    else None
+                )
+                if observer.paired_response_collection_path and paired_responses is None:
+                    continue
+                if paired_responses is not None and len(paired_responses) != len(collection):
+                    continue
+                count = sum(
+                    1
+                    for index, item in enumerate(collection)
+                    if all(
+                        _collection_predicate_matches(item, predicate)
+                        for predicate in observer.request_collection_all
+                    )
+                    and (
+                        paired_responses is None
+                        or all(
+                            _request_predicate_matches(
+                                paired_responses[index], predicate
+                            )
+                            for predicate in observer.paired_response_all
+                        )
+                    )
+                )
+                if count <= 0:
+                    continue
+                quantity = Decimal(count)
+            elif observer.fixed_quantity:
+                quantity = Decimal(observer.fixed_quantity)
             elif observer.response_quantity_header:
                 raw_quantity = next(
                     (
@@ -355,6 +1428,29 @@ class ServiceUsageObservers:
                     quantity = Decimal(str(raw_quantity))
                 except (InvalidOperation, ValueError):
                     continue
+            elif observer.response_collection_sum_path:
+                values = _resolve_collection_path(
+                    response_body, observer.response_collection_sum_path
+                )
+                if not values:
+                    continue
+                quantity = Decimal(0)
+                valid = True
+                for value in values:
+                    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                        valid = False
+                        break
+                    try:
+                        item = Decimal(str(value))
+                    except (InvalidOperation, ValueError):
+                        valid = False
+                        break
+                    if not item.is_finite() or item < 0:
+                        valid = False
+                        break
+                    quantity += item
+                if not valid:
+                    continue
             else:
                 try:
                     quantity = Decimal(
@@ -364,6 +1460,69 @@ class ServiceUsageObservers:
                     continue
             if not quantity.is_finite() or quantity <= 0:
                 continue
+            provider_cost_usd = None
+            provider_cost_values: list[Any] | None = None
+            if observer.provider_cost_usd_path:
+                provider_cost_values = [
+                    _resolve_path(response_body, observer.provider_cost_usd_path)
+                ]
+            elif observer.provider_cost_usd_collection_sum_path:
+                provider_cost_values = _resolve_collection_path(
+                    response_body, observer.provider_cost_usd_collection_sum_path
+                )
+                if not provider_cost_values:
+                    continue
+            if provider_cost_values is not None:
+                provider_cost_usd = Decimal(0)
+                for raw_provider_cost in provider_cost_values:
+                    if isinstance(raw_provider_cost, bool):
+                        provider_cost_usd = None
+                        break
+                    try:
+                        item_cost = Decimal(str(raw_provider_cost))
+                    except (InvalidOperation, ValueError):
+                        provider_cost_usd = None
+                        break
+                    if not item_cost.is_finite() or item_cost < 0:
+                        provider_cost_usd = None
+                        break
+                    provider_cost_usd += item_cost
+                if provider_cost_usd is None:
+                    continue
+            provider_cost_amount = None
+            provider_cost_currency = None
+            if observer.provider_cost_minor_units_path:
+                raw_minor_cost = _resolve_path(
+                    response_body, observer.provider_cost_minor_units_path
+                )
+                raw_currency = _resolve_path(
+                    response_body, observer.provider_cost_currency_path or ""
+                )
+                if (
+                    isinstance(raw_minor_cost, bool)
+                    or not isinstance(raw_minor_cost, (int, float, str))
+                    or not isinstance(raw_currency, str)
+                    or len(raw_currency) != 3
+                    or not raw_currency.isalpha()
+                    or raw_currency != raw_currency.upper()
+                ):
+                    continue
+                try:
+                    minor_cost = Decimal(str(raw_minor_cost))
+                except (InvalidOperation, ValueError):
+                    continue
+                if not minor_cost.is_finite() or minor_cost < 0:
+                    continue
+                exponent = observer.provider_cost_minor_unit_exponent or 0
+                provider_cost_amount = minor_cost / (Decimal(10) ** exponent)
+                provider_cost_currency = raw_currency
+            if observer.quantity_multiplier_query_parameter_count:
+                query_multiplier = len(
+                    query.get(observer.quantity_multiplier_query_parameter_count, [])
+                )
+                if query_multiplier <= 0:
+                    continue
+                quantity *= query_multiplier
             if observer.quantity_multiplier_path and (
                 observer.quantity_multiplier_query_parameter is None
                 or any(
@@ -372,13 +1531,13 @@ class ServiceUsageObservers:
                 )
             ):
                 try:
-                    multiplier = Decimal(
+                    response_multiplier = Decimal(
                         str(_resolve_path(response_body, observer.quantity_multiplier_path))
                     )
                 except (InvalidOperation, ValueError):
-                    multiplier = Decimal(0)
-                if multiplier.is_finite() and multiplier > 0:
-                    quantity *= multiplier
+                    response_multiplier = Decimal(0)
+                if response_multiplier.is_finite() and response_multiplier > 0:
+                    quantity *= response_multiplier
             record_id = (
                 _bounded_string(_resolve_path(response_body, observer.record_id_path))
                 if observer.record_id_path
@@ -411,16 +1570,45 @@ class ServiceUsageObservers:
                 if observer.resource_path
                 else None
             )
-            if resource_id is None and observer.request_resource_path:
-                resource_id = _bounded_string(
-                    _resolve_path(request_body, observer.request_resource_path)
-                )
-            if resource_id is None and observer.resource_query_parameter:
-                resource_id = _bounded_string(
-                    next(iter(query.get(observer.resource_query_parameter, [])), None)
-                )
+            request_resource_id = (
+                _bounded_string(_resolve_path(request_body, observer.request_resource_path))
+                if observer.request_resource_path
+                else None
+            )
+            query_resource_id = (
+                _bounded_string(next(iter(query.get(observer.resource_query_parameter, [])), None))
+                if observer.resource_query_parameter
+                else None
+            )
+            path_resource_id = (
+                _bounded_string(parameters.get(observer.resource_path_parameter))
+                if observer.resource_path_parameter
+                else None
+            )
+            hostname_resource_id = (
+                _bounded_string(parsed.hostname) if observer.resource_hostname else None
+            )
+            if (
+                request_resource_id is not None
+                and query_resource_id is not None
+                and request_resource_id != query_resource_id
+            ):
+                continue
+            resource_id = (
+                resource_id
+                or request_resource_id
+                or query_resource_id
+                or path_resource_id
+                or hostname_resource_id
+            )
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
+            if (
+                resource_id is not None
+                and observer.resource_id_prefix_to_strip
+                and resource_id.startswith(observer.resource_id_prefix_to_strip)
+            ):
+                resource_id = resource_id[len(observer.resource_id_prefix_to_strip) :]
             if observer.allowed_resource_ids and resource_id not in observer.allowed_resource_ids:
                 continue
             if resource_id is not None and observer.resource_variant is not None:
@@ -432,22 +1620,18 @@ class ServiceUsageObservers:
                     else variant["default_suffix"]
                 )
                 resource_id = f"{resource_id}{suffix}"[:256]
-            dimensions: list[dict[str, Any]] = []
-            if observer.service_key == "elevenlabs_tts":
-                prefix = "/v1/text-to-speech/"
-                if parsed.path.startswith(prefix):
-                    encoded = parsed.path[len(prefix) :].split("/", 1)[0]
-                    try:
-                        value = _bounded_string(unquote(encoded, errors="strict"))
-                    except UnicodeDecodeError:
-                        value = None
-                    if value is not None:
-                        dimensions.append(
-                            {
-                                "key": "voice_id",
-                                "value": {"type": "string", "value": value},
-                            }
-                        )
+            provider_region = None
+            if observer.provider_region_domain_label is not None:
+                labels = (parsed.hostname or "").split(".")
+                if observer.provider_region_domain_label >= len(labels):
+                    continue
+                candidate = labels[observer.provider_region_domain_label]
+                if candidate not in observer.allowed_provider_regions:
+                    continue
+                provider_region = candidate
+            dimensions = _billing_dimensions(
+                parsed, request_body, response_body, observer, parameters
+            )
             observations.append(
                 ServiceUsageObservation(
                     service_key=observer.service_key,
@@ -455,11 +1639,16 @@ class ServiceUsageObservers:
                     provider_service=observer.provider_service,
                     component=observer.component,
                     metric=observer.usage_metric,
+                    unit=observer.usage_unit,
                     quantity=quantity,
                     resource_type=observer.resource_type if resource_id else None,
                     resource_id=resource_id,
                     provider_record_id=record_id,
-                    dimensions=tuple(dimensions),
+                    provider_region=provider_region,
+                    provider_cost_usd=provider_cost_usd,
+                    provider_cost_amount=provider_cost_amount,
+                    provider_cost_currency=provider_cost_currency,
+                    dimensions=dimensions,
                     manifest_version=self.manifest_version,
                 )
             )

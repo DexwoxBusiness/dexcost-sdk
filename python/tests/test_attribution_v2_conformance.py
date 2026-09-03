@@ -133,7 +133,8 @@ def test_promotes_compute_quantities_and_closes_usage_period() -> None:
             details={
                 "billing_model": "lambda",
                 "duration_ms": 2500,
-                "memory_bytes_limit": 2 * 1024**3,
+                # Lambda capture stores configured MB as MB * 1_000_000 bytes.
+                "memory_bytes_limit": 2048 * 1_000_000,
                 "vcpu_seconds_used": 2.5,
                 "invocation_count": 1,
                 "region": "us-east-1",
@@ -144,7 +145,7 @@ def test_promotes_compute_quantities_and_closes_usage_period() -> None:
     assert converted["component"] == "compute"
     assert {
         "metric": "memory_gib_seconds",
-        "quantity": "5",
+        "quantity": "4.768371582031",
         "unit": "GiB-Seconds",
     } in converted["usage"]
     assert converted["usage_period"]["end_at"] == converted["occurred_at"]
@@ -317,6 +318,20 @@ def test_drops_observability_only_events() -> None:
 
 def test_drops_unknown_event_types_instead_of_misattributing_external_cost() -> None:
     assert to_attribution_event_v2(_event(event_type="future_internal_signal")) is None
+
+
+def test_drops_custom_metrics_instead_of_relabelling_them_as_requests() -> None:
+    assert to_attribution_event_v2(
+        _event(
+            event_type="external_cost",
+            provider="pinecone",
+            details={
+                "attribution_usage_metric": "pinecone.read_units",
+                "attribution_usage_quantity": "2",
+                "attribution_usage_unit": "ReadUnits",
+            },
+        )
+    ) is None
 
 
 def test_conversion_is_stable_and_never_transmits_details() -> None:

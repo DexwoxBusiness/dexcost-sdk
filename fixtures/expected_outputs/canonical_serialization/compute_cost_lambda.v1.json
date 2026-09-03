@@ -1,7 +1,7 @@
 {
   "cached_tokens": null,
   "cost_confidence": "computed",
-  "cost_usd": "0.0000208",
+  "cost_usd": "0.00000853335",
   "details": {
     "architecture": "x86_64",
     "billing_model": "lambda",
@@ -9,8 +9,8 @@
     "duration_ms": 1000,
     "initialization_type": "on_demand",
     "invocation_count": 1,
-    "memory_bytes_limit": 536870912,
-    "memory_bytes_peak": 268435456,
+    "memory_bytes_limit": 512000000,
+    "memory_bytes_peak": 256000000,
     "region": "us-east-1",
     "vcpu_count": 0.5,
     "vcpu_seconds_used": 0.5

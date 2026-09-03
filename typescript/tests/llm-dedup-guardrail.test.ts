@@ -52,6 +52,7 @@ const NO_CAPTURE_ALLOWLIST = new Set([
   "core/provider-jobs.ts",
   "dev-console.ts",
   "cli/scanner.ts",
+  "instruments/groq.ts",
   "instruments/google-genai.ts",
   "instruments/litellm.ts",
   "instruments/ollama.ts",

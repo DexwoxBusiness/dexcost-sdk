@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -88,7 +89,7 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
 
     const llmEvents = buffer.getAllEvents().filter((e) => e.eventType === "llm_call");
     expect(llmEvents).toHaveLength(1);
-    expect(llmEvents[0].provider).toBe("api.kimi.com");
+    expect(llmEvents[0].provider).toBe("moonshot");
     expect(llmEvents[0].model).toBe("kimi-k2-0905-preview");
     expect(llmEvents[0].inputTokens).toBe(1200);
     expect(llmEvents[0].outputTokens).toBe(340);
@@ -173,6 +174,473 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     expect(llmEvents).toHaveLength(1);
     expect(llmEvents[0].inputTokens).toBe(900);
     expect(llmEvents[0].outputTokens).toBe(150);
+  });
+
+  it("captures a raw OpenAI Responses JSON payload", async () => {
+    const body = {
+      id: "resp-json-1",
+      model: "gpt-5.6-luna",
+      output: [],
+      usage: { input_tokens: 320, output_tokens: 48 },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "responses-json" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, input: "private" }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "api.openai.com",
+      model: "gpt-5.6-luna",
+      inputTokens: 320,
+      outputTokens: 48,
+    });
+    expect(buffer.getAllEvents().filter((event) => event.eventType === "network"))
+      .toHaveLength(0);
+  });
+
+  it("captures nested usage from a raw OpenAI Responses SSE completion", async () => {
+    const generatedOutput = "x".repeat(20_000);
+    const sse = `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "resp-stream-1",
+        model: "gpt-5.6-luna",
+        output: [{
+          type: "message",
+          content: [{ type: "output_text", text: generatedOutput }],
+        }],
+        usage: { input_tokens: 640, output_tokens: 96 },
+      },
+    })}\n\n`;
+    expect(Buffer.byteLength(sse, "utf-8")).toBeGreaterThan(16_384);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(sse, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })));
+    trackHttp(buffer, pricing);
+
+    const task = createTask({ taskId: randomUUID(), taskType: "responses-stream" });
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5.6-luna", input: "private", stream: true }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "api.openai.com",
+      model: "gpt-5.6-luna",
+      inputTokens: 640,
+      outputTokens: 96,
+    });
+    expect(events[0].details?.source).toBe("http_llm_fallback_stream");
+  });
+
+  it("attributes raw DeepSeek calls and preserves its cache-hit bucket", async () => {
+    const body = {
+      id: "chat-deepseek-1",
+      model: "deepseek-v4-pro",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_cache_hit_tokens: 4,
+        prompt_cache_miss_tokens: 16,
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "deepseek" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "deepseek-v4-pro", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
+  it("attributes raw Moonshot calls and preserves its cache-hit bucket", async () => {
+    const body = {
+      id: "chat-moonshot-1",
+      model: "kimi-k3",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        cached_tokens: 4,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "moonshot" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "kimi-k3", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "moonshot",
+      model: "kimi-k3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "10", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
+  it("attributes current Together raw chat calls with exact public model identity", async () => {
+    const model = "deepseek-ai/DeepSeek-V4-Pro-0813";
+    const body = {
+      id: "chat-together-1",
+      model,
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        cached_tokens: 4,
+        reasoning_tokens: 3,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "together" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.together.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "together",
+      model,
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    expect(events[0].costUsd.toString()).toBe("0");
+  });
+
+  it.each([
+    ["https://api.fireworks.ai/inference/v1/chat/completions", undefined, "default"],
+    ["https://us.api.fireworks.ai/inference/v1/chat/completions", "priority", "priority"],
+    ["https://api.fireworks.ai/inference/v1/chat/completions", "standard", "default"],
+  ])("attributes raw Fireworks calls with an exact serving tier", async (url, tier, expectedTier) => {
+    const model = "accounts/fireworks/models/kimi-k3";
+    const body = {
+      id: "chat-fireworks-1",
+      model,
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "fireworks" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [],
+          ...(tier === undefined ? {} : { service_tier: tier }),
+        }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "fireworks_ai",
+      model,
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    expect(events[0].details?.attribution_dimensions).toEqual([
+      { key: "service_tier", value: { type: "string", value: expectedTier } },
+    ]);
+  });
+
+  it.each([
+    [0, "default_short"],
+    [2, undefined],
+  ])("captures raw xAI exact cost and fails open for server tools", async (toolCount, expectedLane) => {
+    const body = {
+      id: "chat-xai-1",
+      model: "grok-4.3",
+      service_tier: "default",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        cost_in_usd_ticks: 12_345_678,
+        num_server_side_tools_used: toolCount,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "xai" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "grok-4.3", messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "xai",
+      model: "grok-4.3",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+      costConfidence: "exact",
+      pricingSource: "provider_response",
+    });
+    expect(events[0].costUsd.toString()).toBe("0.0012345678");
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.xai_pricing_lane).toBe(expectedLane);
+  });
+
+  it.each([
+    ["on_demand", "on_demand", [], "public_sync"],
+    ["performance", "performance", [], undefined],
+    ["performance", undefined, [], undefined],
+    ["auto", "auto", [], undefined],
+    ["on_demand", "on_demand", [{ type: "code_interpreter" }], undefined],
+  ])("captures raw Groq calls only in the public token lane", async (
+    requestTier,
+    responseTier,
+    executedTools,
+    expectedLane,
+  ) => {
+    const body = {
+      id: "chat-groq-1",
+      model: "openai/gpt-oss-120b",
+      service_tier: responseTier,
+      choices: [{ message: { executed_tools: executedTools } }],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "groq" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, service_tier: requestTier, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "groq", model: body.model });
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.groq_pricing_lane).toBe(expectedLane);
+  });
+
+  it.each([
+    ["standard", "global_standard"],
+    ["priority", undefined],
+    [undefined, undefined],
+  ])("captures raw Mistral calls only in the confirmed global Standard lane", async (
+    responseTier,
+    expectedLane,
+  ) => {
+    const body = {
+      id: "chat-mistral-1",
+      model: "mistral-large-latest",
+      choices: [],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        prompt_tokens_details: { cached_tokens: 4 },
+        completion_tokens_details: { reasoning_tokens: 3 },
+        ...(responseTier === undefined ? {} : { service_tier: responseTier }),
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, messages: [] }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: "mistral",
+      model: "mistral-large-2512",
+      inputTokens: 20,
+      outputTokens: 10,
+      cachedTokens: 4,
+    });
+    expect(events[0].costUsd.toString()).toBe("0");
+    expect(events[0].details?.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "16", unit: "Tokens" },
+      { metric: "output_tokens", quantity: "7", unit: "Tokens" },
+      { metric: "cache_read_input_tokens", quantity: "4", unit: "Tokens" },
+      { metric: "reasoning_output_tokens", quantity: "3", unit: "Tokens" },
+    ]);
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{ key: string; value: { value: string } }> ?? [])
+        .map((item) => [item.key, item.value.value]),
+    );
+    expect(dimensions.mistral_pricing_lane).toBe(expectedLane);
+  });
+
+  it("keeps Mistral legacy completions out of the standard pricing lane", async () => {
+    const body = {
+      id: "completion-mistral-legacy-1",
+      model: "mistral-large-latest",
+      choices: [{ index: 0, finish_reason: "stop", text: "private-output" }],
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        service_tier: "standard",
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer, pricing);
+    const task = createTask({ taskId: randomUUID(), taskType: "mistral-legacy" });
+
+    await runWithTask(task, async () => {
+      const response = await fetch("https://api.mistral.ai/v1/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: body.model, prompt: "private-query" }),
+      });
+      await response.text();
+    });
+
+    const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
+    expect(events).toHaveLength(1);
+    const dimensions = Object.fromEntries(
+      (events[0].details?.attribution_dimensions as Array<{
+        key: string;
+        value: { value: string };
+      }> ?? []).map((item) => [item.key, item.value.value]),
+    );
+    expect(events[0]).toMatchObject({ provider: "mistral", model: "mistral-large-2512" });
+    expect(dimensions.mistral_pricing_lane).toBeUndefined();
+    expect(JSON.stringify(events[0])).not.toContain("private-query");
   });
 
   it("captures anthropic-compatible SSE streaming responses via the stream fallback", async () => {

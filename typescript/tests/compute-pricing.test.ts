@@ -43,7 +43,7 @@ describe("Lambda", () => {
     const details = {
       billing_model: "lambda",
       duration_ms: 100,
-      memory_bytes_limit: 1024 * 1024 * 1024,
+      memory_bytes_limit: 1024 * 1_000_000,
       vcpu_count: 1.0,
       vcpu_seconds_used: 0,
       invocation_count: 1,
@@ -51,9 +51,7 @@ describe("Lambda", () => {
       architecture: "x86_64",
     };
     const cost = engine.resolveComputeCost(details, makeEnv(), {});
-    const gbSeconds = new Decimal(1024 * 1024 * 1024)
-      .dividedBy(new Decimal("1000000000"))
-      .times(new Decimal("0.1"));
+    const gbSeconds = new Decimal("0.1");
     const expected = new Decimal("0.0000002").plus(gbSeconds.times(new Decimal("0.0000166667")));
     expect(cost.costUsd.equals(expected)).toBe(true);
     expect(cost.costConfidence).toBe("computed");
@@ -65,7 +63,7 @@ describe("Lambda", () => {
     const base = {
       billing_model: "lambda",
       duration_ms: 100,
-      memory_bytes_limit: 1024 * 1024 * 1024,
+      memory_bytes_limit: 1024 * 1_000_000,
       vcpu_count: 1.0,
       vcpu_seconds_used: 0,
       invocation_count: 1,

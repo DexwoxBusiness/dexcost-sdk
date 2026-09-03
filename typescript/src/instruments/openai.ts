@@ -29,10 +29,16 @@ import {
   type CapturedIdempotencyKey,
 } from "../core/idempotency.js";
 import {
+  canonicalMistralModel,
+  canonicalXaiModel,
+  groqPricingLane,
+  groqToolExecutionBlocksStaticPricing,
+  mistralPricingLane,
   nonNegativeDecimal,
   nonNegativeInteger,
   prefixedModel,
   tokenMeasurement,
+  xaiPricingLane,
 } from "./provider-extract.js";
 import { normalizeOpenAIUsage, OpenAIUsageError } from "./openai-usage.js";
 import { mapProviderResult, recordProviderFailure } from "./provider-metering.js";
@@ -196,6 +202,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     const startTime = performance.now();
     const self = this;
     const route = providerForResource(self, requestedModel);
+    const serviceTier = requestServiceTier(route, body);
     const capability = getCapability();
     const idempotencyKey = captureIdempotencyKey();
 
@@ -218,7 +225,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
       if (body?.stream) {
         return wrapStream(
           response, task, startTime, autoCreated, responsesApi, route, requestedModel,
-          capability, idempotencyKey,
+          capability, idempotencyKey, serviceTier,
         );
       }
       if (_modernInstalled && responsesApi && body?.background === true) {
@@ -229,7 +236,7 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
         const latencyMs = Math.round(performance.now() - startTime);
         recordEvent(
           response, task, latencyMs, route, requestedModel, responsesApi,
-          capability, idempotencyKey,
+          capability, idempotencyKey, serviceTier,
         );
         if (responsesApi && route.provider === "openai" && route.gateway === undefined &&
             _pricing && _buffer) {
@@ -294,11 +301,38 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) {
       return { provider: "perplexity" };
     }
+    if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) {
+      return { provider: "deepseek" };
+    }
+    if (["api.moonshot.ai", "api.moonshot.cn"].includes(hostname)) {
+      return { provider: "moonshot" };
+    }
+    if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) {
+      return { provider: "fireworks_ai" };
+    }
+    if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) {
+      return { provider: "xai" };
+    }
+    if (hostname === "api.groq.com" || hostname.endsWith(".api.groq.com")) {
+      return { provider: "groq" };
+    }
+    if (hostname === "api.mistral.ai") {
+      return { provider: "mistral" };
+    }
+    if (hostname === "api.together.ai" || hostname === "api.together.xyz") {
+      return { provider: "together" };
+    }
     if (hostname.endsWith(".openai.azure.com") || hostname.endsWith(".services.ai.azure.com")) {
       return { provider: "azure_openai" };
     }
   } catch { /* the default OpenAI client may expose a relative/opaque URL */ }
   return { provider: "openai" };
+}
+
+function requestServiceTier(route: RoutedIdentity, body: any): unknown {
+  const value = body?.service_tier ?? body?.extra_body?.service_tier;
+  if (route.provider === "fireworks_ai") return value === "priority" ? "priority" : "default";
+  return route.provider === "groq" ? value : undefined;
 }
 
 function routedService(route: RoutedIdentity, responsesApi: boolean): string {
@@ -314,8 +348,15 @@ function routedModel(route: RoutedIdentity, responseModel: unknown, requestedMod
   if (route.gateway === "litellm") {
     return canonicalLiteLlmModel(route.provider, responseModel, requestedModel);
   }
-  if (route.provider === "openai" && route.gateway === undefined) {
-    return typeof responseModel === "string" && responseModel.length > 0 ? responseModel : requestedModel;
+  if (["openai", "deepseek", "moonshot", "fireworks_ai", "xai", "groq", "mistral", "together"].includes(route.provider) && route.gateway === undefined) {
+    const selected = typeof responseModel === "string" && responseModel.length > 0
+      ? responseModel
+      : requestedModel;
+    return route.provider === "xai"
+      ? canonicalXaiModel(selected)
+      : route.provider === "mistral"
+        ? canonicalMistralModel(selected)
+        : selected;
   }
   const selected = route.provider === "azure_openai" || route.gateway !== undefined
     ? requestedModel
@@ -332,13 +373,14 @@ function recordEvent(
   responsesApi: boolean,
   capability: CapabilityIdentity | undefined,
   idempotencyKey: CapturedIdempotencyKey | undefined,
+  serviceTier?: unknown,
 ): void {
   if (!_buffer || !_pricing) return;
 
   const model = routedModel(route, response?.model, requestedModel);
   recordUsageEvent(
     task, model, response?.usage, latencyMs, response?.id, route,
-    responsesApi, "succeeded", undefined, capability, idempotencyKey, response,
+    responsesApi, "succeeded", undefined, capability, idempotencyKey, response, serviceTier,
   );
 }
 
@@ -355,6 +397,7 @@ function recordUsageEvent(
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
   rawResponse?: unknown,
+  serviceTier?: unknown,
 ): void {
   if (!_buffer || !_pricing) return;
   const provider = route.provider;
@@ -392,6 +435,15 @@ function recordUsageEvent(
     }];
   } else if (provider !== "openai") {
     details.attribution_dimensions = [{ key: "gateway", value: { type: "string", value: provider } }];
+  }
+  if (provider === "fireworks_ai" && typeof serviceTier === "string") {
+    const dimensions = Array.isArray(details.attribution_dimensions)
+      ? details.attribution_dimensions as Array<Record<string, unknown>>
+      : [];
+    details.attribution_dimensions = [
+      ...dimensions,
+      { key: "service_tier", value: { type: "string", value: serviceTier } },
+    ];
   }
   if (provider === "azure_openai") {
     details.azure_deployment = model.replace(/^azure\//, "");
@@ -467,6 +519,57 @@ function recordUsageEvent(
       details.provider_upstream_cost_usd = providerUpstreamCostUsd.toString();
     }
   }
+  if (provider === "xai") {
+    const pricingLane = xaiPricingLane(
+      rawResponse ?? { usage: rawUsage },
+      inputTokens,
+    );
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "xai_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "groq") {
+    const response = rawResponse !== null && typeof rawResponse === "object"
+      ? rawResponse as Record<string, unknown>
+      : { usage: rawUsage };
+    const pricingLane = groqPricingLane({
+      ...response,
+      ...((response.service_tier === undefined || response.service_tier === null) &&
+          serviceTier !== undefined
+        ? { service_tier: serviceTier }
+        : {}),
+    });
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "groq_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
+  if (provider === "mistral") {
+    const pricingLane = mistralPricingLane(
+      rawResponse ?? { usage: rawUsage },
+      responsesApi ? "responses" : "chat_completions",
+    );
+    if (pricingLane !== undefined) {
+      const dimensions = Array.isArray(details.attribution_dimensions)
+        ? details.attribution_dimensions as Array<Record<string, unknown>>
+        : [];
+      details.attribution_dimensions = [
+        ...dimensions,
+        { key: "mistral_pricing_lane", value: { type: "string", value: pricingLane } },
+      ];
+    }
+  }
   const usageLines = [
     ...(billableInputTokens > 0 ? [{ metric: "input_tokens", quantity: String(billableInputTokens), unit: "Tokens" }] : []),
     ...(cachedTokens > 0 ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }] : []),
@@ -536,11 +639,14 @@ function wrapStream(
   requestedModel: string = "unknown",
   capability?: CapabilityIdentity,
   idempotencyKey?: CapturedIdempotencyKey,
+  serviceTier?: unknown,
 ): AsyncIterable<any> {
   let model = routedModel(route, undefined, requestedModel);
   let usage: unknown;
   let providerRecordId: unknown;
   let terminalResponse: unknown;
+  let groqServiceTier: unknown = route.provider === "groq" ? serviceTier : undefined;
+  let groqToolExecutionSeen = false;
   let finalized = false;
 
   const finalize = (
@@ -550,10 +656,20 @@ function wrapStream(
     if (finalized) return;
     finalized = true;
     try {
+      const pricingResponse = route.provider === "groq"
+        ? {
+            ...(terminalResponse !== null && typeof terminalResponse === "object"
+              ? terminalResponse as Record<string, unknown>
+              : {}),
+            ...(groqServiceTier === undefined ? {} : { service_tier: groqServiceTier }),
+            _dexcost_groq_tool_execution_seen: groqToolExecutionSeen,
+          }
+        : terminalResponse;
       recordUsageEvent(
         task, routedModel(route, model, requestedModel), usage,
         Math.round(performance.now() - startTime), providerRecordId, route,
-        responsesApi, status, error, capability, idempotencyKey, terminalResponse,
+        responsesApi, status, error, capability, idempotencyKey, pricingResponse,
+        serviceTier,
       );
     } catch {
       // dexcost errors must never crash the provider stream
@@ -583,6 +699,12 @@ function wrapStream(
             ? chunk.response
             : chunk;
           terminalResponse = response;
+          if (route.provider === "groq") {
+            if (response?.service_tier !== undefined && response?.service_tier !== null) {
+              groqServiceTier = response.service_tier;
+            }
+            if (groqToolExecutionBlocksStaticPricing(response)) groqToolExecutionSeen = true;
+          }
           if (response?.model) model = response.model;
           if (response?.id) providerRecordId = response.id;
           if (response?.usage) usage = response.usage;
