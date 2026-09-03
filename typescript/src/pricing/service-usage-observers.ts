@@ -707,7 +707,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       (observer.minimum_quantity !== undefined &&
         observer.request_character_count_path === undefined &&
         observer.request_character_count_query_parameter === undefined) ||
-      ((observer.fixed_quantity !== undefined) !== (observer.usage_metric === "request_count")) ||
+      (observer.usage_metric === "request_count" && observer.fixed_quantity === undefined) ||
       (observer.response_path !== undefined &&
         (typeof observer.response_path !== "string" || observer.response_path.length === 0)) ||
       optionalStrings.some(

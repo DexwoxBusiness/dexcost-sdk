@@ -49,16 +49,16 @@ test("rejects monetary authority in the SDK observer manifest", () => {
   );
 });
 
-test("rejects fixed request quantity with a non-request metric", () => {
+test("rejects request_count without a fixed request quantity", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(
     (entry) => entry.service_key === "brave_search",
   );
-  observer.usage_metric = "input_tokens";
+  delete observer.fixed_quantity;
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
-    "observer brave_search fixed_quantity and request_count must be declared together",
+    "observer brave_search request_count must declare fixed_quantity 1",
   );
 });
 

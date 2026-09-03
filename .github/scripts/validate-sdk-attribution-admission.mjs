@@ -696,12 +696,9 @@ function validateObserverShape(observer, issues) {
   if (observer?.fixed_quantity !== undefined && observer.fixed_quantity !== "1") {
     issues.push(`observer ${key} fixed_quantity must be exactly 1`);
   }
-  if (
-    (observer?.fixed_quantity === "1") !==
-    (observer?.usage_metric === "request_count")
-  ) {
+  if (observer?.usage_metric === "request_count" && observer?.fixed_quantity !== "1") {
     issues.push(
-      `observer ${key} fixed_quantity and request_count must be declared together`,
+      `observer ${key} request_count must declare fixed_quantity 1`,
     );
   }
   const hasCharacterCount = isNonEmptyString(observer?.request_character_count_path) ||

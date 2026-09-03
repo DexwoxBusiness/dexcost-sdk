@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.36.1",
-    "observer_count": 105,
+    "version": "1.36.2",
+    "observer_count": 106,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -2111,18 +2111,16 @@
       "source_url": "https://docs.datastax.com/en/astra-db-serverless/api-reference/dataapiclient.html"
     },
     {
-      "service_key": "chroma_cloud_request_count",
+      "service_key": "chroma_cloud_read_request_count",
       "provider_name": "chroma_cloud", "provider_service": "vector_database", "component": "storage",
       "domains": ["api.trychroma.com"],
       "endpoints": [
         "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/query",
         "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/get",
-        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/add",
-        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/update",
-        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/upsert"
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/search"
       ],
       "endpoint_match": "path_template", "methods": ["POST"],
-      "fixed_quantity": "1", "usage_metric": "request_count",
+      "fixed_quantity": "1", "usage_metric": "chroma.read_requests", "usage_unit": "Requests",
       "resource_type": "other", "resource_path_parameter": "collection_id",
       "billing_dimensions": [
         { "key": "tenant", "source": "path_parameter", "selector": "tenant" },
@@ -2130,6 +2128,25 @@
         { "key": "collection", "source": "path_parameter", "selector": "collection_id" }
       ],
       "source_url": "https://docs.trychroma.com/reference/chroma-api/record/query-collection"
+    },
+    {
+      "service_key": "chroma_cloud_write_request_count",
+      "provider_name": "chroma_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": ["api.trychroma.com"],
+      "endpoints": [
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/add",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/update",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/upsert"
+      ],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "fixed_quantity": "1", "usage_metric": "chroma.write_requests", "usage_unit": "Requests",
+      "resource_type": "other", "resource_path_parameter": "collection_id",
+      "billing_dimensions": [
+        { "key": "tenant", "source": "path_parameter", "selector": "tenant" },
+        { "key": "database", "source": "path_parameter", "selector": "database" },
+        { "key": "collection", "source": "path_parameter", "selector": "collection_id" }
+      ],
+      "source_url": "https://docs.trychroma.com/reference/chroma-api/record/add-records"
     }
   ]
 }

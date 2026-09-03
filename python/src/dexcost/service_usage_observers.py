@@ -869,8 +869,10 @@ class ServiceUsageObservers:
                     and request_character_count_path is None
                     and request_character_count_query_parameter is None
                 )
-                or (fixed_quantity is not None)
-                != (definition["usage_metric"] == "request_count")
+                or (
+                    definition["usage_metric"] == "request_count"
+                    and fixed_quantity is None
+                )
                 or (
                     response_path is not None
                     and (not isinstance(response_path, str) or not response_path)

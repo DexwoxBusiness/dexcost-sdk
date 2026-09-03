@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.36.1",
+  "observer_manifest_version": "1.36.2",
   "conformance_schema_version": "28",
   "required_sdks": ["typescript", "python"],
   "observers": [
@@ -685,9 +685,14 @@
       "fail_open_cases": ["astra_failed_request_is_not_an_allocation_signal"]
     },
     {
-      "service_key": "chroma_cloud_request_count",
-      "positive_cases": ["chroma_cloud_success_carries_tenant_database_and_collection_identity"],
-      "fail_open_cases": ["chroma_failed_request_is_not_an_allocation_signal"]
+      "service_key": "chroma_cloud_read_request_count",
+      "positive_cases": ["chroma_cloud_read_success_carries_tenant_database_and_collection_identity"],
+      "fail_open_cases": ["chroma_failed_read_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "chroma_cloud_write_request_count",
+      "positive_cases": ["chroma_cloud_write_success_carries_tenant_database_and_collection_identity"],
+      "fail_open_cases": ["chroma_failed_write_request_is_not_an_allocation_signal"]
     }
   ]
 }

@@ -1985,12 +1985,27 @@
       }]
     },
     {
-      "name": "chroma_cloud_success_carries_tenant_database_and_collection_identity",
+      "name": "chroma_cloud_read_success_carries_tenant_database_and_collection_identity",
       "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query",
       "method": "POST", "headers": {}, "request": { "query_embeddings": [[0.1, 0.2]], "n_results": 3 }, "response": { "ids": [[]] },
       "expected": [{
-        "service_key": "chroma_cloud_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
-        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
+        "service_key": "chroma_cloud_read_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "chroma.read_requests", "unit": "Requests", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
+        "dimensions": [
+          { "key": "tenant", "value": { "type": "string", "value": "tenant-1" } },
+          { "key": "database", "value": { "type": "string", "value": "agent-prod" } },
+          { "key": "collection", "value": { "type": "string", "value": "11111111-1111-1111-1111-111111111111" } }
+        ]
+      }]
+    },
+    {
+      "name": "chroma_cloud_write_success_carries_tenant_database_and_collection_identity",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/add",
+      "method": "POST", "status_code": 201, "headers": {},
+      "request": { "ids": ["memory-1"], "documents": ["contract terms"] }, "response": {},
+      "expected": [{
+        "service_key": "chroma_cloud_write_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "chroma.write_requests", "unit": "Requests", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
         "dimensions": [
           { "key": "tenant", "value": { "type": "string", "value": "tenant-1" } },
           { "key": "database", "value": { "type": "string", "value": "agent-prod" } },
@@ -2085,9 +2100,14 @@
       "request": { "find": { "filter": {} } }, "response": { "errors": [{ "message": "failed" }] }, "expected": []
     },
     {
-      "name": "chroma_failed_request_is_not_an_allocation_signal",
+      "name": "chroma_failed_read_request_is_not_an_allocation_signal",
       "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query", "method": "POST", "status_code": 500, "headers": {},
       "request": { "query_embeddings": [[0.1, 0.2]] }, "response": { "error": "failed" }, "expected": []
+    },
+    {
+      "name": "chroma_failed_write_request_is_not_an_allocation_signal",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/add", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "ids": ["memory-1"] }, "response": { "error": "failed" }, "expected": []
     }
   ]
 }
