@@ -2247,6 +2247,7 @@ async function _maybeRecordCost(
   }
 
   const domain = hostname.includes(":") ? hostname.split(":")[0] : hostname;
+  const storageUrl = serviceUsageObservers?.redactUrlForStorage(urlStr) ?? urlStr;
 
   // Resolve the task to attribute this cost to. An auto-task is created
   // when none is active so HTTP costs are never silently lost (mirrors
@@ -2308,7 +2309,7 @@ async function _maybeRecordCost(
         pricingSource: "manual",
         serviceName: domain,
         details: {
-          url: urlStr,
+          url: storageUrl,
           attribution_usage_quantity: 1,
           attribution_usage_per: rate.per,
           ...byteDetailsRequestOnly,
@@ -2373,7 +2374,7 @@ async function _maybeRecordCost(
               costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
               pricingSource: costResult.pricingSource, provider: domain, model: llmUsage.model,
               inputTokens: llmUsage.inputTokens, outputTokens: llmUsage.outputTokens,
-              details: { url: urlStr, source: "http_llm_fallback", ...byteDetailsRequestOnly },
+              details: { url: storageUrl, source: "http_llm_fallback", ...byteDetailsRequestOnly },
             });
             _pushRecordedEvent(event);
             if (_buffer) _buffer.addEvent(event);
@@ -2431,7 +2432,7 @@ async function _maybeRecordCost(
             pricingVersion: isUserOverride ? undefined : _catalog.catalogVersion,
             serviceName: extractionResult.serviceName,
             details: {
-              url: urlStr,
+              url: storageUrl,
               pricingSource: extractionResult.pricingSource,
               catalogService: entry.display_name,
               attribution_usage_quantity: extractionResult.usageQuantity,
@@ -2496,7 +2497,7 @@ async function _maybeRecordCost(
               model: observation.resourceType === "model" ? observation.resourceId : undefined,
               serviceName: observation.providerService,
               details: {
-                url: urlStr,
+                url: storageUrl,
                 provider_record_id: observation.providerRecordId,
                 attribution_component: observation.component,
                 attribution_resource_type: observation.resourceType,
@@ -2545,7 +2546,7 @@ async function _maybeRecordCost(
       costConfidence: "unknown",
       pricingSource: "unknown",
       serviceName: domain,
-      details: { url: urlStr, ...byteDetailsRequestOnly },
+      details: { url: storageUrl, ...byteDetailsRequestOnly },
     });
 
     _pushRecordedEvent(event);

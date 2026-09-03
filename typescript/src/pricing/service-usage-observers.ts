@@ -437,6 +437,29 @@ function validQueryPredicate(predicate: unknown): predicate is QueryPredicate {
     typeof candidate.value === "string" && candidate.value.length > 0;
 }
 
+function redactQueryParameters(url: string, names: ReadonlySet<string>): string {
+  if (names.size === 0) return url;
+  const hashIndex = url.indexOf("#");
+  const fragment = hashIndex < 0 ? "" : url.slice(hashIndex);
+  const beforeFragment = hashIndex < 0 ? url : url.slice(0, hashIndex);
+  const queryIndex = beforeFragment.indexOf("?");
+  if (queryIndex < 0) return url;
+  const base = beforeFragment.slice(0, queryIndex);
+  const query = beforeFragment.slice(queryIndex + 1);
+  const redacted = query.split("&").map((part) => {
+    const equalsIndex = part.indexOf("=");
+    const rawName = equalsIndex < 0 ? part : part.slice(0, equalsIndex);
+    let name = "";
+    try {
+      name = decodeURIComponent(rawName).toLowerCase();
+    } catch {
+      // An invalid encoded name cannot equal a validated manifest name.
+    }
+    return names.has(name) ? `${rawName}=REDACTED` : part;
+  });
+  return `${base}?${redacted.join("&")}${fragment}`;
+}
+
 function domainMatches(hostname: string, observer: UsageObserverDefinition): boolean {
   return observer.domains.includes(hostname) ||
     observer.domain_suffixes?.some((suffix) => hostname.endsWith(`.${suffix}`)) === true;
@@ -888,6 +911,25 @@ export class ServiceUsageObservers {
         observer.endpoints.some((endpoint) =>
           endpointBoundaryMatches(parsed.pathname, endpoint, observer.endpoint_match)),
     );
+  }
+
+  redactUrlForStorage(url: string): string {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return url;
+    }
+    const sensitiveNames = new Set(
+      this.observers
+        .filter((observer) =>
+          observer.request_character_count_query_parameter !== undefined &&
+          domainMatches(parsed.hostname, observer) &&
+          observer.endpoints.some((endpoint) =>
+            endpointBoundaryMatches(parsed.pathname, endpoint, observer.endpoint_match)))
+        .map((observer) => observer.request_character_count_query_parameter!.toLowerCase()),
+    );
+    return redactQueryParameters(url, sensitiveNames);
   }
 
   needsRequestBody(url: string): boolean {

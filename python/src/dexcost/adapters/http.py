@@ -433,6 +433,17 @@ async def _aiohttp_wrapper(
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
     request_headers = dict(kwargs.get("headers") or {})
+    try:
+        effective_headers = getattr(getattr(response, "request_info", None), "headers", None)
+        if effective_headers is not None:
+            prepared_headers = dict(effective_headers)
+            if prepared_headers:
+                request_headers = prepared_headers
+    except (TypeError, ValueError):
+        # Test doubles and non-standard response implementations may not
+        # expose aiohttp's prepared request metadata. Explicit headers remain
+        # a safe compatibility fallback.
+        pass
     observers = get_service_usage_observers()
     if (
         observers is not None
@@ -749,9 +760,12 @@ def _handle_http_call(
     # where the raw URL with userinfo / api_key would otherwise live
     # between extraction and event creation.
     url = scrub_url(url)
+    storage_url = url
     try:
         observer_request_body: dict[str, Any] | list[Any] | None = None
         observers = get_service_usage_observers()
+        if observers is not None:
+            storage_url = observers.redact_url_for_storage(url)
         if observers is not None and observers.needs_request_body(url):
             if isinstance(request_body, (dict, list)):
                 observer_request_body = request_body
@@ -782,7 +796,7 @@ def _handle_http_call(
         global _network_error_count
         with _network_error_lock:
             _network_error_count += 1
-        _log.warning("network capture failed for %s", url, exc_info=True)
+        _log.warning("network capture failed for %s", storage_url, exc_info=True)
 
 
 def _resolve_task() -> Any | None:
@@ -876,6 +890,7 @@ def _handle_catalog_entry(
     response: Any,
     byte_details: dict[str, Any],
     *,
+    storage_url: str | None = None,
     overrides_only: bool = False,
     response_body: dict[str, Any] | None = None,
 ) -> bool:
@@ -921,7 +936,7 @@ def _handle_catalog_entry(
             pricing_source=pricing_source,
             pricing_version=pricing_version,
             service_name=result.service_name,
-            details={"url": url, **byte_details},
+            details={"url": storage_url or url, **byte_details},
         )
     else:
         event = Event(
@@ -931,7 +946,7 @@ def _handle_catalog_entry(
             cost_confidence="unknown",
             pricing_source="service_catalog",
             service_name=entry.display_name,
-            details={"url": url, **byte_details},
+            details={"url": storage_url or url, **byte_details},
         )
     _persist_event(event)
     return True
@@ -939,6 +954,7 @@ def _handle_catalog_entry(
 
 def _handle_usage_observer(
     url: str,
+    storage_url: str,
     method: str,
     domain: str,
     track_network: bool,
@@ -980,7 +996,7 @@ def _handle_usage_observer(
         )
     for observation in observations:
         details: dict[str, Any] = {
-            "url": url,
+            "url": storage_url,
             "provider_record_id": observation.provider_record_id,
             "attribution_component": observation.component,
             "attribution_resource_type": observation.resource_type,
@@ -1123,6 +1139,10 @@ def _handle_http_call_inner(
     status_code = int(
         getattr(response, "status_code", None) or getattr(response, "status", 0) or 0
     )
+    observers = get_service_usage_observers()
+    storage_url = (
+        observers.redact_url_for_storage(url) if observers is not None else url
+    )
 
     # Provider instruments wrap their underlying transport call in this
     # context because the provider event already owns its cost and usage.
@@ -1144,7 +1164,7 @@ def _handle_http_call_inner(
     if network_only:
         if record_network:
             _handle_uncataloged(
-                url,
+                storage_url,
                 method,
                 domain,
                 bytes_in,
@@ -1157,7 +1177,9 @@ def _handle_http_call_inner(
         return
 
     # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
-    if _handle_domain_rate(url, domain, record_network, bytes_in, bytes_out, byte_details):
+    if _handle_domain_rate(
+        storage_url, domain, record_network, bytes_in, bytes_out, byte_details
+    ):
         return
 
     # Observer-owned endpoint boundaries supersede the bundled legacy catalog.
@@ -1165,7 +1187,6 @@ def _handle_http_call_inner(
     # they fail open instead of falling through to a broader legacy prefix.
     # Manual domain rates above and explicit catalog/workspace overrides remain
     # authoritative.
-    observers = get_service_usage_observers()
     observer_route = observers is not None and observers.matches(url)
     observer_boundary = observers is not None and observers.owns_endpoint_boundary(url)
     if observer_boundary:
@@ -1181,6 +1202,7 @@ def _handle_http_call_inner(
             response_headers,
             response,
             byte_details,
+            storage_url=storage_url,
             overrides_only=True,
             response_body=response_body,
         ):
@@ -1189,6 +1211,7 @@ def _handle_http_call_inner(
         # notable-network event emission is disabled.
         if observers is not None and observer_route and _handle_usage_observer(
             url,
+            storage_url,
             method,
             domain,
             record_network,
@@ -1213,6 +1236,7 @@ def _handle_http_call_inner(
         response_headers,
         response,
         byte_details,
+        storage_url=storage_url,
         response_body=response_body,
     ):
         return
@@ -1222,7 +1246,7 @@ def _handle_http_call_inner(
         return
 
     _handle_uncataloged(
-        url,
+        storage_url,
         method,
         domain,
         bytes_in,

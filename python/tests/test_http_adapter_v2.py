@@ -163,6 +163,79 @@ class TestKnownServiceExtraction:
         assert (await response.json())["usage"]["total_tokens"] == 23
 
     @pytest.mark.asyncio
+    async def test_aiohttp_uses_effective_headers_for_razorpay_auth(self) -> None:
+        task = _make_task("razorpay-aiohttp-capture")
+        authorization = "Basic cnpwX2xpdmVfZml4dHVyZTpmaXh0dXJlX3NlY3JldA=="
+
+        class RequestInfo:
+            def __init__(self) -> None:
+                self.headers = {"Authorization": authorization}
+
+        class FakeAiohttpResponse:
+            status = 200
+
+            def __init__(self) -> None:
+                self.request_info = RequestInfo()
+                self.headers = {
+                    "content-type": "application/json",
+                    "content-length": "256",
+                }
+
+            async def json(self) -> dict[str, Any]:
+                return {
+                    "id": "pay_aiohttp_live_1",
+                    "entity": "payment",
+                    "currency": "INR",
+                    "status": "captured",
+                    "captured": True,
+                    "fee": 236,
+                }
+
+        response = FakeAiohttpResponse()
+
+        async def wrapped(*args: Any, **kwargs: Any) -> FakeAiohttpResponse:
+            return response
+
+        with task_context(task):
+            await _aiohttp_wrapper(
+                wrapped,
+                None,
+                ("GET", "https://api.razorpay.com/v1/payments/pay_aiohttp_live_1"),
+                {},
+            )
+            assert get_recorded_events() == []
+            await response.json()
+
+        event = get_recorded_events()[0]
+        assert event.details["attribution_observer_service"] == (
+            "razorpay_captured_payment_fee"
+        )
+        assert event.details["provider_reported_cost_amount"] == "2.36"
+        retained = json.dumps(event.details)
+        assert "rzp_live_" not in retained
+        assert "fixture_secret" not in retained
+
+    def test_translation_query_is_metered_then_redacted_before_storage(self) -> None:
+        task = _make_task("google-translate")
+        private_text = "private customer text"
+        url = (
+            "https://translation.googleapis.com/language/translate/v2"
+            f"?q={private_text.replace(' ', '%20')}&q=two&model=nmt"
+        )
+
+        with task_context(task):
+            _handle_http_call(url, method="GET", response=_make_response(body={}))
+
+        event = get_recorded_events()[0]
+        assert event.details["attribution_usage_quantity"] == str(
+            len(private_text) + len("two")
+        )
+        assert event.details["url"].count("q=REDACTED") == 2
+        assert "model=nmt" in event.details["url"]
+        assert private_text not in json.dumps(event.details)
+        assert "private%20customer%20text" not in json.dumps(event.details)
+
+    @pytest.mark.asyncio
     async def test_aiohttp_json_stream_is_not_drained_before_return(self) -> None:
         task = _make_task("embedding-stream")
 

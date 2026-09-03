@@ -645,6 +645,26 @@ def _valid_collection_predicate(predicate: Any) -> bool:
     return _valid_json_predicate_scalar(value)
 
 
+def _redact_query_parameters(url: str, names: set[str]) -> str:
+    """Redact selected query values without changing the URL's wire shape."""
+    if not names or "?" not in url:
+        return url
+    before_fragment, separator, fragment = url.partition("#")
+    base, query_separator, query = before_fragment.partition("?")
+    if not query_separator:
+        return url
+    redacted: list[str] = []
+    for part in query.split("&"):
+        raw_name, _, _ = part.partition("=")
+        try:
+            name = unquote(raw_name, errors="strict").lower()
+        except UnicodeDecodeError:
+            name = ""
+        redacted.append(f"{raw_name}=REDACTED" if name in names else part)
+    suffix = f"#{fragment}" if separator else ""
+    return f"{base}?{'&'.join(redacted)}{suffix}"
+
+
 class ServiceUsageObservers:
     def __init__(
         self,
@@ -1172,6 +1192,25 @@ class ServiceUsageObservers:
             )
             for candidate in self._observers
         )
+
+    def redact_url_for_storage(self, url: str) -> str:
+        """Hide query values used as character-count sources before persistence."""
+        parsed = urlparse(url)
+        sensitive_names = {
+            candidate.request_character_count_query_parameter.lower()
+            for candidate in self._observers
+            if candidate.request_character_count_query_parameter
+            and _domain_matches(
+                parsed.hostname, candidate.domains, candidate.domain_suffixes
+            )
+            and any(
+                _endpoint_boundary_matches(
+                    parsed.path, endpoint, candidate.endpoint_match
+                )
+                for endpoint in candidate.endpoints
+            )
+        }
+        return _redact_query_parameters(url, sensitive_names)
 
     def needs_request_body(self, url: str) -> bool:
         matched = self._lookup(url)

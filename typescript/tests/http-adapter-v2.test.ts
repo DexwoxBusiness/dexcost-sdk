@@ -319,6 +319,30 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
     });
   });
 
+  it("meters translation query text and redacts it before storage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    trackHttp(buffer);
+    const task = createTask({ taskId: randomUUID(), taskType: "google-translate" });
+    const privateText = "private customer text";
+    await runWithTask(task, async () => {
+      await fetch(
+        "https://translation.googleapis.com/language/translate/v2" +
+          `?q=${encodeURIComponent(privateText)}&q=two&model=nmt`,
+      );
+    });
+
+    const event = getRecordedEvents()[0];
+    expect(event.details["attribution_usage_quantity"])
+      .toBe(String(privateText.length + "two".length));
+    expect(String(event.details["url"]).match(/q=REDACTED/g)).toHaveLength(2);
+    expect(event.details["url"]).toContain("model=nmt");
+    expect(JSON.stringify(event.details)).not.toContain(privateText);
+    expect(JSON.stringify(event.details)).not.toContain("private%20customer%20text");
+  });
+
   it("lets the Brave observer supersede the legacy domain catalog", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       type: "search",
