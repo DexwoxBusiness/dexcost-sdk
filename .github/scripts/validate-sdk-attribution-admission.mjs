@@ -211,6 +211,12 @@ function observerEndpointMatches(observer, pathname, boundary = false) {
   });
 }
 
+function validJsonPredicateScalar(value) {
+  return typeof value === "string" || typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value) &&
+      Math.abs(value) <= Number.MAX_SAFE_INTEGER);
+}
+
 function responsePredicateMatches(response, predicate) {
   if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
   if (predicate.operator === "collection_all_equals") {
@@ -219,6 +225,9 @@ function responsePredicateMatches(response, predicate) {
       values.every((value) => value === predicate.value);
   }
   const value = resolvePath(response, predicate.path);
+  if (predicate.operator === "absent_or_empty_collection") {
+    return value === undefined || (Array.isArray(value) && value.length === 0);
+  }
   if (predicate.operator === "equals") return value === predicate.value;
   if (predicate.operator === "one_of") {
     return Array.isArray(predicate.values) && predicate.values.some(
@@ -231,6 +240,29 @@ function responsePredicateMatches(response, predicate) {
     if (isObject(value)) return Object.keys(value).length > 0;
   }
   return false;
+}
+
+function validResponsePredicate(predicate) {
+  if (!isObject(predicate) || !isNonEmptyString(predicate.path)) return false;
+  if (
+    predicate.operator === "non_empty" ||
+    predicate.operator === "absent_or_empty_collection"
+  ) {
+    return Object.keys(predicate).length === 2 &&
+      predicate.value === undefined && predicate.values === undefined;
+  }
+  if (predicate.operator === "one_of") {
+    return Object.keys(predicate).length === 3 && predicate.value === undefined &&
+      Array.isArray(predicate.values) && predicate.values.length > 0 &&
+      predicate.values.length <= 20 &&
+      predicate.values.every(validJsonPredicateScalar) &&
+      new Set(predicate.values.map((value) => `${typeof value}:${String(value)}`)).size ===
+        predicate.values.length;
+  }
+  return (predicate.operator === "equals" ||
+      predicate.operator === "collection_all_equals") &&
+    Object.keys(predicate).length === 3 &&
+    validJsonPredicateScalar(predicate.value);
 }
 
 function requestPredicateMatches(request, predicate) {
@@ -572,6 +604,14 @@ function validateObserverShape(observer, issues) {
       !observer.excluded_endpoints.every((endpoint) => endpoint.startsWith("/")))
   ) {
     issues.push(`observer ${key} has invalid excluded endpoints`);
+  }
+  if (
+    observer?.response_all !== undefined &&
+    (!Array.isArray(observer.response_all) ||
+      observer.response_all.length === 0 ||
+      !observer.response_all.every(validResponsePredicate))
+  ) {
+    issues.push(`observer ${key} has invalid response predicates`);
   }
   if (
     observer?.request_all !== undefined &&

@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.36.2",
+  "observer_manifest_version": "1.36.3",
   "conformance_schema_version": "28",
   "required_sdks": ["typescript", "python"],
   "observers": [
@@ -672,7 +672,10 @@
     {
       "service_key": "weaviate_cloud_request_count",
       "positive_cases": ["weaviate_cloud_success_is_an_allocation_signal_only"],
-      "fail_open_cases": ["weaviate_graphql_error_is_not_an_allocation_signal"]
+      "fail_open_cases": [
+        "weaviate_graphql_error_is_not_an_allocation_signal",
+        "weaviate_partial_graphql_error_is_not_an_allocation_signal"
+      ]
     },
     {
       "service_key": "zilliz_cloud_request_count",

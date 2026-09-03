@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": "1.36.2",
+    "version": "1.36.3",
     "observer_count": 106,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
@@ -2074,7 +2074,10 @@
       "provider_name": "weaviate_cloud", "provider_service": "vector_database", "component": "storage",
       "domains": [], "domain_suffixes": ["weaviate.network"],
       "endpoints": ["/v1/graphql"], "endpoint_match": "exact", "methods": ["POST"],
-      "response_all": [{ "path": "data", "operator": "non_empty" }],
+      "response_all": [
+        { "path": "data", "operator": "non_empty" },
+        { "path": "errors", "operator": "absent_or_empty_collection" }
+      ],
       "fixed_quantity": "1", "usage_metric": "request_count",
       "resource_type": "endpoint", "fixed_resource_id": "graphql",
       "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],

@@ -75,6 +75,19 @@ test("rejects an invalid request predicate", () => {
   );
 });
 
+test("rejects a malformed response predicate", () => {
+  const candidate = inputs();
+  const observer = candidate.manifest.observers.find(
+    (entry) => entry.service_key === "weaviate_cloud_request_count",
+  );
+  observer.response_all[1].value = true;
+
+  expectIssue(
+    validateSdkAttributionAdmission(candidate),
+    "observer weaviate_cloud_request_count has invalid response predicates",
+  );
+});
+
 test("rejects a non-scalar equals request predicate", () => {
   const candidate = inputs();
   const observer = candidate.manifest.observers.find(

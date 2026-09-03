@@ -117,13 +117,17 @@ class ServiceUsageObservation:
     dimensions: tuple[dict[str, Any], ...] = ()
 
 
-def _resolve_path(value: Any, path: str) -> Any:
+def _resolve_path_with_presence(value: Any, path: str) -> tuple[bool, Any]:
     current = value
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
-            return None
+            return False, None
         current = current[part]
-    return current
+    return True, current
+
+
+def _resolve_path(value: Any, path: str) -> Any:
+    return _resolve_path_with_presence(value, path)[1]
 
 
 def _resolve_collection_path(value: Any, path: str) -> list[Any] | None:
@@ -366,7 +370,9 @@ def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
             _json_scalar_equals(candidate, predicate["value"])
             for candidate in resolved
         )
-    resolved = _resolve_path(value, predicate["path"])
+    present, resolved = _resolve_path_with_presence(value, predicate["path"])
+    if predicate["operator"] == "absent_or_empty_collection":
+        return not present or (isinstance(resolved, list) and not resolved)
     if predicate["operator"] == "equals":
         return _json_scalar_equals(resolved, predicate["value"])
     if predicate["operator"] == "one_of":
@@ -384,7 +390,7 @@ def _valid_response_predicate(predicate: Any) -> bool:
         return False
     if not predicate["path"]:
         return False
-    if predicate.get("operator") == "non_empty":
+    if predicate.get("operator") in {"non_empty", "absent_or_empty_collection"}:
         return set(predicate) == {"path", "operator"}
     if predicate.get("operator") == "one_of":
         values = predicate.get("values")

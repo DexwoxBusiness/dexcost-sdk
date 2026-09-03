@@ -28,7 +28,8 @@ interface ResourceVariant {
 
 interface ResponsePredicate {
   path: string;
-  operator: "equals" | "collection_all_equals" | "one_of" | "non_empty";
+  operator: "equals" | "collection_all_equals" | "one_of" | "non_empty" |
+    "absent_or_empty_collection";
   value?: string | number | boolean;
   values?: Array<string | number | boolean>;
 }
@@ -465,6 +466,9 @@ function responsePredicateMatches(value: unknown, predicate: ResponsePredicate):
       resolved.every((candidate) => jsonScalarEquals(candidate, predicate.value));
   }
   const resolved = resolvePath(value, predicate.path);
+  if (predicate.operator === "absent_or_empty_collection") {
+    return resolved === undefined || (Array.isArray(resolved) && resolved.length === 0);
+  }
   if (predicate.operator === "equals") return jsonScalarEquals(resolved, predicate.value);
   if (predicate.operator === "one_of") {
     return predicate.values?.some((candidate) => jsonScalarEquals(resolved, candidate)) === true;
@@ -478,7 +482,8 @@ function validResponsePredicate(predicate: unknown): predicate is ResponsePredic
   if (predicate === null || typeof predicate !== "object") return false;
   const candidate = predicate as Partial<ResponsePredicate>;
   if (typeof candidate.path !== "string" || candidate.path.length === 0) return false;
-  if (candidate.operator === "non_empty") {
+  if (candidate.operator === "non_empty" ||
+      candidate.operator === "absent_or_empty_collection") {
     return Object.keys(candidate).length === 2 &&
       candidate.value === undefined && candidate.values === undefined;
   }

@@ -2090,6 +2090,12 @@
       "response": { "data": null, "errors": [{ "message": "collection not found" }] }, "expected": []
     },
     {
+      "name": "weaviate_partial_graphql_error_is_not_an_allocation_signal",
+      "url": "https://agent-memory.weaviate.network/v1/graphql", "method": "POST", "headers": {},
+      "request": { "query": "{ Get { AgentMemory { text } } }" },
+      "response": { "data": { "Get": null }, "errors": [{ "message": "partial execution failure" }] }, "expected": []
+    },
+    {
       "name": "zilliz_application_error_is_not_an_allocation_signal",
       "url": "https://in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com/v2/vectordb/entities/search", "method": "POST", "headers": {},
       "request": { "collectionName": "missing" }, "response": { "code": 100, "message": "collection not found" }, "expected": []
