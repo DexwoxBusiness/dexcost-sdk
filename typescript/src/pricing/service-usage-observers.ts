@@ -3,18 +3,13 @@
 import { createRequire } from "node:module";
 import { Decimal } from "../core/models.js";
 
-export type ObservedUsageMetric =
-  | "input_tokens"
-  | "input_image_tokens"
-  | "output_image_tokens"
-  | "output_tokens"
-  | "audio_seconds"
-  | "characters"
-  | "image_count"
-  | "request_count"
-  | "credit_count";
-export type ObservedAttributionComponent = "external" | "speech_to_text" | "text_to_speech";
-export type ObservedResourceType = "model" | "sku";
+export type ObservedUsageMetric = string;
+export type ObservedAttributionComponent =
+  | "llm" | "telephony" | "voice_platform" | "speech_to_text" | "text_to_speech"
+  | "realtime_transport" | "recording" | "post_call_analysis" | "compute" | "gpu"
+  | "network" | "storage" | "external";
+export type ObservedResourceType =
+  | "model" | "sku" | "instance" | "endpoint" | "session" | "tool" | "other";
 
 const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -79,6 +74,13 @@ export interface ObservedBillingDimension {
   value: { type: "string"; value: string };
 }
 
+interface BillingDimensionDefinition {
+  key: string;
+  source: "request_body" | "response_body" | "query_parameter" | "path_parameter" | "hostname";
+  selector?: string;
+  default_value?: string;
+}
+
 interface UsageObserverDefinition {
   service_key: string;
   provider_name: string;
@@ -109,12 +111,15 @@ interface UsageObserverDefinition {
   minimum_quantity?: "1";
   fixed_quantity?: "1";
   usage_metric: ObservedUsageMetric;
+  usage_unit?: string;
   resource_type?: ObservedResourceType;
   resource_path?: string;
   request_resource_path?: string;
   allowed_resource_ids?: string[];
   resource_id_prefix_to_strip?: string;
   resource_query_parameter?: string;
+  resource_path_parameter?: string;
+  resource_hostname?: true;
   default_resource_id?: string;
   fixed_resource_id?: string;
   resource_variant?: ResourceVariant;
@@ -130,6 +135,7 @@ interface UsageObserverDefinition {
   provider_cost_minor_units_path?: string;
   provider_cost_currency_path?: string;
   provider_cost_minor_unit_exponent?: number;
+  billing_dimensions?: BillingDimensionDefinition[];
   source_url: string;
 }
 
@@ -144,6 +150,7 @@ export interface ServiceUsageObservation {
   providerService: string;
   component: ObservedAttributionComponent;
   metric: ObservedUsageMetric;
+  unit: string;
   quantity: string;
   resourceType?: ObservedResourceType;
   resourceId?: string;
@@ -157,19 +164,26 @@ export interface ServiceUsageObservation {
 }
 
 const CANONICAL_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const METRICS = new Set<ObservedUsageMetric>([
-  "input_tokens",
-  "input_image_tokens",
-  "output_image_tokens",
-  "output_tokens",
-  "audio_seconds",
-  "characters",
-  "image_count",
-  "request_count",
-  "credit_count",
+const CANONICAL_UNIT = /^[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)*$/;
+const DEFAULT_UNITS: Readonly<Record<string, string>> = {
+  input_tokens: "Tokens",
+  input_image_tokens: "Tokens",
+  output_image_tokens: "Tokens",
+  output_tokens: "Tokens",
+  audio_seconds: "Seconds",
+  characters: "Characters",
+  image_count: "Images",
+  request_count: "Requests",
+  credit_count: "Credits",
+};
+const COMPONENTS = new Set<ObservedAttributionComponent>([
+  "llm", "telephony", "voice_platform", "speech_to_text", "text_to_speech",
+  "realtime_transport", "recording", "post_call_analysis", "compute", "gpu",
+  "network", "storage", "external",
 ]);
-const COMPONENTS = new Set<ObservedAttributionComponent>(["external", "speech_to_text", "text_to_speech"]);
-const RESOURCE_TYPES = new Set<ObservedResourceType>(["model", "sku"]);
+const RESOURCE_TYPES = new Set<ObservedResourceType>([
+  "model", "sku", "instance", "endpoint", "session", "tool", "other",
+]);
 
 function resolvePath(value: unknown, path: string): unknown {
   let current = value;
@@ -276,7 +290,9 @@ function endpointMatches(
     const templateSegments = endpoint.split("/");
     return pathSegments.length === templateSegments.length &&
       templateSegments.every((segment, index) =>
-        segment === "{id}" ? pathSegments[index].length > 0 : segment === pathSegments[index]);
+        /^\{[a-z][a-z0-9_]*\}$/.test(segment)
+          ? pathSegments[index].length > 0
+          : segment === pathSegments[index]);
   }
   return pathname === endpoint ||
     (mode === "prefix" && (endpoint === "/" || pathname.startsWith(`${endpoint}/`)));
@@ -288,8 +304,29 @@ function endpointBoundaryMatches(
   mode: "exact" | "prefix" | "path_template" = "prefix",
 ): boolean {
   if (mode !== "path_template") return endpointMatches(pathname, endpoint, "prefix");
-  const boundary = endpoint.slice(0, endpoint.indexOf("/{id}"));
+  const placeholder = endpoint.search(/\/\{[a-z][a-z0-9_]*\}/);
+  const boundary = placeholder < 0 ? endpoint : endpoint.slice(0, placeholder);
   return pathname === boundary || pathname.startsWith(`${boundary}/`);
+}
+
+function pathParameters(pathname: string, definition: UsageObserverDefinition): Map<string, string> {
+  if (definition.endpoint_match !== "path_template") return new Map();
+  for (const endpoint of definition.endpoints) {
+    if (!endpointMatches(pathname, endpoint, "path_template")) continue;
+    const values = new Map<string, string>();
+    const actual = pathname.split("/");
+    for (const [index, segment] of endpoint.split("/").entries()) {
+      const match = /^\{([a-z][a-z0-9_]*)\}$/.exec(segment);
+      if (match === null) continue;
+      try {
+        values.set(match[1], decodeURIComponent(actual[index]));
+      } catch {
+        return new Map();
+      }
+    }
+    return values;
+  }
+  return new Map();
 }
 
 function requestHeaderPredicateMatches(
@@ -501,20 +538,39 @@ function validRequestPredicate(predicate: unknown): predicate is RequestPredicat
     typeof candidate.value === "number" && Number.isFinite(candidate.value);
 }
 
-function pathDimensions(url: URL, definition: UsageObserverDefinition): ObservedBillingDimension[] {
-  if (definition.service_key !== "elevenlabs_tts") return [];
-  const prefix = "/v1/text-to-speech/";
-  if (!url.pathname.startsWith(prefix)) return [];
-  const encoded = url.pathname.slice(prefix.length).split("/", 1)[0];
-  if (encoded === "") return [];
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(encoded);
-  } catch {
-    return [];
+function validBillingDimension(definition: BillingDimensionDefinition): boolean {
+  if (!CANONICAL_NAME.test(definition.key)) return false;
+  if (![
+    "request_body", "response_body", "query_parameter", "path_parameter", "hostname",
+  ].includes(definition.source)) return false;
+  if (definition.source === "hostname") {
+    if (definition.selector !== undefined) return false;
+  } else if (typeof definition.selector !== "string" || definition.selector.length === 0) {
+    return false;
   }
-  const value = boundedString(decoded);
-  return value === undefined ? [] : [{ key: "voice_id", value: { type: "string", value } }];
+  return definition.default_value === undefined ||
+    (typeof definition.default_value === "string" && definition.default_value.length > 0);
+}
+
+function billingDimensions(
+  url: URL,
+  requestBody: unknown,
+  responseBody: unknown,
+  definition: UsageObserverDefinition,
+  parameters: ReadonlyMap<string, string>,
+): ObservedBillingDimension[] {
+  const observed: ObservedBillingDimension[] = [];
+  for (const dimension of definition.billing_dimensions ?? []) {
+    let raw: unknown;
+    if (dimension.source === "request_body") raw = resolvePath(requestBody, dimension.selector!);
+    else if (dimension.source === "response_body") raw = resolvePath(responseBody, dimension.selector!);
+    else if (dimension.source === "query_parameter") raw = url.searchParams.get(dimension.selector!);
+    else if (dimension.source === "path_parameter") raw = parameters.get(dimension.selector!);
+    else raw = url.hostname;
+    const value = boundedString(raw) ?? boundedString(dimension.default_value);
+    if (value !== undefined) observed.push({ key: dimension.key, value: { type: "string", value } });
+  }
+  return observed;
 }
 
 function validateManifest(raw: unknown): UsageObserverManifest {
@@ -544,6 +600,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.response_quantity_header,
       observer.fixed_quantity,
       observer.resource_query_parameter,
+      observer.resource_path_parameter,
+      observer.usage_unit,
       observer.default_resource_id,
       observer.fixed_resource_id,
       observer.quantity_multiplier_path,
@@ -561,6 +619,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.resource_path,
       observer.request_resource_path,
       observer.resource_query_parameter,
+      observer.resource_path_parameter,
+      observer.resource_hostname === true ? "hostname" : undefined,
       observer.default_resource_id,
       observer.fixed_resource_id,
     ].some((value) => value !== undefined);
@@ -571,10 +631,14 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       !CANONICAL_NAME.test(observer.provider_name) ||
       !CANONICAL_NAME.test(observer.provider_service) ||
       !COMPONENTS.has(observer.component) ||
-      !METRICS.has(observer.usage_metric) ||
+      !CANONICAL_NAME.test(observer.usage_metric) ||
+      ((observer.usage_unit ?? DEFAULT_UNITS[observer.usage_metric]) === undefined) ||
+      (observer.usage_unit !== undefined && (
+        observer.usage_unit.length > 64 || !CANONICAL_UNIT.test(observer.usage_unit)
+      )) ||
       !Array.isArray(observer.domains) ||
-      observer.domains.length === 0 ||
       !observer.domains.every((domain) => typeof domain === "string" && domain.length > 0) ||
+      observer.domains.length === 0 && observer.domain_suffixes === undefined ||
       (observer.domain_suffixes !== undefined && (
         !Array.isArray(observer.domain_suffixes) ||
         observer.domain_suffixes.length === 0 ||
@@ -598,7 +662,11 @@ function validateManifest(raw: unknown): UsageObserverManifest {
       observer.endpoints.length === 0 ||
       !observer.endpoints.every((endpoint) => typeof endpoint === "string" && endpoint.startsWith("/")) ||
       (observer.endpoint_match === "path_template" &&
-        !observer.endpoints.every((endpoint) => endpoint.split("/").filter((part) => part === "{id}").length === 1)) ||
+        !observer.endpoints.every((endpoint) => {
+          const placeholders = endpoint.split("/").filter((part) => /^\{[a-z][a-z0-9_]*\}$/.test(part));
+          return placeholders.length > 0 && new Set(placeholders).size === placeholders.length &&
+            !endpoint.split("/").some((part) => part.includes("{") && !/^\{[a-z][a-z0-9_]*\}$/.test(part));
+        })) ||
       (observer.excluded_endpoints !== undefined && (
         !Array.isArray(observer.excluded_endpoints) ||
         observer.excluded_endpoints.length === 0 ||
@@ -642,6 +710,8 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         !observer.allowed_resource_ids.every((id) => typeof id === "string" && id.length > 0)
       )) ||
       (hasResourceSelector && observer.resource_type === undefined) ||
+      (observer.resource_path_parameter !== undefined && observer.endpoint_match !== "path_template") ||
+      (observer.resource_hostname !== undefined && observer.resource_hostname !== true) ||
       (observer.quantity_multiplier_query_parameter !== undefined &&
         observer.quantity_multiplier_path === undefined) ||
       (observer.character_count_encoding !== undefined &&
@@ -730,6 +800,15 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.resource_variant.matched_suffix.length === 0 ||
         typeof observer.resource_variant.default_suffix !== "string"
         || observer.resource_variant.default_suffix.length === 0
+      )) ||
+      (observer.billing_dimensions !== undefined && (
+        !Array.isArray(observer.billing_dimensions) || observer.billing_dimensions.length === 0 ||
+        observer.billing_dimensions.length > 32 ||
+        !observer.billing_dimensions.every(validBillingDimension) ||
+        new Set(observer.billing_dimensions.map((dimension) => dimension.key)).size !==
+          observer.billing_dimensions.length ||
+        observer.billing_dimensions.some((dimension) =>
+          dimension.source === "path_parameter" && observer.endpoint_match !== "path_template")
       )) ||
       typeof observer.source_url !== "string" ||
       !observer.source_url.startsWith("https://") ||
@@ -879,6 +958,7 @@ export class ServiceUsageObservers {
       }
     }
     for (const observer of matched.observers) {
+      const parameters = pathParameters(matched.parsed.pathname, observer);
       if (observer.methods !== undefined &&
           (method === undefined || !observer.methods.includes(method.toUpperCase()))) {
         continue;
@@ -1069,11 +1149,17 @@ export class ServiceUsageObservers {
       const queryResourceId = observer.resource_query_parameter === undefined
         ? undefined
         : boundedString(matched.parsed.searchParams.get(observer.resource_query_parameter));
+      const pathResourceId = observer.resource_path_parameter === undefined
+        ? undefined
+        : boundedString(parameters.get(observer.resource_path_parameter));
+      const hostnameResourceId = observer.resource_hostname === true
+        ? boundedString(matched.parsed.hostname)
+        : undefined;
       if (requestResourceId !== undefined && queryResourceId !== undefined &&
           requestResourceId !== queryResourceId) {
         continue;
       }
-      resourceId ??= requestResourceId ?? queryResourceId;
+      resourceId ??= requestResourceId ?? queryResourceId ?? pathResourceId ?? hostnameResourceId;
       resourceId ??= boundedString(observer.fixed_resource_id);
       resourceId ??= boundedString(observer.default_resource_id);
       if (
@@ -1112,6 +1198,7 @@ export class ServiceUsageObservers {
         providerService: observer.provider_service,
         component: observer.component,
         metric: observer.usage_metric,
+        unit: observer.usage_unit ?? DEFAULT_UNITS[observer.usage_metric],
         quantity: quantity.toFixed().replace(/(?:\.0+|(?:(\.\d*?)0+))$/, "$1"),
         resourceType: resourceId === undefined ? undefined : observer.resource_type,
         resourceId,
@@ -1120,7 +1207,13 @@ export class ServiceUsageObservers {
         providerCostUsd,
         providerCostAmount,
         providerCostCurrency,
-        dimensions: pathDimensions(matched.parsed, observer),
+        dimensions: billingDimensions(
+          matched.parsed,
+          requestBody,
+          responseBody,
+          observer,
+          parameters,
+        ),
         manifestVersion: this.manifestVersion,
       });
     }

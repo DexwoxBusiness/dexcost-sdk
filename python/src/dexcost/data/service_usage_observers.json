@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.35.0",
-    "observer_count": 85,
+    "version": "1.36.0",
+    "observer_count": 105,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
@@ -777,7 +777,8 @@
       "provider_service": "text_to_speech",
       "component": "text_to_speech",
       "domains": ["api.elevenlabs.io"],
-      "endpoints": ["/v1/text-to-speech"],
+      "endpoints": ["/v1/text-to-speech/{voice_id}", "/v1/text-to-speech/{voice_id}/stream"],
+      "endpoint_match": "path_template",
       "response_quantity_header": "character-cost",
       "usage_metric": "characters",
       "resource_type": "model",
@@ -792,6 +793,9 @@
       ],
       "default_resource_id": "eleven_multilingual_v2",
       "record_id_header": "request-id",
+      "billing_dimensions": [
+        { "key": "voice_id", "source": "path_parameter", "selector": "voice_id" }
+      ],
       "source_url": "https://elevenlabs.io/docs/api-reference/introduction"
     },
     {
@@ -1792,6 +1796,338 @@
       "provider_cost_currency_path": "currency",
       "provider_cost_minor_unit_exponent": 2,
       "source_url": "https://razorpay.com/docs/api/payments/capture/"
+    },
+    {
+      "service_key": "pinecone_query_read_units",
+      "provider_name": "pinecone",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["pinecone.io"],
+      "endpoints": ["/query"],
+      "endpoint_match": "exact",
+      "methods": ["POST"],
+      "response_path": "usage.readUnits",
+      "usage_metric": "pinecone.read_units_rounded",
+      "usage_unit": "ReadUnits",
+      "resource_type": "endpoint",
+      "resource_hostname": true,
+      "billing_dimensions": [
+        { "key": "index_host", "source": "hostname" },
+        { "key": "namespace", "source": "request_body", "selector": "namespace", "default_value": "__default__" }
+      ],
+      "source_url": "https://docs.pinecone.io/guides/manage-cost/understanding-cost"
+    },
+    {
+      "service_key": "pinecone_fetch_read_units",
+      "provider_name": "pinecone",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["pinecone.io"],
+      "endpoints": ["/vectors/fetch"],
+      "endpoint_match": "exact",
+      "methods": ["GET"],
+      "response_path": "usage.readUnits",
+      "usage_metric": "pinecone.read_units_rounded",
+      "usage_unit": "ReadUnits",
+      "resource_type": "endpoint",
+      "resource_hostname": true,
+      "billing_dimensions": [
+        { "key": "index_host", "source": "hostname" },
+        { "key": "namespace", "source": "query_parameter", "selector": "namespace", "default_value": "__default__" }
+      ],
+      "source_url": "https://docs.pinecone.io/reference/api/2024-10/data-plane/fetch"
+    },
+    {
+      "service_key": "pinecone_documents_search_read_units",
+      "provider_name": "pinecone",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["pinecone.io"],
+      "endpoints": ["/namespaces/{namespace}/documents/search"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "usage.read_units",
+      "usage_metric": "pinecone.read_units_rounded",
+      "usage_unit": "ReadUnits",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "index_host", "source": "hostname" },
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" }
+      ],
+      "source_url": "https://docs.pinecone.io/reference/api/2026-01.alpha/data-plane/search_documents"
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_queried",
+      "provider_name": "turbopuffer",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["turbopuffer.com"],
+      "endpoints": ["/v2/namespaces/{namespace}/query"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "billing.billable_logical_bytes_queried",
+      "usage_metric": "turbopuffer.logical_bytes_queried",
+      "usage_unit": "Bytes",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" },
+        { "key": "region_host", "source": "hostname" }
+      ],
+      "source_url": "https://turbopuffer.com/docs/query"
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_returned",
+      "provider_name": "turbopuffer",
+      "provider_service": "vector_database",
+      "component": "network",
+      "domains": [],
+      "domain_suffixes": ["turbopuffer.com"],
+      "endpoints": ["/v2/namespaces/{namespace}/query"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "billing.billable_logical_bytes_returned",
+      "usage_metric": "turbopuffer.logical_bytes_returned",
+      "usage_unit": "Bytes",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" },
+        { "key": "region_host", "source": "hostname" }
+      ],
+      "source_url": "https://turbopuffer.com/docs/query"
+    },
+    {
+      "service_key": "turbopuffer_write_bytes_written",
+      "provider_name": "turbopuffer",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["turbopuffer.com"],
+      "endpoints": ["/v2/namespaces/{namespace}"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "billing.billable_logical_bytes_written",
+      "usage_metric": "turbopuffer.logical_bytes_written",
+      "usage_unit": "Bytes",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" },
+        { "key": "region_host", "source": "hostname" }
+      ],
+      "source_url": "https://turbopuffer.com/docs/write/"
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_queried",
+      "provider_name": "turbopuffer",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["turbopuffer.com"],
+      "endpoints": ["/v2/namespaces/{namespace}"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "billing.query.billable_logical_bytes_queried",
+      "usage_metric": "turbopuffer.logical_bytes_queried",
+      "usage_unit": "Bytes",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" },
+        { "key": "region_host", "source": "hostname" }
+      ],
+      "source_url": "https://turbopuffer.com/docs/write/"
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_returned",
+      "provider_name": "turbopuffer",
+      "provider_service": "vector_database",
+      "component": "network",
+      "domains": [],
+      "domain_suffixes": ["turbopuffer.com"],
+      "endpoints": ["/v2/namespaces/{namespace}"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "billing.query.billable_logical_bytes_returned",
+      "usage_metric": "turbopuffer.logical_bytes_returned",
+      "usage_unit": "Bytes",
+      "resource_type": "other",
+      "resource_path_parameter": "namespace",
+      "billing_dimensions": [
+        { "key": "namespace", "source": "path_parameter", "selector": "namespace" },
+        { "key": "region_host", "source": "hostname" }
+      ],
+      "source_url": "https://turbopuffer.com/docs/write/"
+    },
+    {
+      "service_key": "qdrant_request_count",
+      "provider_name": "qdrant_cloud",
+      "provider_service": "vector_database",
+      "component": "storage",
+      "domains": [],
+      "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "fixed_quantity": "1",
+      "usage_metric": "request_count",
+      "resource_type": "other",
+      "resource_path_parameter": "collection_name",
+      "billing_dimensions": [
+        { "key": "collection", "source": "path_parameter", "selector": "collection_name" },
+        { "key": "cluster_host", "source": "hostname" }
+      ],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_hardware_cpu",
+      "provider_name": "qdrant_cloud",
+      "provider_service": "vector_database",
+      "component": "compute",
+      "domains": [],
+      "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template",
+      "methods": ["POST"],
+      "response_path": "usage.hardware.cpu",
+      "usage_metric": "qdrant.hardware.cpu",
+      "usage_unit": "Units",
+      "resource_type": "other",
+      "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_payload_io_read",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.payload_io_read", "usage_metric": "qdrant.hardware.payload_io_read", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_payload_io_write",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.payload_io_write", "usage_metric": "qdrant.hardware.payload_io_write", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_payload_index_io_read",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.payload_index_io_read", "usage_metric": "qdrant.hardware.payload_index_io_read", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_payload_index_io_write",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.payload_index_io_write", "usage_metric": "qdrant.hardware.payload_index_io_write", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_vector_io_read",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.vector_io_read", "usage_metric": "qdrant.hardware.vector_io_read", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "qdrant_vector_io_write",
+      "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["cloud.qdrant.io"],
+      "endpoints": ["/collections/{collection_name}/points/query", "/collections/{collection_name}/points/search"],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "response_path": "usage.hardware.vector_io_write", "usage_metric": "qdrant.hardware.vector_io_write", "usage_unit": "Units",
+      "resource_type": "other", "resource_path_parameter": "collection_name",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://api.qdrant.tech/api-reference/search/query-points"
+    },
+    {
+      "service_key": "weaviate_cloud_request_count",
+      "provider_name": "weaviate_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["weaviate.network"],
+      "endpoints": ["/v1/search/{collection}/near-text"], "endpoint_match": "path_template", "methods": ["POST"],
+      "fixed_quantity": "1", "usage_metric": "request_count",
+      "resource_type": "other", "resource_path_parameter": "collection",
+      "billing_dimensions": [{ "key": "cluster_host", "source": "hostname" }],
+      "source_url": "https://docs.weaviate.io/weaviate/api/rest"
+    },
+    {
+      "service_key": "zilliz_cloud_request_count",
+      "provider_name": "milvus_zilliz", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["vectordb.zillizcloud.com"],
+      "endpoints": ["/v2/vectordb/entities/search", "/v2/vectordb/entities/query", "/v2/vectordb/entities/insert", "/v2/vectordb/entities/upsert", "/v2/vectordb/entities/delete"],
+      "endpoint_match": "exact", "methods": ["POST"],
+      "fixed_quantity": "1", "usage_metric": "request_count",
+      "resource_type": "other", "request_resource_path": "collectionName",
+      "billing_dimensions": [
+        { "key": "cluster_host", "source": "hostname" },
+        { "key": "collection", "source": "request_body", "selector": "collectionName" },
+        { "key": "database", "source": "request_body", "selector": "dbName", "default_value": "default" }
+      ],
+      "source_url": "https://docs.zilliz.com/reference/restful/search-v2"
+    },
+    {
+      "service_key": "astra_db_request_count",
+      "provider_name": "astra_db", "provider_service": "vector_database", "component": "storage",
+      "domains": [], "domain_suffixes": ["apps.astra.datastax.com"],
+      "endpoints": ["/api/json/v1/{keyspace}/{collection}"], "endpoint_match": "path_template", "methods": ["POST"],
+      "fixed_quantity": "1", "usage_metric": "request_count",
+      "resource_type": "other", "resource_path_parameter": "collection",
+      "billing_dimensions": [
+        { "key": "database_host", "source": "hostname" },
+        { "key": "keyspace", "source": "path_parameter", "selector": "keyspace" },
+        { "key": "collection", "source": "path_parameter", "selector": "collection" }
+      ],
+      "source_url": "https://docs.datastax.com/en/astra-db-serverless/api-reference/dataapiclient.html"
+    },
+    {
+      "service_key": "chroma_cloud_request_count",
+      "provider_name": "chroma_cloud", "provider_service": "vector_database", "component": "storage",
+      "domains": ["api.trychroma.com"],
+      "endpoints": [
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/query",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/get",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/add",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/update",
+        "/api/v2/tenants/{tenant}/databases/{database}/collections/{collection_id}/upsert"
+      ],
+      "endpoint_match": "path_template", "methods": ["POST"],
+      "fixed_quantity": "1", "usage_metric": "request_count",
+      "resource_type": "other", "resource_path_parameter": "collection_id",
+      "billing_dimensions": [
+        { "key": "tenant", "source": "path_parameter", "selector": "tenant" },
+        { "key": "database", "source": "path_parameter", "selector": "database" },
+        { "key": "collection", "source": "path_parameter", "selector": "collection_id" }
+      ],
+      "source_url": "https://docs.trychroma.com/reference/chroma-api/record/query-collection"
     }
   ]
 }

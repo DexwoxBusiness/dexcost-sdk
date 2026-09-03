@@ -1,5 +1,5 @@
 {
-  "schema_version": "27",
+  "schema_version": "28",
   "cases": [
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
@@ -905,7 +905,7 @@
       "headers": { "Character-Cost": "11", "Request-Id": "el_req_123" },
       "request": { "model_id": "eleven_flash_v2_5", "text": "This raw text is deliberately not eleven characters." },
       "response": null,
-      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "11", "resource_type": "model", "resource_id": "eleven_flash_v2_5", "provider_record_id": "el_req_123" }]
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "11", "resource_type": "model", "resource_id": "eleven_flash_v2_5", "provider_record_id": "el_req_123", "dimensions": [{ "key": "voice_id", "value": { "type": "string", "value": "voice_123" } }] }]
     },
     {
       "name": "elevenlabs_tts_defaults_to_multilingual_v2",
@@ -913,7 +913,7 @@
       "headers": { "character-cost": "7.5", "request-id": "el_req_default" },
       "request": { "text": "Hello" },
       "response": null,
-      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "7.5", "resource_type": "model", "resource_id": "eleven_multilingual_v2", "provider_record_id": "el_req_default" }]
+      "expected": [{ "service_key": "elevenlabs_tts", "provider_name": "elevenlabs", "provider_service": "text_to_speech", "component": "text_to_speech", "metric": "characters", "quantity": "7.5", "resource_type": "model", "resource_id": "eleven_multilingual_v2", "provider_record_id": "el_req_default", "dimensions": [{ "key": "voice_id", "value": { "type": "string", "value": "voice_456" } }] }]
     },
     {
       "name": "elevenlabs_tts_missing_character_cost_is_not_invented",
@@ -1873,6 +1873,218 @@
       "headers": {},
       "response": { "entity": "collection", "count": 1, "items": [{ "id": "pay_collection_1", "entity": "payment", "currency": "INR", "status": "captured", "captured": true, "fee": 236 }] },
       "expected": []
+    },
+    {
+      "name": "pinecone_query_preserves_rounded_read_units_as_usage_not_money",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "namespace": "agent-memory", "topK": 5, "vector": [0.1, 0.2] },
+      "response": { "matches": [], "usage": { "readUnits": 2 } },
+      "expected": [{
+        "service_key": "pinecone_query_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "2",
+        "resource_type": "endpoint", "resource_id": "demo-abc.svc.us-east-1.pinecone.io",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "turbopuffer_query_preserves_both_provider_billing_meters",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent%20memory/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "rank_by": ["vector", "ANN", [0.1, 0.2]], "top_k": 10 },
+      "response": { "rows": [], "billing": { "billable_logical_bytes_queried": 4096, "billable_logical_bytes_returned": 512 } },
+      "expected": [
+        {
+          "service_key": "turbopuffer_query_bytes_queried", "provider_name": "turbopuffer", "provider_service": "vector_database",
+          "component": "storage", "metric": "turbopuffer.logical_bytes_queried", "unit": "Bytes", "quantity": "4096",
+          "resource_type": "other", "resource_id": "agent memory",
+          "dimensions": [
+            { "key": "namespace", "value": { "type": "string", "value": "agent memory" } },
+            { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }
+          ]
+        },
+        {
+          "service_key": "turbopuffer_query_bytes_returned", "provider_name": "turbopuffer", "provider_service": "vector_database",
+          "component": "network", "metric": "turbopuffer.logical_bytes_returned", "unit": "Bytes", "quantity": "512",
+          "resource_type": "other", "resource_id": "agent memory",
+          "dimensions": [
+            { "key": "namespace", "value": { "type": "string", "value": "agent memory" } },
+            { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qdrant_query_preserves_hardware_allocation_counters",
+      "url": "https://cluster-1.us-east.aws.cloud.qdrant.io/collections/agent-memory/points/query",
+      "method": "POST",
+      "headers": {},
+      "request": { "query": [0.1, 0.2], "limit": 5 },
+      "response": { "result": { "points": [] }, "usage": { "hardware": { "cpu": 3, "payload_io_read": 4, "payload_io_write": 5, "payload_index_io_read": 6, "payload_index_io_write": 7, "vector_io_read": 8, "vector_io_write": 9 } } },
+      "expected": [
+        {
+          "service_key": "qdrant_request_count", "provider_name": "qdrant_cloud", "provider_service": "vector_database",
+          "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "agent-memory",
+          "dimensions": [
+            { "key": "collection", "value": { "type": "string", "value": "agent-memory" } },
+            { "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }
+          ]
+        },
+        { "service_key": "qdrant_hardware_cpu", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "compute", "metric": "qdrant.hardware.cpu", "unit": "Units", "quantity": "3", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_io_read", "unit": "Units", "quantity": "4", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_io_write", "unit": "Units", "quantity": "5", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_index_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_index_io_read", "unit": "Units", "quantity": "6", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_payload_index_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.payload_index_io_write", "unit": "Units", "quantity": "7", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_vector_io_read", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.vector_io_read", "unit": "Units", "quantity": "8", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] },
+        { "service_key": "qdrant_vector_io_write", "provider_name": "qdrant_cloud", "provider_service": "vector_database", "component": "storage", "metric": "qdrant.hardware.vector_io_write", "unit": "Units", "quantity": "9", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "cluster-1.us-east.aws.cloud.qdrant.io" } }] }
+      ]
+    },
+    {
+      "name": "weaviate_cloud_success_is_an_allocation_signal_only",
+      "url": "https://agent-memory.weaviate.network/v1/search/Memory/near-text",
+      "method": "POST", "headers": {}, "request": { "query": "contract terms" }, "response": { "objects": [] },
+      "expected": [{
+        "service_key": "weaviate_cloud_request_count", "provider_name": "weaviate_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "Memory",
+        "dimensions": [{ "key": "cluster_host", "value": { "type": "string", "value": "agent-memory.weaviate.network" } }]
+      }]
+    },
+    {
+      "name": "zilliz_success_carries_cluster_collection_and_database_identity",
+      "url": "https://in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com/v2/vectordb/entities/search",
+      "method": "POST", "headers": {}, "request": { "collectionName": "memory", "dbName": "prod", "data": [[0.1, 0.2]] }, "response": { "code": 0, "data": [] },
+      "expected": [{
+        "service_key": "zilliz_cloud_request_count", "provider_name": "milvus_zilliz", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "memory",
+        "dimensions": [
+          { "key": "cluster_host", "value": { "type": "string", "value": "in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com" } },
+          { "key": "collection", "value": { "type": "string", "value": "memory" } },
+          { "key": "database", "value": { "type": "string", "value": "prod" } }
+        ]
+      }]
+    },
+    {
+      "name": "astra_success_carries_database_keyspace_and_collection_identity",
+      "url": "https://123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com/api/json/v1/default_keyspace/memory",
+      "method": "POST", "headers": {}, "request": { "find": { "filter": {} } }, "response": { "data": { "documents": [] } },
+      "expected": [{
+        "service_key": "astra_db_request_count", "provider_name": "astra_db", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "memory",
+        "dimensions": [
+          { "key": "database_host", "value": { "type": "string", "value": "123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com" } },
+          { "key": "keyspace", "value": { "type": "string", "value": "default_keyspace" } },
+          { "key": "collection", "value": { "type": "string", "value": "memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "chroma_cloud_success_carries_tenant_database_and_collection_identity",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query",
+      "method": "POST", "headers": {}, "request": { "query_embeddings": [[0.1, 0.2]], "n_results": 3 }, "response": { "ids": [[]] },
+      "expected": [{
+        "service_key": "chroma_cloud_request_count", "provider_name": "chroma_cloud", "provider_service": "vector_database",
+        "component": "storage", "metric": "request_count", "quantity": "1", "resource_type": "other", "resource_id": "11111111-1111-1111-1111-111111111111",
+        "dimensions": [
+          { "key": "tenant", "value": { "type": "string", "value": "tenant-1" } },
+          { "key": "database", "value": { "type": "string", "value": "agent-prod" } },
+          { "key": "collection", "value": { "type": "string", "value": "11111111-1111-1111-1111-111111111111" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_query_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/query", "method": "POST", "headers": {},
+      "request": { "namespace": "agent-memory", "topK": 5, "vector": [0.1, 0.2] }, "response": { "matches": [] }, "expected": []
+    },
+    {
+      "name": "pinecone_fetch_preserves_rounded_read_units",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/vectors/fetch?ids=id-1&namespace=agent-memory", "method": "GET", "headers": {},
+      "response": { "namespace": "agent-memory", "vectors": {}, "usage": { "readUnits": 1 } },
+      "expected": [{
+        "service_key": "pinecone_fetch_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "1",
+        "resource_type": "endpoint", "resource_id": "demo-abc.svc.us-east-1.pinecone.io",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_fetch_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/vectors/fetch?ids=id-1", "method": "GET", "headers": {},
+      "response": { "vectors": {} }, "expected": []
+    },
+    {
+      "name": "pinecone_documents_search_preserves_namespace_and_rounded_units",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/namespaces/agent-memory/documents/search", "method": "POST", "headers": {},
+      "request": { "top_k": 5, "score_by": [{ "type": "text", "field": "body", "query": "terms" }] },
+      "response": { "matches": [], "namespace": "agent-memory", "usage": { "read_units": 3 } },
+      "expected": [{
+        "service_key": "pinecone_documents_search_read_units", "provider_name": "pinecone", "provider_service": "vector_database",
+        "component": "storage", "metric": "pinecone.read_units_rounded", "unit": "ReadUnits", "quantity": "3",
+        "resource_type": "other", "resource_id": "agent-memory",
+        "dimensions": [
+          { "key": "index_host", "value": { "type": "string", "value": "demo-abc.svc.us-east-1.pinecone.io" } },
+          { "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }
+        ]
+      }]
+    },
+    {
+      "name": "pinecone_documents_search_missing_usage_fails_open",
+      "url": "https://demo-abc.svc.us-east-1.pinecone.io/namespaces/agent-memory/documents/search", "method": "POST", "headers": {},
+      "request": { "top_k": 5 }, "response": { "matches": [], "namespace": "agent-memory" }, "expected": []
+    },
+    {
+      "name": "turbopuffer_query_missing_billing_fails_open",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory/query", "method": "POST", "headers": {},
+      "request": { "top_k": 10 }, "response": { "rows": [] }, "expected": []
+    },
+    {
+      "name": "turbopuffer_write_preserves_write_and_nested_query_meters",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory", "method": "POST", "headers": {},
+      "request": { "upsert_rows": [{ "id": "1", "text": "hello" }] },
+      "response": { "rows_affected": 1, "billing": { "billable_logical_bytes_written": 1024, "query": { "billable_logical_bytes_queried": 2048, "billable_logical_bytes_returned": 128 } } },
+      "expected": [
+        { "service_key": "turbopuffer_write_bytes_written", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "storage", "metric": "turbopuffer.logical_bytes_written", "unit": "Bytes", "quantity": "1024", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] },
+        { "service_key": "turbopuffer_write_query_bytes_queried", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "storage", "metric": "turbopuffer.logical_bytes_queried", "unit": "Bytes", "quantity": "2048", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] },
+        { "service_key": "turbopuffer_write_query_bytes_returned", "provider_name": "turbopuffer", "provider_service": "vector_database", "component": "network", "metric": "turbopuffer.logical_bytes_returned", "unit": "Bytes", "quantity": "128", "resource_type": "other", "resource_id": "agent-memory", "dimensions": [{ "key": "namespace", "value": { "type": "string", "value": "agent-memory" } }, { "key": "region_host", "value": { "type": "string", "value": "gcp-us-central1.turbopuffer.com" } }] }
+      ]
+    },
+    {
+      "name": "turbopuffer_write_missing_billing_fails_open",
+      "url": "https://gcp-us-central1.turbopuffer.com/v2/namespaces/agent-memory", "method": "POST", "headers": {},
+      "request": { "upsert_rows": [{ "id": "1" }] }, "response": { "rows_affected": 1 }, "expected": []
+    },
+    {
+      "name": "qdrant_failed_request_is_not_an_allocation_signal",
+      "url": "https://cluster-1.us-east.aws.cloud.qdrant.io/collections/agent-memory/points/query", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "query": [0.1, 0.2] }, "response": { "status": { "error": "failed" } }, "expected": []
+    },
+    {
+      "name": "weaviate_failed_request_is_not_an_allocation_signal",
+      "url": "https://agent-memory.weaviate.network/v1/search/Memory/near-text", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "query": "terms" }, "response": { "error": "failed" }, "expected": []
+    },
+    {
+      "name": "zilliz_failed_request_is_not_an_allocation_signal",
+      "url": "https://in01-a.serverless.gcp-us-west1.vectordb.zillizcloud.com/v2/vectordb/entities/search", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "collectionName": "memory" }, "response": { "code": 1 }, "expected": []
+    },
+    {
+      "name": "astra_failed_request_is_not_an_allocation_signal",
+      "url": "https://123e4567-e89b-12d3-a456-426614174000-us-east1.apps.astra.datastax.com/api/json/v1/default_keyspace/memory", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "find": { "filter": {} } }, "response": { "errors": [{ "message": "failed" }] }, "expected": []
+    },
+    {
+      "name": "chroma_failed_request_is_not_an_allocation_signal",
+      "url": "https://api.trychroma.com/api/v2/tenants/tenant-1/databases/agent-prod/collections/11111111-1111-1111-1111-111111111111/query", "method": "POST", "status_code": 500, "headers": {},
+      "request": { "query_embeddings": [[0.1, 0.2]] }, "response": { "error": "failed" }, "expected": []
     }
   ]
 }

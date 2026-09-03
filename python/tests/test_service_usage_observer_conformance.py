@@ -16,6 +16,12 @@ from dexcost.models.event import Event
 from dexcost.service_usage_observers import ServiceUsageObservers
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_UNITS = {
+    "input_tokens": "Tokens", "input_image_tokens": "Tokens",
+    "output_image_tokens": "Tokens", "output_tokens": "Tokens",
+    "audio_seconds": "Seconds", "characters": "Characters", "image_count": "Images",
+    "request_count": "Requests", "credit_count": "Credits",
+}
 
 
 def test_provider_observation_id_is_stable_across_sdk_languages() -> None:
@@ -64,6 +70,9 @@ def test_shared_service_usage_observer_conformance() -> None:
             assert actual.provider_service == wanted["provider_service"]
             assert actual.component == wanted["component"]
             assert actual.metric == wanted["metric"]
+            assert actual.unit == (
+                wanted.get("unit") or DEFAULT_UNITS[wanted["metric"]]
+            )
             assert str(actual.quantity) == wanted["quantity"]
             assert actual.resource_type == wanted.get("resource_type")
             assert actual.resource_id == wanted.get("resource_id")
@@ -80,6 +89,7 @@ def test_shared_service_usage_observer_conformance() -> None:
                 else None
             ) == wanted.get("provider_cost_amount")
             assert actual.provider_cost_currency == wanted.get("provider_cost_currency")
+            assert list(actual.dimensions) == wanted.get("dimensions", [])
 
 
 def test_packaged_observer_manifest_matches_canonical_manifest() -> None:

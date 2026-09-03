@@ -61,6 +61,15 @@ const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
   google: Object.freeze([
     Object.freeze({ apiRoot: "googleapis.com", documentationRoot: "google.com" }),
   ]),
+  qdrant_cloud: Object.freeze([
+    Object.freeze({ apiRoot: "qdrant.io", documentationRoot: "qdrant.tech" }),
+  ]),
+  weaviate_cloud: Object.freeze([
+    Object.freeze({ apiRoot: "weaviate.network", documentationRoot: "weaviate.io" }),
+  ]),
+  milvus_zilliz: Object.freeze([
+    Object.freeze({ apiRoot: "zillizcloud.com", documentationRoot: "zilliz.com" }),
+  ]),
 });
 
 const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -183,14 +192,17 @@ function observerEndpointMatches(observer, pathname, boundary = false) {
   const matchMode = observer.endpoint_match ?? "prefix";
   return observer.endpoints.some((endpoint) => {
     if (matchMode === "path_template") {
-      const staticBoundary = endpoint.slice(0, endpoint.indexOf("/{id}"));
+      const placeholder = endpoint.search(/\/\{[a-z][a-z0-9_]*\}/);
+      const staticBoundary = placeholder < 0 ? endpoint : endpoint.slice(0, placeholder);
       if (boundary) {
         return pathname === staticBoundary || pathname.startsWith(`${staticBoundary}/`);
       }
       const actual = pathname.split("/");
       const template = endpoint.split("/");
       return actual.length === template.length && template.every(
-        (segment, index) => segment === "{id}" ? actual[index].length > 0 : segment === actual[index],
+        (segment, index) => /^\{[a-z][a-z0-9_]*\}$/.test(segment)
+          ? actual[index].length > 0
+          : segment === actual[index],
       );
     }
     return pathname === endpoint ||
@@ -506,7 +518,7 @@ function validateObserverShape(observer, issues) {
 
   if (
     !Array.isArray(observer?.domains) ||
-    observer.domains.length === 0 ||
+    (observer.domains.length === 0 && !Array.isArray(observer?.domain_suffixes)) ||
     !observer.domains.every(
       (domain) =>
         isNonEmptyString(domain) &&
@@ -735,6 +747,8 @@ function validateObserverShape(observer, issues) {
     observer?.resource_path,
     observer?.request_resource_path,
     observer?.resource_query_parameter,
+    observer?.resource_path_parameter,
+    observer?.resource_hostname === true ? "hostname" : undefined,
     observer?.fixed_resource_id,
     observer?.default_resource_id,
   ].filter(isNonEmptyString);

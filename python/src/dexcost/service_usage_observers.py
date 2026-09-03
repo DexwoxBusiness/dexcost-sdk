@@ -14,18 +14,23 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 _DATA_PATH = Path(__file__).parent / "data" / "service_usage_observers.json"
-_METRICS = {
-    "input_tokens",
-    "input_image_tokens",
-    "output_image_tokens",
-    "output_tokens",
-    "audio_seconds",
-    "characters",
-    "image_count",
-    "request_count",
-    "credit_count",
+_DEFAULT_UNITS = {
+    "input_tokens": "Tokens",
+    "input_image_tokens": "Tokens",
+    "output_image_tokens": "Tokens",
+    "output_tokens": "Tokens",
+    "audio_seconds": "Seconds",
+    "characters": "Characters",
+    "image_count": "Images",
+    "request_count": "Requests",
+    "credit_count": "Credits",
 }
-_COMPONENTS = {"external", "speech_to_text", "text_to_speech"}
+_COMPONENTS = {
+    "llm", "telephony", "voice_platform", "speech_to_text", "text_to_speech",
+    "realtime_transport", "recording", "post_call_analysis", "compute", "gpu",
+    "network", "storage", "external",
+}
+_RESOURCE_TYPES = {"model", "sku", "instance", "endpoint", "session", "tool", "other"}
 _DOMAIN_EDGE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 _DOMAIN_LABEL_CHARS = _DOMAIN_EDGE_CHARS | {"-"}
 _HEADER_NAME_CHARS = _DOMAIN_EDGE_CHARS | frozenset("!#$%&'*+.^_`|~-")
@@ -63,12 +68,15 @@ class UsageObserver:
     minimum_quantity: str | None
     fixed_quantity: str | None
     usage_metric: str
+    usage_unit: str
     resource_type: str | None
     resource_path: str | None
     request_resource_path: str | None
     allowed_resource_ids: tuple[str, ...]
     resource_id_prefix_to_strip: str | None
     resource_query_parameter: str | None
+    resource_path_parameter: str | None
+    resource_hostname: bool
     default_resource_id: str | None
     fixed_resource_id: str | None
     resource_variant: dict[str, str] | None
@@ -84,6 +92,7 @@ class UsageObserver:
     provider_cost_minor_units_path: str | None
     provider_cost_currency_path: str | None
     provider_cost_minor_unit_exponent: int | None
+    billing_dimensions: tuple[dict[str, str], ...]
     source_url: str
 
 
@@ -94,6 +103,7 @@ class ServiceUsageObservation:
     provider_service: str
     component: str
     metric: str
+    unit: str
     quantity: Decimal
     manifest_version: str
     resource_type: str | None = None
@@ -244,7 +254,13 @@ def _endpoint_matches(path: str, endpoint: str, mode: str) -> bool:
         path_parts = path.split("/")
         template_parts = endpoint.split("/")
         return len(path_parts) == len(template_parts) and all(
-            actual == expected or (expected == "{id}" and bool(actual))
+            actual == expected
+            or (
+                expected.startswith("{")
+                and expected.endswith("}")
+                and _valid_path_parameter_name(expected[1:-1])
+                and bool(actual)
+            )
             for actual, expected in zip(path_parts, template_parts, strict=True)
         )
     return path == endpoint or (
@@ -255,8 +271,48 @@ def _endpoint_matches(path: str, endpoint: str, mode: str) -> bool:
 def _endpoint_boundary_matches(path: str, endpoint: str, mode: str) -> bool:
     if mode != "path_template":
         return _endpoint_matches(path, endpoint, "prefix")
-    boundary = endpoint[: endpoint.index("/{id}")]
+    segments = endpoint.split("/")
+    first_parameter = next(
+        (
+            index
+            for index, segment in enumerate(segments)
+            if segment.startswith("{")
+            and segment.endswith("}")
+            and _valid_path_parameter_name(segment[1:-1])
+        ),
+        len(segments),
+    )
+    boundary = "/".join(segments[:first_parameter])
     return path == boundary or path.startswith(f"{boundary}/")
+
+
+def _valid_path_parameter_name(value: str) -> bool:
+    return bool(value) and value[0].islower() and all(
+        character.islower() or character.isdigit() or character == "_"
+        for character in value
+    )
+
+
+def _path_parameters(path: str, observer: UsageObserver) -> dict[str, str]:
+    if observer.endpoint_match != "path_template":
+        return {}
+    for endpoint in observer.endpoints:
+        if not _endpoint_matches(path, endpoint, "path_template"):
+            continue
+        parameters: dict[str, str] = {}
+        for actual, template in zip(path.split("/"), endpoint.split("/"), strict=True):
+            if not (
+                template.startswith("{")
+                and template.endswith("}")
+                and _valid_path_parameter_name(template[1:-1])
+            ):
+                continue
+            try:
+                parameters[template[1:-1]] = unquote(actual, errors="strict")
+            except UnicodeDecodeError:
+                return {}
+        return parameters
+    return {}
 
 
 def _valid_domain_suffix(value: Any) -> bool:
@@ -475,6 +531,63 @@ def _valid_canonical_name(value: Any) -> bool:
     )
 
 
+def _valid_unit(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 64
+        and value[0].isalpha()
+        and all(character.isalnum() or character in {".", "_", "-"} for character in value)
+        and not any(separator * 2 in value for separator in ".-_")
+        and value[-1].isalnum()
+    )
+
+
+def _valid_billing_dimension(value: Any) -> bool:
+    if not isinstance(value, dict) or not _valid_canonical_name(value.get("key")):
+        return False
+    source = value.get("source")
+    if source not in {
+        "request_body", "response_body", "query_parameter", "path_parameter", "hostname"
+    }:
+        return False
+    selector = value.get("selector")
+    if source == "hostname":
+        if selector is not None:
+            return False
+    elif not isinstance(selector, str) or not selector:
+        return False
+    default = value.get("default_value")
+    return default is None or (isinstance(default, str) and bool(default))
+
+
+def _billing_dimensions(
+    parsed: Any,
+    request_body: Any,
+    response_body: Any,
+    observer: UsageObserver,
+    parameters: dict[str, str],
+) -> tuple[dict[str, Any], ...]:
+    observed: list[dict[str, Any]] = []
+    for dimension in observer.billing_dimensions:
+        source = dimension["source"]
+        selector = dimension.get("selector", "")
+        if source == "request_body":
+            raw = _resolve_path(request_body, selector)
+        elif source == "response_body":
+            raw = _resolve_path(response_body, selector)
+        elif source == "query_parameter":
+            values = parse_qs(parsed.query, keep_blank_values=True).get(selector, [])
+            raw = next(iter(values), None)
+        elif source == "path_parameter":
+            raw = parameters.get(selector)
+        else:
+            raw = parsed.hostname
+        value = _bounded_string(raw) or _bounded_string(dimension.get("default_value"))
+        if value is not None:
+            observed.append({"key": dimension["key"], "value": {"type": "string", "value": value}})
+    return tuple(observed)
+
+
 def _collection_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     resolved = _resolve_collection_path(value, predicate["path"])
     if resolved is None:
@@ -560,6 +673,8 @@ class ServiceUsageObservers:
                 "response_quantity_header",
                 "fixed_quantity",
                 "resource_query_parameter",
+                "resource_path_parameter",
+                "usage_unit",
                 "default_resource_id",
                 "fixed_resource_id",
                 "quantity_multiplier_path",
@@ -579,6 +694,8 @@ class ServiceUsageObservers:
                     "resource_path",
                     "request_resource_path",
                     "resource_query_parameter",
+                    "resource_path_parameter",
+                    "resource_hostname",
                     "default_resource_id",
                     "fixed_resource_id",
                 )
@@ -617,13 +734,18 @@ class ServiceUsageObservers:
             provider_cost_minor_unit_exponent = definition.get(
                 "provider_cost_minor_unit_exponent"
             )
+            usage_unit = definition.get("usage_unit") or _DEFAULT_UNITS.get(
+                definition["usage_metric"]
+            )
+            billing_dimensions = definition.get("billing_dimensions", [])
             if (
                 definition["service_key"] in keys
-                or definition["usage_metric"] not in _METRICS
+                or not _valid_canonical_name(definition["usage_metric"])
+                or not _valid_unit(usage_unit)
                 or definition["component"] not in _COMPONENTS
                 or not definition["source_url"].startswith("https://")
                 or not isinstance(domains, list)
-                or not domains
+                or (not domains and not domain_suffixes)
                 or not all(isinstance(item, str) and item for item in domains)
                 or not isinstance(domain_suffixes, list)
                 or ("domain_suffixes" in definition and not domain_suffixes)
@@ -660,7 +782,28 @@ class ServiceUsageObservers:
                 not in {"exact", "prefix", "path_template"}
                 or (
                     definition.get("endpoint_match") == "path_template"
-                    and not all(item.split("/").count("{id}") == 1 for item in endpoints)
+                    and not all(
+                        (
+                            placeholders := [
+                                segment
+                                for segment in item.split("/")
+                                if segment.startswith("{")
+                                and segment.endswith("}")
+                                and _valid_path_parameter_name(segment[1:-1])
+                            ]
+                        )
+                        and len(placeholders) == len(set(placeholders))
+                        and not any(
+                            "{" in segment
+                            and not (
+                                segment.startswith("{")
+                                and segment.endswith("}")
+                                and _valid_path_parameter_name(segment[1:-1])
+                            )
+                            for segment in item.split("/")
+                        )
+                        for item in endpoints
+                    )
                 )
                 or not isinstance(definition.get("methods", []), list)
                 or ("methods" in definition and not definition["methods"])
@@ -675,7 +818,7 @@ class ServiceUsageObservers:
                     and (not isinstance(definition[field], str) or not definition[field])
                     for field in optional_string_fields
                 )
-                or definition.get("resource_type") not in {None, "model", "sku"}
+                or definition.get("resource_type") not in {None, *_RESOURCE_TYPES}
                 or sum(
                     value is not None
                     for value in (
@@ -706,6 +849,14 @@ class ServiceUsageObservers:
                 or any(not isinstance(item, str) or not item for item in allowed_resource_ids)
                 or (allowed_resource_ids and definition.get("resource_type") is None)
                 or (has_resource_selector and definition.get("resource_type") is None)
+                or (
+                    "resource_path_parameter" in definition
+                    and definition.get("endpoint_match") != "path_template"
+                )
+                or (
+                    "resource_hostname" in definition
+                    and definition.get("resource_hostname") is not True
+                )
                 or (
                     "quantity_multiplier_query_parameter" in definition
                     and "quantity_multiplier_path" not in definition
@@ -764,6 +915,16 @@ class ServiceUsageObservers:
                         "provider_cost_usd_path" in definition
                         or "provider_cost_usd_collection_sum_path" in definition
                     )
+                )
+                or not isinstance(billing_dimensions, list)
+                or ("billing_dimensions" in definition and not billing_dimensions)
+                or len(billing_dimensions) > 32
+                or not all(_valid_billing_dimension(item) for item in billing_dimensions)
+                or len({item["key"] for item in billing_dimensions}) != len(billing_dimensions)
+                or any(
+                    item["source"] == "path_parameter"
+                    and definition.get("endpoint_match") != "path_template"
+                    for item in billing_dimensions
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
@@ -880,6 +1041,7 @@ class ServiceUsageObservers:
                     minimum_quantity=minimum_quantity,
                     fixed_quantity=fixed_quantity,
                     usage_metric=definition["usage_metric"],
+                    usage_unit=usage_unit,
                     resource_type=definition.get("resource_type"),
                     resource_path=definition.get("resource_path"),
                     request_resource_path=definition.get("request_resource_path"),
@@ -888,6 +1050,8 @@ class ServiceUsageObservers:
                         "resource_id_prefix_to_strip"
                     ),
                     resource_query_parameter=definition.get("resource_query_parameter"),
+                    resource_path_parameter=definition.get("resource_path_parameter"),
+                    resource_hostname=definition.get("resource_hostname", False),
                     default_resource_id=definition.get("default_resource_id"),
                     fixed_resource_id=definition.get("fixed_resource_id"),
                     resource_variant=resource_variant,
@@ -913,6 +1077,7 @@ class ServiceUsageObservers:
                     provider_cost_minor_unit_exponent=(
                         provider_cost_minor_unit_exponent
                     ),
+                    billing_dimensions=tuple(billing_dimensions),
                     source_url=definition["source_url"],
                 )
             )
@@ -1082,8 +1247,9 @@ class ServiceUsageObservers:
         else:
             normalized_request_headers = {
                 str(name).lower(): None for name in request_headers
-            }
+        }
         for observer in observers:
+            parameters = _path_parameters(parsed.path, observer)
             if observer.methods and (
                 method is None or method.upper() not in observer.methods
             ):
@@ -1335,13 +1501,27 @@ class ServiceUsageObservers:
                 if observer.resource_query_parameter
                 else None
             )
+            path_resource_id = (
+                _bounded_string(parameters.get(observer.resource_path_parameter))
+                if observer.resource_path_parameter
+                else None
+            )
+            hostname_resource_id = (
+                _bounded_string(parsed.hostname) if observer.resource_hostname else None
+            )
             if (
                 request_resource_id is not None
                 and query_resource_id is not None
                 and request_resource_id != query_resource_id
             ):
                 continue
-            resource_id = resource_id or request_resource_id or query_resource_id
+            resource_id = (
+                resource_id
+                or request_resource_id
+                or query_resource_id
+                or path_resource_id
+                or hostname_resource_id
+            )
             resource_id = resource_id or _bounded_string(observer.fixed_resource_id)
             resource_id = resource_id or _bounded_string(observer.default_resource_id)
             if (
@@ -1370,22 +1550,9 @@ class ServiceUsageObservers:
                 if candidate not in observer.allowed_provider_regions:
                     continue
                 provider_region = candidate
-            dimensions: list[dict[str, Any]] = []
-            if observer.service_key == "elevenlabs_tts":
-                prefix = "/v1/text-to-speech/"
-                if parsed.path.startswith(prefix):
-                    encoded = parsed.path[len(prefix) :].split("/", 1)[0]
-                    try:
-                        value = _bounded_string(unquote(encoded, errors="strict"))
-                    except UnicodeDecodeError:
-                        value = None
-                    if value is not None:
-                        dimensions.append(
-                            {
-                                "key": "voice_id",
-                                "value": {"type": "string", "value": value},
-                            }
-                        )
+            dimensions = _billing_dimensions(
+                parsed, request_body, response_body, observer, parameters
+            )
             observations.append(
                 ServiceUsageObservation(
                     service_key=observer.service_key,
@@ -1393,6 +1560,7 @@ class ServiceUsageObservers:
                     provider_service=observer.provider_service,
                     component=observer.component,
                     metric=observer.usage_metric,
+                    unit=observer.usage_unit,
                     quantity=quantity,
                     resource_type=observer.resource_type if resource_id else None,
                     resource_id=resource_id,
@@ -1401,7 +1569,7 @@ class ServiceUsageObservers:
                     provider_cost_usd=provider_cost_usd,
                     provider_cost_amount=provider_cost_amount,
                     provider_cost_currency=provider_cost_currency,
-                    dimensions=tuple(dimensions),
+                    dimensions=dimensions,
                     manifest_version=self.manifest_version,
                 )
             )

@@ -1301,8 +1301,7 @@ class TestKnownServiceExtraction:
         assert counters["bytes_in"] > 0
         assert counters["bytes_out"] >= 19
 
-    def test_pinecone_cost_from_response_body(self) -> None:
-        """Pinecone: cost extracted from response_body.usage.readUnits."""
+    def test_pinecone_rounded_read_units_are_observed_without_sdk_money(self) -> None:
         task = _make_task()
         response = _make_response(
             body={"usage": {"readUnits": 10}, "matches": []},
@@ -1311,16 +1310,24 @@ class TestKnownServiceExtraction:
         with task_context(task):
             _handle_http_call(
                 "https://my-index.svc.us-east1-gcp.pinecone.io/query",
+                method="POST",
                 response=response,
             )
 
         events = get_recorded_events()
         assert len(events) == 1
         event = events[0]
-        # 10 * $0.000016 = $0.000160
-        assert event.cost_usd == Decimal("10") * Decimal("0.000016")
-        assert event.cost_confidence == "computed"
-        assert event.service_name == "Pinecone"
+        assert event.cost_usd == Decimal("0")
+        assert event.cost_confidence == "unknown"
+        assert event.pricing_source is None
+        assert event.provider == "pinecone"
+        assert event.service_name == "vector_database"
+        assert event.details["attribution_usage_quantity"] == "10"
+        assert event.details["attribution_usage_metric"] == "pinecone.read_units_rounded"
+        assert event.details["attribution_usage_unit"] == "ReadUnits"
+        assert event.details["attribution_resource_id"] == (
+            "my-index.svc.us-east1-gcp.pinecone.io"
+        )
 
     def test_google_maps_endpoint_match(self) -> None:
         """Google Maps Geocoding: fixed cost via endpoint_match."""

@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.35.0",
-  "conformance_schema_version": "27",
+  "observer_manifest_version": "1.36.0",
+  "conformance_schema_version": "28",
   "required_sdks": ["typescript", "python"],
   "observers": [
     {
@@ -588,6 +588,106 @@
         "razorpay_failed_http_capture_is_not_observed",
         "razorpay_payment_collection_is_not_a_payment_snapshot"
       ]
+    },
+    {
+      "service_key": "pinecone_query_read_units",
+      "positive_cases": ["pinecone_query_preserves_rounded_read_units_as_usage_not_money"],
+      "fail_open_cases": ["pinecone_query_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "pinecone_fetch_read_units",
+      "positive_cases": ["pinecone_fetch_preserves_rounded_read_units"],
+      "fail_open_cases": ["pinecone_fetch_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "pinecone_documents_search_read_units",
+      "positive_cases": ["pinecone_documents_search_preserves_namespace_and_rounded_units"],
+      "fail_open_cases": ["pinecone_documents_search_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_queried",
+      "positive_cases": ["turbopuffer_query_preserves_both_provider_billing_meters"],
+      "fail_open_cases": ["turbopuffer_query_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_returned",
+      "positive_cases": ["turbopuffer_query_preserves_both_provider_billing_meters"],
+      "fail_open_cases": ["turbopuffer_query_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_bytes_written",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_queried",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_returned",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "qdrant_request_count",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_hardware_cpu",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_index_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_index_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_vector_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_vector_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "weaviate_cloud_request_count",
+      "positive_cases": ["weaviate_cloud_success_is_an_allocation_signal_only"],
+      "fail_open_cases": ["weaviate_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "zilliz_cloud_request_count",
+      "positive_cases": ["zilliz_success_carries_cluster_collection_and_database_identity"],
+      "fail_open_cases": ["zilliz_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "astra_db_request_count",
+      "positive_cases": ["astra_success_carries_database_keyspace_and_collection_identity"],
+      "fail_open_cases": ["astra_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "chroma_cloud_request_count",
+      "positive_cases": ["chroma_cloud_success_carries_tenant_database_and_collection_identity"],
+      "fail_open_cases": ["chroma_failed_request_is_not_an_allocation_signal"]
     }
   ]
 }
