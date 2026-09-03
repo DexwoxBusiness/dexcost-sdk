@@ -328,20 +328,30 @@ def _valid_domain_suffix(value: Any) -> bool:
     )
 
 
+def _json_scalar_equals(left: Any, right: Any) -> bool:
+    """Match JSON scalars with JavaScript number semantics, excluding booleans."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    return type(left) is type(right) and left == right
+
+
 def _response_predicate_matches(value: Any, predicate: dict[str, Any]) -> bool:
     if predicate["operator"] == "collection_all_equals":
         resolved = _resolve_collection_path(value, predicate["path"])
-        return bool(resolved) and all(
-            candidate == predicate["value"]
-            and type(candidate) is type(predicate["value"])
+        if not resolved:
+            return False
+        return all(
+            _json_scalar_equals(candidate, predicate["value"])
             for candidate in resolved
         )
     resolved = _resolve_path(value, predicate["path"])
     if predicate["operator"] == "equals":
-        return resolved == predicate["value"] and type(resolved) is type(predicate["value"])
+        return _json_scalar_equals(resolved, predicate["value"])
     if predicate["operator"] == "one_of":
         return any(
-            resolved == candidate and type(resolved) is type(candidate)
+            _json_scalar_equals(resolved, candidate)
             for candidate in predicate["values"]
         )
     if isinstance(resolved, str):
@@ -364,19 +374,27 @@ def _valid_response_predicate(predicate: Any) -> bool:
             or not 1 <= len(values) <= 20
             or any(
                 type(value) not in {str, bool, int, float}
-                or (isinstance(value, float) and value != value)
+                or (isinstance(value, float) and not isfinite(value))
                 for value in values
             )
         ):
             return False
-        typed_values = {(type(value), str(value)) for value in values}
+        typed_values = {
+            (
+                "number",
+                Decimal(str(value)),
+            )
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else (type(value).__name__, value)
+            for value in values
+        }
         return len(typed_values) == len(values)
     value = predicate.get("value")
     return (
         predicate.get("operator") in {"equals", "collection_all_equals"}
         and set(predicate) == {"path", "operator", "value"}
         and type(value) in {str, bool, int, float}
-        and (not isinstance(value, float) or value == value)
+        and (not isinstance(value, float) or isfinite(value))
     )
 
 
@@ -734,9 +752,14 @@ class ServiceUsageObservers:
             provider_cost_minor_unit_exponent = definition.get(
                 "provider_cost_minor_unit_exponent"
             )
-            usage_unit = definition.get("usage_unit") or _DEFAULT_UNITS.get(
-                definition["usage_metric"]
-            )
+            raw_usage_unit = definition.get("usage_unit")
+            usage_unit: str | None
+            if isinstance(raw_usage_unit, str):
+                usage_unit = raw_usage_unit
+            elif raw_usage_unit is None:
+                usage_unit = _DEFAULT_UNITS.get(definition["usage_metric"])
+            else:
+                usage_unit = None
             billing_dimensions = definition.get("billing_dimensions", [])
             if (
                 definition["service_key"] in keys
@@ -928,6 +951,8 @@ class ServiceUsageObservers:
                 )
             ):
                 raise ValueError("usage observer manifest contains an invalid observer")
+            if usage_unit is None:
+                raise ValueError("usage observer manifest contains an invalid usage unit")
             if (
                 not isinstance(response_all, list)
                 or ("response_all" in definition and not response_all)

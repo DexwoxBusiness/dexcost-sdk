@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from dexcost.adapters.http import (
     _persist_event,
     _provider_observation_event_id,
@@ -98,6 +100,58 @@ def test_packaged_observer_manifest_matches_canonical_manifest() -> None:
         (ROOT / "python" / "src" / "dexcost" / "data" / "service_usage_observers.json").read_text()
     )
     assert packaged == canonical
+
+
+def _numeric_response_observer(predicate: dict[str, Any]) -> ServiceUsageObservers:
+    return ServiceUsageObservers(
+        data={
+            "_meta": {"version": "test", "observer_count": 1},
+            "observers": [
+                {
+                    "service_key": "numeric_response_test",
+                    "provider_name": "test_provider",
+                    "provider_service": "test_service",
+                    "component": "external",
+                    "domains": ["numeric.example"],
+                    "endpoints": ["/v1/check"],
+                    "endpoint_match": "exact",
+                    "fixed_quantity": "1",
+                    "usage_metric": "request_count",
+                    "response_all": [predicate],
+                    "source_url": "https://numeric.example/docs",
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("predicate", "response"),
+    [
+        ({"path": "status", "operator": "equals", "value": 1}, {"status": 1.0}),
+        ({"path": "status", "operator": "one_of", "values": [1]}, {"status": 1.0}),
+        (
+            {"path": "statuses[]", "operator": "collection_all_equals", "value": 1},
+            {"statuses": [1.0, 1]},
+        ),
+    ],
+)
+def test_response_predicates_use_json_number_semantics(
+    predicate: dict[str, Any], response: dict[str, Any]
+) -> None:
+    observer = _numeric_response_observer(predicate)
+    assert len(observer.observe("https://numeric.example/v1/check", {}, response)) == 1
+
+    boolean_path = "statuses" if predicate["operator"] == "collection_all_equals" else "status"
+    boolean_response = {boolean_path: [True] if boolean_path == "statuses" else True}
+    assert observer.observe("https://numeric.example/v1/check", {}, boolean_response) == []
+
+
+def test_response_one_of_rejects_duplicate_json_numbers() -> None:
+    with pytest.raises(ValueError, match="invalid response predicate"):
+        _numeric_response_observer(
+            {"path": "status", "operator": "one_of", "values": [1, 1.0]}
+        )
 
 
 def test_azure_observer_owns_invalid_variants_without_trusting_spoofed_suffixes() -> None:
