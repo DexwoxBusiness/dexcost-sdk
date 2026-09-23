@@ -1860,8 +1860,8 @@ function _recordHttpLlmEvent(
   const provider = ctx.liteLlmProxy
     ? classifyLiteLlmProvider(requestedModel, usage?.model)
     : ctx.hostname === "api.deepseek.com" ? "deepseek"
-      : ["api.kimi.com", "api.moonshot.ai"].includes(ctx.hostname)
-        ? "moonshot_global"
+      : ctx.hostname === "api.moonshot.ai" ? "moonshot_global"
+      : ctx.hostname === "api.kimi.com" ? "moonshot"
       : ctx.hostname === "api.moonshot.cn" ? "moonshot_cn"
       : ctx.hostname === "api.fireworks.ai" || ctx.hostname.endsWith(".api.fireworks.ai")
         ? "fireworks_ai"

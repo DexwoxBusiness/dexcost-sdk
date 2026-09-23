@@ -235,7 +235,7 @@ def test_deepseek_openai_compatibility_preserves_provider_and_cache_usage(
 
 @pytest.mark.parametrize(
     "base_url",
-    ["https://api.moonshot.ai/v1", "https://api.moonshot.cn/v1"],
+    ["https://api.moonshot.ai/v1", "https://api.moonshot.cn/v1", "https://api.kimi.com/v1"],
 )
 def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
     tmp_path: Path,
@@ -268,7 +268,11 @@ def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
         events = storage.query_events()
         assert len(events) == 1
         event = events[0]
-        expected_provider = "moonshot_cn" if "moonshot.cn" in base_url else "moonshot_global"
+        expected_provider = (
+            "moonshot_cn" if "moonshot.cn" in base_url
+            else "moonshot" if "api.kimi.com" in base_url
+            else "moonshot_global"
+        )
         assert event.provider == expected_provider
         assert event.model == "kimi-k3"
         assert event.input_tokens == 20

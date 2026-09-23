@@ -147,7 +147,7 @@ describe("HTTP adapter v2 — catalog cost extraction", () => {
         record_id: "rjob-summary-1",
       },
       resource: { type: "sku", id: "summarize" },
-      usage: [{ metric: "credit_count", quantity: "650", unit: "Credits" }],
+      usage: [{ metric: "provider_unit_count", quantity: "650", unit: "Provider-Units" }],
     });
     expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
   });

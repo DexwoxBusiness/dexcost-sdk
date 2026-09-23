@@ -480,7 +480,7 @@ class TestKnownServiceExtraction:
         }
         assert wire["resource"] == {"type": "sku", "id": "summarize"}
         assert wire["usage"] == [
-            {"metric": "credit_count", "quantity": "650", "unit": "Credits"}
+            {"metric": "provider_unit_count", "quantity": "650", "unit": "Provider-Units"}
         ]
         assert "cost_evidence" not in wire
 

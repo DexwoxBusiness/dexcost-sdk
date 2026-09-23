@@ -57,7 +57,8 @@ function routedProvider(resource: any, requestedModel?: unknown): string {
     if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "openrouter";
     if (hostname === "api.perplexity.ai" || hostname.endsWith(".perplexity.ai")) return "perplexity";
     if (hostname === "api.deepseek.com" || hostname.endsWith(".deepseek.com")) return "deepseek";
-    if (["api.moonshot.ai", "api.kimi.com"].includes(hostname)) return "moonshot_global";
+    if (hostname === "api.moonshot.ai") return "moonshot_global";
+    if (hostname === "api.kimi.com") return "moonshot";
     if (hostname === "api.moonshot.cn") return "moonshot_cn";
     if (hostname === "api.fireworks.ai" || hostname.endsWith(".api.fireworks.ai")) return "fireworks_ai";
     if (hostname === "api.x.ai" || hostname.endsWith(".api.x.ai")) return "xai";
