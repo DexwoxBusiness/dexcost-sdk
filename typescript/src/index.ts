@@ -280,6 +280,7 @@ export {
   instrumentOllama, uninstrumentOllama,
   instrumentOpenRouter, uninstrumentOpenRouter,
   instrumentPerplexity, uninstrumentPerplexity,
+  instrumentGroq, uninstrumentGroq,
   instrumentFal, uninstrumentFal,
 } from "./instruments/public.js";
 

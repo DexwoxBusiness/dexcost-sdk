@@ -1,0 +1,127 @@
+{
+  "schema_version": "1",
+  "model_cases": {
+    "grok-4.6": "grok-4.6",
+    "grok-build-0.1": "grok-build-0.1",
+    "grok-4.5": "grok-4.5",
+    "grok-4.3": "grok-4.3",
+    "grok-4.20-multi-agent-0309": "grok-4.20-multi-agent-0309",
+    "grok-4.20-0309-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-0309-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.3-latest": "grok-4.3",
+    "grok-code-fast-1": "grok-build-0.1",
+    "grok-code-fast": "grok-build-0.1",
+    "grok-code-fast-1-0825": "grok-build-0.1",
+    "grok-4.5-latest": "grok-4.5",
+    "grok-build-latest": "grok-4.5",
+    "grok-4.20-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-0309": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-latest-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-beta-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-0304": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-reasoning-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-experimental-beta-latest": "grok-4.20-0309-reasoning",
+    "grok-4.20-reasoning-gv2": "grok-4.20-0309-reasoning",
+    "grok-4.20-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-latest-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-experimental-beta-non-reasoning-latest": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-beta-0309-non-reasoning": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-non-reasoning-gv2": "grok-4.20-0309-non-reasoning",
+    "grok-4.20-multi-agent": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-0304": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-experimental-beta-latest": "grok-4.20-multi-agent-0309",
+    "grok-4.20-multi-agent-beta-0309": "grok-4.20-multi-agent-0309",
+    "grok-4-1-fast-reasoning": "grok-4.3",
+    "grok-4-1-fast-non-reasoning": "grok-4.3",
+    "grok-4-fast-reasoning": "grok-4.3",
+    "grok-4-fast-non-reasoning": "grok-4.3",
+    "grok-4-0709": "grok-4.3",
+    "grok-3": "grok-4.3",
+    "unverified-model-alias": "unverified-model-alias"
+  },
+  "lane_cases": [
+    {
+      "id": "default-short-with-omitted-tier-and-tool-count",
+      "usage": {},
+      "total_input_tokens": 199999,
+      "expected": "default_short"
+    },
+    {
+      "id": "default-long-at-200k-boundary",
+      "usage": { "num_server_side_tools_used": 0 },
+      "total_input_tokens": 200000,
+      "service_tier": "default",
+      "expected": "default_long"
+    },
+    {
+      "id": "priority-short",
+      "usage": { "num_server_side_tools_used": 0 },
+      "total_input_tokens": 199999,
+      "service_tier": "priority",
+      "expected": "priority_short"
+    },
+    {
+      "id": "priority-long",
+      "usage": { "num_server_side_tools_used": 0 },
+      "total_input_tokens": 200000,
+      "service_tier": "priority",
+      "expected": "priority_long"
+    },
+    {
+      "id": "server-tool-use-fails-open",
+      "usage": { "num_server_side_tools_used": 1 },
+      "total_input_tokens": 10,
+      "expected": null
+    },
+    {
+      "id": "malformed-tool-count-fails-open",
+      "usage": { "num_server_side_tools_used": "not-a-count" },
+      "total_input_tokens": 10,
+      "expected": null
+    },
+    {
+      "id": "string-tool-count-fails-open",
+      "usage": { "num_server_side_tools_used": "0" },
+      "total_input_tokens": 10,
+      "expected": null
+    },
+    {
+      "id": "negative-tool-count-fails-open",
+      "usage": { "num_server_side_tools_used": -1 },
+      "total_input_tokens": 10,
+      "expected": null
+    },
+    {
+      "id": "unknown-service-tier-fails-open",
+      "usage": {},
+      "total_input_tokens": 10,
+      "service_tier": "flex",
+      "expected": null
+    },
+    {
+      "id": "missing-usage-fails-open",
+      "usage": null,
+      "total_input_tokens": 10,
+      "expected": null
+    }
+  ],
+  "tick_cases": [
+    { "ticks": 0, "expected_usd": "0" },
+    { "ticks": 12345678, "expected_usd": "0.0012345678" },
+    { "ticks": "12345678", "expected_usd": "0.0012345678" },
+    { "ticks": 1.5, "expected_usd": null },
+    { "ticks": -1, "expected_usd": null }
+  ]
+}

@@ -104,7 +104,7 @@ try {
   });
   const fallbackEvents = tracker.buffer
     .getAllEvents()
-    .filter((e) => e.eventType === "llm_call" && e.provider === "api.kimi.com");
+    .filter((e) => e.eventType === "llm_call" && e.provider === "moonshot");
   assert.equal(fallbackEvents.length, 1, "HTTP LLM fallback captured exactly one llm_call");
   assert.equal(fallbackEvents[0].inputTokens, 1200);
   ok("ambient fetch capture (LLM HTTP fallback)");

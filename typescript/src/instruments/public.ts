@@ -24,5 +24,7 @@ export const instrumentOpenRouter = (): Promise<void> => globalInstrument("openr
 export const uninstrumentOpenRouter = (): void => globalUninstrument("openrouter");
 export const instrumentPerplexity = (): Promise<void> => globalInstrument("perplexity");
 export const uninstrumentPerplexity = (): void => globalUninstrument("perplexity");
+export const instrumentGroq = (): Promise<void> => globalInstrument("groq");
+export const uninstrumentGroq = (): void => globalUninstrument("groq");
 export const instrumentFal = (): Promise<void> => globalInstrument("fal");
 export const uninstrumentFal = (): void => globalUninstrument("fal");

@@ -12,23 +12,20 @@ def _find_repo_root() -> Path | None:
     current = Path(__file__).resolve()
     for parent in current.parents:
         if (
-            (parent / "go" / "pricing" / "data").exists()
-            and (parent / "rust" / "src" / "data").exists()
+            (parent / "python" / "src" / "dexcost" / "data").exists()
             and (parent / "typescript" / "src" / "data").exists()
         ):
             return parent
     return None
 
 
-def test_service_catalog_is_safe_and_byte_equal_across_sdks() -> None:
+def test_service_catalog_is_safe_and_byte_equal_across_active_sdks() -> None:
     repo_root = _find_repo_root()
     if repo_root is None:
         pytest.skip("non-monorepo install - other SDK directories not reachable")
 
     canonical = repo_root / "python" / "src" / "dexcost" / "data" / "service_prices.json"
     targets = {
-        "go": repo_root / "go" / "pricing" / "data" / "service_prices.json",
-        "rust": repo_root / "rust" / "src" / "data" / "service_prices.json",
         "typescript": repo_root / "typescript" / "src" / "data" / "service_prices.json",
     }
 
@@ -43,9 +40,9 @@ def test_service_catalog_is_safe_and_byte_equal_across_sdks() -> None:
     entries = {key: value for key, value in catalog.items() if key != "_meta"}
     metadata = catalog["_meta"]
 
-    assert metadata["safety_policy_version"] == "2026-07-14.2"
-    assert metadata["disabled_service_count"] == 94
-    assert metadata["service_count"] == len(entries) == 73
+    assert metadata["safety_policy_version"] == "2026-09-03.26"
+    assert metadata["disabled_service_count"] == 95
+    assert metadata["service_count"] == len(entries) == 72
 
     zero_rate_entries = [
         key

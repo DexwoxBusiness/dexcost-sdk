@@ -43,4 +43,21 @@ describe("shared OpenAI usage conformance", () => {
       expect(() => normalizeOpenAIUsage(testCase.usage)).toThrow(testCase.expected_error);
     });
   }
+
+  it("keeps DeepSeek top-level cache-hit tokens disjoint", () => {
+    expect(normalizeOpenAIUsage({
+      prompt_tokens: 20,
+      completion_tokens: 10,
+      prompt_cache_hit_tokens: 4,
+      prompt_cache_miss_tokens: 16,
+    })).toEqual({
+      totalInputTokens: 20,
+      inputTokens: 16,
+      cacheReadInputTokens: 4,
+      cacheWriteInputTokens: 0,
+      totalOutputTokens: 10,
+      outputTokens: 10,
+      reasoningOutputTokens: 0,
+    });
+  });
 });

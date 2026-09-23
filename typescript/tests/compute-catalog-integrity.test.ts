@@ -109,6 +109,21 @@ describe("compute catalog integrity", () => {
     }
   });
 
+  test("Lambda regions match the verified Price List scope", () => {
+    const regions = load().aws.lambda.regions;
+    expect(new Set(Object.keys(regions))).toEqual(new Set([
+      "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+      "eu-west-1", "eu-west-2", "eu-central-1",
+      "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-south-1",
+      "sa-east-1", "ca-central-1",
+    ]));
+    for (const rates of Object.values<any>(regions)) {
+      expect(rates.x86_64.gb_second_usd).toBe("0.0000166667");
+      expect(rates.arm64.gb_second_usd).toBe("0.0000133334");
+      expect(rates.x86_64.request_usd).toBe("0.0000002");
+    }
+  });
+
   test("Fargate has both architectures", () => {
     const data = load();
     const def = data.aws.fargate.default;

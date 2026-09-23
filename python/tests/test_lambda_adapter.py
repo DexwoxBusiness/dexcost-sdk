@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from dexcost.adapters.aws_lambda import lambda_cost, get_supported_regions
+from dexcost.adapters.aws_lambda import get_supported_regions, lambda_cost
 
 
 class TestLambdaCost:
@@ -36,12 +36,24 @@ class TestLambdaCost:
         expected_total = expected_duration_cost + Decimal("0.0000002")
         assert result["cost_usd"] == expected_total
 
-    def test_eu_central_1_pricing(self) -> None:
-        """EU regions use higher per-GB-second rate."""
+    def test_eu_central_1_uses_current_x86_price_list_rate(self) -> None:
+        """The current regional Price List publishes the standard x86 rate."""
         result = lambda_cost(duration_ms=1000, memory_mb=1024, region="eu-central-1")
-        # 1024 MB = 1 GB. 1s * 1 GB * 0.0000175000 = 0.0000175000
-        # + request 0.0000002 = 0.0000177000
-        assert result["cost_usd"] == Decimal("0.0000177000")
+        assert result["cost_usd"] == Decimal("0.0000168667")
+
+    def test_arm_uses_architecture_specific_rate(self) -> None:
+        result = lambda_cost(
+            duration_ms=1000,
+            memory_mb=1024,
+            region="us-east-1",
+            architecture="arm64",
+        )
+        assert result["cost_usd"] == Decimal("0.0000135334")
+        assert result["details"]["architecture"] == "arm64"
+
+    def test_unknown_architecture_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="architecture"):
+            lambda_cost(1000, 1024, "us-east-1", architecture="sparc")
 
     def test_cost_usd_is_decimal(self) -> None:
         """cost_usd must be a Decimal, never a float."""
@@ -81,7 +93,7 @@ class TestLambdaCost:
         """get_supported_regions returns a non-empty list of region strings."""
         regions = get_supported_regions()
         assert isinstance(regions, list)
-        assert len(regions) >= 10
+        assert len(regions) == 13
         assert "us-east-1" in regions
         assert "eu-central-1" in regions
 

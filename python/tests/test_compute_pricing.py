@@ -31,16 +31,16 @@ def engine():
 # ─── Lambda ──────────────────────────────────────────────────────────────────
 
 def test_lambda_x86_canonical_case(engine):
-    """1024 MiB × 100 ms × 1 invocation in us-east-1 (x86_64).
+    """1024 configured MB x 100 ms x 1 invocation in us-east-1 (x86_64).
 
-    Lambda uses DECIMAL GB (10^9 bytes) per Decision #7:
-      gb_seconds = 1024^3 / 10^9 * (100/1000) ≈ 0.107374
+    Lambda bills 1024 configured MB as 1 GB:
+      gb_seconds = 1 * (100/1000) = 0.1
       cost = 1 * 0.0000002 + gb_seconds * 0.0000166667
     """
     details = {
         "billing_model": "lambda",
         "duration_ms": 100,
-        "memory_bytes_limit": 1024 * 1024 * 1024,
+        "memory_bytes_limit": 1024 * 1_000_000,
         "vcpu_count": 1.0,
         "vcpu_seconds_used": 0,
         "invocation_count": 1,
@@ -48,9 +48,7 @@ def test_lambda_x86_canonical_case(engine):
         "architecture": "x86_64",
     }
     cost = engine.resolve_compute_cost(details, _env(), {})
-    gb_seconds = (
-        Decimal(1024 * 1024 * 1024) / Decimal("1000000000") * Decimal("0.1")
-    )
+    gb_seconds = Decimal("1") * Decimal("0.1")
     expected = Decimal("0.0000002") + gb_seconds * Decimal("0.0000166667")
     assert cost.cost_usd == expected
     assert cost.cost_confidence == "computed"
@@ -60,7 +58,7 @@ def test_lambda_x86_canonical_case(engine):
 def test_lambda_arm_is_cheaper(engine):
     base = {
         "billing_model": "lambda", "duration_ms": 100,
-        "memory_bytes_limit": 1024 * 1024 * 1024, "vcpu_count": 1.0,
+        "memory_bytes_limit": 1024 * 1_000_000, "vcpu_count": 1.0,
         "vcpu_seconds_used": 0, "invocation_count": 1,
         "region": "us-east-1",
     }
@@ -72,7 +70,7 @@ def test_lambda_arm_is_cheaper(engine):
 # ─── Fargate (the binary GiB bug-prevention test) ────────────────────────────
 
 def test_fargate_uses_binary_gib_divisor(engine):
-    """0.5 vCPU × 1 GiB × 60 s in us-east-1.
+    """0.5 vCPU x 1 GiB x 60 s in us-east-1.
 
     Fargate uses BINARY GiB per Decision #7 — divisor 1024^3. If the
     implementation confuses it for decimal GB (10^9), the GiB term becomes

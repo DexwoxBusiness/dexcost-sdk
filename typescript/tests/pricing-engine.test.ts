@@ -145,6 +145,17 @@ describe("PricingEngine", () => {
     }
   });
 
+  it("does not claim a catalog money source without a positive billable meter", () => {
+    const engine = new PricingEngine();
+    const result = engine.getMeteredCost("gpt-4o", {});
+
+    expect(result.costUsd.toString()).toBe("0");
+    expect(result.costConfidence).toBe("unknown");
+    expect(result.pricingSource).toBe("unknown");
+    expect(result.resolvedModel).toBe("gpt-4o");
+    expect(result.lines).toEqual([]);
+  });
+
   it("marks an unpriced Anthropic one-hour cache bucket unknown", () => {
     const engine = new PricingEngine();
     engine.replaceCatalog({

@@ -326,6 +326,12 @@ describe("HTTP API endpoint detection", () => {
     const results = scanSource(source, "test.ts");
     expect(results.some((r) => r.provider === "deepseek" && r.type === "http_call")).toBe(true);
   });
+
+  it("detects fetch to the current Together API host", () => {
+    const source = 'await fetch("https://api.together.ai/v1/chat/completions", opts);';
+    const results = scanSource(source, "test.ts");
+    expect(results.some((r) => r.provider === "together" && r.type === "http_call")).toBe(true);
+  });
 });
 
 // ── Edge case tests ──────────────────────────────────────────────────

@@ -242,7 +242,7 @@ const PATTERNS: ScanPattern[] = [
     autoInstrumentable: false,
   },
   {
-    regex: /fetch\s*\(\s*["'`]https?:\/\/api\.together\.xyz/g,
+    regex: /fetch\s*\(\s*["'`]https?:\/\/api\.together\.(?:ai|xyz)/g,
     provider: "together",
     type: "http_call",
     autoInstrumentable: false,

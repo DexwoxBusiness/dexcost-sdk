@@ -84,6 +84,9 @@ openrouter = [
 perplexity = [
     "perplexityai>=0.43,<2.0",
 ]
+groq = [
+    "groq>=1.0,<2.0",
+]
 fal = [
     "fal-client>=0.14,<1.0",
 ]
@@ -105,6 +108,7 @@ all = [
     "ollama>=0.6,<1.0",
     "openrouter>=1.0,<2.0",
     "perplexityai>=0.43,<2.0",
+    "groq>=1.0,<2.0",
     "fal-client>=0.14,<1.0",
     "nvidia-ml-py>=12.535,<14.0",
     "crewai>=1.0; python_version < '3.14'",

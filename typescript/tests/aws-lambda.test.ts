@@ -10,6 +10,7 @@ describe("getSupportedRegions", () => {
     const regions = getSupportedRegions();
     expect(regions.length).toBeGreaterThan(0);
     expect(regions).toContain("us-east-1");
+    expect(regions).toHaveLength(13);
     expect([...regions].sort()).toEqual(regions);
   });
 });
@@ -34,6 +35,12 @@ describe("lambdaCost", () => {
     expect(result.costUsd).toBeCloseTo(0.0000002, 12);
   });
 
+  it("uses the architecture-specific Arm rate", () => {
+    const result = lambdaCost(1000, 1024, "us-east-1", "arm64");
+    expect(result.costUsd).toBeCloseTo(0.0000133334 + 0.0000002, 12);
+    expect(result.details.architecture).toBe("arm64");
+  });
+
   it("throws for a negative duration", () => {
     expect(() => lambdaCost(-1, 512, "us-east-1")).toThrow(/durationMs/);
   });
@@ -44,5 +51,10 @@ describe("lambdaCost", () => {
 
   it("throws for an unknown region", () => {
     expect(() => lambdaCost(100, 512, "mars-1")).toThrow(/Unknown AWS region/);
+  });
+
+  it("throws for an unknown architecture at runtime", () => {
+    expect(() => lambdaCost(100, 512, "us-east-1", "sparc" as never))
+      .toThrow(/architecture/);
   });
 });

@@ -24,6 +24,8 @@ ATTRIBUTION_COMPONENTS = (
 
 ATTRIBUTION_USAGE_METRICS = (
     "input_tokens",
+    "input_image_tokens",
+    "output_image_tokens",
     "output_tokens",
     "cache_read_input_tokens",
     "cache_write_input_tokens",
@@ -44,6 +46,7 @@ ATTRIBUTION_USAGE_METRICS = (
     "image_count",
     "page_count",
     "credit_count",
+    "provider_unit_count",
 )
 
 ATTRIBUTION_USAGE_UNITS = (
@@ -59,6 +62,7 @@ ATTRIBUTION_USAGE_UNITS = (
     "Images",
     "Pages",
     "Credits",
+    "Provider-Units",
 )
 
 AttributionComponent = Literal[
@@ -78,6 +82,8 @@ AttributionComponent = Literal[
 ]
 AttributionUsageMetric = Literal[
     "input_tokens",
+    "input_image_tokens",
+    "output_image_tokens",
     "output_tokens",
     "cache_read_input_tokens",
     "cache_write_input_tokens",
@@ -98,6 +104,7 @@ AttributionUsageMetric = Literal[
     "image_count",
     "page_count",
     "credit_count",
+    "provider_unit_count",
 ]
 AttributionUsageUnit = Literal[
     "Tokens",
@@ -112,6 +119,7 @@ AttributionUsageUnit = Literal[
     "Images",
     "Pages",
     "Credits",
+    "Provider-Units",
 ]
 AttributionConfidence = Literal["exact", "computed", "estimated", "unknown"]
 AttributionLifecycleState = Literal["pending", "provisional", "final", "voided"]
@@ -121,6 +129,8 @@ AttributionCostEvidenceSource = Literal[
 
 ATTRIBUTION_UNIT_BY_METRIC: dict[AttributionUsageMetric, AttributionUsageUnit] = {
     "input_tokens": "Tokens",
+    "input_image_tokens": "Tokens",
+    "output_image_tokens": "Tokens",
     "output_tokens": "Tokens",
     "cache_read_input_tokens": "Tokens",
     "cache_write_input_tokens": "Tokens",
@@ -141,6 +151,7 @@ ATTRIBUTION_UNIT_BY_METRIC: dict[AttributionUsageMetric, AttributionUsageUnit] =
     "image_count": "Images",
     "page_count": "Pages",
     "credit_count": "Credits",
+    "provider_unit_count": "Provider-Units",
 }
 
 

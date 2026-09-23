@@ -130,6 +130,7 @@ import "../instruments/litellm.js";
 import "../instruments/ollama.js";
 import "../instruments/openrouter.js";
 import "../instruments/perplexity.js";
+import "../instruments/groq.js";
 import "../instruments/fal.js";
 
 // ---------------------------------------------------------------------------

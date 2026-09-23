@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.capabilities import capability_context
 from dexcost.idempotency import idempotency_key
 from dexcost.instruments.cohere import instrument_cohere, uninstrument_cohere
@@ -78,7 +79,11 @@ def _json_response(request: httpx.Request) -> httpx.Response:
                 "embeddings": {"float": [[0.1, 0.2]]},
                 "meta": {
                     "api_version": {"version": "2"},
-                    "billed_units": {"input_tokens": 7},
+                    "billed_units": {
+                        "input_tokens": 7,
+                        "image_tokens": 11,
+                        "images": 3,
+                    },
                 },
             },
             request=request,
@@ -191,16 +196,32 @@ def test_current_client_v2_chat_embed_and_rerank_are_all_metered(
     assert chat_event.output_tokens == 3
     assert chat_event.details["provider_record_id"] == "cohere-v2-chat-1"
     assert {
-        line["metric"]: line["quantity"]
-        for line in chat_event.details["attribution_usage_lines"]
+        line["metric"]: line["quantity"] for line in chat_event.details["attribution_usage_lines"]
     } == {"input_tokens": "12", "output_tokens": "3", "tool_call_count": "1"}
 
     embed_event = by_service["embeddings"]
-    assert embed_event.model == "cohere/embed-v4.0"
+    assert embed_event.event_type == "external_cost"
+    assert embed_event.model == "embed-v4.0"
     assert embed_event.input_tokens == 7
-    assert embed_event.cost_usd == Decimal("0.00000084")
-    assert embed_event.cost_confidence == "computed"
+    assert embed_event.cost_usd == Decimal("0")
+    assert embed_event.details["attribution_component"] == "external"
+    assert embed_event.details["attribution_provider_service"] == "embed"
     assert embed_event.details["provider_record_id"] == "cohere-v2-embed-1"
+    assert {
+        line["metric"]: line["quantity"] for line in embed_event.details["attribution_usage_lines"]
+    } == {"input_tokens": "7", "input_image_tokens": "11"}
+    observation = to_attribution_observation_v3(embed_event)
+    assert observation is not None
+    assert observation["provider"] == {
+        "name": "cohere",
+        "service": "embed",
+        "record_id": "cohere-v2-embed-1",
+    }
+    assert observation["resource"] == {"type": "model", "id": "embed-v4.0"}
+    assert {line["metric"]: line["quantity"] for line in observation["usage"]} == {
+        "input_tokens": "7",
+        "input_image_tokens": "11",
+    }
 
     rerank_event = by_service["rerank"]
     assert rerank_event.model == "rerank-v3.5"
@@ -254,8 +275,7 @@ def test_current_client_v2_stream_reads_message_end_usage_after_task_exit(
     assert event.details["provider_record_id"] == "cohere-v2-stream-1"
     assert event.details["attribution_operation_status"] == "succeeded"
     assert {
-        line["metric"]: line["quantity"]
-        for line in event.details["attribution_usage_lines"]
+        line["metric"]: line["quantity"] for line in event.details["attribution_usage_lines"]
     } == {"input_tokens": "11", "output_tokens": "4", "tool_call_count": "1"}
     assert "private_stream_tool" not in json.dumps(event.details, sort_keys=True)
 
@@ -342,4 +362,9 @@ async def test_async_v2_auto_tasks_are_created_only_when_coroutines_are_awaited(
     tasks = tracker._storage.query_tasks(task_type="cohere.embed")
     assert len(tasks) == 1
     assert tasks[0].status == "success"
-    assert tasks[0].total_input_tokens == 7
+    # Embed is an external service meter, not an LLM-generation token rollup.
+    assert tasks[0].total_input_tokens == 0
+    events = tracker._storage.query_events(task_id=str(tasks[0].task_id))
+    assert len(events) == 1
+    assert events[0].input_tokens == 7
+    assert events[0].details["attribution_provider_service"] == "embed"

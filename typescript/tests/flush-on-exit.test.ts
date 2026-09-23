@@ -132,10 +132,12 @@ describe("flush on exit (B9)", () => {
     EventBuffer._forceFallbackForTest = true;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const before = new Set(process.listeners("beforeExit"));
+    const endpoint = "https://flush-request-test.invalid";
     const tracker = init({
       apiKey: "dx_test_x",
       autoInstrument: [],
       trackHttp: false,
+      endpoint,
     });
     const sdkListener = process.listeners("beforeExit").find((listener) => !before.has(listener));
     expect(sdkListener).toBeDefined();
@@ -145,21 +147,24 @@ describe("flush on exit (B9)", () => {
     });
 
     let aborted = false;
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => (
-      new Promise<Response>((_resolve, reject) => {
+    const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) !== `${endpoint}/v1/ingest`) {
+        return Promise.resolve({ ok: true, status: 202, json: async () => ({}) } as Response);
+      }
+      return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => {
           aborted = true;
           const error = new Error("request aborted");
           error.name = "AbortError";
           reject(error);
         }, { once: true });
-      })
-    ));
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     (sdkListener as (code: number) => void)(0);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `${endpoint}/v1/ingest`)).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(5_000);
 
@@ -174,10 +179,12 @@ describe("flush on exit (B9)", () => {
     EventBuffer._forceFallbackForTest = true;
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const before = new Set(process.listeners("beforeExit"));
+    const endpoint = "https://flush-response-test.invalid";
     const tracker = init({
       apiKey: "dx_test_x",
       autoInstrument: [],
       trackHttp: false,
+      endpoint,
     });
     const sdkListener = process.listeners("beforeExit").find((listener) => !before.has(listener));
     expect(sdkListener).toBeDefined();
@@ -186,7 +193,10 @@ describe("flush on exit (B9)", () => {
     const markTasksSynced = vi.spyOn(tracker.buffer, "markTasksSynced");
 
     let bodyReadAborted = false;
-    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+    const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) !== `${endpoint}/v1/ingest`) {
+        return Promise.resolve({ ok: true, status: 202, json: async () => ({}) } as Response);
+      }
       const signal = init?.signal;
       return Promise.resolve({
         ok: true,
@@ -205,7 +215,7 @@ describe("flush on exit (B9)", () => {
 
     (sdkListener as (code: number) => void)(0);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `${endpoint}/v1/ingest`)).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(5_000);
 

@@ -66,7 +66,7 @@ function signedRelease(sequence, { expired = false } = {}) {
     channel: "stable",
     published_at: new Date(now - 2 * 86_400_000).toISOString(),
     expires_at: new Date(now + (expired ? -86_400_000 : 30 * 86_400_000)).toISOString(),
-    safety_policy_version: "2026-07-14.2",
+    safety_policy_version: "2026-09-03.26",
     sdk_contract: { min: 1, max: 1 },
     server_pricing_reference: { catalog_version: "server-v1", activation_id: "10" },
     artifacts: descriptors,

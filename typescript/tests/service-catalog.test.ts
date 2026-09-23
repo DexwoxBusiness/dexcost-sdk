@@ -87,11 +87,10 @@ describe("ServiceCatalog", () => {
   // Domain matching — wildcard
   // -----------------------------------------------------------------------
 
-  it("matches wildcard domain pattern", () => {
+  it("does not load an unverified Pinecone per-RU rate", () => {
     const catalog = new ServiceCatalog();
     const entry = catalog.lookup("https://my-index-abc.pinecone.io/query");
-    expect(entry).not.toBeNull();
-    expect(entry!.display_name).toBe("Pinecone");
+    expect(entry).toBeNull();
   });
 
   it("does not load safety-disabled synthetic-zero services", () => {
@@ -245,17 +244,10 @@ describe("ServiceCatalog", () => {
     expect(result!.confidence).toBe("exact");
   });
 
-  it("extracts cost from pinecone read units in body", () => {
+  it("does not convert Pinecone rounded read units into SDK money", () => {
     const catalog = new ServiceCatalog();
     const entry = catalog.lookup("https://my-index.pinecone.io/query");
-    expect(entry).not.toBeNull();
-
-    const body = { usage: { readUnits: 10 }, matches: [] };
-    const result = catalog.extractCost(entry!, new Headers(), body);
-    expect(result).not.toBeNull();
-    // 10 * $0.000016 = $0.00016
-    expect(result!.costUsd).toBeCloseTo(0.00016, 8);
-    expect(result!.confidence).toBe("exact");
+    expect(entry).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -335,7 +327,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 1,
-          safety_policy_version: "2026-07-14.2",
+          safety_policy_version: "2026-09-03.26",
         },
         custom_search: {
           display_name: "Custom Search",
@@ -350,7 +342,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-07-14.2",
+        safety_policy_version: "2026-09-03.26",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 1,
@@ -383,7 +375,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 0,
-          safety_policy_version: "2026-07-14.2",
+          safety_policy_version: "2026-09-03.26",
         },
         synthetic_zero: {
           display_name: "Synthetic Zero",
@@ -398,7 +390,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-07-14.2",
+        safety_policy_version: "2026-09-03.26",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 0,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from decimal import Decimal
 from pathlib import Path
 
@@ -12,9 +12,16 @@ import fal_client
 import httpx
 import pytest
 
+from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.capabilities import capability_context
 from dexcost.idempotency import idempotency_key
-from dexcost.instruments.fal import instrument_fal, uninstrument_fal
+from dexcost.instruments.fal import (
+    _captured_async_stream,
+    _captured_sync_stream,
+    _inside_fal,
+    instrument_fal,
+    uninstrument_fal,
+)
 from dexcost.models.capability import CapabilityIdentity
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
@@ -56,7 +63,12 @@ def _transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.url.host == "fal.run" and path.endswith("/flux/schnell"):
-            return httpx.Response(200, json=_image_result(), request=request)
+            return httpx.Response(
+                200,
+                json=_image_result(),
+                headers={"x-fal-request-id": "fal-run-1"},
+                request=request,
+            )
         if request.url.host == "fal.run" and path.endswith("/video-model"):
             return httpx.Response(
                 200,
@@ -66,6 +78,7 @@ def _transport() -> httpx.MockTransport:
                         "duration": 6.5,
                     }
                 },
+                headers={"x-fal-request-id": "fal-video-direct-1"},
                 request=request,
             )
         if request.url.host == "fal.run" and path.endswith("/audio-model/stream"):
@@ -77,13 +90,18 @@ def _transport() -> httpx.MockTransport:
             return httpx.Response(
                 200,
                 content=body.encode(),
-                headers={"content-type": "text/event-stream"},
+                headers={
+                    "content-type": "text/event-stream",
+                    "x-fal-request-id": "fal-stream-1",
+                },
                 request=request,
             )
         if request.method == "POST" and request.url.host == "queue.fal.run":
             application = path.strip("/")
             if application == "fal-ai/video-model":
                 request_id = "fal-video-1"
+            elif b"private-image-prompt" in request.content:
+                request_id = "fal-run-1"
             else:
                 request_id = "fal-job-cancel" if b"cancel-me" in request.content else "fal-job-1"
             return httpx.Response(
@@ -98,7 +116,12 @@ def _transport() -> httpx.MockTransport:
             payload: dict[str, object] = {"status": status, "logs": []}
             if status == "COMPLETED":
                 payload["metrics"] = {"inference_time": 2.7}
-            return httpx.Response(200, json=payload, request=request)
+            return httpx.Response(
+                200,
+                json=payload,
+                headers={"x-fal-request-id": f"transport-status-{request_id}"},
+                request=request,
+            )
         if request.method == "GET" and "/requests/" in path:
             if "/video-model/" in path:
                 return httpx.Response(
@@ -109,9 +132,15 @@ def _transport() -> httpx.MockTransport:
                             "duration": 6.5,
                         }
                     },
+                    headers={"x-fal-request-id": "transport-result-video"},
                     request=request,
                 )
-            return httpx.Response(200, json=_image_result(), request=request)
+            return httpx.Response(
+                200,
+                json=_image_result(),
+                headers={"x-fal-request-id": "transport-result-image"},
+                request=request,
+            )
         if request.method == "PUT" and path.endswith("/cancel"):
             return httpx.Response(202, json={"status": "CANCELLATION_REQUESTED"}, request=request)
         return httpx.Response(404, request=request)
@@ -123,6 +152,33 @@ def _client_with_transport(transport: httpx.MockTransport) -> fal_client.SyncCli
     client = fal_client.SyncClient(key="test")
     client.__dict__["_client"] = httpx.Client(transport=transport)
     return client
+
+
+def test_sync_stream_guard_is_restored_before_user_chunk_code() -> None:
+    def source() -> Generator[str, None, None]:
+        assert _inside_fal.get() is True
+        yield "chunk"
+
+    stream = _captured_sync_stream(source(), lambda _request_id: None)
+    assert next(stream) == "chunk"
+    assert _inside_fal.get() is False
+    stream.close()
+    assert _inside_fal.get() is False
+
+
+def test_async_stream_guard_is_restored_before_user_chunk_code() -> None:
+    async def run() -> None:
+        async def source() -> AsyncIterator[str]:
+            assert _inside_fal.get() is True
+            yield "chunk"
+
+        stream = _captured_async_stream(source(), lambda _request_id: None)
+        assert await anext(stream) == "chunk"
+        assert _inside_fal.get() is False
+        await stream.aclose()
+        assert _inside_fal.get() is False
+
+    asyncio.run(run())
 
 
 def test_current_client_sync_stream_and_queue_are_attributed_once(
@@ -167,8 +223,14 @@ def test_current_client_sync_stream_and_queue_are_attributed_once(
         image = by_operation["fal_ai.run"]
         assert image.provider == "fal_ai"
         assert image.model == "fal_ai/fal-ai/flux/schnell"
-        assert image.cost_usd == Decimal("0.003")
-        assert image.cost_confidence == "computed"
+        assert image.cost_usd == Decimal("0")
+        assert image.cost_confidence == "unknown"
+        assert image.pricing_source == "unknown"
+        assert to_attribution_observation_v3(image)["provider"] == {
+            "name": "fal_ai",
+            "service": "inference",
+            "record_id": "fal-run-1",
+        }
         image_lines = {
             line["metric"]: line["quantity"] for line in image.details["attribution_usage_lines"]
         }
@@ -179,6 +241,7 @@ def test_current_client_sync_stream_and_queue_are_attributed_once(
             line["metric"]: line["quantity"] for line in video.details["attribution_usage_lines"]
         }
         assert video_lines["output_video_seconds"] == "6.5"
+        assert to_attribution_observation_v3(video)["provider"]["record_id"] == "fal-video-1"
         assert "inference_time" not in json.dumps(video.to_dict())
 
         audio = by_operation["fal_ai.stream"]
@@ -186,12 +249,13 @@ def test_current_client_sync_stream_and_queue_are_attributed_once(
             line["metric"]: line["quantity"] for line in audio.details["attribution_usage_lines"]
         }
         assert audio_lines["output_audio_seconds"] == "3.25"
+        assert to_attribution_observation_v3(audio)["provider"]["record_id"] == "fal-stream-1"
 
-        job = storage.get_provider_job("fal_ai", "queue", "fal-job-1")
+        job = storage.get_provider_job("fal_ai", "inference", "fal-job-1")
         assert job is not None
         assert job.status == "succeeded"
-        assert job.cost_amount == Decimal("0.003")
-        cancelled = storage.get_provider_job("fal_ai", "queue", "fal-job-cancel")
+        assert job.cost_amount is None
+        cancelled = storage.get_provider_job("fal_ai", "inference", "fal-job-cancel")
         assert cancelled is not None
         assert cancelled.status == "submitted"
 
@@ -268,7 +332,14 @@ def test_current_async_client_stream_and_queue_lifecycle(tmp_path: Path) -> None
             "fal_ai.run",
             "fal_ai.stream",
         }
-        job = storage.get_provider_job("fal_ai", "queue", "fal-job-1")
+        by_operation = {event.details["attribution_operation_name"]: event for event in events}
+        assert to_attribution_observation_v3(by_operation["fal_ai.run"])["provider"][
+            "record_id"
+        ] == "fal-run-1"
+        assert to_attribution_observation_v3(by_operation["fal_ai.stream"])["provider"][
+            "record_id"
+        ] == "fal-stream-1"
+        job = storage.get_provider_job("fal_ai", "inference", "fal-job-1")
         assert job is not None
         assert job.status == "succeeded"
         persisted = json.dumps(
@@ -318,7 +389,7 @@ def test_capability_idempotency_job_and_native_failure_contract(tmp_path: Path) 
         event = storage.query_events(task_id=str(task.task_id))[0]
         assert event.details["attribution_capability"] == capability.to_dict()
         assert len(event.details["_dexcost_idempotency_sha256"]) == 64
-        job = storage.get_provider_job("fal_ai", "queue", "fal-job-1")
+        job = storage.get_provider_job("fal_ai", "inference", "fal-job-1")
         assert job is not None
         assert job.capability == capability
 
