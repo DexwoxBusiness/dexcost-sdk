@@ -89,8 +89,12 @@ def _provider_for_messages_instance(instance: Any) -> str:
             client, "_base_url", None
         )
         hostname = (urlparse(str(raw_base_url)).hostname or "").lower()
-        if hostname in {"api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"}:
-            return "moonshot"
+        if hostname == "api.moonshot.ai":
+            return "moonshot_global"
+        if hostname == "api.kimi.com":
+            return "moonshot"  # No verified global-USD tariff for this endpoint.
+        if hostname == "api.moonshot.cn":
+            return "moonshot_cn"
     except (AttributeError, TypeError, ValueError):
         pass
     return "anthropic"
@@ -3268,7 +3272,9 @@ def _insert_llm_event(
             billable.usage, tool_calls, billable.unbilled_usage
         ),
         "provider_usage_privacy": "quantities_only",
-        "attribution_provider_service": "api" if provider == "moonshot" else service_name,
+        "attribution_provider_service": (
+            "api" if provider in {"moonshot", "moonshot_global", "moonshot_cn"} else service_name
+        ),
     }
     if provider_record_id is not None:
         details["provider_record_id"] = provider_record_id

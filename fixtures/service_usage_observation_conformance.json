@@ -1594,7 +1594,7 @@
       "method": "GET",
       "headers": {},
       "response": { "data": { "id": "rjob-summary-1", "workflow": "summarize", "status": "completed", "units_consumed": 650, "outputs": { "title": "private output" } } },
-      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "650", "resource_type": "sku", "resource_id": "summarize", "provider_record_id": "rjob-summary-1" }]
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "provider_unit_count", "quantity": "650", "resource_type": "sku", "resource_id": "summarize", "provider_record_id": "rjob-summary-1" }]
     },
     {
       "name": "mux_robots_completed_multiword_workflow_reports_final_units",
@@ -1602,7 +1602,7 @@
       "method": "GET",
       "headers": {},
       "response": { "data": { "id": "rjob-translate-1", "workflow": "translate-captions", "status": "completed", "units_consumed": "1600", "outputs": { "temporary_vtt_url": "private" } } },
-      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "credit_count", "quantity": "1600", "resource_type": "sku", "resource_id": "translate-captions", "provider_record_id": "rjob-translate-1" }]
+      "expected": [{ "service_key": "mux_robots_terminal_units", "provider_name": "mux", "provider_service": "robots", "component": "external", "metric": "provider_unit_count", "quantity": "1600", "resource_type": "sku", "resource_id": "translate-captions", "provider_record_id": "rjob-translate-1" }]
     },
     {
       "name": "mux_robots_pending_job_is_not_billed",

@@ -23,6 +23,7 @@ DEFAULT_UNITS = {
     "output_image_tokens": "Tokens", "output_tokens": "Tokens",
     "audio_seconds": "Seconds", "characters": "Characters", "image_count": "Images",
     "request_count": "Requests", "credit_count": "Credits",
+    "provider_unit_count": "Provider-Units",
 }
 
 

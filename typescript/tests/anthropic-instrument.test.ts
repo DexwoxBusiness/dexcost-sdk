@@ -202,7 +202,7 @@ describe("Anthropic instrumentation", () => {
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      provider: "moonshot",
+      provider: baseURL.includes("moonshot.cn") ? "moonshot_cn" : baseURL.includes("api.kimi.com") ? "moonshot" : "moonshot_global",
       model: "kimi-k3",
       inputTokens: 16,
       outputTokens: 7,
@@ -210,7 +210,7 @@ describe("Anthropic instrumentation", () => {
     });
     expect(events[0].costUsd.toString()).toBe("0");
     const observation = toAttributionObservationV3(events[0]);
-    expect(observation?.provider).toEqual({ name: "moonshot", service: "api" });
+    expect(observation?.provider).toEqual({ name: baseURL.includes("moonshot.cn") ? "moonshot_cn" : baseURL.includes("api.kimi.com") ? "moonshot" : "moonshot_global", service: "api" });
     expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
     expect(Object.fromEntries(observation?.usage.map((line) => [
       line.metric,

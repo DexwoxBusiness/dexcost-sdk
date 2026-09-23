@@ -1683,7 +1683,7 @@
         { "path": "data.id", "operator": "non_empty" }
       ],
       "response_path": "data.units_consumed",
-      "usage_metric": "credit_count",
+      "usage_metric": "provider_unit_count",
       "resource_type": "sku",
       "resource_path": "data.workflow",
       "allowed_resource_ids": [

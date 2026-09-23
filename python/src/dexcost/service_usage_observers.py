@@ -24,6 +24,7 @@ _DEFAULT_UNITS = {
     "image_count": "Images",
     "request_count": "Requests",
     "credit_count": "Credits",
+    "provider_unit_count": "Provider-Units",
 }
 _COMPONENTS = {
     "llm", "telephony", "voice_platform", "speech_to_text", "text_to_speech",

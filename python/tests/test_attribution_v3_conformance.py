@@ -184,6 +184,8 @@ def test_llm_conversion_preserves_provider_native_multiline_usage() -> None:
         "mistral",
         "groq",
         "moonshot",
+        "moonshot_global",
+        "moonshot_cn",
     ],
 )
 def test_every_supported_provider_route_round_trips_to_attribution_v3(

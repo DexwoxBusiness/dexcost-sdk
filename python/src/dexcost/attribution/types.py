@@ -46,6 +46,7 @@ ATTRIBUTION_USAGE_METRICS = (
     "image_count",
     "page_count",
     "credit_count",
+    "provider_unit_count",
 )
 
 ATTRIBUTION_USAGE_UNITS = (
@@ -61,6 +62,7 @@ ATTRIBUTION_USAGE_UNITS = (
     "Images",
     "Pages",
     "Credits",
+    "Provider-Units",
 )
 
 AttributionComponent = Literal[
@@ -102,6 +104,7 @@ AttributionUsageMetric = Literal[
     "image_count",
     "page_count",
     "credit_count",
+    "provider_unit_count",
 ]
 AttributionUsageUnit = Literal[
     "Tokens",
@@ -116,6 +119,7 @@ AttributionUsageUnit = Literal[
     "Images",
     "Pages",
     "Credits",
+    "Provider-Units",
 ]
 AttributionConfidence = Literal["exact", "computed", "estimated", "unknown"]
 AttributionLifecycleState = Literal["pending", "provisional", "final", "voided"]
@@ -147,6 +151,7 @@ ATTRIBUTION_UNIT_BY_METRIC: dict[AttributionUsageMetric, AttributionUsageUnit] =
     "image_count": "Images",
     "page_count": "Pages",
     "credit_count": "Credits",
+    "provider_unit_count": "Provider-Units",
 }
 
 

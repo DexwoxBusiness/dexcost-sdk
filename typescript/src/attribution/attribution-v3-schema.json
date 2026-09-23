@@ -184,7 +184,8 @@
           "bytes_out",
           "image_count",
           "page_count",
-          "credit_count"
+          "credit_count",
+          "provider_unit_count"
         ],
         "x-dexcost-known-units": [
           "Tokens",
@@ -198,7 +199,8 @@
           "Bytes",
           "Images",
           "Pages",
-          "Credits"
+          "Credits",
+          "Provider-Units"
         ],
         "x-dexcost-unit-by-metric": {
           "input_tokens": "Tokens",
@@ -223,7 +225,8 @@
           "bytes_out": "Bytes",
           "image_count": "Images",
           "page_count": "Pages",
-          "credit_count": "Credits"
+          "credit_count": "Credits",
+          "provider_unit_count": "Provider-Units"
         }
       },
       "AttributionProviderIdentity": {

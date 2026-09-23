@@ -187,14 +187,14 @@
       "sha256": "5e1b7d8a5852d9dc97ed13376fc37bef694e8c46aae9b3464483ef7cedfa7b58"
     },
     {
-      "byte_size": 41966,
+      "byte_size": 42078,
       "path": "fixtures/attribution_v3/schemas.json",
-      "sha256": "f46ddf75615835db8d9a27da5334cad6e8d7e1bf85445ad654a71ad207550983"
+      "sha256": "5af456be6a9e8d3c1fc3a672c886286b938814081ba4d1557a3fb957b6296cc7"
     },
     {
-      "byte_size": 127629,
+      "byte_size": 127643,
       "path": "fixtures/service_usage_observation_conformance.json",
-      "sha256": "eec826100078fe1775d4db05c14d1a0bcfca2be37c2a969b7019b2ece94e26c9"
+      "sha256": "31cce0eb0b078a08f6248f032cfc5b7409e51a0521e2914595f1dde5fd3bcc15"
     }
   ],
   "schema_version": "1",

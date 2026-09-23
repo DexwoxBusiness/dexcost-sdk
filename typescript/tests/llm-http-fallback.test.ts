@@ -89,7 +89,7 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
 
     const llmEvents = buffer.getAllEvents().filter((e) => e.eventType === "llm_call");
     expect(llmEvents).toHaveLength(1);
-    expect(llmEvents[0].provider).toBe("moonshot");
+    expect(llmEvents[0].provider).toBe("moonshot_global");
     expect(llmEvents[0].model).toBe("kimi-k2-0905-preview");
     expect(llmEvents[0].inputTokens).toBe(1200);
     expect(llmEvents[0].outputTokens).toBe(340);
@@ -329,7 +329,7 @@ describe("LLM HTTP fallback — anthropic-compatible base-path prefixes", () => 
     const events = buffer.getAllEvents().filter((event) => event.eventType === "llm_call");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      provider: "moonshot",
+      provider: "moonshot_global",
       model: "kimi-k3",
       inputTokens: 20,
       outputTokens: 10,

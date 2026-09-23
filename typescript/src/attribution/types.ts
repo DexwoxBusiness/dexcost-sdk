@@ -42,6 +42,7 @@ export const ATTRIBUTION_USAGE_METRICS = [
   "image_count",
   "page_count",
   "credit_count",
+  "provider_unit_count",
 ] as const;
 
 export type AttributionUsageMetric = (typeof ATTRIBUTION_USAGE_METRICS)[number];
@@ -59,6 +60,7 @@ export const ATTRIBUTION_USAGE_UNITS = [
   "Images",
   "Pages",
   "Credits",
+  "Provider-Units",
 ] as const;
 
 export type AttributionUsageUnit = (typeof ATTRIBUTION_USAGE_UNITS)[number];
@@ -89,6 +91,7 @@ export const ATTRIBUTION_UNIT_BY_METRIC: Readonly<
   image_count: "Images",
   page_count: "Pages",
   credit_count: "Credits",
+  provider_unit_count: "Provider-Units",
 });
 
 export type AttributionConfidence = "exact" | "computed" | "estimated" | "unknown";

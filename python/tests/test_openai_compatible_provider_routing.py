@@ -268,7 +268,8 @@ def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
         events = storage.query_events()
         assert len(events) == 1
         event = events[0]
-        assert event.provider == "moonshot"
+        expected_provider = "moonshot_cn" if "moonshot.cn" in base_url else "moonshot_global"
+        assert event.provider == expected_provider
         assert event.model == "kimi-k3"
         assert event.input_tokens == 20
         assert event.output_tokens == 10
@@ -277,7 +278,7 @@ def test_moonshot_openai_compatibility_preserves_current_model_and_cache_usage(
         observation = to_attribution_observation_v3(event)
         assert observation is not None
         assert observation["provider"] == {
-            "name": "moonshot",
+            "name": expected_provider,
             "service": "api",
             "record_id": "chat-provider-1",
         }

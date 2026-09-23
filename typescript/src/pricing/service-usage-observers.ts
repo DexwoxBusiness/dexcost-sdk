@@ -176,6 +176,7 @@ const DEFAULT_UNITS: Readonly<Record<string, string>> = {
   image_count: "Images",
   request_count: "Requests",
   credit_count: "Credits",
+  provider_unit_count: "Provider-Units",
 };
 const COMPONENTS = new Set<ObservedAttributionComponent>([
   "llm", "telephony", "voice_platform", "speech_to_text", "text_to_speech",

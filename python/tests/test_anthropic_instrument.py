@@ -353,12 +353,17 @@ class TestSyncNonStreaming:
         events = storage.query_events(task_id=str(task.task_id))
         assert len(events) == 1
         event = events[0]
-        assert event.provider == "moonshot"
+        expected_provider = (
+            "moonshot_cn" if "moonshot.cn" in base_url
+            else "moonshot" if "api.kimi.com" in base_url
+            else "moonshot_global"
+        )
+        assert event.provider == expected_provider
         assert event.cost_usd == Decimal("0")
         observation = to_attribution_observation_v3(event)
         assert observation is not None
         assert observation["provider"] == {
-            "name": "moonshot",
+            "name": expected_provider,
             "service": "api",
         }
         assert observation["resource"] == {"type": "model", "id": "kimi-k3"}

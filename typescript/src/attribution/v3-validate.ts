@@ -69,6 +69,7 @@ const KNOWN_UNIT_BY_METRIC: Readonly<Record<string, string>> = Object.freeze({
   image_count: "Images",
   page_count: "Pages",
   credit_count: "Credits",
+  provider_unit_count: "Provider-Units",
 });
 
 const TIME_METRICS = new Set([

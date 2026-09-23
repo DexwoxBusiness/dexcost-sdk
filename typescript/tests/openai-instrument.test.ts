@@ -167,7 +167,7 @@ describe("OpenAI instrumentation", () => {
     const events = buffer.getAllEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      provider: "moonshot",
+      provider: baseURL.includes("moonshot.cn") ? "moonshot_cn" : "moonshot_global",
       model: "kimi-k3",
       inputTokens: 20,
       outputTokens: 10,
@@ -175,7 +175,7 @@ describe("OpenAI instrumentation", () => {
     });
     expect(events[0].costUsd.toString()).toBe("0");
     const observation = toAttributionObservationV3(events[0]);
-    expect(observation?.provider).toMatchObject({ name: "moonshot", service: "api" });
+    expect(observation?.provider).toMatchObject({ name: baseURL.includes("moonshot.cn") ? "moonshot_cn" : "moonshot_global", service: "api" });
     expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
     expect(Object.fromEntries(observation?.usage.map((line) => [
       line.metric,

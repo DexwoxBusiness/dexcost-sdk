@@ -40,14 +40,14 @@ const _batchPatches: Array<{ prototype: any; name: string; original: Function }>
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
 
-function providerForMessagesResource(resource: any): "anthropic" | "moonshot" {
+function providerForMessagesResource(resource: any): "anthropic" | "moonshot" | "moonshot_global" | "moonshot_cn" {
   try {
     const raw = resource?._client?.baseURL ?? resource?._client?.base_url ??
       resource?._client?._baseURL ?? resource?._client?._base_url;
     const hostname = typeof raw === "string" ? new URL(raw).hostname.toLowerCase() : "";
-    if (["api.kimi.com", "api.moonshot.ai", "api.moonshot.cn"].includes(hostname)) {
-      return "moonshot";
-    }
+    if (hostname === "api.moonshot.ai") return "moonshot_global";
+    if (hostname === "api.kimi.com") return "moonshot"; // Global-USD tariff is unverified.
+    if (hostname === "api.moonshot.cn") return "moonshot_cn";
   } catch {
     // Malformed or unavailable client metadata falls back to Anthropic.
   }
@@ -152,7 +152,7 @@ export async function instrumentAnthropic(
         return wrapStream(rawStream, task, startTime, autoCreated, provider);
       } catch (err) {
         if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-          taskType: `${provider}.messages`, provider, service: provider === "moonshot" ? "api" : "messages",
+          taskType: `${provider}.messages`, provider, service: provider !== "anthropic" ? "api" : "messages",
           operation, component: "llm", model: body?.model, eventType: "llm_call",
         }, err, startTime);
         if (autoCreated) {
@@ -179,7 +179,7 @@ export async function instrumentAnthropic(
       return response;
     } catch (err) {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
-        taskType: `${provider}.messages`, provider, service: provider === "moonshot" ? "api" : "messages",
+        taskType: `${provider}.messages`, provider, service: provider !== "anthropic" ? "api" : "messages",
         operation, component: "llm", model: body?.model, eventType: "llm_call",
       }, err, startTime);
       if (autoCreated) {
@@ -578,7 +578,7 @@ function recordEvent(
   response: any,
   task: Task,
   latencyMs: number,
-  provider: "anthropic" | "moonshot" = "anthropic",
+  provider: "anthropic" | "moonshot" | "moonshot_global" | "moonshot_cn" = "anthropic",
 ): void {
   if (!_buffer || !_pricing) return;
 
@@ -628,7 +628,7 @@ function recordEvent(
     attribution_operation_status: "succeeded",
     attribution_resource_type: "model",
     attribution_resource_id: model,
-    attribution_provider_service: provider === "moonshot" ? "api" : "messages",
+    attribution_provider_service: provider !== "anthropic" ? "api" : "messages",
     attribution_usage_lines: usageLines.length > 0
       ? usageLines
       : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
@@ -671,7 +671,7 @@ function wrapStream(
   task: Task,
   startTime: number,
   autoCreated: boolean = false,
-  provider: "anthropic" | "moonshot" = "anthropic",
+  provider: "anthropic" | "moonshot" | "moonshot_global" | "moonshot_cn" = "anthropic",
 ): AsyncIterable<any> {
   let model = "unknown";
   let inputTokens = 0;
@@ -706,7 +706,7 @@ function wrapStream(
           attribution_operation_status: status,
           attribution_resource_type: "model",
           attribution_resource_id: model,
-          attribution_provider_service: provider === "moonshot" ? "api" : "messages",
+          attribution_provider_service: provider !== "anthropic" ? "api" : "messages",
           attribution_usage_lines: usageLines.length > 0
             ? usageLines
             : [{ metric: "request_count", quantity: "1", unit: "Requests" }],

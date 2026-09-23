@@ -11,6 +11,7 @@ const defaultUnits: Record<string, string> = {
   input_tokens: "Tokens", input_image_tokens: "Tokens", output_image_tokens: "Tokens",
   output_tokens: "Tokens", audio_seconds: "Seconds", characters: "Characters",
   image_count: "Images", request_count: "Requests", credit_count: "Credits",
+  provider_unit_count: "Provider-Units",
 };
 const fixture = JSON.parse(readFileSync(join(here, "../../fixtures/service_usage_observation_conformance.json"), "utf8")) as {
   cases: Array<{ name: string; url: string; method?: string; status_code?: number; headers: Record<string, string>; request_headers?: string[] | Record<string, string>; request?: unknown; response: unknown; expected: Array<Record<string, unknown>> }>;
