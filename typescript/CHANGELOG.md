@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.25.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.25.0...typescript/v0.25.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **sdk:** capture bodies required by billing dimensions ([#176](https://github.com/DexwoxBusiness/dexcost-sdk/issues/176)) ([bb0db91](https://github.com/DexwoxBusiness/dexcost-sdk/commit/bb0db91b6504d7699eb02ff979dcd336da27d224))
+
+## [0.25.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.2...typescript/v0.25.0) (2026-09-27)
+
+
+### Features
+
+* **attribution:** add vector database billing allocation ([#173](https://github.com/DexwoxBusiness/dexcost-sdk/issues/173)) ([1d9ecc3](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1d9ecc3258bd33fc71fdf5660d08e5591bad3fd0))
+
 ## [0.24.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.1...typescript/v0.24.2) (2026-08-31)
 
 

@@ -57,6 +57,20 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.21.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.21.0...python/v0.21.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **sdk:** capture bodies required by billing dimensions ([#176](https://github.com/DexwoxBusiness/dexcost-sdk/issues/176)) ([bb0db91](https://github.com/DexwoxBusiness/dexcost-sdk/commit/bb0db91b6504d7699eb02ff979dcd336da27d224))
+
+## [0.21.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.20.2...python/v0.21.0) (2026-09-27)
+
+
+### Features
+
+* **attribution:** add vector database billing allocation ([#173](https://github.com/DexwoxBusiness/dexcost-sdk/issues/173)) ([1d9ecc3](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1d9ecc3258bd33fc71fdf5660d08e5591bad3fd0))
+
 ## [0.20.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.20.1...python/v0.20.2) (2026-08-31)
 
 
