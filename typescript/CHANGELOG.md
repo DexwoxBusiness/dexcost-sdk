@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.2...typescript/v0.25.0) (2026-09-27)
+
+
+### Features
+
+* **attribution:** add vector database billing allocation ([#173](https://github.com/DexwoxBusiness/dexcost-sdk/issues/173)) ([1d9ecc3](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1d9ecc3258bd33fc71fdf5660d08e5591bad3fd0))
+
 ## [0.24.2](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.24.1...typescript/v0.24.2) (2026-08-31)
 
 
