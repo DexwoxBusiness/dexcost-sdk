@@ -57,6 +57,13 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.22.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.21.1...python/v0.22.0) (2026-09-27)
+
+
+### Features
+
+* **sdk:** observe Neon and Supabase database requests ([#177](https://github.com/DexwoxBusiness/dexcost-sdk/issues/177)) ([046367d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/046367d8ff09e2e8e626e7b4da98e8523a9b414c))
+
 ## [0.21.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.21.0...python/v0.21.1) (2026-09-27)
 
 
