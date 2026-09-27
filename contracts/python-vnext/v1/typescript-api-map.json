@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 177,
-  "typescript_export_count": 333,
-  "equivalent_count": 174,
+  "python_export_count": 180,
+  "typescript_export_count": 337,
+  "equivalent_count": 177,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -1150,6 +1150,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_e2b_sandbox",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentE2bSandbox"
+      ],
+      "notes": "Python returns a stoppable sandbox facade; TypeScript returns {sandbox, close}. Both capture completed commands/run-code as observed task weights, never provider-billed runtime. Lifecycle methods pass through; wrap any new sandbox returned by connect separately."
+    },
+    {
       "python_name": "instrument_fal",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1461,6 +1470,15 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_e2b_sandbox",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentE2bSandbox"
+      ],
+      "notes": "Python accepts the returned sandbox facade; TypeScript accepts the capture handle. Both stop capture idempotently without terminating provider resources."
+    },
+    {
       "python_name": "uninstrument_fal",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1592,6 +1610,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "verifyWebhookSignature"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "wrap_runtime_handler",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "wrapRuntimeHandler"
       ],
       "notes": null
     }
