@@ -11,6 +11,10 @@ import {
   getOutcomeHistory,
   instrumentOpenAI,
   instrumentOpenRouter,
+  instrumentMongoClient,
+  instrumentRedisClient,
+  uninstrumentRedisClient,
+  databaseResourceId,
   recordOutcome,
   recordRevenue,
   trackTool,
@@ -24,6 +28,19 @@ import {
   type AttributionCapabilityInvocationV3,
   type AttributionOperationErrorV3,
 } from "@dexcost/sdk";
+import { MongoClient } from "mongodb";
+import { createClient } from "redis";
+
+function checkDatabaseTypes(tracker: CostTracker): void {
+  const config = { billingAccountId: "account", resourceId: "database" };
+  const mongo = new MongoClient("mongodb://localhost:27017", { monitorCommands: true });
+  const stop: () => void = instrumentMongoClient(mongo, tracker, config);
+  const redis = instrumentRedisClient(createClient(), tracker, config);
+  const pending: Promise<string | null> = redis.client.get("not-executed");
+  const id: string = databaseResourceId(config.billingAccountId, config.resourceId);
+  void pending; void id; stop(); uninstrumentRedisClient(redis);
+}
+void checkDatabaseTypes;
 import {
   createExpressMiddleware,
   dexcostFastifyPlugin,

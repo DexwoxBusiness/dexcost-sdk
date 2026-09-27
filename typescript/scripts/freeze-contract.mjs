@@ -46,6 +46,7 @@ const overrides = new Map(Object.entries({
   task_context: ["runWithTask"],
   to_business_identity_revision_v1: ["toBusinessIdentityRevision"],
   instrument_litellm: ["instrumentLiteLLM"],
+  mongodb_command_listener: ["instrumentMongoClient"],
   instrument_gemini: ["instrumentGoogleGenAI"],
   instrument_openai: ["instrumentOpenAI"],
   instrument_openrouter: ["instrumentOpenRouter"],
@@ -56,6 +57,9 @@ const overrides = new Map(Object.entries({
 }));
 
 const equivalenceNotes = new Map(Object.entries({
+  mongodb_command_listener: "Python supplies a PyMongo CommandListener at client construction; TypeScript attaches listeners to a monitorCommands-enabled MongoClient. Both return a per-resource stoppable capture, not a global monkey patch.",
+  instrument_redis_client: "Python instruments a redis-py client instance and returns an undo callback; TypeScript returns a node-redis client proxy and close handle. Both require explicit account/resource identity and emit unknown-cost command observations.",
+  uninstrument_redis_client: "Python accepts the original instrumented client; TypeScript accepts the returned instrumentation handle. Both stop recording without closing the application-owned connection.",
   ALL_SUPPORTED_INSTRUMENTS:
     "Equivalent supported-instrument registry; TypeScript additionally exposes its Vercel AI and legacy @google/generative-ai adapters, while Python's gemini entry maps to the current google.genai adapter.",
   instrument_gemini:

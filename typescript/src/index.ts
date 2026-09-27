@@ -17,6 +17,8 @@
  */
 
 // Core
+export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
+export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";
 export { CostTracker, TrackedTask } from "./core/tracker.js";
 export type {
   TrackerOptions, TaskOptions, ToolCallOptions, TrackToolOptions, AmendOutcomeOptions,
