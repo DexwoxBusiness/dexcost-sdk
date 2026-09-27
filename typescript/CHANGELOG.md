@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.25.1...typescript/v0.26.0) (2026-09-27)
+
+
+### Features
+
+* **sdk:** observe Neon and Supabase database requests ([#177](https://github.com/DexwoxBusiness/dexcost-sdk/issues/177)) ([046367d](https://github.com/DexwoxBusiness/dexcost-sdk/commit/046367d8ff09e2e8e626e7b4da98e8523a9b414c))
+
 ## [0.25.1](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.25.0...typescript/v0.25.1) (2026-09-27)
 
 
