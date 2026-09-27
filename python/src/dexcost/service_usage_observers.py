@@ -1222,6 +1222,8 @@ class ServiceUsageObservers:
                 or item.request_character_count_path
                 or item.request_collection_count_path
                 or item.request_all
+                or any(dimension["source"] == "request_body"
+                       for dimension in item.billing_dimensions)
                 for item in matched[1]
             )
         )
@@ -1242,6 +1244,8 @@ class ServiceUsageObservers:
                 or item.response_all
                 or item.paired_response_collection_path
                 or item.quantity_multiplier_path
+                or any(dimension["source"] == "response_body"
+                       for dimension in item.billing_dimensions)
                 for item in matched[1]
             )
         )

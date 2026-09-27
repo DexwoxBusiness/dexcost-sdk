@@ -103,6 +103,32 @@ def test_packaged_observer_manifest_matches_canonical_manifest() -> None:
     assert packaged == canonical
 
 
+@pytest.mark.parametrize("source", ["request_body", "response_body", "hostname"])
+def test_billing_dimensions_select_only_the_required_body(source: str) -> None:
+    definition: dict[str, Any] = {
+        "service_key": "dimension_test", "provider_name": "test_provider",
+        "provider_service": "database", "component": "storage",
+        "domains": ["dimension.example"], "endpoints": ["/query"],
+        "endpoint_match": "exact", "fixed_quantity": "1",
+        "usage_metric": "request_count",
+        "billing_dimensions": [{"key": "namespace", "source": source}],
+        "source_url": "https://dimension.example/docs",
+    }
+    if source != "hostname":
+        definition["billing_dimensions"][0]["selector"] = "namespace"
+    observers = ServiceUsageObservers(data={
+        "_meta": {"version": "test", "observer_count": 1},
+        "observers": [definition],
+    })
+    assert observers.needs_request_body("https://dimension.example/query") == (
+        source == "request_body"
+    )
+    assert observers.needs_response_body("https://dimension.example/query") == (
+        source == "response_body"
+    )
+    assert not observers.needs_request_body("https://unmatched.example/query")
+
+
 def _numeric_response_observer(predicate: dict[str, Any]) -> ServiceUsageObservers:
     return ServiceUsageObservers(
         data={

@@ -938,7 +938,8 @@ export class ServiceUsageObservers {
       (observer) => observer.request_resource_path !== undefined ||
         observer.request_character_count_path !== undefined ||
         observer.request_collection_count_path !== undefined ||
-        observer.request_all !== undefined,
+        observer.request_all !== undefined ||
+        observer.billing_dimensions?.some((dimension) => dimension.source === "request_body"),
     ) === true;
   }
 
@@ -954,7 +955,8 @@ export class ServiceUsageObservers {
         observer.provider_cost_currency_path !== undefined ||
         observer.response_all !== undefined ||
         observer.paired_response_collection_path !== undefined ||
-        observer.quantity_multiplier_path !== undefined,
+        observer.quantity_multiplier_path !== undefined ||
+        observer.billing_dimensions?.some((dimension) => dimension.source === "response_body"),
     ) === true;
   }
 
