@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 173,
-  "typescript_export_count": 327,
-  "equivalent_count": 170,
+  "python_export_count": 177,
+  "typescript_export_count": 333,
+  "equivalent_count": 174,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -979,6 +979,15 @@
       "notes": null
     },
     {
+      "python_name": "database_resource_id",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "databaseResourceId"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "delivery_status",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1220,6 +1229,24 @@
         "instrumentPerplexity"
       ],
       "notes": null
+    },
+    {
+      "python_name": "instrument_redis_client",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentRedisClient"
+      ],
+      "notes": "Python instruments a redis-py client instance and returns an undo callback; TypeScript returns a node-redis client proxy and close handle. Both require explicit account/resource identity and emit unknown-cost command observations."
+    },
+    {
+      "python_name": "mongodb_command_listener",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentMongoClient"
+      ],
+      "notes": "Python supplies a PyMongo CommandListener at client construction; TypeScript attaches listeners to a monitorCommands-enabled MongoClient. Both return a per-resource stoppable capture, not a global monkey patch."
     },
     {
       "python_name": "on_delivery_error",
@@ -1513,6 +1540,15 @@
         "uninstrumentPerplexity"
       ],
       "notes": null
+    },
+    {
+      "python_name": "uninstrument_redis_client",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentRedisClient"
+      ],
+      "notes": "Python accepts the original instrumented client; TypeScript accepts the returned instrumentation handle. Both stop recording without closing the application-owned connection."
     },
     {
       "python_name": "validate",

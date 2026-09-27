@@ -1211,6 +1211,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.database",
+      "name": "database_resource_id",
+      "signature": "(billing_account_id: 'str', resource_id: 'str') -> 'str'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost",
       "name": "delivery_status",
       "signature": "() -> 'DeliveryStatus'"
@@ -1370,6 +1376,18 @@
       "module": "dexcost.instruments.perplexity",
       "name": "instrument_perplexity",
       "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.database",
+      "name": "instrument_redis_client",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.database",
+      "name": "mongodb_command_listener",
+      "signature": "(tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str') -> 'Any'"
     },
     {
       "kind": "function",
@@ -1568,6 +1586,12 @@
       "module": "dexcost.instruments.perplexity",
       "name": "uninstrument_perplexity",
       "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.database",
+      "name": "uninstrument_redis_client",
+      "signature": "(client: 'Any') -> 'None'"
     },
     {
       "kind": "function",

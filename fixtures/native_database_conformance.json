@@ -1,0 +1,85 @@
+{
+  "version": "1",
+  "cases": [
+    {
+      "id": "mongo_read",
+      "service": "mongodb_atlas",
+      "command": "find",
+      "category": "read",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "mongo_write",
+      "service": "mongodb_atlas",
+      "command": "insert",
+      "category": "write",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "mongo_retry_failure",
+      "service": "mongodb_atlas",
+      "command": "find",
+      "category": "read",
+      "quantity": 1,
+      "failed": true
+    },
+    {
+      "id": "mongo_unknown_private_name",
+      "service": "mongodb_atlas",
+      "command": "secret-tenant-command",
+      "category": "other",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_read",
+      "service": "redis_cloud",
+      "command": "GET",
+      "category": "read",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_write",
+      "service": "redis_cloud",
+      "command": "SET",
+      "category": "write",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_vector",
+      "service": "redis_cloud",
+      "command": "FT.SEARCH",
+      "category": "read",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_json",
+      "service": "redis_cloud",
+      "command": "JSON.GET",
+      "category": "read",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_unknown_private_name",
+      "service": "redis_cloud",
+      "command": "secret-tenant-command",
+      "category": "other",
+      "quantity": 1,
+      "failed": false
+    },
+    {
+      "id": "redis_failure",
+      "service": "redis_cloud",
+      "command": "SET",
+      "category": "write",
+      "quantity": 1,
+      "failed": true
+    }
+  ]
+}

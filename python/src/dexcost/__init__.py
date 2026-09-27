@@ -158,6 +158,12 @@ from dexcost.instruments import (
     uninstrument_openrouter,
     uninstrument_perplexity,
 )
+from dexcost.instruments.database import (
+    database_resource_id,
+    instrument_redis_client,
+    mongodb_command_listener,
+    uninstrument_redis_client,
+)
 from dexcost.integrations import track_crewai, track_griptape
 from dexcost.models import (
     CostConfidence,
@@ -1352,6 +1358,7 @@ __all__ = [
     "catalog_status",
     "clear_context",
     "close",
+    "database_resource_id",
     "delivery_status",
     "enforce_metadata_limit",
     "explain_pricing",
@@ -1379,6 +1386,8 @@ __all__ = [
     "instrument_openai",
     "instrument_openrouter",
     "instrument_perplexity",
+    "instrument_redis_client",
+    "mongodb_command_listener",
     "on_delivery_error",
     "record_cost",
     "record_outcome",
@@ -1412,6 +1421,7 @@ __all__ = [
     "uninstrument_openai",
     "uninstrument_openrouter",
     "uninstrument_perplexity",
+    "uninstrument_redis_client",
     "validate",
     "validate_api_key",
     "validate_attribution_event_v2",
