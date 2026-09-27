@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "version": "1.0.1",
-    "last_updated": "2026-05-20",
+    "version": "1.0.2",
+    "last_updated": "2026-09-02",
     "currency": "USD",
     "default_lambda_request_usd": "0.0000002",
     "default_lambda_gb_second_usd": "0.0000166667",
@@ -17,11 +17,13 @@
     "default_ec2_vcpu_hour_usd": "0.0464",
     "default_k8s_pod_vcpu_hour_usd": "0.0464",
     "description": "Dexcost compute catalog — per-billing-model rates by cloud provider/region. Community-maintained; submit PRs to add or refresh rates.",
-    "notes": "Rates are standard on-demand pricing, FIRST tier only. Sustained-use discounts (GCE), Savings Plans (AWS), and Reserved Instances are not modelled. Lambda/Azure Functions/Vercel rates are DECIMAL GB (10^9 bytes); Fargate/Cloud Run rates are BINARY GiB (2^30 bytes) — see spec §6.2. The default_* keys at this _meta level are the universal fallbacks used when neither a region match nor a provider default is available. EC2/GCE/Azure-VM blocks carry per-region instance_types maps keyed by the SKU returned by IMDS (e.g. c7g.xlarge, n2-standard-2, Standard_D2s_v3) — extend as new SKUs ship by transcribing from each provider's public pricing page."
+    "notes": "Rates are standard on-demand pricing, FIRST tier only. Free-tier allowances, aggregate volume tiers, sustained-use discounts, Savings Plans, and Reserved Instances are not modelled. Lambda uses 1024 configured MB per billed GB; Azure Functions and Vercel use decimal GB; Fargate and Cloud Run use binary GiB. The default_* keys are universal fallbacks when neither a region match nor a provider default is available."
   },
   "aws": {
     "_last_verified": "2026-05-20",
     "lambda": {
+      "_last_verified": "2026-09-02",
+      "_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/index.json",
       "default": {
         "x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"},
         "arm64":  {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}
@@ -32,10 +34,14 @@
         "us-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
         "us-west-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
         "eu-west-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "eu-west-2":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
         "eu-central-1":   {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
         "ap-south-1":     {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
         "ap-southeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
-        "ap-northeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}}
+        "ap-southeast-2": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ap-northeast-1": {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "sa-east-1":      {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}},
+        "ca-central-1":   {"x86_64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000166667"}, "arm64": {"request_usd": "0.0000002", "gb_second_usd": "0.0000133334"}}
       }
     },
     "fargate": {

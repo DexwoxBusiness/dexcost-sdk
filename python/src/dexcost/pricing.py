@@ -538,7 +538,10 @@ class PricingEngine:
             return MeteredCostResult(
                 cost_usd=Decimal(0),
                 cost_confidence="unknown",
-                pricing_source="unknown" if model_info is None else "litellm",
+                # A catalog match without a positive billable meter is not
+                # pricing evidence. Keep the operation unpriced so the server
+                # can apply its configured catalog or provider-final-cost path.
+                pricing_source="unknown",
                 pricing_version=pricing_version,
                 resolved_model=resolved_model,
                 lines=(),

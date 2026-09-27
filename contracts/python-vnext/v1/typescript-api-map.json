@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 171,
-  "typescript_export_count": 325,
-  "equivalent_count": 168,
+  "python_export_count": 173,
+  "typescript_export_count": 327,
+  "equivalent_count": 170,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -1159,6 +1159,15 @@
       "notes": "Python google.genai maps to TypeScript @google/genai; instrumentGemini is the separate legacy @google/generative-ai adapter."
     },
     {
+      "python_name": "instrument_groq",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentGroq"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "instrument_litellm",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1441,6 +1450,15 @@
         "uninstrumentGoogleGenAI"
       ],
       "notes": "Python google.genai maps to TypeScript @google/genai; uninstrumentGemini is the separate legacy @google/generative-ai adapter."
+    },
+    {
+      "python_name": "uninstrument_groq",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentGroq"
+      ],
+      "notes": null
     },
     {
       "python_name": "uninstrument_litellm",

@@ -47,6 +47,8 @@ const schemaValidator: ValidateFunction = compiledSchemaValidator;
 
 const KNOWN_UNIT_BY_METRIC: Readonly<Record<string, string>> = Object.freeze({
   input_tokens: "Tokens",
+  input_image_tokens: "Tokens",
+  output_image_tokens: "Tokens",
   output_tokens: "Tokens",
   cache_read_input_tokens: "Tokens",
   cache_write_input_tokens: "Tokens",
@@ -67,6 +69,7 @@ const KNOWN_UNIT_BY_METRIC: Readonly<Record<string, string>> = Object.freeze({
   image_count: "Images",
   page_count: "Pages",
   credit_count: "Credits",
+  provider_unit_count: "Provider-Units",
 });
 
 const TIME_METRICS = new Set([

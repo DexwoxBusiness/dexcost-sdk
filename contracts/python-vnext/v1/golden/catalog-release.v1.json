@@ -5,7 +5,7 @@
   "channel": "stable",
   "published_at": "2026-08-21T06:00:00.000Z",
   "expires_at": "2027-08-21T06:00:00.000Z",
-  "safety_policy_version": "2026-07-14.2",
+  "safety_policy_version": "2026-09-03.26",
   "sdk_contract": { "min": 1, "max": 1 },
   "server_pricing_reference": {
     "catalog_version": "provider-public-r6",
@@ -17,7 +17,7 @@
       "schema_version": "1",
       "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "byte_size": 17000,
-      "item_count": 52,
+      "item_count": 105,
       "media_type": "application/json",
       "path": "/v1/catalogs/artifacts/sha256/1111111111111111111111111111111111111111111111111111111111111111",
       "sdk_contract": { "min": 1, "max": 1 }
@@ -37,7 +37,7 @@
       "schema_version": "1",
       "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "byte_size": 34000,
-      "item_count": 73,
+      "item_count": 72,
       "media_type": "application/json",
       "path": "/v1/catalogs/artifacts/sha256/3333333333333333333333333333333333333333333333333333333333333333",
       "sdk_contract": { "min": 1, "max": 1 }
@@ -87,7 +87,7 @@
     {
       "algorithm": "ed25519",
       "key_id": "dexcost-test-rfc8032-1",
-      "signature": "1wlhn7fzJcBmexaXOcHozDVh76fZ0M6hwCtcuvcWawRAxbCf1MByS-5ixvexIfbYbpYl3kZUYOFr8h0jrZU3Aw"
+      "signature": "-sT3lYTGQysbtdELfwIA6dA3uJYjQTGJFExFd_w_xz2fPy5dKAKYH7SquEqo7NoXomIswf71smAATAIeR-YLDw"
     }
   ]
 }

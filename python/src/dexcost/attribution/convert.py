@@ -168,6 +168,9 @@ def _provider_for(event: Event) -> AttributionProviderIdentityV2:
                 name = _canonical_name(event.provider, _canonical_name(raw_service, "external"))
                 service = _canonical_name(raw_service, "api")
 
+    explicit_service = _string_detail(event.details, "attribution_provider_service")
+    if explicit_service is not None:
+        service = _canonical_name(explicit_service, service)
     provider: AttributionProviderIdentityV2 = {"name": name, "service": service}
     record_id = _string_detail(event.details, "provider_record_id", "request_id", "call_sid")
     region = _string_detail(event.details, "region", "cloud_region")
@@ -208,6 +211,23 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
 
 
 def _evidence_for(event: Event) -> AttributionCostEvidenceV2 | None:
+    provider_amount = _positive_quantity(
+        _decimal_detail(event.details, "provider_reported_cost_amount")
+    )
+    provider_currency = _string_detail(
+        event.details, "provider_reported_cost_currency"
+    )
+    if (
+        provider_amount is not None
+        and provider_currency is not None
+        and re.fullmatch(r"[A-Z]{3}", provider_currency)
+    ):
+        return {
+            "amount": provider_amount,
+            "currency": provider_currency,
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
     amount = _positive_quantity(event.cost_usd)
     if amount is None:
         return None
@@ -358,6 +378,8 @@ def _component_and_usage(
     explicit_quantity = _decimal_detail(details, "attribution_usage_quantity")
     explicit_metric = _string_detail(details, "attribution_usage_metric")
     explicit_component = _string_detail(details, "attribution_component")
+    if explicit_metric is not None and not _is_attribution_usage_metric(explicit_metric):
+        return None
     per = _canonical_name(_string_detail(details, "attribution_usage_per"), "request")
     inferred_metric: AttributionUsageMetric
     if "page" in per:
@@ -372,7 +394,7 @@ def _component_and_usage(
         inferred_metric = "characters"
     else:
         inferred_metric = "request_count"
-    metric = explicit_metric if _is_attribution_usage_metric(explicit_metric) else inferred_metric
+    metric = explicit_metric if explicit_metric is not None else inferred_metric
     component: AttributionComponent = cast(
         AttributionComponent,
         explicit_component

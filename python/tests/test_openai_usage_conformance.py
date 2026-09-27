@@ -53,3 +53,20 @@ def test_pydantic_v2_provider_extras_remain_billable() -> None:
         "output_tokens": 10,
         "reasoning_output_tokens": 2,
     }
+
+
+def test_deepseek_top_level_cache_hit_tokens_are_disjoint() -> None:
+    assert asdict(normalize_openai_usage({
+        "prompt_tokens": 20,
+        "completion_tokens": 10,
+        "prompt_cache_hit_tokens": 4,
+        "prompt_cache_miss_tokens": 16,
+    })) == {
+        "total_input_tokens": 20,
+        "input_tokens": 16,
+        "cache_read_input_tokens": 4,
+        "cache_write_input_tokens": 0,
+        "total_output_tokens": 10,
+        "output_tokens": 10,
+        "reasoning_output_tokens": 0,
+    }

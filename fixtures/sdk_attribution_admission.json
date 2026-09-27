@@ -1,8 +1,8 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.5.0",
-  "conformance_schema_version": "5",
-  "required_sdks": ["typescript", "python", "go", "rust"],
+  "observer_manifest_version": "1.36.3",
+  "conformance_schema_version": "28",
+  "required_sdks": ["typescript", "python"],
   "observers": [
     {
       "service_key": "openai_embeddings",
@@ -11,8 +11,71 @@
     },
     {
       "service_key": "cohere_embed",
-      "positive_cases": ["cohere_embed_uses_billed_tokens_and_request_model"],
-      "fail_open_cases": ["cohere_embed_missing_billed_units_is_not_invented"]
+      "positive_cases": [
+        "cohere_embed_uses_billed_tokens_and_request_model",
+        "cohere_embed_mixed_usage_preserves_each_billed_meter"
+      ],
+      "fail_open_cases": [
+        "cohere_embed_missing_billed_units_is_not_invented",
+        "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing"
+      ]
+    },
+    {
+      "service_key": "cohere_embed_image_tokens",
+      "positive_cases": [
+        "cohere_embed_uses_provider_billed_image_tokens",
+        "cohere_embed_mixed_usage_preserves_each_billed_meter"
+      ],
+      "fail_open_cases": [
+        "cohere_embed_image_count_is_not_assumed_to_be_image_tokens",
+        "cohere_embed_unknown_model_is_not_assumed_to_use_embed_4_pricing"
+      ]
+    },
+    {
+      "service_key": "stability_ai_ultra",
+      "positive_cases": ["stability_ai_ultra_success_is_one_billable_generation"],
+      "fail_open_cases": ["stability_ai_failed_ultra_generation_is_not_observed"]
+    },
+    {
+      "service_key": "stability_ai_core",
+      "positive_cases": ["stability_ai_core_success_is_one_billable_generation"],
+      "fail_open_cases": ["stability_ai_failed_core_generation_is_not_observed"]
+    },
+    {
+      "service_key": "stability_ai_sd3",
+      "positive_cases": [
+        "stability_ai_sd3_defaults_to_large",
+        "stability_ai_sd3_uses_requested_flash_model"
+      ],
+      "fail_open_cases": ["stability_ai_unknown_sd3_model_fails_open"]
+    },
+    {
+      "service_key": "stripe_payment_intent_create",
+      "positive_cases": ["stripe_confirmed_payment_intent_captures_charge_identity"],
+      "fail_open_cases": ["stripe_unconfirmed_or_async_payment_intent_is_not_assumed_billable"]
+    },
+    {
+      "service_key": "stripe_payment_intent_terminal",
+      "positive_cases": [
+        "stripe_payment_intent_confirm_template_captures_charge_identity",
+        "stripe_manual_capture_captures_charge_identity"
+      ],
+      "fail_open_cases": ["stripe_payment_intent_metadata_update_is_not_a_new_charge"]
+    },
+    {
+      "service_key": "stripe_charge_create",
+      "positive_cases": ["stripe_legacy_charge_create_captures_charge_identity"],
+      "fail_open_cases": ["stripe_charge_retrieval_is_not_a_new_charge"]
+    },
+    {
+      "service_key": "twilio_message_create",
+      "positive_cases": ["twilio_message_create_captures_outbound_message_sid"],
+      "fail_open_cases": ["twilio_message_list_read_is_not_a_send"]
+    },
+    {
+      "service_key": "twilio_call_create",
+      "positive_cases": ["twilio_call_create_captures_outbound_call_sid"],
+      "fail_open_cases": ["twilio_call_list_read_is_not_a_new_call"]
     },
     {
       "service_key": "voyage_ai",
@@ -25,9 +88,233 @@
       "fail_open_cases": ["zero_usage_is_not_a_billable_observation"]
     },
     {
+      "service_key": "jina_reranker",
+      "positive_cases": [
+        "jina_reranker_v3_5_uses_provider_total_tokens",
+        "jina_reranker_v2_uses_provider_total_tokens",
+        "jina_reranker_full_model_id_is_canonicalized"
+      ],
+      "fail_open_cases": [
+        "jina_reranker_missing_usage_is_not_invented",
+        "jina_reranker_unknown_model_is_not_assumed_to_use_public_pricing"
+      ]
+    },
+    {
+      "service_key": "jina_reader",
+      "positive_cases": ["jina_reader_uses_authenticated_provider_reported_tokens"],
+      "fail_open_cases": ["jina_reader_anonymous_free_usage_is_not_priced"]
+    },
+    {
+      "service_key": "jina_search",
+      "positive_cases": ["jina_search_uses_provider_reported_minimum_tokens"],
+      "fail_open_cases": ["jina_search_missing_provider_usage_is_not_invented"]
+    },
+    {
+      "service_key": "nomic_embeddings",
+      "positive_cases": [
+        "nomic_embeddings_v1_use_provider_total_tokens",
+        "nomic_embeddings_v1_5_use_provider_total_tokens"
+      ],
+      "fail_open_cases": [
+        "nomic_embeddings_missing_usage_is_not_invented",
+        "nomic_embeddings_v2_is_not_assumed_to_use_atlas_pricing"
+      ]
+    },
+    {
+      "service_key": "brave_search",
+      "positive_cases": ["brave_web_search_counts_one_successful_request"],
+      "fail_open_cases": ["brave_web_search_error_response_fails_open"]
+    },
+    {
+      "service_key": "google_translate",
+      "positive_cases": [
+        "google_translate_v2_counts_unicode_characters_across_queries",
+        "google_translate_v2_counts_repeated_url_query_values",
+        "google_translate_v2_prefers_body_quantity_over_url_fallback",
+        "google_translate_v2_accepts_the_documented_base_nmt_alias",
+        "google_translate_v2_applies_the_documented_one_character_minimum"
+      ],
+      "fail_open_cases": [
+        "google_translate_v2_does_not_price_translation_llm",
+        "google_translate_v2_conflicting_model_sources_fail_open",
+        "google_translate_detect_is_not_assumed_to_be_translation"
+      ]
+    },
+    {
+      "service_key": "aws_translate",
+      "positive_cases": [
+        "aws_translate_text_counts_unicode_characters",
+        "aws_translate_text_supports_documented_dual_stack_endpoint"
+      ],
+      "fail_open_cases": [
+        "aws_translate_auto_detection_is_not_assumed_to_be_standard_text_only",
+        "aws_translate_missing_source_language_fails_open"
+      ]
+    },
+    {
+      "service_key": "azure_translator",
+      "positive_cases": [
+        "azure_translator_counts_utf16_units_for_each_target",
+        "azure_translator_supports_documented_geography_endpoint",
+        "azure_translator_supports_documented_resource_endpoint"
+      ],
+      "fail_open_cases": [
+        "azure_translator_custom_category_fails_open",
+        "azure_translator_missing_api_version_fails_open",
+        "azure_translator_missing_target_fails_open",
+        "azure_translator_ambiguous_text_casing_fails_open",
+        "azure_translator_endpoint_descendant_fails_open"
+      ]
+    },
+    {
+      "service_key": "google_custom_search",
+      "positive_cases": [
+        "google_custom_search_counts_existing_customer_query",
+        "google_custom_search_supports_documented_www_endpoint"
+      ],
+      "fail_open_cases": [
+        "google_custom_search_site_restricted_retired_endpoint_fails_open"
+      ]
+    },
+    {
+      "service_key": "google_vision_label",
+      "positive_cases": [
+        "google_vision_counts_each_requested_feature_per_image",
+        "google_vision_counts_only_successful_paired_batch_items"
+      ],
+      "fail_open_cases": [
+        "google_vision_unknown_feature_fails_open",
+        "google_vision_mismatched_response_batch_fails_open"
+      ]
+    },
+    {
+      "service_key": "google_vision_text",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_document_text",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_safe_search",
+      "positive_cases": ["google_vision_counts_unbundled_safe_search"],
+      "fail_open_cases": ["google_vision_does_not_double_count_bundled_features"]
+    },
+    {
+      "service_key": "google_vision_face",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_landmark",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_logo",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_image_properties",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_crop_hints",
+      "positive_cases": ["google_vision_counts_unbundled_crop_hints"],
+      "fail_open_cases": ["google_vision_does_not_double_count_bundled_features"]
+    },
+    {
+      "service_key": "google_vision_web",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_object_localization",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "google_vision_product_search",
+      "positive_cases": ["google_vision_counts_each_requested_feature_per_image"],
+      "fail_open_cases": ["google_vision_unknown_feature_fails_open"]
+    },
+    {
+      "service_key": "perplexity_search",
+      "positive_cases": ["perplexity_raw_search_counts_one_successful_request"],
+      "fail_open_cases": ["perplexity_search_error_response_fails_open"]
+    },
+    {
+      "service_key": "tavily_search",
+      "positive_cases": ["tavily_search_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_search_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_extract",
+      "positive_cases": ["tavily_extract_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_extract_zero_threshold_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_crawl",
+      "positive_cases": ["tavily_crawl_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_crawl_missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "tavily_map",
+      "positive_cases": ["tavily_map_uses_provider_reported_credits"],
+      "fail_open_cases": ["tavily_map_zero_threshold_usage_is_not_invented"]
+    },
+    {
+      "service_key": "exa_search",
+      "positive_cases": [
+        "exa_search_defaults_to_the_standard_auto_tariff",
+        "exa_deep_search_uses_the_requested_tariff_variant",
+        "exa_deep_reasoning_uses_the_requested_tariff_variant"
+      ],
+      "fail_open_cases": [
+        "exa_search_over_ten_results_fails_open_until_incremental_results_are_metered",
+        "exa_search_with_content_addons_fails_open_until_pages_are_metered",
+        "exa_search_with_legacy_context_fails_open_until_pages_are_metered",
+        "exa_search_with_synthesized_output_fails_open_until_synthesis_is_metered",
+        "exa_search_unknown_type_is_not_assumed_to_use_public_pricing",
+        "exa_search_without_captured_request_metadata_fails_open"
+      ]
+    },
+    {
+      "service_key": "fireworks_embeddings",
+      "positive_cases": [
+        "fireworks_embeddings_uses_provider_reported_prompt_tokens",
+        "fireworks_embeddings_accepts_the_documented_shorthand"
+      ],
+      "fail_open_cases": [
+        "fireworks_embeddings_unknown_model_fails_open"
+      ]
+    },
+    {
+      "service_key": "fireworks_rerank",
+      "positive_cases": [
+        "fireworks_rerank_uses_provider_reported_prompt_tokens",
+        "fireworks_rerank_accepts_the_documented_shorthand"
+      ],
+      "fail_open_cases": [
+        "fireworks_rerank_endpoint_descendant_is_not_observed"
+      ]
+    },
+    {
       "service_key": "openai_tts",
       "positive_cases": ["openai_tts_counts_unicode_characters_from_the_successful_request"],
       "fail_open_cases": ["openai_tts_does_not_invent_usage_without_billed_text"]
+    },
+    {
+      "service_key": "resemble_ai",
+      "positive_cases": ["resemble_tts_uses_provider_reported_generated_audio_duration"],
+      "fail_open_cases": [
+        "resemble_speech_to_speech_does_not_use_the_tts_tariff",
+        "resemble_failed_or_durationless_synthesis_fails_open"
+      ]
     },
     {
       "service_key": "elevenlabs_tts",
@@ -53,6 +340,11 @@
       "service_key": "deepgram_keyterm_prompting",
       "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
       "fail_open_cases": ["missing_usage_is_not_invented"]
+    },
+    {
+      "service_key": "deepgram_entity_detection",
+      "positive_cases": ["deepgram_emits_base_and_billable_addons_with_channel_seconds"],
+      "fail_open_cases": ["deepgram_entity_detection_missing_duration_is_not_invented"]
     },
     {
       "service_key": "assemblyai_transcription",
@@ -143,6 +435,267 @@
       "service_key": "assemblyai_content_moderation",
       "positive_cases": ["assemblyai_emits_every_observable_billable_addon_with_channel_seconds"],
       "fail_open_cases": ["assemblyai_missing_duration_is_not_invented"]
+    },
+    {
+      "service_key": "github_api",
+      "positive_cases": ["github_rest_api_successful_request_is_observed"],
+      "fail_open_cases": [
+        "github_rest_api_failed_request_is_not_observed",
+        "github_graphql_uses_distinct_point_accounting_not_rest_request_count"
+      ]
+    },
+    {
+      "service_key": "discord_api",
+      "positive_cases": ["discord_rest_api_successful_request_is_observed"],
+      "fail_open_cases": ["discord_rest_api_failed_request_is_not_observed"]
+    },
+    {
+      "service_key": "gitlab_api",
+      "positive_cases": ["gitlab_rest_api_successful_request_is_observed"],
+      "fail_open_cases": ["gitlab_rest_api_failed_request_is_not_observed"]
+    },
+    {
+      "service_key": "deepl_translate_plain_text",
+      "positive_cases": ["deepl_plain_text_counts_unicode_characters_on_regional_endpoint"],
+      "fail_open_cases": [
+        "deepl_tag_handling_without_billed_characters_fails_open",
+        "deepl_failed_translation_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "deepl_translate_billed_characters",
+      "positive_cases": ["deepl_uses_provider_reported_billed_characters_when_requested"],
+      "fail_open_cases": [
+        "deepl_missing_provider_billed_characters_fails_open",
+        "deepl_failed_translation_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "aws_rekognition_image_group_1",
+      "positive_cases": ["aws_rekognition_group_1_request_captures_region_and_request_id"],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "aws_rekognition_image_group_2",
+      "positive_cases": ["aws_rekognition_group_2_request_supports_dualstack_endpoint"],
+      "fail_open_cases": [
+        "aws_rekognition_unknown_operation_fails_open",
+        "aws_rekognition_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_default",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_defaults_to_general_labels_when_features_absent",
+        "aws_rekognition_detect_labels_empty_features_uses_default_group"
+      ],
+      "fail_open_cases": [
+        "aws_rekognition_unknown_operation_fails_open",
+        "aws_rekognition_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_general",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_general_feature_uses_group_2",
+        "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units"
+      ],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "aws_rekognition_detect_labels_image_properties",
+      "positive_cases": [
+        "aws_rekognition_detect_labels_image_properties_uses_separate_sku",
+        "aws_rekognition_detect_labels_both_features_emits_two_non_overlapping_units"
+      ],
+      "fail_open_cases": ["aws_rekognition_unknown_operation_fails_open"]
+    },
+    {
+      "service_key": "leonardo_generation_sync_cost",
+      "positive_cases": ["leonardo_sync_uses_provider_reported_dollar_cost"],
+      "fail_open_cases": [
+        "leonardo_missing_cost_fails_open",
+        "leonardo_negative_cost_fails_open",
+        "leonardo_failed_request_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "leonardo_generation_async_cost",
+      "positive_cases": ["leonardo_async_uses_provider_reported_dollar_cost"],
+      "fail_open_cases": [
+        "leonardo_transitional_credit_unit_does_not_invent_usd",
+        "leonardo_read_does_not_repeat_generation_cost"
+      ]
+    },
+    {
+      "service_key": "mux_robots_terminal_units",
+      "positive_cases": [
+        "mux_robots_completed_summarize_reports_final_units",
+        "mux_robots_completed_multiword_workflow_reports_final_units"
+      ],
+      "fail_open_cases": [
+        "mux_robots_pending_job_is_not_billed",
+        "mux_robots_errored_job_is_not_billed",
+        "mux_robots_zero_units_fail_open",
+        "mux_robots_creation_response_is_not_terminal_usage",
+        "mux_robots_failed_http_response_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "runway_terminal_task_credits",
+      "positive_cases": [
+        "runway_succeeded_task_reports_final_charged_credits",
+        "runway_failed_task_preserves_nonrefunded_final_charge",
+        "runway_cancelled_task_preserves_nonrefunded_final_charge"
+      ],
+      "fail_open_cases": [
+        "runway_pending_estimate_is_not_a_final_charge",
+        "runway_refunded_terminal_task_has_no_positive_charge",
+        "runway_unknown_task_status_fails_open",
+        "runway_task_creation_is_not_terminal_cost",
+        "runway_failed_http_response_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "paypal_order_capture_fee",
+      "positive_cases": ["paypal_order_capture_sums_completed_usd_fees"],
+      "fail_open_cases": [
+        "paypal_pending_order_capture_fails_open",
+        "paypal_non_usd_order_capture_does_not_invent_conversion",
+        "paypal_order_capture_missing_fee_fails_open",
+        "paypal_failed_http_capture_is_not_observed"
+      ]
+    },
+    {
+      "service_key": "paypal_authorization_capture_fee",
+      "positive_cases": ["paypal_authorization_capture_uses_completed_usd_fee"],
+      "fail_open_cases": [
+        "paypal_pending_authorization_capture_fails_open",
+        "paypal_non_usd_authorization_capture_does_not_invent_conversion"
+      ]
+    },
+    {
+      "service_key": "razorpay_captured_payment_fee",
+      "positive_cases": [
+        "razorpay_live_capture_uses_final_inr_fee",
+        "razorpay_live_fetch_uses_same_final_inr_fee"
+      ],
+      "fail_open_cases": [
+        "razorpay_test_key_capture_is_not_real_cost",
+        "razorpay_authorized_payment_has_no_final_fee",
+        "razorpay_captured_payment_missing_fee_fails_open",
+        "razorpay_non_inr_fee_waits_for_verified_minor_unit_rule",
+        "razorpay_failed_http_capture_is_not_observed",
+        "razorpay_payment_collection_is_not_a_payment_snapshot"
+      ]
+    },
+    {
+      "service_key": "pinecone_query_read_units",
+      "positive_cases": ["pinecone_query_preserves_rounded_read_units_as_usage_not_money"],
+      "fail_open_cases": ["pinecone_query_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "pinecone_fetch_read_units",
+      "positive_cases": ["pinecone_fetch_preserves_rounded_read_units"],
+      "fail_open_cases": ["pinecone_fetch_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "pinecone_documents_search_read_units",
+      "positive_cases": ["pinecone_documents_search_preserves_namespace_and_rounded_units"],
+      "fail_open_cases": ["pinecone_documents_search_missing_usage_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_queried",
+      "positive_cases": ["turbopuffer_query_preserves_both_provider_billing_meters"],
+      "fail_open_cases": ["turbopuffer_query_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_query_bytes_returned",
+      "positive_cases": ["turbopuffer_query_preserves_both_provider_billing_meters"],
+      "fail_open_cases": ["turbopuffer_query_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_bytes_written",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_queried",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "turbopuffer_write_query_bytes_returned",
+      "positive_cases": ["turbopuffer_write_preserves_write_and_nested_query_meters"],
+      "fail_open_cases": ["turbopuffer_write_missing_billing_fails_open"]
+    },
+    {
+      "service_key": "qdrant_request_count",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_hardware_cpu",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_index_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_payload_index_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_vector_io_read",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "qdrant_vector_io_write",
+      "positive_cases": ["qdrant_query_preserves_hardware_allocation_counters"],
+      "fail_open_cases": ["qdrant_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "weaviate_cloud_request_count",
+      "positive_cases": ["weaviate_cloud_success_is_an_allocation_signal_only"],
+      "fail_open_cases": [
+        "weaviate_graphql_error_is_not_an_allocation_signal",
+        "weaviate_partial_graphql_error_is_not_an_allocation_signal"
+      ]
+    },
+    {
+      "service_key": "zilliz_cloud_request_count",
+      "positive_cases": ["zilliz_success_carries_cluster_collection_and_database_identity"],
+      "fail_open_cases": ["zilliz_application_error_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "astra_db_request_count",
+      "positive_cases": ["astra_success_carries_database_keyspace_and_collection_identity"],
+      "fail_open_cases": ["astra_failed_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "chroma_cloud_read_request_count",
+      "positive_cases": ["chroma_cloud_read_success_carries_tenant_database_and_collection_identity"],
+      "fail_open_cases": ["chroma_failed_read_request_is_not_an_allocation_signal"]
+    },
+    {
+      "service_key": "chroma_cloud_write_request_count",
+      "positive_cases": ["chroma_cloud_write_success_carries_tenant_database_and_collection_identity"],
+      "fail_open_cases": ["chroma_failed_write_request_is_not_an_allocation_signal"]
     }
   ]
 }

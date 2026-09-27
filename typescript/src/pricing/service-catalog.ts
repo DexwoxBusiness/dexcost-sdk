@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
-export const SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2";
+export const SUPPORTED_SAFETY_POLICY_VERSION = "2026-09-03.26";
 const MCP_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/;
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { createTask } from "../src/core/models.js";
 import { runWithTask, setContext, clearContext } from "../src/core/context.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import {
   instrumentCohere,
   uninstrumentCohere,
@@ -70,7 +71,7 @@ class FakeCohereClient {
     return {
       id: "embed-123",
       embeddings: { float: [[0.1, 0.2]] },
-      meta: { billedUnits: { inputTokens: 42 } },
+      meta: { billedUnits: { inputTokens: 42, imageTokens: 11, images: 3 } },
     };
   }
 
@@ -232,9 +233,27 @@ describe("Cohere instrumentation", () => {
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe("external_cost");
     expect(events[0].serviceName).toBe("embeddings");
-    expect(events[0].model).toBe("cohere/embed-v4.0");
+    expect(events[0].model).toBe("embed-v4.0");
     expect(events[0].inputTokens).toBe(42);
+    expect(events[0].costUsd.toNumber()).toBe(0);
+    expect(events[0].details.attribution_component).toBe("external");
+    expect(events[0].details.attribution_provider_service).toBe("embed");
     expect(events[0].details.provider_record_id).toBe("embed-123");
+    expect(events[0].details.attribution_usage_lines).toEqual([
+      { metric: "input_tokens", quantity: "42", unit: "Tokens" },
+      { metric: "input_image_tokens", quantity: "11", unit: "Tokens" },
+    ]);
+    const observation = toAttributionObservationV3(events[0]);
+    expect(observation?.provider).toEqual({
+      name: "cohere",
+      service: "embed",
+      record_id: "embed-123",
+    });
+    expect(observation?.resource).toEqual({ type: "model", id: "embed-v4.0" });
+    expect(observation?.usage.map(({ metric, quantity }) => ({ metric, quantity }))).toEqual([
+      { metric: "input_tokens", quantity: "42" },
+      { metric: "input_image_tokens", quantity: "11" },
+    ]);
     expect(JSON.stringify(events[0].details)).not.toContain("private input");
   });
 

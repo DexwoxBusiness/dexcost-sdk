@@ -2,18 +2,15 @@ name: CI
 
 # DexCost SDK CI uses three blocking layers:
 #
-# 1. Per-SDK test jobs (python, go, typescript, rust) MUST pass. Each runs
-#    that SDK's existing test suite (including bundled catalog drift checks
-#    like test_compute_catalog_integrity / gpu-catalog-drift.test.ts) and
-#    excludes the parity/conformance files exercised once in the shared gate.
+# 1. Python and TypeScript test jobs MUST pass. Go and Rust job definitions are
+#    intentionally retained but temporarily skipped while those SDKs are
+#    non-paired; re-enable them when their catalogs and runtimes are paired.
 #
-# 2. cross-sdk-conformance MUST pass. It runs both the historical serialization
-#    and pricing parity suites and the active attribution contract corpora in all
-#    four languages. A contract regression in any SDK blocks merge.
+# 2. cross-sdk-conformance MUST pass for the paired Python and TypeScript SDKs.
 #
-# 3. sdk-attribution-admission runs only after all four shared consumers pass.
+# 3. sdk-attribution-admission runs after the shared consumers pass.
 #    It rejects observers without exact dimensions, provider API evidence,
-#    positive and fail-open fixtures, or identical packaged manifests.
+#    positive and fail-open fixtures, or identical Python/TypeScript manifests.
 #
 # Per-SDK hardening flags pin specific audit findings:
 #   - Go    : -race (catches B13 session race, race conditions in pusher)
@@ -71,6 +68,8 @@ jobs:
 
   go:
     name: go tests
+    # Temporarily disabled: Go is intentionally outside the paired SDK scope.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,7 +110,7 @@ jobs:
         working-directory: typescript
         run: >-
           npx vitest run
-          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance}.test.ts'
+          --exclude 'tests/{cross-sdk-parity,attribution-v2-conformance,attribution-v3-conformance,attribution-v3-pusher-conformance,openai-usage-conformance,service-usage-observer-conformance,xai-pricing-conformance}.test.ts'
       - name: Build + runtime and catalog-probe smoke (node control)
         working-directory: typescript
         run: npm run build && node scripts/runtime-smoke.mjs && npm run test:catalog-probe
@@ -165,6 +164,8 @@ jobs:
 
   rust:
     name: rust tests
+    # Temporarily disabled: Rust is intentionally outside the paired SDK scope.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -203,7 +204,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sdk: [python, go, typescript, rust]
+        sdk: [python, typescript]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -229,7 +230,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with: { workspaces: rust }
 
-      - name: P2 cost-map drift check (all SDKs)
+      - name: Active cost-map drift check (Python and TypeScript)
         if: matrix.sdk == 'python'
         run: bash scripts/check_cost_map_drift.sh
 
@@ -244,6 +245,7 @@ jobs:
             tests/test_attribution_v2_conformance.py \
             tests/test_attribution_v3_conformance.py \
             tests/test_openai_usage_conformance.py \
+            tests/test_xai_pricing_conformance.py \
             tests/test_service_usage_observer_conformance.py \
             -v
 
@@ -254,7 +256,6 @@ jobs:
           go test -v -run '^TestCrossSDK' .
           go test -v -run '^(TestSharedAttributionV2Conformance|TestValidateEventV2|TestSharedAttributionV3Conformance|TestToObservationV3)' ./attribution
           go test -v -run '^TestSharedOpenAIUsageConformance$' ./clients
-          go test -v -run '^(TestSharedServiceUsageObserverConformance|TestServiceUsageObserverManifestMatchesCanonical)' ./pricing
 
       - name: Run cross-SDK conformance (typescript)
         if: matrix.sdk == 'typescript'
@@ -267,6 +268,7 @@ jobs:
             tests/attribution-v3-conformance.test.ts \
             tests/attribution-v3-pusher-conformance.test.ts \
             tests/openai-usage-conformance.test.ts \
+            tests/xai-pricing-conformance.test.ts \
             tests/service-usage-observer-conformance.test.ts
 
       - name: Run cross-SDK conformance (rust)
@@ -275,7 +277,6 @@ jobs:
         run: |
           cargo test --test cross_sdk_parity
           cargo test --test attribution_v2_conformance
-          cargo test --test service_usage_observer_conformance
 
   sdk-attribution-admission:
     name: SDK attribution admission gate

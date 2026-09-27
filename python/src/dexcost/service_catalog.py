@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 from dexcost._user_agent import sdk_user_agent
 
 _log = logging.getLogger(__name__)
-SUPPORTED_SAFETY_POLICY_VERSION = "2026-07-14.2"
+SUPPORTED_SAFETY_POLICY_VERSION = "2026-09-03.26"
 
 _DEFAULT_DATA_PATH = Path(__file__).parent / "data" / "service_prices.json"
 _MCP_TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")

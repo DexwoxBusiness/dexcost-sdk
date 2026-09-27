@@ -21,6 +21,7 @@ import {
   uninstrumentOpenai,
 } from "../src/instruments/openai.js";
 import { installOpenAIModern, uninstallOpenAIModern } from "../src/instruments/openai-modern.js";
+import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 
 function openRouterResponse(id = "gen-litellm-current") {
   return {
@@ -108,7 +109,9 @@ describe("current LiteLLM direct-module attribution", () => {
     ["azure", "azure/private-deployment", "gpt-5-mini", "azure_openai", "azure/gpt-5-mini"],
     ["vertex_ai", "vertex_ai/gemini-3-flash", "gemini-3-flash", "google", "vertex_ai/gemini-3-flash"],
     ["cohere", "cohere/command-r", "command-r", "cohere", "command-r"],
-    ["together_ai", "together_ai/meta-llama/model", "meta-llama/model", "together", "together_ai/meta-llama/model"],
+    ["together_ai", "together_ai/meta-llama/model", "meta-llama/model", "together", "meta-llama/model"],
+    ["moonshot_ai", "moonshot_ai/kimi-k3", "moonshot_ai/kimi-k3", "moonshot", "kimi-k3"],
+    ["kimi", "kimi/kimi-k2.6", "kimi/kimi-k2.6", "moonshot", "kimi-k2.6"],
     ["fal_ai", "fal_ai/fal-ai/flux/schnell", "fal-ai/flux/schnell", "fal_ai", "fal_ai/fal-ai/flux/schnell"],
   ])("matches Python identity for %s", async (raw, requested, responseModel, provider, model) => {
     const module = {
@@ -122,7 +125,15 @@ describe("current LiteLLM direct-module attribution", () => {
     provideLiteLlmModule(module);
     await instrumentLiteLlm(pricing, buffer);
     module.completion({ model: requested });
-    expect(buffer.getAllEvents()[0]).toMatchObject({ provider, model });
+    const event = buffer.getAllEvents()[0];
+    expect(event).toMatchObject({ provider, model });
+    if (provider === "fal_ai") {
+      expect(toAttributionObservationV3(event)?.provider).toEqual({
+        name: "fal_ai",
+        service: "inference",
+        record_id: "provider-fal_ai",
+      });
+    }
   });
 
   it("captures the promise-based acompletion surface without changing its result", async () => {

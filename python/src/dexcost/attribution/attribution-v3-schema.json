@@ -163,6 +163,8 @@
         "additionalProperties": false,
         "x-dexcost-known-metrics": [
           "input_tokens",
+          "input_image_tokens",
+          "output_image_tokens",
           "output_tokens",
           "cache_read_input_tokens",
           "cache_write_input_tokens",
@@ -182,7 +184,8 @@
           "bytes_out",
           "image_count",
           "page_count",
-          "credit_count"
+          "credit_count",
+          "provider_unit_count"
         ],
         "x-dexcost-known-units": [
           "Tokens",
@@ -196,10 +199,13 @@
           "Bytes",
           "Images",
           "Pages",
-          "Credits"
+          "Credits",
+          "Provider-Units"
         ],
         "x-dexcost-unit-by-metric": {
           "input_tokens": "Tokens",
+          "input_image_tokens": "Tokens",
+          "output_image_tokens": "Tokens",
           "output_tokens": "Tokens",
           "cache_read_input_tokens": "Tokens",
           "cache_write_input_tokens": "Tokens",
@@ -219,7 +225,8 @@
           "bytes_out": "Bytes",
           "image_count": "Images",
           "page_count": "Pages",
-          "credit_count": "Credits"
+          "credit_count": "Credits",
+          "provider_unit_count": "Provider-Units"
         }
       },
       "AttributionProviderIdentity": {

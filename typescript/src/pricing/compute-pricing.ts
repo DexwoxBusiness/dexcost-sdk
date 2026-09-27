@@ -280,7 +280,9 @@ export class ComputePricingEngine {
       "lambda", this._resolveLambdaRate(region, architecture),
     );
     const durationS = toDecimal(details.duration_ms).dividedBy(MS_PER_S);
-    const memoryGb = toDecimal(details.memory_bytes_limit).dividedBy(GB_DECIMAL);
+    // Lambda bills configured memory in 1024 MB-per-GB units. The runtime
+    // capture stores the configured MB value as MB * 1_000_000 bytes.
+    const memoryGb = toDecimal(details.memory_bytes_limit).dividedBy(new Decimal("1024000000"));
     const gbSeconds = memoryGb.times(durationS);
     const invocations = toDecimal(details.invocation_count);
     const cost = invocations

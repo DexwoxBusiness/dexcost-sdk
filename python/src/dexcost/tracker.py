@@ -86,6 +86,7 @@ ALL_SUPPORTED_INSTRUMENTS: list[str] = [
     "ollama",
     "openrouter",
     "perplexity",
+    "groq",
     "fal",
 ]
 
@@ -1399,6 +1400,10 @@ class CostTracker:
             from dexcost.instruments.perplexity import instrument_perplexity
 
             instrument_perplexity(self)
+        elif name == "groq":
+            from dexcost.instruments.groq import instrument_groq
+
+            instrument_groq(self)
         elif name == "fal":
             from dexcost.instruments.fal import instrument_fal
 
@@ -1465,6 +1470,10 @@ class CostTracker:
             from dexcost.instruments.perplexity import uninstrument_perplexity
 
             uninstrument_perplexity()
+        elif name == "groq":
+            from dexcost.instruments.groq import uninstrument_groq
+
+            uninstrument_groq()
         elif name == "fal":
             from dexcost.instruments.fal import uninstrument_fal
 

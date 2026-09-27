@@ -388,7 +388,9 @@ export class PricingEngine {
       return {
         costUsd: new Decimal(0),
         costConfidence: "unknown",
-        pricingSource: modelInfo === undefined ? "unknown" : "litellm",
+        // Resolving a model without a positive billable meter is not pricing
+        // evidence. Leave it unpriced for the server-selected money source.
+        pricingSource: "unknown",
         pricingVersion: this._pricingVersion,
         resolvedModel,
         lines: [],

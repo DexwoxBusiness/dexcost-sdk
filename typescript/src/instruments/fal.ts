@@ -56,8 +56,15 @@ function requestDimensions(app: string, input: Record<string, any>, path?: unkno
 }
 function measurement(result: any, modelId: string, app: string, input: Record<string, any>): OperationMeasurement {
   const lines: NonNullable<OperationMeasurement["usageLines"]> = [];
+  const billingDimensions = requestDimensions(app, input);
   const images = Array.isArray(result?.images) ? result.images : result?.image ? [result.image] : [];
-  if (images.length > 0) lines.push({ metric: "output_image_count", quantity: images.length, unit: "Images" });
+  if (images.length > 0) {
+    lines.push({ metric: "output_image_count", quantity: images.length, unit: "Images" });
+    const width = nonNegativeInteger(images[0]?.width);
+    const height = nonNegativeInteger(images[0]?.height);
+    if (width > 0) billingDimensions.push(["output_width", String(width)]);
+    if (height > 0) billingDimensions.push(["output_height", String(height)]);
+  }
   const kind = mediaKind(app, result);
   const videoSeconds = nonNegativeDecimal(result?.video?.duration ?? (kind === "video" ? result?.duration : undefined));
   const audioSeconds = nonNegativeDecimal(result?.audio?.duration ?? (kind === "audio" ? result?.duration : undefined));
@@ -73,10 +80,15 @@ function measurement(result: any, modelId: string, app: string, input: Record<st
   if (outputTokens > 0) lines.push({ metric: "output_tokens", quantity: outputTokens, unit: "Tokens" });
   const cost = nonNegativeDecimal(usage.total_cost ?? usage.cost ?? result?.metrics?.cost ?? result?.cost);
   return {
-    usageLines: lines, providerRecordId: result?.request_id ?? result?.requestId,
-    pricingUsage: Object.fromEntries(lines.map((item) => [item.metric, item.quantity])),
+    usageLines: lines, providerService: "inference",
+    providerRecordId: result?.request_id ?? result?.requestId,
+    // fal endpoints may bill per image, megapixel, video second, or GPU second,
+    // and the billing-events API applies account-specific discounts. Keep the
+    // native meters, but do not let the bundled legacy map become a second
+    // monetary authority beside server reconciliation.
+    pricingUsage: {},
     providerCostUsd: cost, responseModel: modelId,
-    billingDimensions: requestDimensions(app, input),
+    billingDimensions,
     inputTokens, outputTokens, cachedTokens,
   };
 }
@@ -97,7 +109,7 @@ function submitJob(buffer: EventBuffer, session: ProviderOperationSession, resul
   const id = requestId([], result);
   if (!id) return;
   buffer.insertProviderJobRevision(new ProviderJobRevision({
-    taskId: session.task.taskId, provider: "fal_ai", service: "queue", providerRecordId: id,
+    taskId: session.task.taskId, provider: "fal_ai", service: "inference", providerRecordId: id,
     operation: "fal_ai.submit", component: "external", eventType: "external_cost",
     resourceType: "model", resourceId: modelId, status: "submitted",
     ownsTask: session.autoCreated, billingDimensions: requestDimensions(app, input),
@@ -105,7 +117,7 @@ function submitJob(buffer: EventBuffer, session: ProviderOperationSession, resul
   session.releaseForProviderJob();
 }
 function reconcile(pricing: PricingEngine, buffer: EventBuffer, result: any, id: string, terminalOverride?: ProviderJobStatus): void {
-  const raw = buffer.getProviderJob("fal_ai", "queue", id);
+  const raw = buffer.getProviderJob("fal_ai", "inference", id);
   if (!raw) return;
   const previous = providerJobFromDict(raw);
   const nextStatus = terminalOverride ?? status(result);
@@ -133,7 +145,7 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
     const modelId = model(app, args[1]?.path);
     const isQueue = ownerName.toLowerCase().includes("queue") || ["submit", "status", "result", "cancel"].includes(name);
     const session = new ProviderOperationSession(pricing, buffer, {
-      taskType: `fal_ai.${name}`, provider: "fal_ai", service: isQueue ? "queue" : "inference",
+      taskType: `fal_ai.${name}`, provider: "fal_ai", service: "inference",
       operation: `fal_ai.${name}`, component: "external", model: modelId, eventType: "external_cost",
     });
     let output: any;
@@ -148,8 +160,16 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
         session.finalizeWithoutEvent();
       } else if (name === "stream") {
         let final = response;
-        return wrapProviderStream(response, session, (item) => { final = item; }, () => measurement(final, modelId, app, input));
-      } else session.finish(measurement(response?.data ?? response, modelId, app, input));
+        return wrapProviderStream(response, session, (item) => { final = item; }, () => {
+          const observed = measurement(final, modelId, app, input);
+          observed.providerRecordId = requestId([], response) ?? observed.providerRecordId;
+          return observed;
+        });
+      } else {
+        const observed = measurement(response?.data ?? response, modelId, app, input);
+        observed.providerRecordId = requestId([], response) ?? observed.providerRecordId;
+        session.finish(observed);
+      }
       return response;
     };
     return mapProviderResult(output, complete, (error) => { session.fail(error); throw error; });

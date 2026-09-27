@@ -18,6 +18,7 @@ Implements US-035.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import threading
@@ -423,6 +424,7 @@ async def _aiohttp_wrapper(
     All public methods (get, post, put, etc.) funnel through _request.
     Signature: _request(method, str_or_url, ...) -> ClientResponse.
     """
+    request_context = contextvars.copy_context()
     t0 = time.monotonic()
     response = await wrapped(*args, **kwargs)
     latency_ms = int((time.monotonic() - t0) * 1000)
@@ -430,10 +432,49 @@ async def _aiohttp_wrapper(
     url = str(args[1]) if len(args) > 1 else str(kwargs.get("str_or_url", ""))
     # bytes-out is approximate (request-line overhead): no prepared-request object available here
     request_body = kwargs.get("json", kwargs.get("data"))
+    request_headers = dict(kwargs.get("headers") or {})
+    try:
+        effective_headers = getattr(getattr(response, "request_info", None), "headers", None)
+        if effective_headers is not None:
+            prepared_headers = dict(effective_headers)
+            if prepared_headers:
+                request_headers = prepared_headers
+    except (TypeError, ValueError):
+        # Test doubles and non-standard response implementations may not
+        # expose aiohttp's prepared request metadata. Explicit headers remain
+        # a safe compatibility fallback.
+        pass
+    observers = get_service_usage_observers()
+    if (
+        observers is not None
+        and observers.needs_response_body(url)
+        and _aiohttp_response_has_bounded_json(response)
+        and _defer_aiohttp_json_observation(
+            response,
+            url=url,
+            method=method,
+            request_body=request_body,
+            request_headers=request_headers,
+            latency_ms=latency_ms,
+            request_context=request_context,
+        )
+    ):
+        request_context.run(
+            _handle_http_call,
+            url,
+            method=method,
+            request_headers=request_headers,
+            request_body_len=0,
+            request_body=request_body,
+            response=response,
+            latency_ms=latency_ms,
+            network_only=True,
+        )
+        return response
     _handle_http_call(
         url,
         method=method,
-        request_headers={},
+        request_headers=request_headers,
         request_body_len=0,
         request_body=request_body,
         response=response,
@@ -462,10 +503,11 @@ def _botocore_wrapper(
         url = str(getattr(req, "url", "") or "")
         body = getattr(req, "body", None)
         body_len = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
+        headers = dict(getattr(req, "headers", {}) or {})
         _handle_http_call(
             url,
             method=str(getattr(req, "method", "GET")),
-            request_headers={},
+            request_headers=headers,
             request_body_len=body_len,
             request_body=body,
             response=response,
@@ -506,7 +548,7 @@ def _urllib3_wrapper(
     _handle_http_call(
         full_url,
         method=req_method,
-        request_headers={},
+        request_headers=dict(kwargs.get("headers") or {}),
         request_body_len=0,
         request_body=kwargs.get("body"),
         response=response,
@@ -598,6 +640,79 @@ def _get_response_body(response: Any) -> dict[str, Any] | None:
     return None
 
 
+def _aiohttp_response_has_bounded_json(response: Any) -> bool:
+    headers = _get_response_headers(response)
+
+    def _header(name: str) -> str:
+        target = name.lower()
+        return next(
+            (value for key, value in headers.items() if key.lower() == target),
+            "",
+        )
+
+    content_type = _header("content-type").lower()
+    if "application/json" not in content_type or "text/event-stream" in content_type:
+        return False
+    if "chunked" in _header("transfer-encoding").lower():
+        return False
+    content_length = _header("content-length")
+    if not content_length:
+        return False
+    try:
+        return 0 <= int(content_length) <= _MAX_BODY_SIZE
+    except (TypeError, ValueError):
+        return False
+
+
+def _defer_aiohttp_json_observation(
+    response: Any,
+    *,
+    url: str,
+    method: str,
+    request_body: Any,
+    request_headers: dict[str, Any],
+    latency_ms: int,
+    request_context: contextvars.Context,
+) -> bool:
+    """Observe JSON only after the caller explicitly materialises it.
+
+    ``ClientSession._request`` returns before the caller chooses between
+    ``response.json()`` and streaming ``response.content``. Eagerly awaiting
+    JSON here would drain the public stream. Wrapping the response's JSON
+    method preserves that choice and records at most once after the caller
+    has already requested materialisation.
+    """
+    original_json = getattr(response, "json", None)
+    if not callable(original_json):
+        return False
+    recorded = False
+
+    async def observed_json(*json_args: Any, **json_kwargs: Any) -> Any:
+        nonlocal recorded
+        body = await original_json(*json_args, **json_kwargs)
+        if not recorded:
+            recorded = True
+            request_context.run(
+                _handle_http_call,
+                url,
+                method=method,
+                request_headers=request_headers,
+                request_body_len=0,
+                request_body=request_body,
+                response=response,
+                response_body=body if isinstance(body, dict) else None,
+                latency_ms=latency_ms,
+                account_network=False,
+            )
+        return body
+
+    try:
+        response.json = observed_json
+    except Exception:
+        return False
+    return True
+
+
 def _response_body_len(response: Any) -> int:
     """Best-effort response body length in bytes.
 
@@ -630,7 +745,10 @@ def _handle_http_call(
     request_body_len: int = 0,
     request_body: Any = None,
     response: Any = None,
+    response_body: dict[str, Any] | None = None,
     latency_ms: int = 0,
+    account_network: bool = True,
+    network_only: bool = False,
 ) -> None:
     """Record cost + network bytes for one instrumented HTTP call.
 
@@ -642,11 +760,14 @@ def _handle_http_call(
     # where the raw URL with userinfo / api_key would otherwise live
     # between extraction and event creation.
     url = scrub_url(url)
+    storage_url = url
     try:
-        observer_request_body: dict[str, Any] | None = None
+        observer_request_body: dict[str, Any] | list[Any] | None = None
         observers = get_service_usage_observers()
+        if observers is not None:
+            storage_url = observers.redact_url_for_storage(url)
         if observers is not None and observers.needs_request_body(url):
-            if isinstance(request_body, dict):
+            if isinstance(request_body, (dict, list)):
                 observer_request_body = request_body
             elif isinstance(request_body, (str, bytes, bytearray)):
                 raw = (
@@ -657,7 +778,7 @@ def _handle_http_call(
                         decoded = json.loads(raw)
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         decoded = None
-                    if isinstance(decoded, dict):
+                    if isinstance(decoded, (dict, list)):
                         observer_request_body = decoded
         _handle_http_call_inner(
             url,
@@ -666,13 +787,16 @@ def _handle_http_call(
             request_body_len,
             observer_request_body,
             response,
+            response_body,
             latency_ms,
+            account_network,
+            network_only,
         )
     except Exception:  # broad catch intentional: must never break the caller's HTTP call
         global _network_error_count
         with _network_error_lock:
             _network_error_count += 1
-        _log.warning("network capture failed for %s", url, exc_info=True)
+        _log.warning("network capture failed for %s", storage_url, exc_info=True)
 
 
 def _resolve_task() -> Any | None:
@@ -765,11 +889,24 @@ def _handle_catalog_entry(
     response_headers: dict[str, str],
     response: Any,
     byte_details: dict[str, Any],
+    *,
+    storage_url: str | None = None,
+    overrides_only: bool = False,
+    response_body: dict[str, Any] | None = None,
 ) -> bool:
     """Handle service-catalog path. Returns True if handled."""
     catalog = get_catalog()
     entry = catalog.lookup(url)
     if entry is None:
+        return False
+    result = catalog.extract_cost(
+        entry,
+        response_headers,
+        response_body if response_body is not None else _get_response_body(response),
+    )
+    if overrides_only and (
+        result is None or result.pricing_source not in {"user_override", "workspace_overlay"}
+    ):
         return False
     task = _resolve_task()
     if task is None:
@@ -784,19 +921,22 @@ def _handle_catalog_entry(
             bytes_out=bytes_out,
             is_internal=byte_details.get("is_internal_traffic"),
         )
-    result = catalog.extract_cost(
-        entry, response_headers, _get_response_body(response) if response else None
-    )
     if result is not None:
+        pricing_source = result.pricing_source
+        pricing_version: str | None = catalog.catalog_version
+        if pricing_source == "user_override":
+            pricing_version = None
+        elif pricing_source == "workspace_overlay":
+            pricing_source = "service_catalog"
         event = Event(
             task_id=task.task_id,
             event_type="external_cost",
             cost_usd=result.amount,
             cost_confidence=result.confidence,
-            pricing_source=result.pricing_source,
-            pricing_version=catalog.catalog_version,
+            pricing_source=pricing_source,
+            pricing_version=pricing_version,
             service_name=result.service_name,
-            details={"url": url, **byte_details},
+            details={"url": storage_url or url, **byte_details},
         )
     else:
         event = Event(
@@ -806,7 +946,7 @@ def _handle_catalog_entry(
             cost_confidence="unknown",
             pricing_source="service_catalog",
             service_name=entry.display_name,
-            details={"url": url, **byte_details},
+            details={"url": storage_url or url, **byte_details},
         )
     _persist_event(event)
     return True
@@ -814,15 +954,19 @@ def _handle_catalog_entry(
 
 def _handle_usage_observer(
     url: str,
+    storage_url: str,
+    method: str,
     domain: str,
     track_network: bool,
     bytes_in: int,
     bytes_out: int,
     response_headers: dict[str, str],
     response: Any,
+    response_body: dict[str, Any] | None,
     status_code: int,
     byte_details: dict[str, Any],
-    request_body: dict[str, Any] | None,
+    request_body: dict[str, Any] | list[Any] | None,
+    request_headers: dict[str, str | None],
 ) -> bool:
     """Record provider-owned usage without asserting an SDK-side price."""
     if status_code < 200 or status_code >= 300:
@@ -831,7 +975,12 @@ def _handle_usage_observer(
     if observers is None or not observers.matches(url):
         return False
     observations = observers.observe(
-        url, response_headers, _get_response_body(response), request_body
+        url,
+        response_headers,
+        response_body if response_body is not None else _get_response_body(response),
+        request_body,
+        request_headers,
+        method,
     )
     if not observations:
         return False
@@ -847,27 +996,52 @@ def _handle_usage_observer(
         )
     for observation in observations:
         details: dict[str, Any] = {
-            "url": url,
+            "url": storage_url,
             "provider_record_id": observation.provider_record_id,
             "attribution_component": observation.component,
             "attribution_resource_type": observation.resource_type,
             "attribution_resource_id": observation.resource_id,
             "attribution_usage_quantity": str(observation.quantity),
             "attribution_usage_metric": observation.metric,
+            "attribution_usage_unit": observation.unit,
             "attribution_dimensions": list(observation.dimensions),
             "attribution_observer_version": observation.manifest_version,
             "attribution_observer_service": observation.service_key,
             **byte_details,
         }
+        if observation.provider_region is not None:
+            details["cloud_region"] = observation.provider_region
+        if (
+            observation.provider_cost_amount is not None
+            and observation.provider_cost_currency is not None
+        ):
+            details["provider_reported_cost_amount"] = str(
+                observation.provider_cost_amount
+            )
+            details["provider_reported_cost_currency"] = (
+                observation.provider_cost_currency
+            )
         if observation.metric == "audio_seconds":
             details["attribution_usage_duration_seconds"] = str(observation.quantity)
+        provider_cost_usd = observation.provider_cost_usd
+        if (
+            provider_cost_usd is None
+            and observation.provider_cost_currency == "USD"
+        ):
+            provider_cost_usd = observation.provider_cost_amount
         event = Event(
             event_id=_provider_observation_event_id(observation),
             task_id=task.task_id,
             event_type="external_cost",
-            cost_usd=Decimal("0"),
-            cost_confidence="unknown",
-            pricing_source=None,
+            cost_usd=provider_cost_usd or Decimal("0"),
+            cost_confidence=(
+                "exact" if provider_cost_usd is not None else "unknown"
+            ),
+            pricing_source=(
+                "provider_response"
+                if provider_cost_usd is not None
+                else None
+            ),
             provider=observation.provider_name,
             model=observation.resource_id if observation.resource_type == "model" else None,
             service_name=observation.provider_service,
@@ -937,9 +1111,12 @@ def _handle_http_call_inner(
     method: str,
     request_headers: dict[str, Any],
     request_body_len: int,
-    request_body: dict[str, Any] | None,
+    request_body: dict[str, Any] | list[Any] | None,
     response: Any,
+    response_body: dict[str, Any] | None,
     latency_ms: int,
+    account_network: bool,
+    network_only: bool,
 ) -> None:
     parsed = urlparse(str(url))
     domain = parsed.hostname or ""
@@ -947,6 +1124,7 @@ def _handle_http_call_inner(
 
     cfg = _cfg()
     track_network = cfg.track_network
+    record_network = track_network and account_network
 
     bytes_out, bytes_in, response_headers, byte_details = _measure_bytes(
         method,
@@ -961,6 +1139,10 @@ def _handle_http_call_inner(
     status_code = int(
         getattr(response, "status_code", None) or getattr(response, "status", 0) or 0
     )
+    observers = get_service_usage_observers()
+    storage_url = (
+        observers.redact_url_for_storage(url) if observers is not None else url
+    )
 
     # Provider instruments wrap their underlying transport call in this
     # context because the provider event already owns its cost and usage.
@@ -970,7 +1152,7 @@ def _handle_http_call_inner(
     # owning task without creating a second attribution row.
     if is_network_event_suppressed() or current_provider_capture_owner() is not None:
         task = get_current_task()
-        if task is not None and track_network:
+        if task is not None and record_network:
             task._network.record(
                 domain,
                 bytes_in=bytes_in,
@@ -979,45 +1161,92 @@ def _handle_http_call_inner(
             )
         return
 
-    # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
-    if _handle_domain_rate(url, domain, track_network, bytes_in, bytes_out, byte_details):
+    if network_only:
+        if record_network:
+            _handle_uncataloged(
+                storage_url,
+                method,
+                domain,
+                bytes_in,
+                bytes_out,
+                status_code,
+                latency_ms,
+                byte_details,
+                cfg,
+            )
         return
 
-    # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
-    if _handle_catalog_entry(
-        url,
-        domain,
-        track_network,
-        bytes_in,
-        bytes_out,
-        response_headers,
-        response,
-        byte_details,
+    # ── 1. user-registered domain rate (cataloged — unaffected by toggle) ──
+    if _handle_domain_rate(
+        storage_url, domain, record_network, bytes_in, bytes_out, byte_details
     ):
         return
 
-    # Usage-only observers contain no rates and remain active even when
-    # notable-network event emission is disabled.
-    if _handle_usage_observer(
+    # Observer-owned endpoint boundaries supersede the bundled legacy catalog.
+    # This includes intentionally unsupported descendants of exact routes, so
+    # they fail open instead of falling through to a broader legacy prefix.
+    # Manual domain rates above and explicit catalog/workspace overrides remain
+    # authoritative.
+    observer_route = observers is not None and observers.matches(url)
+    observer_boundary = observers is not None and observers.owns_endpoint_boundary(url)
+    if observer_boundary:
+        # Explicit local and authenticated workspace rates remain
+        # authoritative on observer-owned boundaries. Bundled SDK base prices
+        # do not: those would either double count or defeat fail-open routing.
+        if _handle_catalog_entry(
+            url,
+            domain,
+            record_network,
+            bytes_in,
+            bytes_out,
+            response_headers,
+            response,
+            byte_details,
+            storage_url=storage_url,
+            overrides_only=True,
+            response_body=response_body,
+        ):
+            return
+        # Usage-only observers contain no rates and remain active even when
+        # notable-network event emission is disabled.
+        if observers is not None and observer_route and _handle_usage_observer(
+            url,
+            storage_url,
+            method,
+            domain,
+            record_network,
+            bytes_in,
+            bytes_out,
+            response_headers,
+            response,
+            response_body,
+            status_code,
+            byte_details,
+            request_body,
+            observers.select_request_headers(url, request_headers),
+        ):
+            return
+    # ── 2. service-catalog match (cataloged — unaffected by toggle) ────────
+    elif _handle_catalog_entry(
         url,
         domain,
-        track_network,
+        record_network,
         bytes_in,
         bytes_out,
         response_headers,
         response,
-        status_code,
         byte_details,
-        request_body,
+        storage_url=storage_url,
+        response_body=response_body,
     ):
         return
 
     # ── 3. un-cataloged: skip entirely when track_network=False ────────────
-    if not track_network:
+    if not record_network:
         return
 
     _handle_uncataloged(
-        url,
+        storage_url,
         method,
         domain,
         bytes_in,

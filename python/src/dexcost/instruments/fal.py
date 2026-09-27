@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from decimal import Decimal
 from importlib import import_module
@@ -26,6 +26,9 @@ _active_tracker: Any | None = None
 _patched = False
 _originals: dict[str, tuple[Any, str, Any]] = {}
 _inside_fal: ContextVar[bool] = ContextVar("dexcost_inside_fal", default=False)
+_nested_request_id: ContextVar[str | None] = ContextVar(
+    "dexcost_fal_nested_request_id", default=None
+)
 
 
 def _value(value: object, name: str) -> Any:
@@ -72,6 +75,63 @@ def _request_id(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> str | None:
     if not isinstance(value, str) and len(args) > 1:
         value = args[1]
     return value if isinstance(value, str) and value else None
+
+
+def _capture_response_request_id(response: Any) -> None:
+    if not _inside_fal.get():
+        return
+    headers = _value(response, "headers")
+    request_id: Any = None
+    request = _value(response, "request")
+    url = _value(request, "url")
+    if _value(url, "host") == "queue.fal.run":
+        with suppress(Exception):
+            body = response.json()
+            if isinstance(body, Mapping):
+                request_id = body.get("request_id")
+    else:
+        request_id = headers.get("x-fal-request-id") if hasattr(headers, "get") else None
+    if isinstance(request_id, str) and request_id:
+        _nested_request_id.set(request_id[:256])
+
+
+def _captured_sync_stream(
+    stream: Iterator[Any], capture: Callable[[str], None]
+) -> Iterator[Any]:
+    iterator = iter(stream)
+    while True:
+        inside_token = _inside_fal.set(True)
+        request_token = _nested_request_id.set(None)
+        try:
+            item = next(iterator)
+            request_id = _nested_request_id.get()
+        except StopIteration:
+            return
+        finally:
+            _nested_request_id.reset(request_token)
+            _inside_fal.reset(inside_token)
+        if request_id is not None:
+            capture(request_id)
+        yield item
+
+
+async def _captured_async_stream(
+    stream: AsyncIterator[Any], capture: Callable[[str], None]
+) -> AsyncIterator[Any]:
+    while True:
+        inside_token = _inside_fal.set(True)
+        request_token = _nested_request_id.set(None)
+        try:
+            item = await anext(stream)
+            request_id = _nested_request_id.get()
+        except StopAsyncIteration:
+            return
+        finally:
+            _nested_request_id.reset(request_token)
+            _inside_fal.reset(inside_token)
+        if request_id is not None:
+            capture(request_id)
+        yield item
 
 
 def _model(application: str, path: Any = "") -> str:
@@ -144,9 +204,9 @@ def _measurement(
     model: str,
     application: str,
     arguments: Mapping[str, Any] | None = None,
+    provider_record_id: str | None = None,
 ) -> OperationMeasurement:
     request = arguments or {}
-    pricing: dict[str, Decimal | int] = {}
     lines: list[ProviderUsageLine] = []
     dimensions = list(_request_dimensions(application, request))
     kind = _media_kind(application, result)
@@ -162,7 +222,6 @@ def _measurement(
     )
     if image_items:
         count = len(image_items)
-        pricing["output_image_count"] = count
         lines.append(ProviderUsageLine("output_image_count", count, "Images"))
         first = image_items[0]
         for name in ("width", "height"):
@@ -175,7 +234,6 @@ def _measurement(
     if video_seconds is None:
         video_seconds = _decimal(_value(result, "duration")) if kind == "video" else None
     if video_seconds is not None and video_seconds > 0:
-        pricing["output_video_seconds"] = video_seconds
         lines.append(ProviderUsageLine("output_video_seconds", video_seconds, "Seconds"))
 
     audio = _value(result, "audio")
@@ -183,30 +241,40 @@ def _measurement(
     if audio_seconds is None:
         audio_seconds = _decimal(_value(result, "duration")) if kind == "audio" else None
     if audio_seconds is not None and audio_seconds > 0:
-        pricing["output_audio_seconds"] = audio_seconds
         lines.append(ProviderUsageLine("output_audio_seconds", audio_seconds, "Seconds"))
 
     usage = _value(result, "usage")
     input_tokens = _integer(_value(usage, "prompt_tokens") or _value(usage, "input_tokens"))
     output_tokens = _integer(_value(usage, "completion_tokens") or _value(usage, "output_tokens"))
     cached_tokens = _integer(_value(usage, "cached_tokens")) or 0
+    ordinary_input_tokens = (
+        input_tokens - cached_tokens
+        if input_tokens is not None and cached_tokens <= input_tokens
+        else input_tokens
+    )
     for metric, quantity in (
-        ("input_tokens", input_tokens),
+        ("input_tokens", ordinary_input_tokens),
         ("cache_read_input_tokens", cached_tokens),
         ("output_tokens", output_tokens),
     ):
         if quantity is not None:
-            pricing[metric] = quantity
             item = _line(metric, quantity, "Tokens")
             if item is not None:
                 lines.append(item)
     if not lines:
         lines.append(ProviderUsageLine("request_count", 1, "Requests"))
-        pricing["request_count"] = 1
     record_id = _value(result, "request_id")
+    if not isinstance(record_id, str) or not record_id:
+        record_id = provider_record_id
     return OperationMeasurement(
-        pricing_usage=pricing,
+        # fal pricing is endpoint- and account-specific.  In particular, image
+        # endpoints may bill per image, per megapixel, or GPU second, while the
+        # provider's billing-events API applies the final account discount.
+        # Preserve every observed meter for server reconciliation without
+        # allowing the bundled legacy cost map to become a second money source.
+        pricing_usage={},
         usage_lines=tuple(lines),
+        provider_service="inference",
         provider_record_id=(record_id[:256] if isinstance(record_id, str) and record_id else None),
         provider_cost_usd=_provider_cost(result),
         response_model=model,
@@ -232,17 +300,34 @@ def _operation_session(method: str, model: str) -> ProviderOperationSession:
 
 
 class _FalStreamMeter:
-    def __init__(self, model: str, application: str, arguments: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        model: str,
+        application: str,
+        arguments: Mapping[str, Any],
+        provider_record_id: str | None = None,
+    ) -> None:
         self.model = model
         self.application = application
         self.arguments = arguments
+        self.provider_record_id = provider_record_id
         self.latest: Any = None
 
     def observe(self, item: Any) -> None:
         self.latest = item
 
+    def capture_request_id(self, request_id: str) -> None:
+        if self.provider_record_id is None:
+            self.provider_record_id = request_id[:256]
+
     def measurement(self) -> OperationMeasurement:
-        return _measurement(self.latest, self.model, self.application, self.arguments)
+        return _measurement(
+            self.latest,
+            self.model,
+            self.application,
+            self.arguments,
+            provider_record_id=self.provider_record_id,
+        )
 
 
 def _sync_operation(
@@ -258,23 +343,34 @@ def _sync_operation(
     model = _model(application, kwargs.get("path", ""))
     session = _operation_session(method, model)
     token = _inside_fal.set(True)
+    request_token = _nested_request_id.set(None)
     try:
         result = call()
+        provider_record_id = _nested_request_id.get()
     except BaseException as exc:
         session.fail(exc)
         raise
     finally:
+        _nested_request_id.reset(request_token)
         _inside_fal.reset(token)
     if method == "stream" and hasattr(result, "__next__"):
-        meter = _FalStreamMeter(model, application, arguments)
+        meter = _FalStreamMeter(model, application, arguments, provider_record_id)
         session.release_context()
         return SyncProviderStream(
-            result,
+            _captured_sync_stream(result, meter.capture_request_id),
             session,
             observe=meter.observe,
             measurement=meter.measurement,
         )
-    session.succeed(_measurement(result, model, application, arguments))
+    session.succeed(
+        _measurement(
+            result,
+            model,
+            application,
+            arguments,
+            provider_record_id=provider_record_id,
+        )
+    )
     return result
 
 
@@ -291,23 +387,34 @@ async def _async_operation(
     model = _model(application, kwargs.get("path", ""))
     session = _operation_session(method, model)
     token = _inside_fal.set(True)
+    request_token = _nested_request_id.set(None)
     try:
         result = await call()
+        provider_record_id = _nested_request_id.get()
     except BaseException as exc:
         session.fail(exc)
         raise
     finally:
+        _nested_request_id.reset(request_token)
         _inside_fal.reset(token)
     if method == "stream" and hasattr(result, "__anext__"):
-        meter = _FalStreamMeter(model, application, arguments)
+        meter = _FalStreamMeter(model, application, arguments, provider_record_id)
         session.release_context()
         return AsyncProviderStream(
-            result,
+            _captured_async_stream(result, meter.capture_request_id),
             session,
             observe=meter.observe,
             measurement=meter.measurement,
         )
-    session.succeed(_measurement(result, model, application, arguments))
+    session.succeed(
+        _measurement(
+            result,
+            model,
+            application,
+            arguments,
+            provider_record_id=provider_record_id,
+        )
+    )
     return result
 
 
@@ -334,7 +441,7 @@ def _async_stream_operation(
     meter = _FalStreamMeter(model, application, arguments)
     session.release_context()
     return AsyncProviderStream(
-        result,
+        _captured_async_stream(result, meter.capture_request_id),
         session,
         observe=meter.observe,
         measurement=meter.measurement,
@@ -343,7 +450,11 @@ def _async_stream_operation(
 
 def _sync_submit(call: Callable[[], Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     if _inside_fal.get():
-        return call()
+        result = call()
+        record_id = _value(result, "request_id")
+        if isinstance(record_id, str) and record_id:
+            _nested_request_id.set(record_id[:256])
+        return result
     application = _application(args, kwargs)
     arguments = _arguments(args, kwargs)
     model = _model(application, kwargs.get("path", ""))
@@ -351,7 +462,7 @@ def _sync_submit(call: Callable[[], Any], args: tuple[Any, ...], kwargs: dict[st
         tracker=_active_tracker,
         task_type="fal_ai.submit",
         provider="fal_ai",
-        service="queue",
+        service="inference",
         operation="fal_ai.submit",
         component="external",
         event_type="external_cost",
@@ -379,7 +490,11 @@ async def _async_submit(
     call: Callable[[], Any], args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
     if _inside_fal.get():
-        return await call()
+        result = await call()
+        record_id = _value(result, "request_id")
+        if isinstance(record_id, str) and record_id:
+            _nested_request_id.set(record_id[:256])
+        return result
     application = _application(args, kwargs)
     arguments = _arguments(args, kwargs)
     model = _model(application, kwargs.get("path", ""))
@@ -387,7 +502,7 @@ async def _async_submit(
         tracker=_active_tracker,
         task_type="fal_ai.submit",
         provider="fal_ai",
-        service="queue",
+        service="inference",
         operation="fal_ai.submit",
         component="external",
         event_type="external_cost",
@@ -431,7 +546,7 @@ def _reconcile(
     tracker = _active_tracker
     if tracker is None:
         return
-    previous = tracker._storage.get_provider_job("fal_ai", "queue", request_id)
+    previous = tracker._storage.get_provider_job("fal_ai", "inference", request_id)
     if previous is None:
         return
     measurement = None
@@ -441,7 +556,7 @@ def _reconcile(
     reconcile_provider_job(
         tracker=tracker,
         provider="fal_ai",
-        service="queue",
+        service="inference",
         provider_record_id=request_id,
         status=status,
         measurement=measurement,
@@ -516,6 +631,51 @@ def _patch(owner: Any, name: str, replacement: Any, key: str) -> None:
             name,
             provider_capture_callable("fal", replacement, original),
         )
+
+
+def _patch_internal(owner: Any, name: str, replacement: Any, key: str) -> None:
+    original = getattr(owner, name, None)
+    if callable(original):
+        _originals[key] = (owner, name, original)
+        setattr(owner, name, replacement)
+
+
+def _sync_request_wrapper(key: str) -> Any:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        response = _originals[key][2](*args, **kwargs)
+        _capture_response_request_id(response)
+        return response
+
+    return wrapper
+
+
+def _async_request_wrapper(key: str) -> Any:
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        response = await _originals[key][2](*args, **kwargs)
+        _capture_response_request_id(response)
+        return response
+
+    return wrapper
+
+
+def _sync_sse_wrapper(key: str) -> Any:
+    @contextmanager
+    def wrapper(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        with _originals[key][2](*args, **kwargs) as events:
+            _capture_response_request_id(events.response)
+            yield events
+
+    return wrapper
+
+
+def _async_sse_wrapper(key: str) -> Any:
+    @asynccontextmanager
+    async def wrapper(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        async with _originals[key][2](*args, **kwargs) as events:
+            _capture_response_request_id(events.response)
+            yield events
+
+    return wrapper
 
 
 def _class_sync_wrapper(key: str, method: str) -> Any:
@@ -640,6 +800,20 @@ def instrument_fal(tracker: Any) -> None:
         ) from exc
     _active_tracker = tracker
     try:
+        client_module = import_module("fal_client.client")
+        for name, wrapper_factory in (
+            ("_maybe_retry_request", _sync_request_wrapper),
+            ("_async_maybe_retry_request", _async_request_wrapper),
+            ("connect_sse", _sync_sse_wrapper),
+            ("aconnect_sse", _async_sse_wrapper),
+        ):
+            key = f"fal_client:client:{name}"
+            _patch_internal(
+                client_module,
+                name,
+                wrapper_factory(key),
+                key,
+            )
         for class_name, is_async in (("SyncClient", False), ("AsyncClient", True)):
             owner = getattr(module, class_name)
             for method in ("run", "subscribe", "stream", "submit", "status", "result", "cancel"):

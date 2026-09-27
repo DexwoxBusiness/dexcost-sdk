@@ -1331,6 +1331,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.groq",
+      "name": "instrument_groq",
+      "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.litellm",
       "name": "instrument_litellm",
       "signature": "(tracker: 'Any') -> 'None'"
@@ -1519,6 +1525,12 @@
       "kind": "function",
       "module": "dexcost.instruments.gemini",
       "name": "uninstrument_gemini",
+      "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.groq",
+      "name": "uninstrument_groq",
       "signature": "() -> 'None'"
     },
     {

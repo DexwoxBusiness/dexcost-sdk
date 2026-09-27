@@ -84,8 +84,14 @@ class OperationMeasurement:
     task_input_tokens: int | None = None
     task_output_tokens: int | None = None
     task_cached_tokens: int | None = None
+    provider_service: str | None = None
 
     def __post_init__(self) -> None:
+        if (
+            self.provider_service is not None
+            and _CANONICAL_NAME.fullmatch(self.provider_service) is None
+        ):
+            raise ValueError(f"invalid provider service {self.provider_service!r}")
         for cost_field in (
             "provider_cost_usd",
             "provider_upstream_cost_usd",
@@ -230,6 +236,8 @@ def record_provider_operation(
         "attribution_usage_lines": _usage_details(measurement.usage_lines),
         "provider_usage_privacy": "quantities_only",
     }
+    if measurement.provider_service is not None:
+        details["attribution_provider_service"] = measurement.provider_service
     if measurement.billing_dimensions:
         details["attribution_dimensions"] = [
             {"key": key, "value": {"type": "string", "value": value}}

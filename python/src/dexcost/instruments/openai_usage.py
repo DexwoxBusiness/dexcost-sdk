@@ -99,6 +99,10 @@ def normalize_openai_usage(usage: object) -> OpenAIUsage:
     if cached_value is None and input_details is not None:
         # Perplexity's native Agent API uses this more explicit spelling.
         cached_value = _field(input_details, "cache_read_input_tokens")
+    if cached_value is None:
+        # DeepSeek's OpenAI-compatible Chat Completions response reports the
+        # provider-billed cache bucket at the top level of ``usage``.
+        cached_value = _field(usage, "prompt_cache_hit_tokens")
     cache_write_value = (
         _field(input_details, "cache_write_tokens") if input_details is not None else None
     )

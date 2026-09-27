@@ -266,7 +266,9 @@ class ComputePricingEngine:
             "lambda", rate, source, confidence
         )
         duration_s = Decimal(str(details["duration_ms"])) / _MS_PER_S
-        memory_gb = Decimal(str(details["memory_bytes_limit"])) / _GB_DECIMAL
+        # Lambda bills configured memory in 1024 MB-per-GB units. The runtime
+        # capture stores the configured MB value as MB * 1_000_000 bytes.
+        memory_gb = Decimal(str(details["memory_bytes_limit"])) / Decimal("1024000000")
         gb_seconds = memory_gb * duration_s
         invocations = Decimal(str(details["invocation_count"]))
         cost = (

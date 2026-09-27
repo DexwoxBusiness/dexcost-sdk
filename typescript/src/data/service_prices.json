@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "version": "3.0.0",
-    "last_updated": "2026-05-11",
-    "service_count": 73,
+    "version": "3.0.1",
+    "last_updated": "2026-09-03",
+    "service_count": 72,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,8 +10,8 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 94,
-    "safety_policy_version": "2026-07-14.2"
+    "disabled_service_count": 95,
+    "safety_policy_version": "2026-09-03.26"
   },
   "tavily_search": {
     "display_name": "Tavily Search",
@@ -213,21 +213,6 @@
     },
     "source": "https://www.diffbot.com/pricing/",
     "last_verified": "2026-04-07"
-  },
-  "pinecone_query": {
-    "display_name": "Pinecone",
-    "domains": [
-      "*.pinecone.io"
-    ],
-    "category": "vector_db",
-    "pricing_model": "read_unit",
-    "cost_per_read_unit_usd": "0.000016",
-    "cost_extraction": {
-      "type": "response_body",
-      "path": "usage.readUnits"
-    },
-    "source": "https://www.pinecone.io/pricing/",
-    "last_verified": "2026-04-01"
   },
   "e2b_sandbox": {
     "display_name": "E2B Code Sandbox",
