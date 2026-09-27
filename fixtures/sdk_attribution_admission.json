@@ -1,9 +1,30 @@
 {
   "schema_version": "1",
-  "observer_manifest_version": "1.36.3",
-  "conformance_schema_version": "28",
+  "observer_manifest_version": "1.37.0",
+  "conformance_schema_version": "29",
   "required_sdks": ["typescript", "python"],
   "observers": [
+    {
+      "service_key": "neon_sql_http_requests",
+      "positive_cases": [
+        "neon_sql_http_records_usage_not_money"
+      ],
+      "fail_open_cases": [
+        "neon_sql_http_failed_request",
+        "neon_sql_http_wrong_method"
+      ]
+    },
+    {
+      "service_key": "supabase_database_requests",
+      "positive_cases": [
+        "supabase_rest_records_usage_not_money",
+        "supabase_rpc_records_usage_not_money"
+      ],
+      "fail_open_cases": [
+        "supabase_rest_failed_request",
+        "supabase_rest_wrong_method"
+      ]
+    },
     {
       "service_key": "openai_embeddings",
       "positive_cases": ["openai_embeddings_uses_total_tokens_and_request_id"],

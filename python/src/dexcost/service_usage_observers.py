@@ -66,6 +66,7 @@ class UsageObserver:
     request_character_count_path: str | None
     request_character_count_query_parameter: str | None
     request_character_count_case_insensitive: bool
+    redact_query: bool
     character_count_encoding: str
     minimum_quantity: str | None
     fixed_quantity: str | None
@@ -777,6 +778,7 @@ class ServiceUsageObservers:
             request_character_count_case_insensitive = definition.get(
                 "request_character_count_case_insensitive", False
             )
+            redact_query = definition.get("redact_query", False)
             character_count_encoding = definition.get(
                 "character_count_encoding", "unicode_code_points"
             )
@@ -930,6 +932,7 @@ class ServiceUsageObservers:
                     "request_character_count_case_insensitive" in definition
                     and request_character_count_case_insensitive is not True
                 )
+                or ("redact_query" in definition and redact_query is not True)
                 or (
                     request_character_count_case_insensitive
                     and request_character_count_path is None
@@ -1092,6 +1095,7 @@ class ServiceUsageObservers:
                     paired_response_collection_path=paired_response_collection_path,
                     paired_response_all=tuple(paired_response_all),
                     request_character_count_path=request_character_count_path,
+                    redact_query=redact_query,
                     request_character_count_query_parameter=(
                         request_character_count_query_parameter
                     ),
@@ -1195,8 +1199,16 @@ class ServiceUsageObservers:
         )
 
     def redact_url_for_storage(self, url: str) -> str:
-        """Hide query values used as character-count sources before persistence."""
+        """Apply declarative query redaction before persistence, not before metering."""
         parsed = urlparse(url)
+        if any(
+            candidate.redact_query
+            and _domain_matches(parsed.hostname, candidate.domains, candidate.domain_suffixes)
+            and any(_endpoint_boundary_matches(parsed.path, endpoint, candidate.endpoint_match)
+                    for endpoint in candidate.endpoints)
+            for candidate in self._observers
+        ):
+            return parsed._replace(query="", fragment="").geturl()
         sensitive_names = {
             candidate.request_character_count_query_parameter.lower()
             for candidate in self._observers

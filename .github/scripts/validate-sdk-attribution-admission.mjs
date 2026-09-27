@@ -50,6 +50,12 @@ const FORBIDDEN_MONETARY_KEYS = new Set([
 // from the request endpoint. Keep this allowlist explicit and provider-scoped
 // so a documentation CDN cannot become a generic provenance bypass.
 const OFFICIAL_PROVIDER_DOCUMENTATION_ROOTS = Object.freeze({
+  neon: Object.freeze([
+    Object.freeze({ apiRoot: "neon.tech", documentationRoot: "neon.com" }),
+  ]),
+  supabase: Object.freeze([
+    Object.freeze({ apiRoot: "supabase.co", documentationRoot: "supabase.com" }),
+  ]),
   aws: Object.freeze([
     Object.freeze({ apiRoot: "amazonaws.com", documentationRoot: "amazon.com" }),
     Object.freeze({ apiRoot: "api.aws", documentationRoot: "amazon.com" }),
@@ -743,6 +749,9 @@ function validateObserverShape(observer, issues) {
   }
   const hasCharacterCount = isNonEmptyString(observer?.request_character_count_path) ||
     isNonEmptyString(observer?.request_character_count_query_parameter);
+  if (observer?.redact_query !== undefined && observer.redact_query !== true) {
+    issues.push(`observer ${key} has invalid query redaction flag`);
+  }
   if (
     observer?.character_count_encoding !== undefined &&
     !["unicode_code_points", "utf16_code_units"].includes(

@@ -110,6 +110,38 @@ def _make_response(
 
 
 class TestKnownServiceExtraction:
+    @pytest.mark.parametrize(
+        ("url", "method", "metric", "host"),
+        [
+            ("https://ep-agent-123.us-east-2.aws.neon.tech/sql", "POST",
+             "neon.sql_http_requests", "ep-agent-123.us-east-2.aws.neon.tech"),
+            ("https://agentproject.supabase.co/rest/v1/memories?content=eq.private-memory",
+             "GET", "supabase.database_requests", "agentproject.supabase.co"),
+        ],
+    )
+    def test_database_http_capture_is_usage_only_and_does_not_retain_content(
+        self, url: str, method: str, metric: str, host: str
+    ) -> None:
+        import httpx
+
+        request = httpx.Request(method, url, json={"query": "select private_secret"},
+                               headers={"authorization": "Bearer private-key"})
+        response = httpx.Response(200, json={"rows": [{"secret": "private-result"}]})
+        with task_context(_make_task()):
+            _httpx_wrapper(lambda req: response, None, (request,), {})
+        events = get_recorded_events()
+        assert len(events) == 1
+        wire = to_attribution_observation_v3(events[0])
+        assert wire is not None
+        assert wire["usage"][0]["metric"] == metric
+        assert wire["usage"][0]["quantity"] == "1"
+        assert wire["resource"] == {"type": "endpoint", "id": host}
+        assert events[0].cost_confidence == "unknown"
+        assert events[0].cost_usd == 0
+        serialized = json.dumps(events[0].details)
+        for private in ("private-memory", "private_secret", "private-key", "private-result"):
+            assert private not in serialized
+
     @pytest.mark.asyncio
     async def test_aiohttp_json_body_is_observed_when_caller_materialises_it(self) -> None:
         task = _make_task("embedding")
