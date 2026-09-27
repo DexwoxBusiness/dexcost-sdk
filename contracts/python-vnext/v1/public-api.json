@@ -1325,6 +1325,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.runtime",
+      "name": "instrument_e2b_sandbox",
+      "signature": "(sandbox: 'Any', tracker: 'Any', *, billing_account_id: 'str', vcpu_count: 'int | None' = None, memory_mib: 'int | None' = None) -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.fal",
       "name": "instrument_fal",
       "signature": "(tracker: 'Any') -> 'None'"
@@ -1535,6 +1541,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.runtime",
+      "name": "uninstrument_e2b_sandbox",
+      "signature": "(sandbox: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.fal",
       "name": "uninstrument_fal",
       "signature": "() -> 'None'"
@@ -1622,6 +1634,12 @@
       "module": "dexcost.webhooks",
       "name": "verify_webhook_signature",
       "signature": "(payload: 'bytes | bytearray | memoryview', signature_header: 'WebhookHeader', *, timestamp_header: 'str | None', secrets: 'WebhookSecret | Sequence[WebhookSecret]', tolerance_seconds: 'float' = 300, now: 'float | None' = None, allow_legacy: 'bool' = False) -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.runtime",
+      "name": "wrap_runtime_handler",
+      "signature": "(fn: 'Any', tracker: 'Any', *, service_key: 'str', billing_account_id: 'str', resource_id: 'str', vcpu_count: 'int | None' = None, memory_mib: 'int | None' = None) -> 'Any'"
     }
   ],
   "freeze_version": "python-vnext-v1",

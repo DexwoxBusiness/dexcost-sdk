@@ -17,6 +17,8 @@
  */
 
 // Core
+export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
+export type { RuntimeResource } from "./instruments/runtime.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
 export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";
 export { CostTracker, TrackedTask } from "./core/tracker.js";

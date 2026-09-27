@@ -57,6 +57,8 @@ const overrides = new Map(Object.entries({
 }));
 
 const equivalenceNotes = new Map(Object.entries({
+  uninstrument_e2b_sandbox: "Python accepts the returned sandbox facade; TypeScript accepts the capture handle. Both stop capture idempotently without terminating provider resources.",
+  instrument_e2b_sandbox: "Python returns a stoppable sandbox facade; TypeScript returns {sandbox, close}. Both capture completed commands/run-code as observed task weights, never provider-billed runtime. Lifecycle methods pass through; wrap any new sandbox returned by connect separately.",
   mongodb_command_listener: "Python supplies a PyMongo CommandListener at client construction; TypeScript attaches listeners to a monitorCommands-enabled MongoClient. Both return a per-resource stoppable capture, not a global monkey patch.",
   instrument_redis_client: "Python instruments a redis-py client instance and returns an undo callback; TypeScript returns a node-redis client proxy and close handle. Both require explicit account/resource identity and emit unknown-cost command observations.",
   uninstrument_redis_client: "Python accepts the original instrumented client; TypeScript accepts the returned instrumentation handle. Both stop recording without closing the application-owned connection.",

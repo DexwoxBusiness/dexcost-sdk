@@ -15,6 +15,8 @@ import {
   instrumentRedisClient,
   uninstrumentRedisClient,
   databaseResourceId,
+  wrapRuntimeHandler,
+  instrumentE2bSandbox,
   recordOutcome,
   recordRevenue,
   trackTool,
@@ -70,6 +72,13 @@ const operationError: AttributionOperationErrorV3 = { type: "provider_error", co
 const amendOptions: AmendOutcomeOptions = { state: "missed", expectedRevision: 1 };
 
 const tracker = new CostTracker({ autoInstrument: [], trackHttp: false });
+const runtimeHandler: (input: string) => Promise<number> = wrapRuntimeHandler(async (input: string) => input.length,
+  tracker, { serviceKey: "modal_compute", billingAccountId: "acct", resourceId: "app" });
+const runtimeSync: (input: number) => number = wrapRuntimeHandler((input: number) => input + 1,
+  tracker, { serviceKey: "modal_compute", billingAccountId: "acct", resourceId: "app" });
+const sandboxCapture = instrumentE2bSandbox({ sandboxId: "sb-1", commands: { run: async (_command: string) => 1 } }, tracker, { billingAccountId: "acct" });
+const runtimeResult: Promise<number> = sandboxCapture.sandbox.commands.run("test");
+void runtimeHandler; void runtimeSync; void runtimeResult;
 tracker.getCost("anthropic/claude", 100, 10, 20, 30, 40);
 tracker.registerRate("maps", "request", "0.005");
 tracker.registerInfrastructureRate("network", "local", "gb_transferred", "0.02");

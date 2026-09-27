@@ -164,6 +164,11 @@ from dexcost.instruments.database import (
     mongodb_command_listener,
     uninstrument_redis_client,
 )
+from dexcost.instruments.runtime import (
+    instrument_e2b_sandbox,
+    uninstrument_e2b_sandbox,
+    wrap_runtime_handler,
+)
 from dexcost.integrations import track_crewai, track_griptape
 from dexcost.models import (
     CostConfidence,
@@ -1377,6 +1382,7 @@ __all__ = [
     "instrument_anthropic",
     "instrument_bedrock",
     "instrument_cohere",
+    "instrument_e2b_sandbox",
     "instrument_fal",
     "instrument_gemini",
     "instrument_groq",
@@ -1412,6 +1418,7 @@ __all__ = [
     "uninstrument_anthropic",
     "uninstrument_bedrock",
     "uninstrument_cohere",
+    "uninstrument_e2b_sandbox",
     "uninstrument_fal",
     "uninstrument_gemini",
     "uninstrument_groq",
@@ -1427,4 +1434,5 @@ __all__ = [
     "validate_attribution_event_v2",
     "validate_attribution_observation_v3",
     "verify_webhook_signature",
+    "wrap_runtime_handler",
 ]

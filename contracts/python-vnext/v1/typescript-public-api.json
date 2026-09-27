@@ -146,6 +146,7 @@
     "RevenueSource",
     "RevenueSourceType",
     "RevenueState",
+    "RuntimeResource",
     "SchemaNotFoundError",
     "ServiceCatalog",
     "ServiceEntry",
@@ -237,6 +238,7 @@
     "instrumentAnthropic",
     "instrumentBedrock",
     "instrumentCohere",
+    "instrumentE2bSandbox",
     "instrumentFal",
     "instrumentGemini",
     "instrumentGoogleGenAI",
@@ -304,6 +306,7 @@
     "uninstrumentAnthropic",
     "uninstrumentBedrock",
     "uninstrumentCohere",
+    "uninstrumentE2bSandbox",
     "uninstrumentFal",
     "uninstrumentGemini",
     "uninstrumentGoogleGenAI",
@@ -335,6 +338,7 @@
     "wrapOpenAI",
     "wrapReplicateHandler",
     "wrapRunpodHandler",
+    "wrapRuntimeHandler",
     "wrapVercelHandler"
   ]
 }

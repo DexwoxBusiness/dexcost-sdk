@@ -86,9 +86,9 @@
       "sha256": "cd2a9b0b22f68b06d7bd15050659c15257c52acc3c9e74030af9b31133b5187e"
     },
     {
-      "byte_size": 61826,
+      "byte_size": 62605,
       "path": "public-api.json",
-      "sha256": "b97d8bdd2ab4ff3e7cdb8bd5d84e089e957fb6717ed3fecd3126a311aa607251"
+      "sha256": "7e938915cf3d60e8aa87412406fec8871d5e938d5ac0f66ae74e092bc4cb3065"
     },
     {
       "byte_size": 2375,
@@ -156,19 +156,19 @@
       "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
-      "byte_size": 40265,
+      "byte_size": 41339,
       "path": "typescript-api-map.json",
-      "sha256": "00e9ca9915490fda1b29fb7311ec751c24f4f65914ee60609b60e050a54a0c3b"
+      "sha256": "ebea8a4e6dfb8eb0aa7369577dc6ce06242c1736318a8273c34d94b78aab7919"
     },
     {
-      "byte_size": 8738,
+      "byte_size": 8845,
       "path": "typescript-public-api.json",
-      "sha256": "dac6805195f1a022d80a012933ca240c6324b9d38c8822f571b2dcd2bcd97f83"
+      "sha256": "87ad16599c919d0827850846c3ad27037f95129a6f124cceb9471d43148843ab"
     },
     {
-      "byte_size": 2663,
+      "byte_size": 2833,
       "path": "wire-schema-inventory.json",
-      "sha256": "728086b07629a71bfbbaedc27a5d72c7f60492b3008f21e5f162ced7fa95f3dc"
+      "sha256": "ad9b0bb125f56e619fcfe0c7708b9e19df203acb0f250dea326492bc215b04e9"
     }
   ],
   "attribution_contract": "3.2.0",
@@ -195,6 +195,11 @@
       "byte_size": 1789,
       "path": "fixtures/native_database_conformance.json",
       "sha256": "d2809e654f905f9b9c38bf2b8ad0ad19ff27ea9d42952f52cebf8f270fd9b489"
+    },
+    {
+      "byte_size": 765,
+      "path": "fixtures/runtime_conformance.json",
+      "sha256": "5bd3f0e55cb89619b11379e290496dc4ce8cadebbbd255f2b4604fdc0534b541"
     },
     {
       "byte_size": 133561,
