@@ -40,9 +40,9 @@ def test_service_catalog_is_safe_and_byte_equal_across_active_sdks() -> None:
     entries = {key: value for key, value in catalog.items() if key != "_meta"}
     metadata = catalog["_meta"]
 
-    assert metadata["safety_policy_version"] == "2026-09-03.26"
-    assert metadata["disabled_service_count"] == 95
-    assert metadata["service_count"] == len(entries) == 72
+    assert metadata["safety_policy_version"] == "2026-09-27.1"
+    assert metadata["disabled_service_count"] == 97
+    assert metadata["service_count"] == len(entries) == 70
 
     zero_rate_entries = [
         key

@@ -2,7 +2,7 @@
   "_meta": {
     "version": "3.0.1",
     "last_updated": "2026-09-03",
-    "service_count": 72,
+    "service_count": 70,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,8 +10,8 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 95,
-    "safety_policy_version": "2026-09-03.26"
+    "disabled_service_count": 97,
+    "safety_policy_version": "2026-09-27.1"
   },
   "tavily_search": {
     "display_name": "Tavily Search",
@@ -134,24 +134,6 @@
     },
     "source": "https://www.firecrawl.dev/pricing",
     "last_verified": "2026-04-01"
-  },
-  "browserbase": {
-    "display_name": "Browserbase",
-    "domains": [
-      "api.browserbase.com",
-      "connect.browserbase.com"
-    ],
-    "category": "scraping",
-    "pricing_model": "per_minute",
-    "cost_per_minute_usd": "0.002",
-    "note": "$0.10-0.12/hr overage. Billed minimum 1 minute per session.",
-    "cost_extraction": {
-      "type": "response_body",
-      "path": "duration_ms",
-      "transform": "ms_to_minutes"
-    },
-    "source": "https://www.browserbase.com/pricing",
-    "last_verified": "2026-04-07"
   },
   "scrapingbee": {
     "display_name": "ScrapingBee",
@@ -1000,22 +982,6 @@
       "type": "fixed"
     },
     "source": "https://docraptor.com/pricing",
-    "last_verified": "2026-05-11"
-  },
-  "browserless": {
-    "display_name": "Browserless",
-    "domains": [
-      "chrome.browserless.io",
-      "*.browserless.io"
-    ],
-    "category": "agent_tools",
-    "pricing_model": "per_unit",
-    "cost_per_request_usd": "0.01",
-    "note": "Usage: ~$0.01-0.02/browser session. Free: 6 hrs/mo. Plans from $200/mo.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://www.browserless.io/pricing",
     "last_verified": "2026-05-11"
   },
   "tavily_extract": {

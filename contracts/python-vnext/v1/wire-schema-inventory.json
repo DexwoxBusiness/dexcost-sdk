@@ -16,6 +16,7 @@
     { "id": "attribution.conformance.v3", "role": "shared positive and negative cross-language contract corpus", "repository_path": "fixtures/attribution_v3/conformance.json" },
     { "id": "service.observation.v1", "role": "shared observer evaluation corpus", "repository_path": "fixtures/service_usage_observation_conformance.json" },
     { "id": "database.native.observation.v1", "role": "paired Python/TypeScript native command capture corpus; money stays server-side", "repository_path": "fixtures/native_database_conformance.json" },
-    { "id": "runtime.observation.v1", "role": "paired observed runtime weights, never billed seconds or money", "repository_path": "fixtures/runtime_conformance.json" }
+    { "id": "runtime.observation.v1", "role": "paired observed runtime weights, never billed seconds or money", "repository_path": "fixtures/runtime_conformance.json" },
+    { "id": "browser.session.observation.v1", "role": "paired terminal browser meters; money remains invoice-authoritative", "repository_path": "fixtures/browser_session_conformance.json" }
   ]
 }
