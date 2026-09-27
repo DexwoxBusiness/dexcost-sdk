@@ -1,10 +1,76 @@
 {
   "_meta": {
-    "version": "1.36.3",
-    "observer_count": 106,
+    "version": "1.37.0",
+    "observer_count": 108,
     "purpose": "Provider-owned usage observations only; this manifest contains no prices."
   },
   "observers": [
+    {
+      "service_key": "neon_sql_http_requests",
+      "provider_name": "neon",
+      "provider_service": "postgres",
+      "component": "compute",
+      "domains": [],
+      "domain_suffixes": [
+        "neon.tech"
+      ],
+      "endpoints": [
+        "/sql"
+      ],
+      "endpoint_match": "exact",
+      "methods": [
+        "POST"
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "neon.sql_http_requests",
+      "usage_unit": "Requests",
+      "resource_type": "endpoint",
+      "resource_hostname": true,
+      "billing_dimensions": [
+        {
+          "key": "endpoint_host",
+          "source": "hostname"
+        }
+      ],
+      "redact_query": true,
+      "source_url": "https://neon.com/docs/serverless/serverless-driver"
+    },
+    {
+      "service_key": "supabase_database_requests",
+      "provider_name": "supabase",
+      "provider_service": "database",
+      "component": "compute",
+      "domains": [],
+      "domain_suffixes": [
+        "supabase.co"
+      ],
+      "endpoints": [
+        "/rest/v1/{table}",
+        "/rest/v1/rpc/{function}"
+      ],
+      "endpoint_match": "path_template",
+      "methods": [
+        "GET",
+        "POST",
+        "PATCH",
+        "PUT",
+        "DELETE",
+        "HEAD"
+      ],
+      "fixed_quantity": "1",
+      "usage_metric": "supabase.database_requests",
+      "usage_unit": "Requests",
+      "resource_type": "endpoint",
+      "resource_hostname": true,
+      "billing_dimensions": [
+        {
+          "key": "project_host",
+          "source": "hostname"
+        }
+      ],
+      "redact_query": true,
+      "source_url": "https://supabase.com/docs/guides/api"
+    },
     {
       "service_key": "openai_embeddings",
       "provider_name": "openai",

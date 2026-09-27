@@ -1,6 +1,224 @@
 {
-  "schema_version": "28",
+  "schema_version": "29",
   "cases": [
+    {
+      "name": "neon_sql_http_records_usage_not_money",
+      "url": "https://ep-agent-123.us-east-2.aws.neon.tech/sql",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": [
+        {
+          "service_key": "neon_sql_http_requests",
+          "provider_name": "neon",
+          "provider_service": "postgres",
+          "component": "compute",
+          "metric": "neon.sql_http_requests",
+          "unit": "Requests",
+          "quantity": "1",
+          "resource_type": "endpoint",
+          "resource_id": "ep-agent-123.us-east-2.aws.neon.tech",
+          "dimensions": [
+            {
+              "key": "endpoint_host",
+              "value": {
+                "type": "string",
+                "value": "ep-agent-123.us-east-2.aws.neon.tech"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "neon_sql_http_failed_request",
+      "url": "https://ep-agent-123.us-east-2.aws.neon.tech/sql",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": [],
+      "status_code": 403
+    },
+    {
+      "name": "neon_sql_http_wrong_method",
+      "url": "https://ep-agent-123.us-east-2.aws.neon.tech/sql",
+      "method": "OPTIONS",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": []
+    },
+    {
+      "name": "neon_sql_http_wrong_path",
+      "url": "https://ep-agent-123.us-east-2.aws.neon.tech/v2",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": []
+    },
+    {
+      "name": "neon_sql_http_spoofed_host",
+      "url": "https://ep-agent-123.us-east-2.aws.neon.tech.evil.example/sql",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": []
+    },
+    {
+      "name": "neon_sql_http_custom_host",
+      "url": "https://database.customer.example/sql",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "query": "select secret from private_table",
+        "params": []
+      },
+      "response": {
+        "rows": [],
+        "rowCount": 0
+      },
+      "expected": []
+    },
+    {
+      "name": "supabase_rest_records_usage_not_money",
+      "url": "https://agentproject.supabase.co/rest/v1/memories?select=id&content=eq.private-memory",
+      "method": "GET",
+      "headers": {},
+      "response": [],
+      "expected": [
+        {
+          "service_key": "supabase_database_requests",
+          "provider_name": "supabase",
+          "provider_service": "database",
+          "component": "compute",
+          "metric": "supabase.database_requests",
+          "unit": "Requests",
+          "quantity": "1",
+          "resource_type": "endpoint",
+          "resource_id": "agentproject.supabase.co",
+          "dimensions": [
+            {
+              "key": "project_host",
+              "value": {
+                "type": "string",
+                "value": "agentproject.supabase.co"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "supabase_rest_failed_request",
+      "url": "https://agentproject.supabase.co/rest/v1/memories?select=id&content=eq.private-memory",
+      "method": "GET",
+      "headers": {},
+      "response": [],
+      "expected": [],
+      "status_code": 403
+    },
+    {
+      "name": "supabase_rest_wrong_method",
+      "url": "https://agentproject.supabase.co/rest/v1/memories?select=id&content=eq.private-memory",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "supabase_rest_wrong_path",
+      "url": "https://agentproject.supabase.co/auth/v1/token",
+      "method": "GET",
+      "headers": {},
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "supabase_rest_spoofed_host",
+      "url": "https://agentproject.supabase.co.evil.example/rest/v1/memories?select=id&content=eq.private-memory",
+      "method": "GET",
+      "headers": {},
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "supabase_rest_custom_host",
+      "url": "https://database.customer.example/rest/v1/memories?select=id&content=eq.private-memory",
+      "method": "GET",
+      "headers": {},
+      "response": [],
+      "expected": []
+    },
+    {
+      "name": "supabase_rpc_records_usage_not_money",
+      "url": "https://agentproject.supabase.co/rest/v1/rpc/match_memories",
+      "method": "POST",
+      "headers": {},
+      "request": {
+        "embedding": [
+          1,
+          2,
+          3
+        ]
+      },
+      "response": [],
+      "expected": [
+        {
+          "service_key": "supabase_database_requests",
+          "provider_name": "supabase",
+          "provider_service": "database",
+          "component": "compute",
+          "metric": "supabase.database_requests",
+          "unit": "Requests",
+          "quantity": "1",
+          "resource_type": "endpoint",
+          "resource_id": "agentproject.supabase.co",
+          "dimensions": [
+            {
+              "key": "project_host",
+              "value": {
+                "type": "string",
+                "value": "agentproject.supabase.co"
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "openai_embeddings_uses_total_tokens_and_request_id",
       "url": "https://api.openai.com/v1/embeddings",

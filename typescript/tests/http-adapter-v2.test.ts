@@ -49,6 +49,34 @@ afterEach(() => {
 });
 
 describe("HTTP adapter v2 — catalog cost extraction", () => {
+  it.each([
+    ["https://ep-agent-123.us-east-2.aws.neon.tech/sql", "POST", "neon.sql_http_requests"],
+    ["https://agentproject.supabase.co/rest/v1/memories?content=eq.private-memory", "GET", "supabase.database_requests"],
+  ])("captures database usage without query content or invented cost: %s", async (url, method, metric) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      rows: [{ secret: "private-result" }],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    await runWithTask(createTask({ taskId: randomUUID() }), async () => {
+      await fetch(url, {
+        method, headers: { authorization: "Bearer private-key" },
+        ...(method === "POST" ? { body: JSON.stringify({ query: "select private_secret" }) } : {}),
+      });
+    });
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    expect(toAttributionObservationV3(events[0])).toMatchObject({
+      resource: { type: "endpoint", id: new URL(url).hostname },
+      usage: [{ metric, quantity: "1", unit: "Requests" }],
+    });
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(events[0].costUsd.toString()).toBe("0");
+    const serialized = JSON.stringify(events[0].details);
+    for (const privateValue of ["private-memory", "private_secret", "private-key", "private-result"]) {
+      expect(serialized).not.toContain(privateValue);
+    }
+  });
+
   it("preserves Pinecone request-body namespace through fetch capture", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       usage: { readUnits: 10 }, matches: [],

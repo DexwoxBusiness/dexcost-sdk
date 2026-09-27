@@ -124,6 +124,7 @@
         "response_quantity_header": { "type": "string", "minLength": 1, "maxLength": 256 },
         "request_character_count_path": { "$ref": "#/$defs/jsonPath" },
         "request_character_count_query_parameter": { "$ref": "#/$defs/queryParameter" },
+        "redact_query": { "const": true },
         "request_character_count_case_insensitive": { "const": true },
         "request_collection_count_path": { "$ref": "#/$defs/jsonPath" },
         "request_collection_all": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/collectionPredicate" } },

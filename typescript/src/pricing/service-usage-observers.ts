@@ -108,6 +108,7 @@ interface UsageObserverDefinition {
   request_character_count_path?: string;
   request_character_count_query_parameter?: string;
   request_character_count_case_insensitive?: true;
+  redact_query?: true;
   character_count_encoding?: "unicode_code_points" | "utf16_code_units";
   minimum_quantity?: "1";
   fixed_quantity?: "1";
@@ -732,6 +733,7 @@ function validateManifest(raw: unknown): UsageObserverManifest {
         observer.fixed_quantity,
       ].filter((value) => value !== undefined).length !== 1 ||
       (observer.fixed_quantity !== undefined && observer.fixed_quantity !== "1") ||
+      (observer.redact_query !== undefined && observer.redact_query !== true) ||
       (observer.minimum_quantity !== undefined && observer.minimum_quantity !== "1") ||
       (observer.minimum_quantity !== undefined &&
         observer.request_character_count_path === undefined &&
@@ -920,6 +922,13 @@ export class ServiceUsageObservers {
       parsed = new URL(url);
     } catch {
       return url;
+    }
+    if (this.observers.some((observer) => observer.redact_query === true &&
+      domainMatches(parsed.hostname, observer) && observer.endpoints.some((endpoint) =>
+        endpointBoundaryMatches(parsed.pathname, endpoint, observer.endpoint_match)))) {
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
     }
     const sensitiveNames = new Set(
       this.observers

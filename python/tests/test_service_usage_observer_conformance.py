@@ -103,6 +103,15 @@ def test_packaged_observer_manifest_matches_canonical_manifest() -> None:
     assert packaged == canonical
 
 
+def test_database_rules_redact_query_values_without_parsing_private_bodies() -> None:
+    observers = ServiceUsageObservers()
+    for path in ("/rest/v1/memories", "/rest/v1/memories/unsupported"):
+        url = "https://agentproject.supabase.co" + path
+        assert observers.redact_url_for_storage(url + "?email=eq.private#private") == url
+    assert not observers.needs_request_body("https://agentproject.supabase.co/rest/v1/memories")
+    assert not observers.needs_response_body("https://agentproject.supabase.co/rest/v1/memories")
+
+
 @pytest.mark.parametrize("source", ["request_body", "response_body", "hostname"])
 def test_billing_dimensions_select_only_the_required_body(source: str) -> None:
     definition: dict[str, Any] = {

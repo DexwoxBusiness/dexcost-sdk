@@ -39,6 +39,15 @@ function numericResponseObserver(value: number): ServiceUsageObservers {
 describe("shared service usage observer conformance", () => {
   const observers = new ServiceUsageObservers();
 
+  it("redacts database query filters without selecting private request/response bodies", () => {
+    for (const path of ["/rest/v1/memories", "/rest/v1/memories/unsupported"]) {
+      const url = `https://agentproject.supabase.co${path}`;
+      expect(observers.redactUrlForStorage(`${url}?email=eq.private#private`)).toBe(url);
+    }
+    expect(observers.needsRequestBody("https://agentproject.supabase.co/rest/v1/memories")).toBe(false);
+    expect(observers.needsResponseBody("https://agentproject.supabase.co/rest/v1/memories")).toBe(false);
+  });
+
   for (const testCase of fixture.cases) {
     it(testCase.name, () => {
       const statusCode = testCase.status_code ?? 200;

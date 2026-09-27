@@ -303,7 +303,8 @@ test("requires a non-empty predicate for query-count multipliers", () => {
 
 test("rejects conformance dimensions that disagree with the observer", () => {
   const candidate = inputs();
-  candidate.conformance.cases[0].expected[0].metric = "characters";
+  candidate.conformance.cases.find((entry) =>
+    entry.name === "openai_embeddings_uses_total_tokens_and_request_id").expected[0].metric = "characters";
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
@@ -363,7 +364,8 @@ test("requires both paired shared conformance consumers", () => {
 
 test("rejects a non-provider observer source", () => {
   const candidate = inputs();
-  candidate.manifest.observers[0].source_url = "https://example.com/api-reference";
+  candidate.manifest.observers.find((entry) =>
+    entry.service_key === "openai_embeddings").source_url = "https://example.com/api-reference";
 
   expectIssue(
     validateSdkAttributionAdmission(candidate),
