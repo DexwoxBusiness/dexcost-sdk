@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.26.0...typescript/v0.27.0) (2026-09-27)
+
+
+### Features
+
+* **attribution:** capture Modal and E2B runtime allocation evidence ([#185](https://github.com/DexwoxBusiness/dexcost-sdk/issues/185)) ([2c334f8](https://github.com/DexwoxBusiness/dexcost-sdk/commit/2c334f840a99b4758daefb9f7a1c44fe0a9aedab))
+* **attribution:** capture MongoDB and Redis database operations ([#182](https://github.com/DexwoxBusiness/dexcost-sdk/issues/182)) ([b82c00e](https://github.com/DexwoxBusiness/dexcost-sdk/commit/b82c00e5909c7db32ec550970c81dd41a87a4565))
+
 ## [0.26.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.25.1...typescript/v0.26.0) (2026-09-27)
 
 
