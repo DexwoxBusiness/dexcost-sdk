@@ -82,6 +82,30 @@ describe("shared service usage observer conformance", () => {
     expect(packaged).toEqual(canonical);
   });
 
+  it.each(["request_body", "response_body", "hostname"] as const)(
+    "selects only the body needed by a %s billing dimension", (source) => {
+      const observer = new ServiceUsageObservers({
+        _meta: { version: "test", observer_count: 1 },
+        observers: [{
+          service_key: "dimension_test", provider_name: "test_provider",
+          provider_service: "database", component: "storage",
+          domains: ["dimension.example"], endpoints: ["/query"],
+          endpoint_match: "exact", fixed_quantity: "1", usage_metric: "request_count",
+          billing_dimensions: [{
+            key: "namespace", source,
+            ...(source === "hostname" ? {} : { selector: "namespace" }),
+          }],
+          source_url: "https://dimension.example/docs",
+        }],
+      });
+      expect(observer.needsRequestBody("https://dimension.example/query"))
+        .toBe(source === "request_body");
+      expect(observer.needsResponseBody("https://dimension.example/query"))
+        .toBe(source === "response_body");
+      expect(observer.needsRequestBody("https://unmatched.example/query")).toBe(false);
+    },
+  );
+
   it("fails open for JSON integers outside the interoperable range", () => {
     const observer = numericResponseObserver(Number.MAX_SAFE_INTEGER);
     expect(observer.observe(

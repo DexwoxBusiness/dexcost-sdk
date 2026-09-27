@@ -49,6 +49,27 @@ afterEach(() => {
 });
 
 describe("HTTP adapter v2 — catalog cost extraction", () => {
+  it("preserves Pinecone request-body namespace through fetch capture", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      usage: { readUnits: 10 }, matches: [],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    trackHttp(buffer);
+    await runWithTask(createTask({ taskId: randomUUID() }), async () => {
+      await fetch("https://my-index.svc.us-east1-gcp.pinecone.io/query", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ namespace: "tenant-42", vector: [0.1, 0.2], topK: 1 }),
+      });
+    });
+    const events = getRecordedEvents();
+    expect(events).toHaveLength(1);
+    const wire = toAttributionObservationV3(events[0]);
+    expect(wire?.usage[0].dimensions).toEqual(expect.arrayContaining([
+      { key: "namespace", value: { type: "string", value: "tenant-42" } },
+    ]));
+    expect(events[0].costConfidence).toBe("unknown");
+    expect(JSON.stringify(events[0].details)).not.toContain("vector");
+  });
+
   it("emits OpenAI embedding tokens without synthetic cost evidence", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       model: "text-embedding-3-small",

@@ -17,6 +17,7 @@ from dexcost.adapters.http import (
     _aiohttp_wrapper,
     _botocore_wrapper,
     _handle_http_call,
+    _httpx_wrapper,
     clear_domain_rates,
     clear_recorded_events,
     get_recorded_events,
@@ -1401,6 +1402,26 @@ class TestKnownServiceExtraction:
         assert event.details["attribution_resource_id"] == (
             "my-index.svc.us-east1-gcp.pinecone.io"
         )
+
+    def test_pinecone_namespace_survives_httpx_transport_capture(self) -> None:
+        import httpx
+
+        request = httpx.Request(
+            "POST", "https://my-index.svc.us-east1-gcp.pinecone.io/query",
+            json={"namespace": "tenant-42", "vector": [0.1, 0.2], "topK": 1},
+        )
+        response = httpx.Response(200, json={"usage": {"readUnits": 10}, "matches": []})
+        with task_context(_make_task()):
+            assert _httpx_wrapper(lambda req: response, None, (request,), {}) is response
+        events = get_recorded_events()
+        assert len(events) == 1
+        wire = to_attribution_observation_v3(events[0])
+        assert wire is not None
+        assert {"key": "namespace", "value": {"type": "string", "value": "tenant-42"}} in (
+            wire["usage"][0]["dimensions"]
+        )
+        assert events[0].cost_confidence == "unknown"
+        assert "vector" not in events[0].details
 
     def test_google_maps_endpoint_match(self) -> None:
         """Google Maps Geocoding: fixed cost via endpoint_match."""

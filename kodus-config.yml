@@ -1,0 +1,7 @@
+# Code review is requested explicitly from Codex, not Kody.
+# Repository-local settings; no organization-wide integration changes.
+version: 2.0
+kodusConfigFileOverridesWebPreferences: true
+automatedReviewActive: false
+summary:
+  generatePRSummary: false
