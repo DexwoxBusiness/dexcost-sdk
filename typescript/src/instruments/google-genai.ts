@@ -87,7 +87,7 @@ function contentMeasurement(response: any, body: any, vertex: boolean): Operatio
   };
 }
 
-function admitDirectContent(measurement: OperationMeasurement, response: any, owner: any, body: any, vertex: boolean): OperationMeasurement {
+function admitDirectContent(measurement: OperationMeasurement, response: any, owner: any, body: any, vertex: boolean, paid = false): OperationMeasurement {
   try {
     const raw = body?.config?.httpOptions?.baseUrl ?? owner?.apiClient?.getBaseUrl?.();
     const endpoint = new URL(String(raw ?? ""));
@@ -99,15 +99,20 @@ function admitDirectContent(measurement: OperationMeasurement, response: any, ow
     const details = [usage?.promptTokensDetails, usage?.cacheTokensDetails, usage?.candidatesTokensDetails];
     const totals = [prompt, cached, usage?.candidatesTokenCount];
     if (!vertex && endpoint.protocol === "https:" && endpoint.hostname === "generativelanguage.googleapis.com" &&
-        model === "gemini-3.1-pro-preview" && usage?.serviceTier === "standard" &&
+        (model === "gemini-3.1-pro-preview" ||
+          (["gemini-3.8-flash", "gemini-3.5-flash-lite"].includes(model) &&
+           paid)) &&
+        usage?.serviceTier === "standard" &&
         [prompt, cached, usage?.candidatesTokenCount, usage?.thoughtsTokenCount ?? 0].every(count) &&
         prompt > 0 && cached <= prompt && [undefined, null, 0].includes(usage?.toolUsePromptTokenCount) &&
+        (model === "gemini-3.1-pro-preview" || details.every((items, index) => totals[index] === 0 || Array.isArray(items))) &&
         details.every((items, index) => items == null || (Array.isArray(items) &&
           items.every((item: any) => item?.modality === "TEXT" && count(item?.tokenCount)) &&
           items.reduce((sum: number, item: any) => sum + item.tokenCount, 0) === totals[index]))) {
       return { ...measurement, responseModel: model, providerService: "gemini", billingDimensions: [
         ...(measurement.billingDimensions ?? []),
-        ["direct_llm_pricing_lane", prompt > 200_000 ? "standard_long" : "standard_short"],
+        ["direct_llm_pricing_lane", model === "gemini-3.1-pro-preview"
+          ? (prompt > 200_000 ? "standard_long" : "standard_short") : "caller_paid_standard"],
       ] };
     }
   } catch { /* Unknown routes and metadata remain explicitly unpriced. */ }
@@ -318,6 +323,11 @@ function patchDirect(
   const original = owner[name] as (...args: any[]) => any;
   owner[name] = function (this: any, ...args: any[]): any {
     const body = args[0] ?? {};
+    let endpoint: unknown;
+    try { endpoint = body?.config?.httpOptions?.baseUrl ?? this?.apiClient?.getBaseUrl?.(); } catch { /* unknown */ }
+    const routeOwner = { apiClient: { getBaseUrl: () => endpoint } };
+    const paid = body?.config?.httpOptions == null && typeof endpoint === "string" &&
+      hasPaidProviderBilling(this, "google", endpoint);
     const operation = `google.genai.${ownerName}.${name}`.toLowerCase();
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: operation, provider: "google", service: service(vertex), operation,
@@ -333,11 +343,11 @@ function patchDirect(
           terminal = (chunk as any)?.response ?? chunk;
         }, () => {
           const measurement = directMeasurement(spec.kind, terminal, body, vertex, name);
-          return spec.kind === "content" ? admitDirectContent(measurement, terminal, this, body, vertex) : measurement;
+          return spec.kind === "content" ? admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid) : measurement;
         });
       }
       const measurement = directMeasurement(spec.kind, response, body, vertex, name);
-      session.finish(spec.kind === "content" ? admitDirectContent(measurement, response, this, body, vertex) : measurement);
+      session.finish(spec.kind === "content" ? admitDirectContent(measurement, response, routeOwner, {}, vertex, paid) : measurement);
       return response;
     };
     return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
@@ -557,3 +567,4 @@ export function uninstrumentGoogleGenAI(): void {
 }
 export function provideGoogleGenAIModule(ref: unknown): void { providedModule = ref; }
 registerInstrument("google-genai", instrumentGoogleGenAI, uninstrumentGoogleGenAI, provideGoogleGenAIModule);
+import { hasPaidProviderBilling } from "../core/provider-billing.js";

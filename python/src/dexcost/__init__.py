@@ -233,6 +233,7 @@ from dexcost.models.revenue import (
 )
 from dexcost.models.tool import ToolQuantityInput, ToolUsage
 from dexcost.pricing import CostResult, PricingEngine
+from dexcost.provider_billing import bind_provider_billing
 from dexcost.rates import InfrastructureRateEntry, RateEntry, RateRegistry
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.schema import SchemaNotFoundError, validate
@@ -1390,6 +1391,7 @@ __all__ = [
     "bind_browser_session",
     "bind_firecrawl_job",
     "bind_llamaparse_job",
+    "bind_provider_billing",
     "capability_context",
     "catalog_status",
     "clear_context",
