@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.27.0...typescript/v0.28.0) (2026-10-03)
+
+
+### Features
+
+* **attribution:** capture browser session usage safely ([#186](https://github.com/DexwoxBusiness/dexcost-sdk/issues/186)) ([1180c26](https://github.com/DexwoxBusiness/dexcost-sdk/commit/1180c260679a48d4f139abd835ee74ab8bf41a33))
+
 ## [0.27.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.26.0...typescript/v0.27.0) (2026-09-27)
 
 
