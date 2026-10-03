@@ -9,11 +9,10 @@ import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import { bindProviderBilling } from "../src/core/provider-billing.js";
 import { instrumentCohere, uninstrumentCohere, _setClientClass, _resetClientClass } from "../src/instruments/cohere.js";
 
-// CI uses the exact devDependency. The optional path supports an isolated local
-// install when worktrees share node_modules with another running test process.
+// Always exercise the installed package's public entry point, including its
+// exports map. Absolute-path overrides can hide package-resolution failures.
 const require = createRequire(import.meta.url);
-const nativeSdk = process.env.DEXCOST_TEST_COHERE_MODULE ?? "cohere-ai";
-const { CohereClient, CohereClientV2 } = require(nativeSdk);
+const { CohereClient, CohereClientV2 } = require("cohere-ai");
 const operations = ["chat", "chatStream", "embed", "rerank"] as const;
 type Operation = typeof operations[number];
 let directory: string;
@@ -87,7 +86,24 @@ afterEach(() => {
 
 describe("real cohere-ai 8.1.0 no-network transport", () => {
   it("pins the actual generated SDK shape under test", () => {
-    expect(require(`${nativeSdk}/package.json`).version).toBe("8.1.0");
+    for (const v2 of [false, true]) {
+      const client = makeClient(v2);
+      const resource = v2 ? client.clientV2 : client;
+      // package.json is not a public Cohere subpath. The generated transport's
+      // own version metadata verifies the implementation actually under test.
+      expect(resource._options.headers).toMatchObject({
+        "x-fern-sdk-name": "cohere-ai",
+        "x-fern-sdk-version": "8.1.0",
+        "user-agent": "cohere-ai/8.1.0",
+      });
+      for (const operation of operations) {
+        expect(typeof resource[operation]).toBe("function");
+        expect(typeof client[operation]).toBe("function");
+        if (v2) expect(Object.hasOwn(client, operation)).toBe(true);
+      }
+      if (v2) expect(resource).not.toBe(client);
+    }
+    expect(fetchStub).not.toHaveBeenCalled();
   });
   for (const v2 of [false, true]) {
     for (const operation of operations) {
@@ -95,7 +111,7 @@ describe("real cohere-ai 8.1.0 no-network transport", () => {
         respond(v2, operation);
         const client = makeClient(v2);
         const normalized = (v2 ? client.clientV2 : client)._options;
-        expect(Object.keys(normalized.headers)).toContain("x-fern-sdk-version");
+        expect(normalized.headers["x-fern-sdk-version"]).toBe("8.1.0");
         const pending = client[operation](request(v2, operation));
         expect(typeof pending.withRawResponse).toBe("function");
         const data = await pending;

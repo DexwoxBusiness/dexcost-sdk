@@ -5,6 +5,7 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { runDoctor } from "../src/cli/doctor.js";
+import * as instruments from "../src/instruments/index.js";
 import {
   setDebugMode,
   isDebugMode,
@@ -39,9 +40,23 @@ describe("dexcost doctor", () => {
     expect(byId.get("fetch")!.status).toBe("ok");
     expect(byId.get("buffer")!.status).toBe("ok");
     expect(byId.get("endpoint")!.status).toBe("skip"); // --offline
-    // No provider package is installed here — every provider check is a
-    // skip, and the dry-run degrades to a warn, not a fail.
-    expect(byId.get("patch")!.status).toBe("warn");
+    // Cohere is a pinned dev dependency, so its real instrument must activate.
+    const patch = byId.get("patch")!;
+    expect(patch.status).toBe("ok");
+    expect(patch.detail.split(" | inactive:")[0]).toMatch(/\bcohere\b/);
+    expect(report.healthy).toBe(true);
+  }, 30_000);
+
+  it("warns without failing when no provider instrument can activate", async () => {
+    const activate = vi.spyOn(instruments, "instrumentProvider").mockResolvedValue(false);
+    const deactivate = vi.spyOn(instruments, "uninstrumentProvider");
+    const report = await runDoctor({ offline: true });
+    const patch = report.checks.find((check) => check.id === "patch")!;
+
+    expect(activate).toHaveBeenCalledTimes(instruments.ALL_SUPPORTED_INSTRUMENTS.length);
+    expect(deactivate).not.toHaveBeenCalled();
+    expect(patch.status).toBe("warn");
+    expect(patch.detail).toContain("no module instrument activated");
     expect(report.healthy).toBe(true);
   }, 30_000);
 
