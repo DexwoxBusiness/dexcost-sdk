@@ -1,7 +1,11 @@
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import uuid
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -236,8 +240,42 @@ def test_parallel_r2_accounts_do_not_share_route_evidence(setup):
     assert object_storage._transport.get() is None
 
 
-def test_real_botocore_before_send_with_mock_transport(setup, monkeypatch):
-    boto3 = pytest.importorskip("boto3")
+def test_real_botocore_before_send_with_mock_transport(setup, monkeypatch, tmp_path):
+    # Earlier fake-provider tests intentionally replace botocore entries in
+    # sys.modules with None. Test the installed package in a fresh interpreter,
+    # without repairing global imports or treating an installed provider as absent.
+    if os.environ.get("DEXCOST_TEST_OBJECT_STORAGE_NATIVE_CHILD") != "1":
+        try:
+            version("boto3")
+        except PackageNotFoundError:
+            pytest.skip("optional boto3 distribution is not installed")
+        source = Path(__file__).resolve().parents[1] / "src"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                f"{Path(__file__).resolve()}::test_real_botocore_before_send_with_mock_transport",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--basetemp",
+                str(tmp_path / "native-child"),
+            ],
+            env={
+                **os.environ,
+                "PYTHONPATH": str(source),
+                "DEXCOST_TEST_OBJECT_STORAGE_NATIVE_CHILD": "1",
+            },
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 passed" in result.stdout, result.stdout + result.stderr
+        return
+    import boto3
     from botocore.awsrequest import AWSResponse
 
     tracker, _ = setup
