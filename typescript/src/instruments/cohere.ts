@@ -79,8 +79,8 @@ export async function instrumentCohere(
   } else {
     // cohere-ai is an optional peer dependency; the dynamic import
     // only succeeds at runtime if the user has installed it.
-    // @ts-expect-error -- cohere-ai types are not bundled with dexcost
-    const cohereModule = await import("cohere-ai");
+    const packageName = "cohere-ai";
+    const cohereModule = await import(packageName);
     const mod = cohereModule.default ?? cohereModule;
     meteredPrototypes = nativePrototypes([mod.CohereClient, mod.CohereClientV2]);
   }
@@ -99,11 +99,11 @@ function patchChatPrototype(ClientProto: any): void {
   if (typeof _originalChat !== "function" && !_originalChatStream) return;
   _chatPatches.push({ prototype: ClientProto, chat: _originalChat, stream: _originalChatStream });
 
-  ClientProto.chat = async function (
+  ClientProto.chat = function (
     this: any,
     body: any,
     options?: any,
-  ): Promise<any> {
+  ): any {
     if (currentProviderCaptureOwner() !== undefined) {
       return _originalChat!.call(this, body, options);
     }
@@ -128,11 +128,7 @@ function patchChatPrototype(ClientProto: any): void {
     const startTime = performance.now();
     const self = this;
     const paid = paidCohere(self, options);
-    try {
-      const response = await suppressNetworkEvent(() =>
-        runWithProviderCapture("cohere", () =>
-          runWithTask(task, () => _originalChat!.call(self, body, options))),
-      );
+    const complete = (response: any): any => {
       try {
         const latencyMs = Math.round(performance.now() - startTime);
         const model: string = body?.model ?? response?.model ?? "command-r-plus";
@@ -144,7 +140,8 @@ function patchChatPrototype(ClientProto: any): void {
         finalizeAutoTask(task, "success", _buffer);
       }
       return response;
-    } catch (err) {
+    };
+    const fail = (err: unknown): never => {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
         taskType: "cohere.chat", provider: "cohere", service: "chat",
         operation: "cohere.chat", component: "llm", model: body?.model, eventType: "llm_call",
@@ -153,15 +150,23 @@ function patchChatPrototype(ClientProto: any): void {
         finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
-    }
+    };
+    let result: any;
+    try {
+      result = suppressNetworkEvent(() =>
+        runWithProviderCapture("cohere", () =>
+          runWithTask(task, () => _originalChat!.call(self, body, options))),
+      );
+    } catch (err) { return fail(err); }
+    return observeCohereResult(result, complete, fail);
   };
 
   if (_originalChatStream) {
-    ClientProto.chatStream = async function (
+    ClientProto.chatStream = function (
       this: any,
       body: any,
       options?: any,
-    ): Promise<any> {
+    ): any {
       if (currentProviderCaptureOwner() !== undefined) {
         return _originalChatStream!.call(this, body, options);
       }
@@ -185,13 +190,7 @@ function patchChatPrototype(ClientProto: any): void {
       const self = this;
       const paid = paidCohere(self, options);
       const model: string = body?.model ?? "command-r-plus";
-      try {
-        const rawStream = await suppressNetworkEvent(() =>
-          runWithProviderCapture("cohere", () =>
-            runWithTask(task, () => _originalChatStream!.call(self, body, options))),
-        );
-        return wrapStream(rawStream, model, task, startTime, autoCreated, paid);
-      } catch (err) {
+      const fail = (err: unknown): never => {
         if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
           taskType: "cohere.chat_stream", provider: "cohere", service: "chat",
           operation: "cohere.chat_stream", component: "llm", model, eventType: "llm_call",
@@ -200,7 +199,16 @@ function patchChatPrototype(ClientProto: any): void {
           finalizeAutoTask(task, "failed", _buffer);
         }
         throw err;
-      }
+      };
+      let result: any;
+      try {
+        result = suppressNetworkEvent(() =>
+          runWithProviderCapture("cohere", () =>
+            runWithTask(task, () => _originalChatStream!.call(self, body, options))),
+        );
+      } catch (err) { return fail(err); }
+      return observeCohereResult(result,
+        (rawStream) => wrapStream(rawStream, model, task, startTime, autoCreated, paid), fail);
     };
   }
 
@@ -231,10 +239,46 @@ export function uninstrumentCohere(): void {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+const COHERE_METADATA_HEADERS = new Set([
+  "x-fern-language", "x-fern-sdk-name", "x-fern-sdk-version",
+  "x-fern-runtime", "x-fern-runtime-version", "user-agent", "x-client-name",
+]);
+
+/** Observe native settlement once, before caller recovery callbacks. Keep the
+ * HttpResponsePromise surface and bound receiver for withRawResponse(). Raw
+ * stream helpers are passed through; their stream consumption is not captured.
+ */
+function observeCohereResult(raw: any, complete: (value: any) => any, fail: (error: unknown) => never): any {
+  if (raw == null || typeof raw.then !== "function") return complete(raw);
+  const observed = raw.then(complete, fail);
+  // An ignored SDK promise must not create an extra unhandled-rejection report.
+  void observed.catch(() => undefined);
+  return new Proxy(raw, {
+    get(target, property) {
+      if (property === "then" || property === "catch" || property === "finally") {
+        return observed[property].bind(observed);
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function ordinaryCohereHeaders(headers: unknown): boolean {
+  if (headers == null) return true;
+  if (typeof headers !== "object" || Array.isArray(headers)) return false;
+  const prototype = Object.getPrototypeOf(headers);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  // Cohere normalizes these metadata headers on every native client. Inspect
+  // names only: never evaluate a header supplier or read an auth secret value.
+  return Object.keys(headers).every(name => COHERE_METADATA_HEADERS.has(name.toLowerCase()));
+}
+
 function paidCohere(client: any, requestOptions: any): boolean {
   // Reject all per-call options: they can contain alternate auth or routing.
   const options = client?._options;
-  if (requestOptions != null || !options || options.headers != null || options.fetcher != null || options.fetch != null) return false;
+  if (requestOptions != null || !options || !ordinaryCohereHeaders(options.headers) ||
+      options.fetcher != null || options.fetch != null) return false;
   const endpoint = options.baseUrl ?? options.environment ?? "https://api.cohere.com";
   return typeof endpoint === "string" && hasPaidProviderBilling(client, "cohere", endpoint);
 }
@@ -317,7 +361,7 @@ function patchMeteredMethods(prototype: any): void {
     if (typeof prototype?.[name] !== "function") continue;
     const original = prototype[name] as Function;
     _meteredPatches.push({ prototype, name, original });
-    prototype[name] = async function (this: any, body: any, options?: any): Promise<any> {
+    prototype[name] = function (this: any, body: any, options?: any): any {
       if (currentProviderCaptureOwner() !== undefined) return original.call(this, body, options);
       const requested = typeof body?.model === "string" && body.model.length > 0 ? body.model : "unknown";
       const model = name === "embed" && requested.startsWith("cohere/")
@@ -334,14 +378,16 @@ function patchMeteredMethods(prototype: any): void {
         model,
         eventType: "external_cost",
       });
-      try {
-        const response = await session.invoke(() => original.call(this, body, options));
+      let result: any;
+      try { result = session.invoke(() => original.call(this, body, options)); }
+      catch (error) { session.fail(error); throw error; }
+      return observeCohereResult(result, (response) => {
         session.finish(meteredMeasurement(name, response, model, paid));
         return response;
-      } catch (error) {
+      }, (error) => {
         session.fail(error);
         throw error;
-      }
+      });
     };
   }
 }

@@ -42,6 +42,22 @@
       ]
     },
     {
+      "url": "https://github.com/cohere-ai/cohere-typescript/blob/main/src/BaseClient.ts",
+      "package_verified": "cohere-ai@8.1.0",
+      "findings": [
+        "Native normalization adds X-Fern runtime/SDK metadata and User-Agent headers. Only known transport metadata header names are accepted; header values and suppliers are never inspected by admission.",
+        "No-network integration fixtures execute actual V1 and bound V2 clients with their default normalized transport. Auth/routing header overrides remain unpriced."
+      ]
+    },
+    {
+      "url": "https://github.com/cohere-ai/cohere-typescript/blob/main/src/core/fetcher/HttpResponsePromise.ts",
+      "package_verified": "cohere-ai@8.1.0",
+      "findings": [
+        "Native chat, chatStream, embed and rerank expose withRawResponse(). Instrumentation retains its bound receiver, native data and response metadata without another request.",
+        "Provider settlement is observed once before caller catch/finally recovery. Recovered synthetic responses cannot acquire provider-paid evidence. Consuming chatStream exclusively through withRawResponse().data is preserved but not attributed."
+      ]
+    },
+    {
       "url": "https://ai.google.dev/gemini-api/docs/pricing",
       "browser_verified": true,
       "rendered_tabs": [

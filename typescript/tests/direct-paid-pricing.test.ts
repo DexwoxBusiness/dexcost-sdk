@@ -10,6 +10,14 @@ import { instrumentCohere, uninstrumentCohere, _setClientClass, _resetClientClas
 import { instrumentGoogleGenAI, uninstrumentGoogleGenAI, provideGoogleGenAIModule } from "../src/instruments/google-genai.js";
 
 const cases = JSON.parse(readFileSync(new URL("../../tests/fixtures/direct-paid-pricing.json", import.meta.url), "utf8")).cases;
+// Official cohere-ai 8.1.0 BaseClient.normalizeClientOptions adds these even
+// when the application never supplies custom headers.
+const COHERE_NORMALIZED_HEADERS = {
+  "X-Fern-Language": "JavaScript", "X-Fern-SDK-Name": "cohere-ai",
+  "X-Fern-SDK-Version": "8.1.0", "User-Agent": "cohere-ai/8.1.0",
+  "X-Fern-Runtime": "node", "X-Fern-Runtime-Version": "22",
+  "X-Client-Name": undefined,
+};
 let buffer: EventBuffer;
 let directory: string;
 afterEach(() => {
@@ -25,9 +33,11 @@ function camel(value: any): any {
 }
 
 async function capture(testCase: any, { stream = false, tier = "paid", endpoint = testCase.endpoint,
-  options = undefined, rebind = false, response = testCase.response, cancel = false, omitTerminal = false, delegated = false }:
+  options = undefined, rebind = false, response = testCase.response, cancel = false, omitTerminal = false, delegated = false,
+  clientHeaders = COHERE_NORMALIZED_HEADERS, v1 = false }:
   { stream?: boolean; tier?: ProviderBillingTier | null; endpoint?: string; options?: any;
-    rebind?: boolean; response?: any; cancel?: boolean; omitTerminal?: boolean; delegated?: boolean } = {}) {
+    rebind?: boolean; response?: any; cancel?: boolean; omitTerminal?: boolean; delegated?: boolean;
+    clientHeaders?: unknown; v1?: boolean } = {}) {
   directory = mkdtempSync(join(tmpdir(), "dexcost-direct-paid-"));
   buffer = new EventBuffer(join(directory, "events.db"));
   const pricing = new PricingEngine();
@@ -41,15 +51,15 @@ async function capture(testCase: any, { stream = false, tier = "paid", endpoint 
   };
   if (testCase.provider === "cohere") {
     class Client {
-      _options = { environment: endpoint };
+      _options = { environment: endpoint, headers: clientHeaders };
       async chat(_body: any, _options?: any) { return duringRequest(); }
       async embed(_body: any, _options?: any) { return duringRequest(); }
       async rerank(_body: any, _options?: any) { return duringRequest(); }
       async chatStream(_body: any, _options?: any) {
         await duringRequest();
         return (async function* () {
-          yield { type: "message-start", id: raw.id };
-          if (!omitTerminal) yield { type: "message-end", delta: raw };
+          if (!v1) yield { type: "message-start", id: raw.id };
+          if (!omitTerminal) yield v1 ? {eventType: "stream-end", response: raw} : { type: "message-end", delta: raw };
         })();
       }
     }
@@ -99,6 +109,25 @@ function admitted(observation: any): boolean {
 }
 
 describe("caller-attested paid native capture -> shared exact server vectors", () => {
+  for (const stream of [false, true]) it.each(cases.filter((item: any) =>
+    item.provider === "cohere" && item.service === "chat"
+  ))(`admits normalized V1 metadata headers $id (stream=${stream})`, async (testCase: any) => {
+    const response = {generation_id: testCase.response.id, finish_reason: "COMPLETE", meta: testCase.response.usage};
+    expect(admitted(await capture(testCase, {stream, response, v1: true}))).toBe(true);
+  });
+  for (const delegated of [false, true]) it.each(["Authorization", "aUtHoRiZaTiOn", "X-API-Key", "Host", "X-Forwarded-Host"])(
+    `rejects custom auth/routing header %s on normalized client (delegated=${delegated})`, async name => {
+      const headers = {...COHERE_NORMALIZED_HEADERS};
+      Object.defineProperty(headers, name, {enumerable: true, get() { throw new Error("secret must not be inspected"); }});
+      expect(admitted(await capture(cases[0], {delegated, clientHeaders: headers}))).toBe(false);
+    });
+  it("never evaluates normalized metadata header values or suppliers", async () => {
+    const headers = {};
+    for (const name of Object.keys(COHERE_NORMALIZED_HEADERS)) {
+      Object.defineProperty(headers, name.toLowerCase(), {enumerable: true, get() { throw new Error("metadata values must not be inspected"); }});
+    }
+    expect(admitted(await capture(cases[0], {delegated: true, clientHeaders: headers}))).toBe(true);
+  });
   for (const stream of [false, true]) it.each(cases.filter((item: any) =>
     item.provider === "cohere" && (!stream || item.service === "chat")
   ))(`captures real delegated V2 shape $id (stream=${stream})`, async (testCase: any) => {
