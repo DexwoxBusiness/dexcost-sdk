@@ -175,19 +175,9 @@ class TestCostExtractionResponseBody:
         assert result.service_name == "Tavily Search"
         assert result.pricing_source == "service_catalog"
 
-    def test_nested_body_path(self, catalog: ServiceCatalog) -> None:
-        """Dotted paths like 'data.stats.computeUnits' are resolved."""
-        entry = catalog.lookup("https://api.apify.com/v2/acts/run")
-        assert entry is not None
-
-        result = catalog.extract_cost(
-            entry,
-            response_headers={},
-            response_body={"data": {"stats": {"computeUnits": 2.5}}},
-        )
-        assert result is not None
-        # 2.5 * $0.25 = $0.625
-        assert result.amount == Decimal("2.5") * Decimal("0.25")
+    def test_apify_money_is_not_reconstructed(self, catalog: ServiceCatalog) -> None:
+        assert catalog.lookup("https://api.apify.com/v2/acts/run") is None
+        assert catalog.lookup("https://api.firecrawl.dev/v2/scrape") is None
 
     def test_fallback_credits_when_body_missing(self, catalog: ServiceCatalog) -> None:
         """When response body is None, fallback_credits is used."""
@@ -465,7 +455,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
                 "version": "test",
                 "service_count": 1,
                 "disabled_service_count": 1,
-                "safety_policy_version": "2026-09-27.1",
+                "safety_policy_version": "2026-10-03.1",
             },
             "custom_search": {
                 "display_name": "Custom Search",
@@ -480,7 +470,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
         },
         "meta": {
             "catalog_version": "test",
-            "safety_policy_version": "2026-09-27.1",
+            "safety_policy_version": "2026-10-03.1",
             "source": "bundled",
             "service_count": 1,
             "disabled_service_count": 1,

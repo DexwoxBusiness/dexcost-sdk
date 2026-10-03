@@ -1,0 +1,7 @@
+{
+  "task_id": "10000000-0000-4000-8000-000000000001",
+  "started_at": "2026-10-01T10:00:00.000Z",
+  "ended_at": "2026-10-01T10:02:00.000Z",
+  "apify": { "id": "run_one", "actId": "actor_one", "userId": "account", "status": "SUCCEEDED", "startedAt": "2026-10-01T10:00:00.000Z", "finishedAt": "2026-10-01T10:02:00.000Z", "usageTotalUsd": 999, "input": "not-retained" },
+  "firecrawl": { "status": "completed", "creditsUsed": 12, "createdAt": "2026-10-01T10:00:00.000Z", "completedAt": "2026-10-01T10:02:00.000Z", "data": [{ "markdown": "not-retained" }] }
+}
