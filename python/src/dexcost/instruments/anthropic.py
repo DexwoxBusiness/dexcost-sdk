@@ -2388,7 +2388,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 if usage is not None:
                     self._usage = _extract_usage(
                         usage,
-                        self._usage,
+                        None,
                         fallback_model=self._model or self._requested,
                     )
 
@@ -2545,7 +2545,7 @@ class _AsyncStreamWrapper:
                 if usage is not None:
                     self._usage = _extract_usage(
                         usage,
-                        self._usage,
+                        None,
                         fallback_model=self._model or self._requested,
                     )
 

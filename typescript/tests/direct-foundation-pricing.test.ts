@@ -40,7 +40,7 @@ async function capture(testCase: any, stream = false) {
       _client = { baseURL: testCase.endpoint };
       async create(_body: any) { return stream ? streamed([
         { type: "message_start", message: response },
-        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 50 } },
+        { type: "message_delta", delta: { stop_reason: response.stop_reason }, usage: { output_tokens: 50 } },
         { type: "message_stop" },
       ]) : response; }
     }
@@ -63,8 +63,8 @@ async function capture(testCase: any, stream = false) {
 }
 
 describe("raw native capture -> paired v3 -> shared server price vector", () => {
-  it.each(fixture.fail_open_cases)("does not price $id", async (testCase: any) => {
-    const observation = await capture(testCase);
+  for (const stream of [false, true]) it.each(fixture.fail_open_cases)(`does not price $id (stream=${stream})`, async (testCase: any) => {
+    const observation = await capture(testCase, stream);
     if (["unknown-openai-cache-overlap", "unknown-openai-reasoning-overflow"].includes(testCase.id)) {
       expect(observation).toBeNull(); // Strict usage diagnostics suppress invalid v3.
       return;

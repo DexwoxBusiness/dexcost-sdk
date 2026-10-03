@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -27,22 +28,25 @@ def objects(value):
     return value
 
 
-def capture(case, tracker, stream=False):
+def capture(case, tracker, stream=False, asynchronous=False):
     provider = case["provider"]
     body = {"model": case["model"], "stream": stream}
     raw = copy.deepcopy(case["response"])
     if provider == "google":
-        raw = {
-            "response_id": raw["responseId"],
-            "model_version": raw["modelVersion"],
-            "usage_metadata": {
-                "prompt_token_count": raw["usageMetadata"]["promptTokenCount"],
-                "cached_content_token_count": raw["usageMetadata"]["cachedContentTokenCount"],
-                "candidates_token_count": raw["usageMetadata"]["candidatesTokenCount"],
-                "thoughts_token_count": raw["usageMetadata"]["thoughtsTokenCount"],
-                "service_tier": raw["usageMetadata"].get("serviceTier"),
-            },
-        }
+
+        def snake(value):
+            import re
+
+            if isinstance(value, dict):
+                return {
+                    re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): snake(item)
+                    for key, item in value.items()
+                }
+            if isinstance(value, list):
+                return [snake(item) for item in value]
+            return value
+
+        raw = snake(raw)
     response = objects(raw)
     module = {"openai": openai, "anthropic": anthropic, "google": gemini}[provider]
     module._active_tracker = tracker
@@ -53,62 +57,71 @@ def capture(case, tracker, stream=False):
             "_api_client": {"vertexai": False, "_http_options": {"base_url": endpoint}},
         }
     )
-    with tracker.task("direct-foundation") as task:
-        if provider == "openai":
-            result = (
-                [objects({"type": "response.completed", "response": raw})] if stream else response
-            )
+    options = {}
+    chunks = [response]
+    if provider == "openai":
+        chunks = [objects({"type": "response.completed", "response": raw})]
+        wrapper = openai._routed_wrapper(
+            openai._async_responses_create_wrapper
+            if asynchronous
+            else openai._sync_responses_create_wrapper
+        )
+    elif provider == "anthropic":
+        chunks = [
+            objects({"type": "message_start", "message": raw}),
+            objects(
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": raw.get("stop_reason")},
+                    "usage": {"output_tokens": 50},
+                }
+            ),
+            objects({"type": "message_stop"}),
+        ]
+        wrapper = (
+            anthropic._async_message_create_wrapper
+            if asynchronous
+            else anthropic._sync_message_create_wrapper
+        )
+        options = {
+            "task_type": "anthropic.messages",
+            "service_name": "messages",
+            "operation_name": "anthropic.messages.create",
+        }
+    elif stream:
+        wrapper = gemini._async_stream_call if asynchronous else gemini._sync_stream_call
+    else:
+        wrapper = gemini._async_direct_call if asynchronous else gemini._sync_direct_call
+        options = {
+            "operation": "google.genai.models.generate_content",
+            "component": "llm",
+            "event_type": "llm_call",
+            "extract": gemini._content_extract,
+        }
 
-            def wrapped(**_):
-                return iter(result) if stream else result
+    def wrapped(**_):
+        return iter(chunks) if stream else response
 
-            returned = openai._routed_wrapper(openai._sync_responses_create_wrapper)(
-                wrapped, resource, (), body
-            )
-        elif provider == "anthropic":
-            result = (
-                [
-                    objects({"type": "message_start", "message": raw}),
-                    objects(
-                        {
-                            "type": "message_delta",
-                            "delta": {"stop_reason": "end_turn"},
-                            "usage": {"output_tokens": 50},
-                        }
-                    ),
-                    objects({"type": "message_stop"}),
-                ]
-                if stream
-                else response
-            )
+    async def async_chunks():
+        for chunk in chunks:
+            yield chunk
 
-            def wrapped(**_):
-                return iter(result) if stream else result
+    async def async_wrapped(**_):
+        return async_chunks() if stream else response
 
-            returned = anthropic._sync_message_create_wrapper(
-                wrapped,
-                resource,
-                (),
-                body,
-                task_type="anthropic.messages",
-                service_name="messages",
-                operation_name="anthropic.messages.create",
-            )
-        elif stream:
-            returned = gemini._sync_stream_call(lambda **_: iter([response]), resource, (), body)
-        else:
-            returned = gemini._sync_direct_call(
-                lambda **_: response,
-                resource,
-                (),
-                body,
-                operation="google.genai.models.generate_content",
-                component="llm",
-                event_type="llm_call",
-                extract=gemini._content_extract,
-            )
+    async def consume():
+        returned = await wrapper(async_wrapped, resource, (), body, **options)
         if stream:
-            list(returned)
+            async for _chunk in returned:
+                pass
+
+    with tracker.task("direct-foundation") as task:
+        if asynchronous:
+            asyncio.run(consume())
+        else:
+            returned = wrapper(wrapped, resource, (), body, **options)
+            if stream:
+                list(returned)
     event = tracker._storage.query_events(task_id=str(task.task_id))[0]
     return to_attribution_observation_v3(event)
 
@@ -125,8 +138,9 @@ def tracker(tmp_path):
 
 @pytest.mark.parametrize("case", FIXTURE["cases"], ids=lambda case: case["id"])
 @pytest.mark.parametrize("stream", [False, True])
-def test_raw_capture_matches_server_price_vector(case, stream, tracker):
-    observation = capture(case, tracker, stream)
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_raw_capture_matches_server_price_vector(case, stream, asynchronous, tracker):
+    observation = capture(case, tracker, stream, asynchronous)
     assert observation is not None
     assert observation["component"] == "llm"
     assert observation["provider"]["name"] == case["provider"]
@@ -165,8 +179,9 @@ def test_unknown_route_or_tier_stays_unpriced(provider, reason, tracker):
 
 
 @pytest.mark.parametrize("case", FIXTURE["fail_open_cases"], ids=lambda case: case["id"])
-def test_unsupported_or_inconsistent_billing_stays_unpriced(case, tracker):
-    observation = capture(case, tracker)
+@pytest.mark.parametrize("stream", [False, True])
+def test_unsupported_or_inconsistent_billing_stays_unpriced(case, stream, tracker):
+    observation = capture(case, tracker, stream)
     if case["id"] in {"unknown-openai-cache-overlap", "unknown-openai-reasoning-overflow"}:
         assert observation is None  # Existing strict usage diagnostics suppress invalid v3.
         return

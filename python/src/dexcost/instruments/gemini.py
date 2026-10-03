@@ -351,9 +351,25 @@ def _admit_direct_content(
 ) -> OperationMeasurement:
     usage = _value(response, "usage_metadata")
     prompt = _count(_value(usage, "prompt_token_count"))
-    cached = _count(_value(usage, "cached_content_token_count") or 0)
+    raw_cached = _value(usage, "cached_content_token_count")
+    cached = _count(0 if raw_cached is None else raw_cached)
     output = _count(_value(usage, "candidates_token_count"))
-    thoughts = _count(_value(usage, "thoughts_token_count") or 0)
+    raw_thoughts = _value(usage, "thoughts_token_count")
+    thoughts = _count(0 if raw_thoughts is None else raw_thoughts)
+
+    def valid_details(name: str, total: int | None) -> bool:
+        details = _value(usage, name)
+        if details is None:
+            return True
+        if not isinstance(details, (list, tuple)):
+            return False
+        counts = [_count(_value(item, "token_count")) for item in details]
+        return (
+            all(_value(item, "modality") == "TEXT" for item in details)
+            and all(count is not None for count in counts)
+            and sum(count for count in counts if count is not None) == total
+        )
+
     allowed = {
         "input_tokens",
         "cache_read_input_tokens",
@@ -362,7 +378,7 @@ def _admit_direct_content(
     }
     if (
         direct
-        and measurement.response_model == "gemini-3.1-pro-preview"
+        and _value(response, "model_version") == "gemini-3.1-pro-preview"
         and _value(usage, "service_tier") == "standard"
         and prompt is not None
         and prompt > 0
@@ -370,6 +386,9 @@ def _admit_direct_content(
         and cached <= prompt
         and output is not None
         and thoughts is not None
+        and valid_details("prompt_tokens_details", prompt)
+        and valid_details("cache_tokens_details", cached)
+        and valid_details("candidates_tokens_details", output)
         and _value(usage, "tool_use_prompt_token_count") in (None, 0)
         and all(line.metric in allowed for line in measurement.usage_lines)
     ):

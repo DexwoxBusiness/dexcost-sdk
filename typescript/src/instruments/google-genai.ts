@@ -97,11 +97,14 @@ function admitDirectContent(measurement: OperationMeasurement, response: any, ow
     const cached = usage?.cachedContentTokenCount ?? 0;
     const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
     const details = [usage?.promptTokensDetails, usage?.cacheTokensDetails, usage?.candidatesTokensDetails];
+    const totals = [prompt, cached, usage?.candidatesTokenCount];
     if (!vertex && endpoint.protocol === "https:" && endpoint.hostname === "generativelanguage.googleapis.com" &&
         model === "gemini-3.1-pro-preview" && usage?.serviceTier === "standard" &&
         [prompt, cached, usage?.candidatesTokenCount, usage?.thoughtsTokenCount ?? 0].every(count) &&
         prompt > 0 && cached <= prompt && [undefined, null, 0].includes(usage?.toolUsePromptTokenCount) &&
-        details.every((items) => items == null || (Array.isArray(items) && items.every((item: any) => item?.modality === "TEXT")))) {
+        details.every((items, index) => items == null || (Array.isArray(items) &&
+          items.every((item: any) => item?.modality === "TEXT" && count(item?.tokenCount)) &&
+          items.reduce((sum: number, item: any) => sum + item.tokenCount, 0) === totals[index]))) {
       return { ...measurement, responseModel: model, providerService: "gemini", billingDimensions: [
         ...(measurement.billingDimensions ?? []),
         ["direct_llm_pricing_lane", prompt > 200_000 ? "standard_long" : "standard_short"],
