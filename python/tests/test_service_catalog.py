@@ -10,7 +10,7 @@ import pytest
 
 import dexcost.service_catalog as service_catalog_module
 from dexcost import __version__
-from dexcost.service_catalog import ServiceCatalog
+from dexcost.service_catalog import ServiceCatalog, ServiceEntry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -222,12 +222,8 @@ class TestCostExtractionResponseBody:
 class TestCostExtractionResponseHeader:
     """Extraction type: response_header."""
 
-    def test_pinecone_read_units_do_not_create_sdk_money(
-        self, catalog: ServiceCatalog
-    ) -> None:
-        entry = catalog.lookup(
-            "https://my-index.svc.us-east1-gcp.pinecone.io/query"
-        )
+    def test_pinecone_read_units_do_not_create_sdk_money(self, catalog: ServiceCatalog) -> None:
+        entry = catalog.lookup("https://my-index.svc.us-east1-gcp.pinecone.io/query")
         assert entry is None
 
     def test_body_missing_returns_none(self, catalog: ServiceCatalog) -> None:
@@ -339,9 +335,24 @@ class TestTransforms:
         assert result.amount == Decimal("5000") / Decimal("1000") * Decimal("0.000014")
 
     def test_ms_to_minutes(self, catalog: ServiceCatalog) -> None:
-        """Browserbase: duration_ms is converted to minutes."""
-        entry = catalog.lookup("https://api.browserbase.com/sessions")
-        assert entry is not None
+        """The generic transform survives without an unverified provider price."""
+        assert catalog.lookup("https://api.browserbase.com/sessions") is None
+        assert catalog.lookup("https://chrome.browserless.io/screenshot") is None
+        entry = ServiceEntry(
+            key="example",
+            display_name="Example",
+            domains=["example.test"],
+            category="test",
+            pricing_model="per_minute",
+            cost_extraction={
+                "type": "response_body",
+                "path": "duration_ms",
+                "transform": "ms_to_minutes",
+            },
+            source="https://example.test",
+            last_verified="2026-09-27",
+            rate_fields={"cost_per_minute_usd": "0.002"},
+        )
 
         result = catalog.extract_cost(
             entry,
@@ -454,7 +465,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
                 "version": "test",
                 "service_count": 1,
                 "disabled_service_count": 1,
-                "safety_policy_version": "2026-09-03.26",
+                "safety_policy_version": "2026-09-27.1",
             },
             "custom_search": {
                 "display_name": "Custom Search",
@@ -469,7 +480,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
         },
         "meta": {
             "catalog_version": "test",
-            "safety_policy_version": "2026-09-03.26",
+            "safety_policy_version": "2026-09-27.1",
             "source": "bundled",
             "service_count": 1,
             "disabled_service_count": 1,

@@ -269,8 +269,11 @@ describe("ServiceCatalog", () => {
 
   it("applies ms_to_minutes transform", () => {
     const catalog = new ServiceCatalog();
-    const entry = catalog.lookup("https://api.browserbase.com/v1/sessions/abc/run");
-    expect(entry).not.toBeNull();
+    expect(catalog.lookup("https://api.browserbase.com/v1/sessions/abc/run")).toBeNull();
+    expect(catalog.lookup("https://chrome.browserless.io/screenshot")).toBeNull();
+    const entry = { key: "example", display_name: "Example", domains: ["example.test"], category: "test",
+      pricing_model: "per_minute", cost_extraction: { type: "response_body" as const, path: "duration_ms", transform: "ms_to_minutes" },
+      source: "https://example.test", last_verified: "2026-09-27", cost_per_minute_usd: "0.002" };
 
     const body = { duration_ms: 120000 }; // 2 minutes
     const result = catalog.extractCost(entry!, new Headers(), body);
@@ -327,7 +330,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 1,
-          safety_policy_version: "2026-09-03.26",
+          safety_policy_version: "2026-09-27.1",
         },
         custom_search: {
           display_name: "Custom Search",
@@ -342,7 +345,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-09-03.26",
+        safety_policy_version: "2026-09-27.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 1,
@@ -375,7 +378,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 0,
-          safety_policy_version: "2026-09-03.26",
+          safety_policy_version: "2026-09-27.1",
         },
         synthetic_zero: {
           display_name: "Synthetic Zero",
@@ -390,7 +393,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-09-03.26",
+        safety_policy_version: "2026-09-27.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 0,

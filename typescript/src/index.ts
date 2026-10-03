@@ -17,6 +17,8 @@
  */
 
 // Core
+export { bindBrowserSession, recordBrowserSession, instrumentBrowserbase, uninstrumentBrowserbase } from "./instruments/browser-sessions.js";
+export type { BrowserSessionIdentity, BrowserSessionBinding, BrowserSessionUsage } from "./instruments/browser-sessions.js";
 export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
 export type { RuntimeResource } from "./instruments/runtime.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";

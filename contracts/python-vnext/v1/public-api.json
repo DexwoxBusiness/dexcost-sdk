@@ -1187,6 +1187,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.browser_sessions",
+      "name": "bind_browser_session",
+      "signature": "(tracker: 'Any', *, service_key: 'str', billing_account_id: 'str', resource_id: 'str', session_id: 'str', started_at: 'datetime', managed_proxy: 'bool' = False) -> 'bool'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.capabilities",
       "name": "capability_context",
       "signature": "(capability: 'CapabilityIdentity') -> 'Generator[CapabilityIdentity, None, None]'"
@@ -1319,6 +1325,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.browser_sessions",
+      "name": "instrument_browserbase",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.cohere",
       "name": "instrument_cohere",
       "signature": "(tracker: 'Any') -> 'None'"
@@ -1400,6 +1412,12 @@
       "module": "dexcost.delivery",
       "name": "on_delivery_error",
       "signature": "(callback: 'DeliveryErrorCallback') -> 'DeliveryErrorCallback'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.browser_sessions",
+      "name": "record_browser_session",
+      "signature": "(tracker: 'Any', *, service_key: 'str', billing_account_id: 'str', session_id: 'str', ended_at: 'datetime', status: \"Literal['succeeded', 'failed', 'cancelled']\", revision: 'int' = 2, proxy_bytes: 'str | None' = None, time_units: 'str | None' = None, proxy_units: 'str | None' = None, captcha_units: 'str | None' = None) -> 'bool'"
     },
     {
       "kind": "function",
@@ -1532,6 +1550,12 @@
       "module": "dexcost.instruments.bedrock",
       "name": "uninstrument_bedrock",
       "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.browser_sessions",
+      "name": "uninstrument_browserbase",
+      "signature": "(client: 'Any') -> 'None'"
     },
     {
       "kind": "function",

@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 180,
-  "typescript_export_count": 337,
-  "equivalent_count": 177,
+  "python_export_count": 184,
+  "typescript_export_count": 344,
+  "equivalent_count": 181,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -943,6 +943,15 @@
       "notes": null
     },
     {
+      "python_name": "bind_browser_session",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "bindBrowserSession"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "capability_context",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1141,6 +1150,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_browserbase",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentBrowserbase"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "instrument_cohere",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1263,6 +1281,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "onDeliveryError"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_browser_session",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordBrowserSession"
       ],
       "notes": null
     },
@@ -1457,6 +1484,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "uninstrumentBedrock"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_browserbase",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentBrowserbase"
       ],
       "notes": null
     },

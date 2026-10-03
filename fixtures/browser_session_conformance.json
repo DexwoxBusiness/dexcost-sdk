@@ -1,0 +1,13 @@
+{
+  "task_id": "11111111-1111-4111-8111-111111111111",
+  "started_at": "2026-09-01T12:00:00Z",
+  "ended_at": "2026-09-01T12:01:00.125Z",
+  "cases": [
+    {"id":"base-managed", "service":"browserbase", "managed":true, "status":"succeeded", "meters":{"proxy_bytes":"1000"}, "usage":{"browser.session_seconds":"60.125","browser.proxy_bytes":"1000"}},
+    {"id":"base-timeout", "service":"browserbase", "managed":false, "status":"failed", "meters":{}, "usage":{"browser.session_seconds":"60.125"}},
+    {"id":"less-billed", "service":"browserless", "managed":false, "status":"succeeded", "meters":{"time_units":"3","proxy_units":"0.125","captcha_units":"10"}, "usage":{"browser.time_units":"3","browser.proxy_units":"0.125","browser.captcha_units":"10"}},
+    {"id":"less-failed", "service":"browserless", "managed":false, "status":"failed", "meters":{"time_units":"1"}, "usage":{"browser.time_units":"1"}},
+    {"id":"less-zero", "service":"browserless", "managed":false, "status":"succeeded", "meters":{"time_units":"0"}, "usage":{}},
+    {"id":"less-unknown", "service":"browserless", "managed":false, "status":"cancelled", "meters":{}, "usage":{}}
+  ]
+}

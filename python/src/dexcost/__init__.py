@@ -158,6 +158,12 @@ from dexcost.instruments import (
     uninstrument_openrouter,
     uninstrument_perplexity,
 )
+from dexcost.instruments.browser_sessions import (
+    bind_browser_session,
+    instrument_browserbase,
+    record_browser_session,
+    uninstrument_browserbase,
+)
 from dexcost.instruments.database import (
     database_resource_id,
     instrument_redis_client,
@@ -1359,6 +1365,7 @@ __all__ = [
     "assert_webhook_signature",
     "async_task_context",
     "attach_task",
+    "bind_browser_session",
     "capability_context",
     "catalog_status",
     "clear_context",
@@ -1381,6 +1388,7 @@ __all__ = [
     "init",
     "instrument_anthropic",
     "instrument_bedrock",
+    "instrument_browserbase",
     "instrument_cohere",
     "instrument_e2b_sandbox",
     "instrument_fal",
@@ -1395,6 +1403,7 @@ __all__ = [
     "instrument_redis_client",
     "mongodb_command_listener",
     "on_delivery_error",
+    "record_browser_session",
     "record_cost",
     "record_outcome",
     "record_revenue",
@@ -1417,6 +1426,7 @@ __all__ = [
     "track_tool",
     "uninstrument_anthropic",
     "uninstrument_bedrock",
+    "uninstrument_browserbase",
     "uninstrument_cohere",
     "uninstrument_e2b_sandbox",
     "uninstrument_fal",
