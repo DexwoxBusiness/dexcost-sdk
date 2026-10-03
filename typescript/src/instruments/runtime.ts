@@ -7,7 +7,7 @@ import type { CostTracker } from "../core/tracker.js";
 import { databaseResourceId } from "./database.js";
 
 export interface RuntimeResource {
-  serviceKey: "modal_compute" | "e2b_sandbox";
+  serviceKey: "modal_compute" | "e2b_sandbox" | "aws_ec2";
   billingAccountId: string;
   resourceId: string;
   vcpuCount?: number;
@@ -15,7 +15,11 @@ export interface RuntimeResource {
 }
 const active = new AsyncLocalStorage<ReadonlySet<string>>();
 function configuration(config: RuntimeResource): string {
-  if (!["modal_compute", "e2b_sandbox"].includes(config.serviceKey)) throw new Error("Unsupported runtime");
+  if (!["modal_compute", "e2b_sandbox", "aws_ec2"].includes(config.serviceKey)) throw new Error("Unsupported runtime");
+  if (config.serviceKey === "aws_ec2" && (!/^[0-9]{12}$/.test(config.billingAccountId) ||
+      !/^[0-9]{12}\.[a-z]{2}(?:-[a-z]+)+-[0-9]\.i-(?:[0-9a-f]{8}|[0-9a-f]{17})$/.test(config.resourceId))) {
+    throw new Error("EC2 requires payer account and usage-account.region.instance-id");
+  }
   for (const value of [config.vcpuCount, config.memoryMiB]) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 1_048_576)) {
       throw new Error("Resource configuration must be a positive integer");
@@ -26,6 +30,7 @@ function configuration(config: RuntimeResource): string {
 
 /** Elapsed client work is an allocation weight, not provider-billed runtime.
  * Use instead of the legacy GPU monetary wrapper. Preserves sync return values.
+ * EC2 opt-in replaces local automatic EC2 compute/GPU estimates for this task.
  */
 export function wrapRuntimeHandler<A extends unknown[], R>(
   fn: (...args: A) => R, tracker: CostTracker, config: RuntimeResource,
@@ -36,6 +41,11 @@ export function wrapRuntimeHandler<A extends unknown[], R>(
     const task = getCurrentTask();
     const key = `${config.serviceKey}/${resource}/${task?.taskId}`;
     if (!task || active.getStore()?.has(key)) return fn.apply(this, args);
+    if (config.serviceKey === "aws_ec2") {
+      const accountant = task._compute as { runtime?: string } | undefined;
+      if (accountant && accountant.runtime !== "ec2") return fn.apply(this, args);
+      (task as typeof task & { _invoiceEc2?: boolean })._invoiceEc2 = true;
+    }
     const started = new Date(), clock = performance.now();
     let finished = false;
     const finish = (failed: boolean): void => {

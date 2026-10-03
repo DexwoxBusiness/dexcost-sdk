@@ -105,6 +105,33 @@ def test_nested_missing_task_and_telemetry_failure(recording):
     assert outer() == 42
 
 
+def test_ec2_exact_mapping_and_exclusion_of_lambda(recording):
+    tracker, events, clock = recording
+    config = dict(service_key="aws_ec2", billing_account_id="111111111111",
+                  resource_id="222222222222.us-east-1.i-1234567890abcdef0")
+
+    def work():
+        clock[0] += 100
+        return "private-result"
+
+    wrapped = wrap_runtime_handler(work, tracker, **config)
+    assert wrapped() == "private-result"
+    assert getattr(_current_task.get(), "_invoice_ec2", False) is True
+    obs = to_attribution_observation_v3(events[0])
+    assert obs["provider"] == {"name": "aws_ec2", "service": "runtime"}
+    assert obs["resource"]["id"] == "111111111111/222222222222.us-east-1.i-1234567890abcdef0"
+    assert obs["usage"][0]["quantity"] == "0.1"
+    assert "cost_evidence" not in obs
+    task = _current_task.get()
+    task._compute = SimpleNamespace(runtime="lambda")
+    assert wrapped() == "private-result"
+    assert len(events) == 1
+    for changes in [{"billing_account_id": "acct"}, {"resource_id": "instance"},
+                    {"resource_id": "222222222222.us-east-1.function-name"}]:
+        with pytest.raises(ValueError, match="EC2 requires"):
+            wrap_runtime_handler(work, tracker, **{**config, **changes})
+
+
 def test_async_e2b_command_and_failed_pause(recording):
     tracker, events, clock = recording
 
