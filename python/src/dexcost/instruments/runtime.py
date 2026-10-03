@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextvars
 import functools
 import inspect
+import re
 import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import suppress
@@ -28,8 +29,16 @@ _active: contextvars.ContextVar[frozenset[tuple[str, str, str]]] = contextvars.C
 def _configuration(
     service: str, account: str, resource: str, cpu: int | None, memory: int | None
 ) -> str:
-    if service not in {"modal_compute", "e2b_sandbox"}:
-        raise ValueError("Supported runtimes: modal_compute, e2b_sandbox")
+    if service not in {"modal_compute", "e2b_sandbox", "aws_ec2"}:
+        raise ValueError("Supported runtimes: modal_compute, e2b_sandbox, aws_ec2")
+    if service == "aws_ec2" and (
+        not re.fullmatch(r"[0-9]{12}", account)
+        or not re.fullmatch(
+            r"[0-9]{12}\.[a-z]{2}(?:-[a-z]+)+-[0-9]\.i-(?:[0-9a-f]{8}|[0-9a-f]{17})",
+            resource,
+        )
+    ):
+        raise ValueError("EC2 requires payer account and usage-account.region.instance-id")
     for value in (cpu, memory):
         if value is not None and (type(value) is not int or not 1 <= value <= 1_048_576):
             raise ValueError("Resource configuration must be a positive integer")
@@ -49,16 +58,23 @@ def wrap_runtime_handler(
     """Wrap sync/async work; elapsed time is an optional invoice allocation weight.
 
     For Modal pass its app/object ID, not an inferred hostname. For E2B use the
-    sandbox ID. Use instead of, not around, the legacy monetary GPU wrapper.
+    sandbox ID. EC2 requires the payer account and usage-account.region.instance-id;
+    opting in replaces local EC2 automatic compute/GPU estimates for this task.
+    Use instead of, not around, the legacy monetary GPU wrapper.
     Nested wrappers for the same resource/task are suppressed. Distinct parallel
     calls remain distinct weights, not claims of exclusive physical CPU time.
     """
     resource = _configuration(service_key, billing_account_id, resource_id, vcpu_count, memory_mib)
 
     def start() -> Any:
-        task = get_current_task()
+        task: Any = get_current_task()
         if task is None:
             return None
+        if service_key == "aws_ec2":
+            accountant = getattr(task, "_compute", None)
+            if accountant is not None and getattr(accountant, "runtime", None) != "ec2":
+                return None  # Lambda, containers and other runtimes are not EC2 instance evidence.
+            task._invoice_ec2 = True
         key = (service_key, resource, str(task.task_id))
         if key in _active.get():
             return None

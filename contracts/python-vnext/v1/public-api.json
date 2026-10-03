@@ -1187,9 +1187,21 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "bind_apify_run",
+      "signature": "(tracker: 'Any', run: 'Any') -> 'bool'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.browser_sessions",
       "name": "bind_browser_session",
       "signature": "(tracker: 'Any', *, service_key: 'str', billing_account_id: 'str', resource_id: 'str', session_id: 'str', started_at: 'datetime', managed_proxy: 'bool' = False) -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "bind_firecrawl_job",
+      "signature": "(tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str', job_id: 'str', started_at: 'datetime', operation: \"Literal['crawl', 'batch_scrape']\") -> 'bool'"
     },
     {
       "kind": "function",
@@ -1319,6 +1331,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "instrument_apify",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.bedrock",
       "name": "instrument_bedrock",
       "signature": "(tracker: 'Any') -> 'None'"
@@ -1346,6 +1364,12 @@
       "module": "dexcost.instruments.fal",
       "name": "instrument_fal",
       "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "instrument_firecrawl",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str') -> 'Any'"
     },
     {
       "kind": "function",
@@ -1415,6 +1439,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "record_apify_run",
+      "signature": "(tracker: 'Any', run: 'Any', *, revision: 'int' = 2) -> 'bool'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.browser_sessions",
       "name": "record_browser_session",
       "signature": "(tracker: 'Any', *, service_key: 'str', billing_account_id: 'str', session_id: 'str', ended_at: 'datetime', status: \"Literal['succeeded', 'failed', 'cancelled']\", revision: 'int' = 2, proxy_bytes: 'str | None' = None, time_units: 'str | None' = None, proxy_units: 'str | None' = None, captcha_units: 'str | None' = None) -> 'bool'"
@@ -1424,6 +1454,18 @@
       "module": "dexcost",
       "name": "record_cost",
       "signature": "(service: 'str', cost_usd: 'Decimal | str', *, event_type: 'str' = 'external_cost', cost_confidence: 'str' = 'exact', pricing_source: 'str' = 'manual', pricing_version: 'str | None' = None, details: 'dict[str, Any] | None' = None, idempotency_key: 'str | None' = None, capability: 'CapabilityIdentity | None' = None) -> 'Event'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "record_firecrawl_job",
+      "signature": "(tracker: 'Any', response: 'Any', *, billing_account_id: 'str', job_id: 'str', revision: 'int' = 2) -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "record_firecrawl_search",
+      "signature": "(tracker: 'Any', response: 'Any', *, billing_account_id: 'str', resource_id: 'str', occurred_at: 'datetime', observed_at: 'datetime', revision: 'int' = 2) -> 'bool'"
     },
     {
       "kind": "function",
@@ -1547,6 +1589,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "uninstrument_apify",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.bedrock",
       "name": "uninstrument_bedrock",
       "signature": "() -> 'None'"
@@ -1574,6 +1622,12 @@
       "module": "dexcost.instruments.fal",
       "name": "uninstrument_fal",
       "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.web_tools",
+      "name": "uninstrument_firecrawl",
+      "signature": "(client: 'Any') -> 'None'"
     },
     {
       "kind": "function",

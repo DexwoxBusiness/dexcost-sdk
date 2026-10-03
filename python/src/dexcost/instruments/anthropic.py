@@ -81,6 +81,22 @@ _originals: dict[str, Any] = {}
 _optional_originals: list[tuple[Any, str, Any]] = []
 
 
+def _direct_standard_messages(instance: Any, kwargs: dict[str, Any]) -> bool:
+    client = getattr(instance, "_client", None)
+    raw = getattr(client, "base_url", None) or getattr(client, "_base_url", None)
+    try:
+        endpoint = urlparse(str(raw or ""))
+        return (
+            endpoint.scheme == "https"
+            and endpoint.hostname == "api.anthropic.com"
+            and kwargs.get("speed") in (None, "standard")
+            and kwargs.get("inference_geo") in (None, "global")
+            and not kwargs.get("betas")
+        )
+    except ValueError:
+        return False
+
+
 def _provider_for_messages_instance(instance: Any) -> str:
     """Identify documented Anthropic-compatible providers at the SDK edge."""
     try:
@@ -426,6 +442,7 @@ def _sync_message_create_wrapper(
 ) -> Any:
     """Capture one stable or Beta sync Messages call."""
     provider = _provider_for_messages_instance(instance)
+    direct_standard = _direct_standard_messages(instance, kwargs)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -470,6 +487,7 @@ def _sync_message_create_wrapper(
                 provider,
                 service_name,
                 operation_name,
+                direct_standard,
             )
 
         try:
@@ -501,6 +519,7 @@ def _sync_message_create_wrapper(
                 provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
+                direct_standard=direct_standard,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -566,6 +585,7 @@ def _async_message_create_wrapper(
 ) -> Any:
     """Capture one stable or Beta async Messages call."""
     provider = _provider_for_messages_instance(instance)
+    direct_standard = _direct_standard_messages(instance, kwargs)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -593,6 +613,7 @@ def _async_message_create_wrapper(
             provider,
             service_name,
             operation_name,
+            direct_standard,
         )
 
     return _async_non_stream_handler(
@@ -608,6 +629,7 @@ def _async_message_create_wrapper(
         provider,
         service_name,
         operation_name,
+        direct_standard,
     )
 
 
@@ -624,6 +646,7 @@ async def _async_non_stream_handler(
     provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
+    direct_standard: bool = False,
 ) -> Any:
     """Await the async create call and record the response."""
     if auto_task_obj is not None and auto_token is None:
@@ -658,6 +681,7 @@ async def _async_non_stream_handler(
                 provider=provider,
                 service_name=service_name,
                 operation_name=operation_name,
+                direct_standard=direct_standard,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -689,6 +713,7 @@ async def _async_stream_handler(
     provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
+    direct_standard: bool = False,
 ) -> Any:
     """Wrap async streaming to capture usage from the final events."""
     if auto_task_obj is not None and auto_token is None:
@@ -722,6 +747,7 @@ async def _async_stream_handler(
             provider,
             service_name,
             operation_name,
+            direct_standard,
         )
     finally:
         if auto_token is not None:
@@ -946,20 +972,12 @@ def _optional_non_negative_decimal(value: Any) -> Decimal | None:
 
 
 def _managed_session_model(resource: Any, fallback: str) -> str:
-    return (
-        _bounded_string(
-            _value(_value(_value(resource, "agent"), "model"), "id")
-        )
-        or fallback
-    )
+    return _bounded_string(_value(_value(_value(resource, "agent"), "model"), "id")) or fallback
 
 
 def _managed_session_requested_model(kwargs: dict[str, Any]) -> str:
     agent = kwargs.get("agent")
-    return (
-        _bounded_string(_value(_value(agent, "model"), "id"))
-        or "anthropic-managed-agent"
-    )
+    return _bounded_string(_value(_value(agent, "model"), "id")) or "anthropic-managed-agent"
 
 
 def _managed_session_provider_cost(usage: Any) -> Decimal | None:
@@ -978,11 +996,7 @@ def _managed_session_measurement(
     model: str,
     include_resource_metadata: bool,
 ) -> OperationMeasurement:
-    usage = (
-        _value(resource_or_usage, "usage")
-        if include_resource_metadata
-        else resource_or_usage
-    )
+    usage = _value(resource_or_usage, "usage") if include_resource_metadata else resource_or_usage
     input_tokens = _optional_non_negative_int(_value(usage, "input_tokens"))
     output_tokens = _optional_non_negative_int(_value(usage, "output_tokens"))
     cached_tokens = _optional_non_negative_int(
@@ -1497,9 +1511,11 @@ def _persist_deployment_session(
             session.release_context()
         return
     tracker = _active_tracker
-    if tracker is not None and tracker._storage.get_provider_job(
-        "anthropic", "managed_sessions", session_id
-    ) is not None:
+    if (
+        tracker is not None
+        and tracker._storage.get_provider_job("anthropic", "managed_sessions", session_id)
+        is not None
+    ):
         session.release_context()
         return
     session.submit(session_id, status="submitted")
@@ -2313,6 +2329,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         provider: str = "anthropic",
         service_name: str = "messages",
         operation_name: str = "anthropic.messages.create",
+        direct_standard: bool = False,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -2330,6 +2347,7 @@ class _SyncStreamWrapper(Iterator[Any]):
         self._provider = provider
         self._service_name = service_name
         self._operation_name = operation_name
+        self._direct_standard = direct_standard
 
     def __iter__(self) -> _SyncStreamWrapper:
         return self
@@ -2370,7 +2388,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 if usage is not None:
                     self._usage = _extract_usage(
                         usage,
-                        self._usage,
+                        None,
                         fallback_model=self._model or self._requested,
                     )
 
@@ -2409,6 +2427,7 @@ class _SyncStreamWrapper(Iterator[Any]):
                 provider=self._provider,
                 service_name=self._service_name,
                 operation_name=self._operation_name,
+                direct_standard=self._direct_standard,
             )
             if self._auto_task_obj is not None and event is not None:
                 finalize_auto_task(
@@ -2467,6 +2486,7 @@ class _AsyncStreamWrapper:
         provider: str = "anthropic",
         service_name: str = "messages",
         operation_name: str = "anthropic.messages.create",
+        direct_standard: bool = False,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
@@ -2484,6 +2504,7 @@ class _AsyncStreamWrapper:
         self._provider = provider
         self._service_name = service_name
         self._operation_name = operation_name
+        self._direct_standard = direct_standard
 
     def __aiter__(self) -> _AsyncStreamWrapper:
         return self
@@ -2524,7 +2545,7 @@ class _AsyncStreamWrapper:
                 if usage is not None:
                     self._usage = _extract_usage(
                         usage,
-                        self._usage,
+                        None,
                         fallback_model=self._model or self._requested,
                     )
 
@@ -2563,6 +2584,7 @@ class _AsyncStreamWrapper:
                 provider=self._provider,
                 service_name=self._service_name,
                 operation_name=self._operation_name,
+                direct_standard=self._direct_standard,
             )
             if self._auto_task_obj is not None and event is not None:
                 finalize_auto_task(
@@ -2662,6 +2684,7 @@ class _UsageSnapshot:
     fallback_credit_status: str | None = None
     iterations: tuple[_UsageIteration, ...] = ()
     cache_breakdown_inconsistent: bool = False
+    canonical_usage_invalid: bool = False
 
 
 def _cache_usage(value: Any) -> tuple[int, int, bool]:
@@ -2724,6 +2747,53 @@ def _extract_usage(
 ) -> _UsageSnapshot:
     """Normalize stable and Beta Messages usage, including cumulative deltas."""
     prior = previous or _UsageSnapshot()
+    invalid = prior.canonical_usage_invalid
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ):
+        raw = _value(value, key)
+        if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int) or raw < 0):
+            invalid = True
+    if previous is None and any(
+        _value(value, key) is None for key in ("input_tokens", "output_tokens")
+    ):
+        invalid = True
+    for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"):
+        raw = _value(_value(value, "cache_creation"), key)
+        if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int) or raw < 0):
+            invalid = True
+    raw_thinking = _value(_value(value, "output_tokens_details"), "thinking_tokens")
+    if raw_thinking is not None and (
+        isinstance(raw_thinking, bool) or not isinstance(raw_thinking, int) or raw_thinking < 0
+    ):
+        invalid = True
+    raw_write = _optional_non_negative_int(_value(value, "cache_creation_input_tokens"))
+    raw_breakdown = _value(value, "cache_creation")
+    if raw_write and (
+        (
+            raw_breakdown is None
+            and (previous is None or raw_write != prior.cache_creation_input_tokens)
+        )
+        or (
+            raw_breakdown is not None
+            and any(
+                _value(raw_breakdown, key) is None
+                for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+            )
+        )
+    ):
+        invalid = True
+    if _value(value, "iterations") not in (None, [], ()):
+        invalid = True
+    if _value(value, "fallback_credit") is not None:
+        invalid = True
+    if _value(value, "speed") not in (None, "standard"):
+        invalid = True
+    if _value(value, "server_tool_use") is not None:
+        invalid = True
 
     def cumulative_int(key: str, prior_value: int) -> int:
         parsed = _optional_non_negative_int(_value(value, key))
@@ -2755,10 +2825,10 @@ def _extract_usage(
 
     output_details = _value(value, "output_tokens_details")
     thinking_raw = _optional_non_negative_int(_value(output_details, "thinking_tokens"))
-    thinking_tokens = (
-        prior.thinking_tokens if thinking_raw is None else thinking_raw
-    )
+    thinking_tokens = prior.thinking_tokens if thinking_raw is None else thinking_raw
     output_tokens = cumulative_int("output_tokens", prior.output_tokens)
+    if thinking_tokens > output_tokens:
+        invalid = True
     thinking_tokens = min(thinking_tokens, output_tokens)
 
     server_tools = _value(value, "server_tool_use")
@@ -2812,6 +2882,7 @@ def _extract_usage(
         or prior.fallback_credit_status,
         iterations=iterations,
         cache_breakdown_inconsistent=cache_inconsistent,
+        canonical_usage_invalid=invalid,
     )
 
 
@@ -2841,7 +2912,12 @@ def _usage_lines(
         ("input_tokens", usage.input_tokens, "Tokens"),
         ("output_tokens", visible_output_tokens, "Tokens"),
         ("reasoning_output_tokens", usage.thinking_tokens, "Tokens"),
-        ("cache_write_input_tokens", usage.cache_creation_input_tokens, "Tokens"),
+        (
+            "cache_write_input_tokens",
+            usage.cache_creation_input_tokens - usage.cache_creation_input_tokens_1h,
+            "Tokens",
+        ),
+        ("cache_write_input_tokens_1h", usage.cache_creation_input_tokens_1h, "Tokens"),
         ("cache_read_input_tokens", usage.cache_read_input_tokens, "Tokens"),
         ("tool_call_count", tool_calls, "Calls"),
         ("web_search_calls", usage.web_search_requests, "Calls"),
@@ -2911,9 +2987,7 @@ def _billable_usage(usage: _UsageSnapshot, stop_reason: str | None) -> _Billable
             "cache_read_input_tokens": iteration.cache_read_input_tokens,
         }
         if iteration.cache_creation_input_tokens_1h > 0:
-            detail["cache_creation_input_tokens_1h"] = (
-                iteration.cache_creation_input_tokens_1h
-            )
+            detail["cache_creation_input_tokens_1h"] = iteration.cache_creation_input_tokens_1h
         iteration_details.append(detail)
         inconsistent = inconsistent or iteration.cache_breakdown_inconsistent
         if not billed:
@@ -3125,6 +3199,7 @@ def _record_from_response(
     provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
+    direct_standard: bool = False,
 ) -> Event | None:
     """Extract fields from an Anthropic Message response and record an event."""
     tracker = _active_tracker
@@ -3159,6 +3234,7 @@ def _record_from_response(
         provider=provider,
         service_name=service_name,
         operation_name=operation_name,
+        direct_standard=direct_standard,
     )
 
 
@@ -3178,6 +3254,7 @@ def _record_from_stream_data(
     provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
+    direct_standard: bool = False,
 ) -> Event | None:
     """Record an event from accumulated stream data."""
     tracker = _active_tracker
@@ -3216,6 +3293,7 @@ def _record_from_stream_data(
         provider=provider,
         service_name=service_name,
         operation_name=operation_name,
+        direct_standard=direct_standard,
     )
 
 
@@ -3237,6 +3315,7 @@ def _insert_llm_event(
     provider: str = "anthropic",
     service_name: str = "messages",
     operation_name: str = "anthropic.messages.create",
+    direct_standard: bool = False,
 ) -> Event:
     """Create and persist an llm_call Event."""
     billable = _billable_usage(usage, stop_reason)
@@ -3294,6 +3373,27 @@ def _insert_llm_event(
         )
         if value is not None
     ]
+    if (
+        direct_standard
+        and provider == "anthropic"
+        and service_name == "messages"
+        and has_usage
+        and operation_status == "succeeded"
+        and stop_reason in {"end_turn", "max_tokens", "stop_sequence", "tool_use"}
+        and usage.service_tier == "standard"
+        and usage.inference_geo in (None, "global")
+        and usage.speed in (None, "standard")
+        and not usage.iterations
+        and not usage.canonical_usage_invalid
+        and not usage.cache_breakdown_inconsistent
+        and usage.fallback_credit_status is None
+    ):
+        dimensions.append(
+            {
+                "key": "direct_llm_pricing_lane",
+                "value": {"type": "string", "value": "standard_global"},
+            }
+        )
     if dimensions:
         details["attribution_dimensions"] = dimensions
     if pricing.unpriced_dimensions:

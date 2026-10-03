@@ -214,17 +214,11 @@ describe("ServiceCatalog", () => {
     expect(result!.confidence).toBe("estimated");
   });
 
-  it("extracts cost from nested response body path", () => {
+  it("never reconstructs Apify run money from compute units", () => {
     const catalog = new ServiceCatalog();
     const entry = catalog.lookup("https://api.apify.com/v2/acts/run");
-    expect(entry).not.toBeNull();
-
-    const body = { data: { stats: { computeUnits: 2.5 } } };
-    const result = catalog.extractCost(entry!, new Headers(), body);
-    expect(result).not.toBeNull();
-    // 2.5 * $0.25 = $0.625
-    expect(result!.costUsd).toBeCloseTo(0.625, 6);
-    expect(result!.confidence).toBe("exact");
+    expect(entry).toBeNull();
+    expect(catalog.lookup("https://api.firecrawl.dev/v2/scrape")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -330,7 +324,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 1,
-          safety_policy_version: "2026-09-27.1",
+          safety_policy_version: "2026-10-03.1",
         },
         custom_search: {
           display_name: "Custom Search",
@@ -345,7 +339,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-09-27.1",
+        safety_policy_version: "2026-10-03.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 1,
@@ -378,7 +372,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 0,
-          safety_policy_version: "2026-09-27.1",
+          safety_policy_version: "2026-10-03.1",
         },
         synthetic_zero: {
           display_name: "Synthetic Zero",
@@ -393,7 +387,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-09-27.1",
+        safety_policy_version: "2026-10-03.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 0,

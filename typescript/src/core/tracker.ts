@@ -1296,7 +1296,8 @@ export class TrackedTask {
       RuntimeKind.K8sPod,
     ]);
     const newEventIds = new Set<string>();
-    if (accountant && longRunning.has(accountant.runtime)) {
+    const invoiceEc2 = (task as typeof task & { _invoiceEc2?: boolean })._invoiceEc2;
+    if (accountant && longRunning.has(accountant.runtime) && !(invoiceEc2 && accountant.runtime === RuntimeKind.Ec2)) {
       const details = accountant.snapshotEndAndBuild(durationMs);
       if (details !== null) {
         const ev = createCostEvent({
@@ -1407,7 +1408,8 @@ export class TrackedTask {
       GpuRuntimeKind.LocalGpu,
     ]);
     const newEventIds = new Set<string>();
-    if (accountant && longRunningGpu.has(accountant.runtime)) {
+    const invoiceEc2 = (task as typeof task & { _invoiceEc2?: boolean })._invoiceEc2;
+    if (accountant && longRunningGpu.has(accountant.runtime) && !(invoiceEc2 && accountant.runtime === GpuRuntimeKind.AwsEc2Gpu)) {
       const { costDetails, signalEvents } = accountant.snapshotEndAndBuild(
         durationMs,
       );

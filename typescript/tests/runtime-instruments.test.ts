@@ -17,6 +17,21 @@ function recording() {
 }
 afterEach(() => vi.restoreAllMocks());
 describe("paired runtime evidence", () => {
+  it("maps EC2 identity exactly and refuses Lambda as instance work", () => {
+    const { tracker, events, clock, task } = recording();
+    const options = { serviceKey: "aws_ec2" as const, billingAccountId: "111111111111", resourceId: "222222222222.us-east-1.i-1234567890abcdef0" };
+    const fn = wrapRuntimeHandler(() => { clock.ms += 100; return "private-result"; }, tracker, options);
+    runWithTask(task, () => expect(fn()).toBe("private-result"));
+    const observation = toAttributionObservationV3(events[0])!;
+    expect(observation.provider).toEqual({ name: "aws_ec2", service: "runtime" });
+    expect(observation.resource!.id).toBe("111111111111/222222222222.us-east-1.i-1234567890abcdef0");
+    expect(observation.usage[0].quantity).toBe("0.1"); expect(observation.cost_evidence).toBeUndefined();
+    task._compute = { runtime: "lambda" };
+    runWithTask(task, () => expect(fn()).toBe("private-result")); expect(events).toHaveLength(1);
+    for (const invalid of [{ billingAccountId: "acct" }, { resourceId: "instance" }, { resourceId: "222222222222.us-east-1.function-name" }]) {
+      expect(() => wrapRuntimeHandler(() => 0, tracker, { ...options, ...invalid })).toThrow("EC2 requires");
+    }
+  });
   it.each([false, true])("does not time iterator setup as completed work (async=%s)", async asynchronous => {
     const { tracker, events, clock, task } = recording();
     const setup = () => { clock.ms += 100; return [1, 2].values(); };

@@ -9,11 +9,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from dexcost import cloud_detect
 from dexcost.cgroup_reader import CpuMax, CpuStat
 from dexcost.compute_accountant import ComputeAccountant
 from dexcost.compute_runtime import RuntimeKind
+from dexcost.context import _current_task
+from dexcost.gpu_runtime import GpuRuntimeKind
+from dexcost.instruments.runtime import wrap_runtime_handler
 from dexcost.models.task import Task
 from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
@@ -99,3 +103,40 @@ def test_unknown_runtime_emits_no_event(tmp_path, monkeypatch):
     compute = [e for e in events if e.event_type == "compute_cost"]
     assert len(compute) == 0
     assert t.compute_cost_usd == Decimal("0")
+
+
+def test_invoice_ec2_replaces_local_compute_and_gpu_estimates(tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_detect, "_result", cloud_detect.CloudEnv("aws", "us-east-1", "imds"))
+    storage = SQLiteStorage(db_path=str(tmp_path / "invoice.db"))
+    tracker = CostTracker(storage=storage, auto_instrument=[])
+    task = Task(task_type="invoice-ec2")
+    task.ended_at = task.started_at + timedelta(seconds=1)
+    storage.insert_task(task)
+
+    def unexpected_snapshot(**kwargs):
+        raise AssertionError("Local instance money must not be added to its invoice allocation")
+
+    task._compute = SimpleNamespace(
+        runtime=RuntimeKind.EC2, snapshot_end_and_build=unexpected_snapshot
+    )
+    task._gpu = SimpleNamespace(
+        runtime=GpuRuntimeKind.AWS_EC2_GPU, snapshot_end_and_build=unexpected_snapshot
+    )
+    ticks = iter([0, 1_000_000_000])
+    monkeypatch.setattr("dexcost.instruments.runtime.time.monotonic_ns", lambda: next(ticks))
+    wrapped = wrap_runtime_handler(lambda: 42, tracker, service_key="aws_ec2",
+                                   billing_account_id="111111111111",
+                                   resource_id="222222222222.us-east-1.i-1234567890abcdef0")
+    token = _current_task.set(task)
+    try:
+        assert wrapped() == 42
+    finally:
+        _current_task.reset(token)
+    tracker._finalize_compute(task)
+    tracker._finalize_gpu(task)
+    events = storage.query_events(task_id=str(task.task_id))
+    assert len(events) == 1
+    assert events[0].provider == "aws_ec2"
+    assert events[0].cost_confidence == "unknown"
+    assert task.compute_cost_usd == task.gpu_cost_usd == Decimal("0")
+    storage.close()

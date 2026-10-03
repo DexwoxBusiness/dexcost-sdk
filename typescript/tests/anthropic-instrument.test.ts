@@ -210,7 +210,7 @@ describe("Anthropic instrumentation", () => {
     });
     expect(events[0].costUsd.toString()).toBe("0");
     const observation = toAttributionObservationV3(events[0]);
-    expect(observation?.provider).toEqual({ name: baseURL.includes("moonshot.cn") ? "moonshot_cn" : baseURL.includes("api.kimi.com") ? "moonshot" : "moonshot_global", service: "api" });
+    expect(observation?.provider).toEqual({ name: baseURL.includes("moonshot.cn") ? "moonshot_cn" : baseURL.includes("api.kimi.com") ? "moonshot" : "moonshot_global", service: "api", record_id: "msg_abc123" });
     expect(observation?.resource).toEqual({ type: "model", id: "kimi-k3" });
     expect(Object.fromEntries(observation?.usage.map((line) => [
       line.metric,

@@ -2,7 +2,7 @@
   "_meta": {
     "version": "3.0.1",
     "last_updated": "2026-09-03",
-    "service_count": 70,
+    "service_count": 68,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,8 +10,8 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 97,
-    "safety_policy_version": "2026-09-27.1"
+    "disabled_service_count": 99,
+    "safety_policy_version": "2026-10-03.1"
   },
   "tavily_search": {
     "display_name": "Tavily Search",
@@ -120,21 +120,6 @@
     "source": "https://serpapi.com/pricing",
     "last_verified": "2026-04-01"
   },
-  "firecrawl_scrape": {
-    "display_name": "Firecrawl",
-    "domains": [
-      "api.firecrawl.dev"
-    ],
-    "category": "scraping",
-    "pricing_model": "per_page",
-    "cost_per_page_usd": "0.00083",
-    "cost_extraction": {
-      "type": "fixed",
-      "units": 1
-    },
-    "source": "https://www.firecrawl.dev/pricing",
-    "last_verified": "2026-04-01"
-  },
   "scrapingbee": {
     "display_name": "ScrapingBee",
     "domains": [
@@ -150,22 +135,6 @@
     },
     "source": "https://www.scrapingbee.com/pricing/",
     "last_verified": "2026-04-07"
-  },
-  "apify": {
-    "display_name": "Apify",
-    "domains": [
-      "api.apify.com"
-    ],
-    "category": "scraping",
-    "pricing_model": "compute_unit",
-    "cost_per_compute_unit_usd": "0.25",
-    "note": "1 CU = 1 GB-RAM x 1 hour. Scale plan: $0.25/CU.",
-    "cost_extraction": {
-      "type": "response_body",
-      "path": "data.stats.computeUnits"
-    },
-    "source": "https://apify.com/pricing",
-    "last_verified": "2026-04-01"
   },
   "scrapingdog": {
     "display_name": "ScrapingDog",

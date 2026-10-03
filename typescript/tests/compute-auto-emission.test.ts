@@ -19,6 +19,9 @@ import { ComputeAccountant } from "../src/core/compute-accountant.js";
 import { RuntimeKind } from "../src/core/compute-runtime.js";
 import { _setResultForTests, _resetCloudDetectForTests } from "../src/cloud-detect.js";
 import * as cgroup from "../src/core/cgroup-reader.js";
+import { wrapRuntimeHandler } from "../src/instruments/runtime.js";
+import { runWithTask } from "../src/core/context.js";
+import { GpuRuntimeKind } from "../src/core/gpu-runtime.js";
 
 let tmpDir: string;
 let tracker: CostTracker;
@@ -42,6 +45,22 @@ afterEach(() => {
 });
 
 describe("compute auto-emission (long-running)", () => {
+  test("invoice EC2 opt-in replaces local compute and GPU estimates", () => {
+    _setResultForTests({ provider: "aws", region: "us-east-1", source: "imds" });
+    const tracked = tracker.startTask({ taskType: "invoice-ec2" });
+    const snapshot = vi.fn(() => { throw new Error("Duplicate instance money"); });
+    tracked.task._compute = { runtime: RuntimeKind.Ec2, snapshotEndAndBuild: snapshot };
+    tracked.task._gpu = { runtime: GpuRuntimeKind.AwsEc2Gpu, snapshotEndAndBuild: snapshot };
+    let clock = 0; vi.spyOn(performance, "now").mockImplementation(() => clock);
+    const fn = wrapRuntimeHandler(() => { clock = 100; return 42; }, tracker, {
+      serviceKey: "aws_ec2", billingAccountId: "111111111111", resourceId: "222222222222.us-east-1.i-1234567890abcdef0",
+    });
+    runWithTask(tracked.task, () => expect(fn()).toBe(42)); tracked.end("success");
+    expect(snapshot).not.toHaveBeenCalled();
+    const events = tracker.buffer.queryEvents(tracked.task.taskId);
+    expect(events.filter(e => ["compute_cost", "gpu_cost"].includes(e.eventType))).toEqual([]);
+    expect(events.filter(e => e.provider === "aws_ec2")).toHaveLength(1);
+  });
   test("EC2 task emits and prices a compute_cost event", async () => {
     _setResultForTests({
       provider: "aws",

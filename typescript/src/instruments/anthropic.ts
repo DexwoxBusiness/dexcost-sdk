@@ -1,3 +1,4 @@
+import { directAnthropicUsage, isDirectStandardAnthropic } from "./direct-anthropic-usage.js";
 /**
  * Anthropic auto-instrumentation for dexcost TypeScript SDK.
  *
@@ -135,6 +136,7 @@ export async function instrumentAnthropic(
 
     const startTime = performance.now();
     const provider = providerForMessagesResource(this);
+    const directStandard = isDirectStandardAnthropic(this, body);
     const operation = `${provider}.messages.create`;
 
     // Scope the SDK call inside runWithTask so the HTTP adapter's
@@ -149,7 +151,7 @@ export async function instrumentAnthropic(
           runWithProviderCapture(provider, () =>
             runWithTask(task, () => _original!.call(self, body, options))),
         );
-        return wrapStream(rawStream, task, startTime, autoCreated, provider);
+        return wrapStream(rawStream, task, startTime, autoCreated, provider, directStandard);
       } catch (err) {
         if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
           taskType: `${provider}.messages`, provider, service: provider !== "anthropic" ? "api" : "messages",
@@ -169,7 +171,7 @@ export async function instrumentAnthropic(
       );
       try {
         const latencyMs = Math.round(performance.now() - startTime);
-        recordEvent(response, task, latencyMs, provider);
+        recordEvent(response, task, latencyMs, provider, directStandard);
       } catch {
         // dexcost errors must never crash user code
       }
@@ -579,6 +581,7 @@ function recordEvent(
   task: Task,
   latencyMs: number,
   provider: "anthropic" | "moonshot" | "moonshot_global" | "moonshot_cn" = "anthropic",
+  directStandard = false,
 ): void {
   if (!_buffer || !_pricing) return;
 
@@ -622,16 +625,19 @@ function recordEvent(
       ? [{ metric: "cache_write_input_tokens", quantity: String(cacheCreationTokens), unit: "Tokens" }]
       : []),
   ];
+  const canonical = directAnthropicUsage(usage, response?.stop_reason, directStandard && provider === "anthropic");
   const details: Record<string, unknown> = {
+    ...(typeof response?.id === "string" ? { provider_record_id: response.id } : {}),
+    attribution_dimensions: canonical.dimensions,
     attribution_component: "llm",
     attribution_operation_name: `${provider}.messages.create`,
     attribution_operation_status: "succeeded",
     attribution_resource_type: "model",
     attribution_resource_id: model,
     attribution_provider_service: provider !== "anthropic" ? "api" : "messages",
-    attribution_usage_lines: usageLines.length > 0
+    attribution_usage_lines: canonical.lines ?? (usageLines.length > 0
       ? usageLines
-      : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+      : [{ metric: "request_count", quantity: "1", unit: "Requests" }]),
   };
   if (cacheCreationTokens > 0) {
     details["cache_creation_input_tokens"] = cacheCreationTokens;
@@ -672,6 +678,7 @@ function wrapStream(
   startTime: number,
   autoCreated: boolean = false,
   provider: "anthropic" | "moonshot" | "moonshot_global" | "moonshot_cn" = "anthropic",
+  directStandard = false,
 ): AsyncIterable<any> {
   let model = "unknown";
   let inputTokens = 0;
@@ -680,6 +687,9 @@ function wrapStream(
   let cacheCreationTokens = 0;
   let hasUsage = false;
   let finalized = false;
+  let providerRecordId: string | undefined;
+  let rawUsage: any = {};
+  let stopReason: unknown;
 
   const finalize = (status: "succeeded" | "failed" | "cancelled", error?: unknown): void => {
     if (finalized) return;
@@ -694,6 +704,7 @@ function wrapStream(
         ...(cachedTokens > 0 ? [{ metric: "cache_read_input_tokens", quantity: String(cachedTokens), unit: "Tokens" }] : []),
         ...(cacheCreationTokens > 0 ? [{ metric: "cache_write_input_tokens", quantity: String(cacheCreationTokens), unit: "Tokens" }] : []),
       ];
+      const canonical = directAnthropicUsage(rawUsage, stopReason, directStandard && provider === "anthropic" && status === "succeeded");
       const event = createCostEvent({
         eventId: randomUUID(), taskId: task.taskId, eventType: "llm_call",
         costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
@@ -701,15 +712,17 @@ function wrapStream(
         inputTokens, outputTokens, cachedTokens,
         latencyMs: Math.round(performance.now() - startTime), isRetry: false,
         details: {
+          ...(providerRecordId ? { provider_record_id: providerRecordId } : {}),
+          attribution_dimensions: canonical.dimensions,
           attribution_component: "llm",
           attribution_operation_name: `${provider}.messages.create`,
           attribution_operation_status: status,
           attribution_resource_type: "model",
           attribution_resource_id: model,
           attribution_provider_service: provider !== "anthropic" ? "api" : "messages",
-          attribution_usage_lines: usageLines.length > 0
+          attribution_usage_lines: canonical.lines ?? (usageLines.length > 0
             ? usageLines
-            : [{ metric: "request_count", quantity: "1", unit: "Requests" }],
+            : [{ metric: "request_count", quantity: "1", unit: "Requests" }]),
           ...(cacheCreationTokens > 0 ? { cache_creation_input_tokens: cacheCreationTokens } : {}),
           ...(error === undefined ? {} : {
             attribution_error_type: error instanceof Error ? error.name.toLowerCase() : typeof error,
@@ -753,8 +766,10 @@ function wrapStream(
 
           // Anthropic streaming event types
           if (chunk?.type === "message_start" && chunk?.message) {
+            if (typeof chunk.message.id === "string") providerRecordId = chunk.message.id;
             if (chunk.message.model) model = chunk.message.model;
             if (chunk.message.usage) {
+              rawUsage = { ...chunk.message.usage };
               hasUsage = true;
               inputTokens = chunk.message.usage.input_tokens ?? inputTokens;
               cachedTokens =
@@ -764,7 +779,9 @@ function wrapStream(
             }
           }
 
+          if (chunk?.type === "message_delta") stopReason = chunk?.delta?.stop_reason ?? stopReason;
           if (chunk?.type === "message_delta" && chunk?.usage) {
+            rawUsage = { ...rawUsage, ...chunk.usage };
             hasUsage = true;
             outputTokens = chunk.usage.output_tokens ?? outputTokens;
           }

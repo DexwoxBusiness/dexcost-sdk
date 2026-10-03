@@ -2340,7 +2340,10 @@ class CostTracker:
             GpuRuntimeKind.LOCAL_GPU,
         }
         new_event_ids: set[uuid.UUID] = set()
-        if accountant is not None and accountant.runtime in long_running_gpu:
+        invoice_ec2 = getattr(task, "_invoice_ec2", False)
+        if accountant is not None and accountant.runtime in long_running_gpu and not (
+            invoice_ec2 and accountant.runtime == GpuRuntimeKind.AWS_EC2_GPU
+        ):
             cost_details, signal_events = accountant.snapshot_end_and_build(
                 duration_ms=duration_ms,
             )
@@ -2488,7 +2491,10 @@ class CostTracker:
             RuntimeKind.K8S_POD,
         }
         new_event_ids: set[uuid.UUID] = set()
-        if accountant is not None and accountant.runtime in long_running:
+        invoice_ec2 = getattr(task, "_invoice_ec2", False)
+        if accountant is not None and accountant.runtime in long_running and not (
+            invoice_ec2 and accountant.runtime == RuntimeKind.EC2
+        ):
             details = accountant.snapshot_end_and_build(duration_ms=duration_ms)
             if details is not None:
                 ev = Event(
