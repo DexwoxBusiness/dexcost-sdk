@@ -243,7 +243,7 @@ def manifest_snapshot(overrides: Mapping[str, bytes]) -> dict[str, object]:
         paths = {
             item["repository_path"]
             for item in inventory["contracts"]
-            if item.get("repository_path", "").startswith("fixtures/")
+            if item.get("repository_path", "").startswith(("fixtures/", "tests/fixtures/"))
         }
         for relative in sorted(paths):
             path = (REPOSITORY_ROOT / relative).resolve()

@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 184,
-  "typescript_export_count": 344,
-  "equivalent_count": 181,
+  "python_export_count": 193,
+  "typescript_export_count": 354,
+  "equivalent_count": 190,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -943,11 +943,29 @@
       "notes": null
     },
     {
+      "python_name": "bind_apify_run",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "bindApifyRun"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "bind_browser_session",
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
         "bindBrowserSession"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "bind_firecrawl_job",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "bindFirecrawlJob"
       ],
       "notes": null
     },
@@ -1141,6 +1159,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_apify",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentApify"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "instrument_bedrock",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1182,6 +1209,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "instrumentFal"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_firecrawl",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentFirecrawl"
       ],
       "notes": null
     },
@@ -1285,6 +1321,15 @@
       "notes": null
     },
     {
+      "python_name": "record_apify_run",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordApifyRun"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "record_browser_session",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1299,6 +1344,24 @@
       "classification": "equivalent",
       "typescript_exports": [
         "recordCost"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_firecrawl_job",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordFirecrawlJob"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "record_firecrawl_search",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordFirecrawlSearch"
       ],
       "notes": null
     },
@@ -1479,6 +1542,15 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_apify",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentApify"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "uninstrument_bedrock",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1520,6 +1592,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "uninstrumentFal"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_firecrawl",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentFirecrawl"
       ],
       "notes": null
     },

@@ -80,6 +80,13 @@ def test_manifest_hashes_every_artifact_and_shared_reference() -> None:
         assert entry["byte_size"] == len(payload)
         assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
 
+    inventory = _load(CONTRACT_ROOT / "wire-schema-inventory.json")
+    expected_references = {
+        item["repository_path"]
+        for item in inventory["contracts"]
+        if not item["repository_path"].startswith("contracts/")
+    }
+    assert {entry["path"] for entry in manifest["referenced_artifacts"]} == expected_references
     for entry in manifest["referenced_artifacts"]:
         payload = _canonical_artifact_bytes(
             entry["path"], (REPOSITORY_ROOT / entry["path"]).read_bytes()
