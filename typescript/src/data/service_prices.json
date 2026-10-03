@@ -1,8 +1,8 @@
 {
   "_meta": {
     "version": "3.0.1",
-    "last_updated": "2026-09-03",
-    "service_count": 68,
+    "last_updated": "2026-10-03",
+    "service_count": 66,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,8 +10,8 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 99,
-    "safety_policy_version": "2026-10-03.1"
+    "disabled_service_count": 101,
+    "safety_policy_version": "2026-10-03.2"
   },
   "tavily_search": {
     "display_name": "Tavily Search",
@@ -427,37 +427,6 @@
       "type": "fixed"
     },
     "source": "https://cloud.google.com/document-ai/pricing",
-    "last_verified": "2026-04-07"
-  },
-  "unstructured_io": {
-    "display_name": "Unstructured.io",
-    "domains": [
-      "api.unstructuredapp.io",
-      "api.unstructured.io"
-    ],
-    "category": "document",
-    "pricing_model": "per_page",
-    "cost_per_page_usd": "0.01",
-    "note": "SaaS API pricing",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://unstructured.io/pricing",
-    "last_verified": "2026-04-07"
-  },
-  "llamaparse": {
-    "display_name": "LlamaParse",
-    "domains": [
-      "api.cloud.llamaindex.ai"
-    ],
-    "category": "document",
-    "pricing_model": "per_page",
-    "cost_per_page_usd": "0.003",
-    "note": "1 credit = 1 page. $0.003/credit.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://cloud.llamaindex.ai/pricing",
     "last_verified": "2026-04-07"
   },
   "twelve_data": {

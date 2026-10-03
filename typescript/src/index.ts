@@ -404,6 +404,7 @@ export type {
 
 // Debug mode
 export { bindApifyRun, recordApifyRun, bindFirecrawlJob, recordFirecrawlJob, recordFirecrawlSearch, instrumentApify, uninstrumentApify, instrumentFirecrawl, uninstrumentFirecrawl } from "./instruments/web-tools.js";
+export { bindLlamaParseJob, recordLlamaParseJob, instrumentLlamaParse, uninstrumentLlamaParse } from "./instruments/document-parse.js";
 export type { FirecrawlBinding } from "./instruments/web-tools.js";
 
 export { setDebugMode, isDebugMode } from "./core/debug.js";

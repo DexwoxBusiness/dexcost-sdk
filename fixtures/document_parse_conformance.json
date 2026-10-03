@@ -1,0 +1,27 @@
+{
+  "verified_at": "2026-10-03",
+  "task_id": "00000000-0000-4000-8000-000000000021",
+  "account": "organization_one",
+  "project": "project_one",
+  "response": {
+    "job": {
+      "id": "pjb-one",
+      "project_id": "project_one",
+      "tier": "agentic",
+      "status": "COMPLETED",
+      "created_at": "2026-09-30T23:59:59.999501Z",
+      "updated_at": "2026-10-01T00:00:00.000001Z",
+      "usage": { "credits": 30.5 },
+      "name": "never-retain-document-name",
+      "user_metadata": { "secret": "never-retain-user-metadata" }
+    },
+    "markdown": { "pages": [{ "markdown": "never-retain-content" }] }
+  },
+  "expected_period": { "start_at": "2026-09-30T23:59:59.999000Z", "end_at": "2026-10-01T00:00:00.001000Z" },
+  "official_sources": [
+    "https://www.llamaindex.ai/pricing",
+    "https://developers.llamaindex.ai/llamaparse/parse/guides/response-format/",
+    "https://github.com/run-llama/llama-parse-py/blob/main/src/llama_cloud/resources/parsing.py",
+    "https://github.com/run-llama/llama-parse-ts/blob/main/src/resources/parsing.ts"
+  ]
+}
