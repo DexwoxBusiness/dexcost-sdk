@@ -21,6 +21,8 @@ export { bindBrowserSession, recordBrowserSession, instrumentBrowserbase, uninst
 export type { BrowserSessionIdentity, BrowserSessionBinding, BrowserSessionUsage } from "./instruments/browser-sessions.js";
 export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
 export type { RuntimeResource } from "./instruments/runtime.js";
+export { instrumentObjectStorage, uninstrumentObjectStorage } from "./instruments/object-storage.js";
+export type { ObjectStorageBinding } from "./instruments/object-storage.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
 export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";
 export { CostTracker, TrackedTask } from "./core/tracker.js";

@@ -1,0 +1,243 @@
+{
+  "evidence_verified_at": "2026-10-03",
+  "task_id": "11111111-1111-4111-8111-111111111111",
+  "bucket": "agent-artifacts",
+  "aws_payer": "111111111111",
+  "aws_owner": "222222222222",
+  "r2_account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cases": [
+    {
+      "id": "aws_transport_override",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "transport_endpoint": "https://proxy.example.com"
+    },
+    {
+      "id": "aws_transport_missing",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "missing_transport": true
+    },
+    {
+      "id": "aws_transport_retries",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "transport_attempts": 2
+    },
+    {
+      "id": "aws_transport_bucket",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "transport_bucket": "wrong-bucket"
+    },
+    {
+      "id": "r2_transport_account",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": "STANDARD"
+      },
+      "transport_endpoint": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.r2.cloudflarestorage.com"
+    },
+    {
+      "id": "aws_get",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "metric": "aws_s3.get_requests"
+    },
+    {
+      "id": "aws_put",
+      "provider": "aws_s3",
+      "operation": "put_object",
+      "metric": "aws_s3.put_requests"
+    },
+    {
+      "id": "aws_list",
+      "provider": "aws_s3",
+      "operation": "list_objects_v2",
+      "metric": "aws_s3.list_requests"
+    },
+    {
+      "id": "aws_ia",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": "STANDARD_IA"
+      }
+    },
+    {
+      "id": "aws_put_ia",
+      "provider": "aws_s3",
+      "operation": "put_object",
+      "request": {
+        "StorageClass": "STANDARD_IA"
+      }
+    },
+    {
+      "id": "aws_null_class",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": null
+      }
+    },
+    {
+      "id": "aws_wrong_bucket",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "request": {
+        "Bucket": "other-bucket"
+      }
+    },
+    {
+      "id": "aws_requester",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "request": {
+        "RequestPayer": "requester"
+      }
+    },
+    {
+      "id": "aws_charged",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "response": {
+        "RequestCharged": "requester"
+      }
+    },
+    {
+      "id": "aws_owner_mismatch",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "request": {
+        "ExpectedBucketOwner": "999999999999"
+      }
+    },
+    {
+      "id": "aws_retried",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "attempts": 2
+    },
+    {
+      "id": "aws_no_attempts",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "attempts": null
+    },
+    {
+      "id": "aws_error",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "status": 500
+    },
+    {
+      "id": "aws_delete",
+      "provider": "aws_s3",
+      "operation": "delete_object"
+    },
+    {
+      "id": "aws_custom_route",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "endpoint": "https://proxy.example.com"
+    },
+    {
+      "id": "aws_wrong_region",
+      "provider": "aws_s3",
+      "operation": "get_object",
+      "client_region": "eu-west-1"
+    },
+    {
+      "id": "r2_get_standard",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": "STANDARD"
+      },
+      "metric": "r2_cloudflare.standard_class_b"
+    },
+    {
+      "id": "r2_get_ia",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": "STANDARD_IA"
+      },
+      "metric": "r2_cloudflare.ia_class_b"
+    },
+    {
+      "id": "r2_put_standard",
+      "provider": "r2_cloudflare",
+      "operation": "put_object",
+      "request": {
+        "StorageClass": "STANDARD"
+      },
+      "metric": "r2_cloudflare.standard_class_a"
+    },
+    {
+      "id": "r2_put_ia",
+      "provider": "r2_cloudflare",
+      "operation": "put_object",
+      "request": {
+        "StorageClass": "STANDARD_IA"
+      },
+      "metric": "r2_cloudflare.ia_class_a"
+    },
+    {
+      "id": "r2_missing_class",
+      "provider": "r2_cloudflare",
+      "operation": "get_object"
+    },
+    {
+      "id": "r2_put_missing_class",
+      "provider": "r2_cloudflare",
+      "operation": "put_object"
+    },
+    {
+      "id": "r2_null_class",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": null
+      }
+    },
+    {
+      "id": "r2_list_unknown_class",
+      "provider": "r2_cloudflare",
+      "operation": "list_objects_v2"
+    },
+    {
+      "id": "r2_delete_free",
+      "provider": "r2_cloudflare",
+      "operation": "delete_object"
+    },
+    {
+      "id": "r2_401_free",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "status": 401,
+      "response": {
+        "StorageClass": "STANDARD"
+      }
+    },
+    {
+      "id": "r2_wrong_account",
+      "provider": "r2_cloudflare",
+      "operation": "get_object",
+      "response": {
+        "StorageClass": "STANDARD"
+      },
+      "endpoint": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.r2.cloudflarestorage.com"
+    },
+    {
+      "id": "r2_retried",
+      "provider": "r2_cloudflare",
+      "operation": "put_object",
+      "attempts": 2,
+      "request": {
+        "StorageClass": "STANDARD"
+      }
+    }
+  ]
+}

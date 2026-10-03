@@ -176,6 +176,10 @@ from dexcost.instruments.document_parse import (
     record_llamaparse_job,
     uninstrument_llamaparse,
 )
+from dexcost.instruments.object_storage import (
+    instrument_object_storage,
+    uninstrument_object_storage,
+)
 from dexcost.instruments.runtime import (
     instrument_e2b_sandbox,
     uninstrument_e2b_sandbox,
@@ -1419,6 +1423,7 @@ __all__ = [
     "instrument_litellm",
     "instrument_llamaparse",
     "instrument_mcp",
+    "instrument_object_storage",
     "instrument_ollama",
     "instrument_openai",
     "instrument_openrouter",
@@ -1464,6 +1469,7 @@ __all__ = [
     "uninstrument_litellm",
     "uninstrument_llamaparse",
     "uninstrument_mcp",
+    "uninstrument_object_storage",
     "uninstrument_ollama",
     "uninstrument_openai",
     "uninstrument_openrouter",
