@@ -2,7 +2,7 @@
   "_meta": {
     "version": "3.0.1",
     "last_updated": "2026-10-03",
-    "service_count": 66,
+    "service_count": 65,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,7 +10,7 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 101,
+    "disabled_service_count": 102,
     "safety_policy_version": "2026-10-03.2"
   },
   "tavily_search": {
@@ -1016,25 +1016,6 @@
       "type": "fixed"
     },
     "source": "https://www.zoominfo.com/pricing",
-    "last_verified": "2026-05-11"
-  },
-  "cohere_rerank": {
-    "display_name": "Cohere Rerank",
-    "domains": [
-      "api.cohere.com"
-    ],
-    "endpoints": [
-      "/v1/rerank",
-      "/v2/rerank"
-    ],
-    "category": "ai_ml_platform",
-    "pricing_model": "per_search",
-    "cost_per_request_usd": "0.002",
-    "note": "Rerank: $2/1K searches.",
-    "cost_extraction": {
-      "type": "endpoint_match"
-    },
-    "source": "https://cohere.com/pricing",
     "last_verified": "2026-05-11"
   },
   "jina_reranker": {

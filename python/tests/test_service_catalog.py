@@ -36,6 +36,7 @@ class TestCatalogLoading:
         assert len(entries) > 0
         assert "tavily_search" in entries
         assert "pinecone_query" not in entries
+        assert {"cohere_rerank", "llamaparse", "unstructured_io"}.isdisjoint(entries)
 
     def test_entries_have_required_fields(self, catalog: ServiceCatalog) -> None:
         for key, entry in catalog.entries.items():

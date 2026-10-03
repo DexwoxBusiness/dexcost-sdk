@@ -19,6 +19,11 @@ describe("ServiceCatalog", () => {
     expect(catalog.catalogVersion.length).toBe(12);
   });
 
+  it("does not replace native billed units or invoice authority with stale flat rates", () => {
+    const catalog = new ServiceCatalog();
+    expect(catalog.lookup("https://api.cohere.com/v2/rerank")).toBeNull();
+  });
+
   it("resolves exact MCP tool aliases from the active catalog", () => {
     const catalog = new ServiceCatalog(undefined, {
       example_api: {

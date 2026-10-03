@@ -86,7 +86,18 @@ function observePromise<T extends object>(promise: T, capture: (response: Respon
     if (typeof native !== "function") return native;
     if (name === "then") return (fulfilled?: (value: Response) => unknown, rejected?: (error: unknown) => unknown) =>
       Reflect.apply(native, target, [(value: Response) => { const observed = capture(value); return fulfilled ? fulfilled(observed) : observed; }, rejected]);
-    if (name === "catch" || name === "finally") return (...args: unknown[]) => observePromise(Reflect.apply(native, target, args), capture);
+    // Observe the native fulfillment BEFORE user callbacks. A catch callback can
+    // synthesize a result; that is not provider evidence and must not be captured.
+    if (name === "catch" || name === "finally") {
+      const then = Reflect.get(target, "then", target);
+      if (typeof then !== "function") return native.bind(target);
+      if (name === "catch") return (rejected?: (error: unknown) => unknown) =>
+        Reflect.apply(then, target, [capture, rejected]);
+      return (...args: unknown[]) => {
+        const observed = Reflect.apply(then, target, [capture]);
+        return Reflect.apply(observed.finally, observed, args);
+      };
+    }
     return native.bind(target);
   } });
 }

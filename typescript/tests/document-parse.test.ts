@@ -107,4 +107,12 @@ describe("paired hosted LlamaParse evidence", () => {
     response.job.usage.credits = 20;
     expect(() => recordLlamaParseJob(tracker, response, scope)).toThrow();
   });
+  it("never treats a caller's error-recovery value as provider-reported usage", async () => {
+    const { tracker, task, raw } = setup(), fallback = structuredClone(data.response);
+    const client = instrumentLlamaParse({ parsing: { parse: async () => { throw new Error("provider failed"); } } }, tracker, scope);
+    await runWithTask(task, async () => {
+      expect(await client.parsing.parse().catch(() => fallback).finally(() => undefined)).toBe(fallback);
+      expect(raw()).toBeUndefined();
+    });
+  });
 });
