@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import wrapt
 
@@ -328,6 +330,61 @@ def _measurement_from_usage(
         task_output_tokens=task_output,
         task_cached_tokens=cache_total,
     )
+
+
+def _direct_gemini_endpoint(instance: object, kwargs: dict[str, Any]) -> bool:
+    try:
+        options = _value(_value(instance, "_api_client"), "_http_options")
+        override = _value(_value(kwargs.get("config"), "http_options"), "base_url")
+        endpoint = urlparse(str(override or _value(options, "base_url") or ""))
+        return (
+            not _is_vertex(instance)
+            and endpoint.scheme == "https"
+            and endpoint.hostname == "generativelanguage.googleapis.com"
+        )
+    except ValueError:
+        return False
+
+
+def _admit_direct_content(
+    measurement: OperationMeasurement, response: object, *, direct: bool
+) -> OperationMeasurement:
+    usage = _value(response, "usage_metadata")
+    prompt = _count(_value(usage, "prompt_token_count"))
+    cached = _count(_value(usage, "cached_content_token_count") or 0)
+    output = _count(_value(usage, "candidates_token_count"))
+    thoughts = _count(_value(usage, "thoughts_token_count") or 0)
+    allowed = {
+        "input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+    }
+    if (
+        direct
+        and measurement.response_model == "gemini-3.1-pro-preview"
+        and _value(usage, "service_tier") == "standard"
+        and prompt is not None
+        and prompt > 0
+        and cached is not None
+        and cached <= prompt
+        and output is not None
+        and thoughts is not None
+        and _value(usage, "tool_use_prompt_token_count") in (None, 0)
+        and all(line.metric in allowed for line in measurement.usage_lines)
+    ):
+        return replace(
+            measurement,
+            provider_service="gemini",
+            billing_dimensions=(
+                *measurement.billing_dimensions,
+                (
+                    "direct_llm_pricing_lane",
+                    "standard_long" if prompt > 200_000 else "standard_short",
+                ),
+            ),
+        )
+    return measurement
 
 
 def _content_measurement(
@@ -1174,6 +1231,10 @@ def _sync_direct_call(
             raise
         try:
             measurement = extract(response, kwargs, vertex)
+            if operation == "google.genai.models.generate_content":
+                measurement = _admit_direct_content(
+                    measurement, response, direct=_direct_gemini_endpoint(instance, kwargs)
+                )
         except Exception:
             _log.debug("dexcost: failed to extract Google provider usage", exc_info=True)
             measurement = _unknown_measurement(model, vertex=vertex)
@@ -1215,6 +1276,10 @@ def _async_direct_call(
                 raise
             try:
                 measurement = extract(response, kwargs, vertex)
+                if operation == "google.genai.models.generate_content":
+                    measurement = _admit_direct_content(
+                        measurement, response, direct=_direct_gemini_endpoint(instance, kwargs)
+                    )
             except Exception:
                 _log.debug(
                     "dexcost: failed to extract async Google provider usage",
@@ -1230,7 +1295,8 @@ def _async_direct_call(
 
 
 class _ContentStreamMeter:
-    def __init__(self, kwargs: dict[str, Any], *, vertex: bool) -> None:
+    def __init__(self, kwargs: dict[str, Any], *, vertex: bool, direct: bool = False) -> None:
+        self.direct = direct
         self.kwargs = kwargs
         self.vertex = vertex
         self.terminal: object | None = None
@@ -1243,7 +1309,11 @@ class _ContentStreamMeter:
         model = _model_name((), self.kwargs)
         if self.terminal is None:
             return _unknown_measurement(model, vertex=self.vertex)
-        return _content_measurement(self.terminal, self.kwargs, vertex=self.vertex)
+        return _admit_direct_content(
+            _content_measurement(self.terminal, self.kwargs, vertex=self.vertex),
+            self.terminal,
+            direct=self.direct,
+        )
 
 
 class _InteractionStreamMeter:
@@ -1287,7 +1357,7 @@ def _sync_stream_call(
     session = _session(
         instance,
         operation="google.genai.models.generate_content_stream",
-        component="external",
+        component="llm",
         model=model,
         event_type="llm_call",
     )
@@ -1300,7 +1370,9 @@ def _sync_stream_call(
         except Exception as exc:
             session.fail(exc)
             raise
-        meter = _ContentStreamMeter(kwargs, vertex=vertex)
+        meter = _ContentStreamMeter(
+            kwargs, vertex=vertex, direct=_direct_gemini_endpoint(instance, kwargs)
+        )
         session.release_context()
         return SyncProviderStream(
             stream,
@@ -1324,7 +1396,7 @@ def _async_stream_call(
         session = _session(
             instance,
             operation="google.genai.models.generate_content_stream",
-            component="external",
+            component="llm",
             model=model,
             event_type="llm_call",
         )
@@ -1337,7 +1409,9 @@ def _async_stream_call(
             except Exception as exc:
                 session.fail(exc)
                 raise
-            meter = _ContentStreamMeter(kwargs, vertex=vertex)
+            meter = _ContentStreamMeter(
+                kwargs, vertex=vertex, direct=_direct_gemini_endpoint(instance, kwargs)
+            )
             session.release_context()
             return AsyncProviderStream(
                 stream,
@@ -1967,7 +2041,7 @@ def _sync_direct_wrapper(
             args,
             kwargs,
             operation=operation,
-            component="external",
+            component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
         )
@@ -1990,7 +2064,7 @@ def _async_direct_wrapper(
             args,
             kwargs,
             operation=operation,
-            component="external",
+            component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
         )

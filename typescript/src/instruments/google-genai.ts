@@ -87,6 +87,30 @@ function contentMeasurement(response: any, body: any, vertex: boolean): Operatio
   };
 }
 
+function admitDirectContent(measurement: OperationMeasurement, response: any, owner: any, body: any, vertex: boolean): OperationMeasurement {
+  try {
+    const raw = body?.config?.httpOptions?.baseUrl ?? owner?.apiClient?.getBaseUrl?.();
+    const endpoint = new URL(String(raw ?? ""));
+    const usage = response?.usageMetadata;
+    const model = response?.modelVersion;
+    const prompt = usage?.promptTokenCount;
+    const cached = usage?.cachedContentTokenCount ?? 0;
+    const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+    const details = [usage?.promptTokensDetails, usage?.cacheTokensDetails, usage?.candidatesTokensDetails];
+    if (!vertex && endpoint.protocol === "https:" && endpoint.hostname === "generativelanguage.googleapis.com" &&
+        model === "gemini-3.1-pro-preview" && usage?.serviceTier === "standard" &&
+        [prompt, cached, usage?.candidatesTokenCount, usage?.thoughtsTokenCount ?? 0].every(count) &&
+        prompt > 0 && cached <= prompt && [undefined, null, 0].includes(usage?.toolUsePromptTokenCount) &&
+        details.every((items) => items == null || (Array.isArray(items) && items.every((item: any) => item?.modality === "TEXT")))) {
+      return { ...measurement, responseModel: model, providerService: "gemini", billingDimensions: [
+        ...(measurement.billingDimensions ?? []),
+        ["direct_llm_pricing_lane", prompt > 200_000 ? "standard_long" : "standard_short"],
+      ] };
+    }
+  } catch { /* Unknown routes and metadata remain explicitly unpriced. */ }
+  return measurement;
+}
+
 function embeddingMeasurement(response: any, body: any, vertex: boolean): OperationMeasurement {
   const embeddings = Array.isArray(response?.embeddings) ? response.embeddings : [];
   let tokens = 0;
@@ -304,9 +328,13 @@ function patchDirect(
         let terminal = response;
         return wrapProviderStream(response, session, (chunk) => {
           terminal = (chunk as any)?.response ?? chunk;
-        }, () => directMeasurement(spec.kind, terminal, body, vertex, name));
+        }, () => {
+          const measurement = directMeasurement(spec.kind, terminal, body, vertex, name);
+          return spec.kind === "content" ? admitDirectContent(measurement, terminal, this, body, vertex) : measurement;
+        });
       }
-      session.finish(directMeasurement(spec.kind, response, body, vertex, name));
+      const measurement = directMeasurement(spec.kind, response, body, vertex, name);
+      session.finish(spec.kind === "content" ? admitDirectContent(measurement, response, this, body, vertex) : measurement);
       return response;
     };
     return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });

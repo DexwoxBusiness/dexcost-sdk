@@ -87,6 +87,7 @@ _patched_owner: tuple[Any, Any] | None = None
 _provider_identity: ContextVar[str] = ContextVar(
     "dexcost_openai_compatible_provider", default="openai"
 )
+_direct_openai_endpoint: ContextVar[bool] = ContextVar("dexcost_direct_openai", default=False)
 
 
 def _current_provider() -> str:
@@ -148,6 +149,8 @@ def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | N
 
 def _request_service_tier(provider: str, kwargs: Mapping[str, Any]) -> object:
     """Retain only the request tier needed to select a verified pricing lane."""
+    if provider == "openai" and _direct_openai_endpoint.get():
+        return "direct_openai"
     if provider == "fireworks_ai":
         return _fireworks_service_tier(provider, kwargs)
     if provider != "groq":
@@ -317,20 +320,29 @@ def _routed_wrapper(wrapper: Any) -> Any:
         kwargs: dict[str, Any],
     ) -> Any:
         provider = _provider_for_instance(instance)
+        base_url = getattr(getattr(instance, "_client", None), "base_url", None)
+        direct = False
+        with suppress(ValueError):
+            endpoint = urlparse(str(base_url or ""))
+            direct = endpoint.scheme == "https" and endpoint.hostname == "api.openai.com"
         token = _provider_identity.set(provider)
+        route_token = _direct_openai_endpoint.set(direct)
         try:
             result = wrapper(wrapped, instance, args, kwargs)
         finally:
             _provider_identity.reset(token)
+            _direct_openai_endpoint.reset(route_token)
         if not isawaitable(result):
             return result
 
         async def await_result() -> Any:
             async_token = _provider_identity.set(provider)
+            async_route_token = _direct_openai_endpoint.set(direct)
             try:
                 return await result
             finally:
                 _provider_identity.reset(async_token)
+                _direct_openai_endpoint.reset(async_route_token)
 
         return await_result()
 
@@ -1908,6 +1920,9 @@ def _record_from_response(
         xai_pricing_lane=xai_pricing_lane,
         groq_pricing_lane=groq_pricing_lane,
         mistral_pricing_lane=mistral_pricing_lane,
+        direct_llm_pricing_lane=_direct_openai_lane(
+            response, provider, operation_name, service_tier, input_tokens, has_usage
+        ),
     )
     _record_response_tool_events(
         response,
@@ -2018,6 +2033,14 @@ def _record_from_stream_usage(
         xai_pricing_lane=xai_pricing_lane,
         groq_pricing_lane=groq_pricing_lane,
         mistral_pricing_lane=mistral_pricing_lane,
+        direct_llm_pricing_lane=_direct_openai_lane(
+            response,
+            resolved_provider,
+            operation_name,
+            service_tier,
+            input_tokens,
+            has_usage and status == "succeeded",
+        ),
     )
     if response is not None:
         _record_response_tool_events(
@@ -2043,6 +2066,28 @@ def _finalize_stream_auto_task(
     if _active_tracker is not None:
         _active_tracker._aggregate_costs(auto_task_obj)
         _active_tracker._storage.insert_task(auto_task_obj)
+
+
+def _direct_openai_lane(
+    response: Any,
+    provider: str,
+    operation: str,
+    route: object,
+    total_input: int,
+    valid: bool,
+) -> str | None:
+    """Only direct global Standard Responses are admitted to public gross pricing."""
+    if (
+        valid
+        and provider == "openai"
+        and operation == "openai.responses"
+        and route == "direct_openai"
+        and total_input > 0
+        and _value(response, "service_tier") == "default"
+        and _value(response, "status") == "completed"
+    ):
+        return "standard_long" if total_input > 272_000 else "standard_short"
+    return None
 
 
 def _insert_llm_event(
@@ -2073,6 +2118,7 @@ def _insert_llm_event(
     xai_pricing_lane: str | None = None,
     groq_pricing_lane: str | None = None,
     mistral_pricing_lane: str | None = None,
+    direct_llm_pricing_lane: str | None = None,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if provider_cost_usd is not None:
@@ -2147,6 +2193,13 @@ def _insert_llm_event(
             }
         ]
     dimensions = list(details.get("attribution_dimensions", []))
+    if direct_llm_pricing_lane is not None:
+        dimensions.append(
+            {
+                "key": "direct_llm_pricing_lane",
+                "value": {"type": "string", "value": direct_llm_pricing_lane},
+            }
+        )
     if provider == "fireworks_ai" and service_tier in {"default", "priority"}:
         dimensions.append(
             {

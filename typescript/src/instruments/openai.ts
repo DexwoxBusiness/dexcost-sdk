@@ -286,6 +286,7 @@ export function uninstrumentOpenai(): void {
 interface RoutedIdentity {
   provider: string;
   gateway?: "litellm";
+  directOpenai?: boolean;
 }
 
 function providerForResource(resource: any, requestedModel: string): RoutedIdentity {
@@ -294,6 +295,9 @@ function providerForResource(resource: any, requestedModel: string): RoutedIdent
     const hostname = new URL(raw).hostname.toLowerCase();
     if (isConfiguredLiteLlmProxyUrl(raw)) {
       return { provider: classifyLiteLlmProvider(requestedModel), gateway: "litellm" };
+    }
+    if (hostname === "api.openai.com" && new URL(raw).protocol === "https:") {
+      return { provider: "openai", directOpenai: true };
     }
     if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) {
       return { provider: "openrouter" };
@@ -518,6 +522,14 @@ function recordUsageEvent(
     if (providerUpstreamCostUsd !== undefined) {
       details.provider_upstream_cost_usd = providerUpstreamCostUsd.toString();
     }
+  }
+  const directResponse = rawResponse as { service_tier?: unknown; status?: unknown } | undefined;
+  if (route.directOpenai === true && responsesApi && status === "succeeded" &&
+      rawUsage != null && details.openai_usage_error === undefined && inputTokens > 0 &&
+      directResponse?.service_tier === "default" && directResponse?.status === "completed") {
+    details.attribution_dimensions = [{ key: "direct_llm_pricing_lane", value: {
+      type: "string", value: inputTokens > 272_000 ? "standard_long" : "standard_short",
+    } }];
   }
   if (provider === "xai") {
     const pricingLane = xaiPricingLane(
