@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 193,
-  "typescript_export_count": 354,
-  "equivalent_count": 190,
+  "python_export_count": 200,
+  "typescript_export_count": 365,
+  "equivalent_count": 197,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -970,6 +970,24 @@
       "notes": null
     },
     {
+      "python_name": "bind_llamaparse_job",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "bindLlamaParseJob"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
+      "python_name": "bind_provider_billing",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "bindProviderBilling"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "capability_context",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1249,11 +1267,29 @@
       "notes": "Intentional TypeScript naming/API-shape equivalent."
     },
     {
+      "python_name": "instrument_llamaparse",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentLlamaParse"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
       "python_name": "instrument_mcp",
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
         "instrumentMcp"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_object_storage",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentObjectStorage"
       ],
       "notes": null
     },
@@ -1364,6 +1400,15 @@
         "recordFirecrawlSearch"
       ],
       "notes": null
+    },
+    {
+      "python_name": "record_llamaparse_job",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "recordLlamaParseJob"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
     },
     {
       "python_name": "record_outcome",
@@ -1632,11 +1677,29 @@
       "notes": "Intentional TypeScript naming/API-shape equivalent."
     },
     {
+      "python_name": "uninstrument_llamaparse",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentLlamaParse"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
       "python_name": "uninstrument_mcp",
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
         "uninstrumentMcp"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_object_storage",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentObjectStorage"
       ],
       "notes": null
     },

@@ -6,7 +6,8 @@
  *
  * Token usage from response.meta.billedUnits (inputTokens, outputTokens).
  *
- * Supports both non-streaming and streaming responses (chatStream).
+ * Supports V1 and generated V2 chat, streaming, Embed and Rerank. Instrument
+ * before constructing CohereClientV2: it binds its resource methods at creation.
  */
 
 import { randomUUID } from "node:crypto";
@@ -22,16 +23,13 @@ import { registerInstrument } from "./index.js";
 import { stampAmbientAttribution } from "../core/capabilities.js";
 import { ProviderOperationSession, recordProviderFailure } from "./provider-metering.js";
 import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
+import { hasPaidProviderBilling } from "../core/provider-billing.js";
 import { debugLog } from "../core/debug.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _patched = false;
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-let _originalChat: Function | null = null;
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-let _originalChatStream: Function | null = null;
-let _patchedPrototype: any = null;
+const _chatPatches: Array<{ prototype: any; chat: any; stream: any }> = [];
 let _clientClass: any = null;
 let _buffer: EventBuffer | null = null;
 let _pricing: PricingEngine | null = null;
@@ -47,6 +45,21 @@ export function _resetClientClass(): void {
   _clientClass = null;
 }
 
+function nativePrototypes(classes: any[]): any[] {
+  return classes.flatMap((Client) => {
+    if (!Client?.prototype) return [];
+    if (["chat", "chatStream", "embed", "rerank"].some(name => typeof Client.prototype[name] === "function")) return [Client.prototype];
+    // Official CohereClientV2 has bound instance fields, not prototype methods.
+    // Constructing a keyless transport performs no request and reveals the
+    // generated resource prototype. Never use ambient/user credentials here.
+    try {
+      const sample = new Client({ token: "dexcost-instrumentation-no-request" });
+      const resource = sample?.clientV2;
+      return resource ? [Object.getPrototypeOf(resource)] : [];
+    } catch { return []; }
+  }).filter((value, index, values) => value && values.indexOf(value) === index);
+}
+
 /**
  * Patch `CohereClient.prototype.chat` and `CohereClient.prototype.chatStream`
  * to record cost events.
@@ -60,33 +73,37 @@ export async function instrumentCohere(
 ): Promise<void> {
   if (_patched) return;
 
-  let ClientProto: any;
   let meteredPrototypes: any[];
   if (_clientClass) {
-    ClientProto = _clientClass.prototype;
-    meteredPrototypes = [ClientProto];
+    meteredPrototypes = nativePrototypes(Array.isArray(_clientClass) ? _clientClass : [_clientClass]);
   } else {
     // cohere-ai is an optional peer dependency; the dynamic import
     // only succeeds at runtime if the user has installed it.
-    // @ts-expect-error -- cohere-ai types are not bundled with dexcost
-    const cohereModule = await import("cohere-ai");
+    const packageName = "cohere-ai";
+    const cohereModule = await import(packageName);
     const mod = cohereModule.default ?? cohereModule;
-    ClientProto = mod.CohereClient.prototype;
-    meteredPrototypes = [mod.CohereClient?.prototype, mod.CohereClientV2?.prototype]
-      .filter((value, index, values) => value && values.indexOf(value) === index);
+    meteredPrototypes = nativePrototypes([mod.CohereClient, mod.CohereClientV2]);
   }
 
-  _originalChat = ClientProto.chat;
-  _originalChatStream = ClientProto.chatStream ?? null;
-  _patchedPrototype = ClientProto;
   _buffer = buffer;
   _pricing = pricing;
+  for (const prototype of meteredPrototypes) patchChatPrototype(prototype);
+  for (const prototype of meteredPrototypes) patchMeteredMethods(prototype);
 
-  ClientProto.chat = async function (
+  _patched = true;
+}
+
+function patchChatPrototype(ClientProto: any): void {
+  const _originalChat = ClientProto.chat;
+  const _originalChatStream = ClientProto.chatStream ?? null;
+  if (typeof _originalChat !== "function" && !_originalChatStream) return;
+  _chatPatches.push({ prototype: ClientProto, chat: _originalChat, stream: _originalChatStream });
+
+  ClientProto.chat = function (
     this: any,
     body: any,
     options?: any,
-  ): Promise<any> {
+  ): any {
     if (currentProviderCaptureOwner() !== undefined) {
       return _originalChat!.call(this, body, options);
     }
@@ -110,15 +127,12 @@ export async function instrumentCohere(
 
     const startTime = performance.now();
     const self = this;
-    try {
-      const response = await suppressNetworkEvent(() =>
-        runWithProviderCapture("cohere", () =>
-          runWithTask(task, () => _originalChat!.call(self, body, options))),
-      );
+    const paid = paidCohere(self, options);
+    const complete = (response: any): any => {
       try {
         const latencyMs = Math.round(performance.now() - startTime);
         const model: string = body?.model ?? response?.model ?? "command-r-plus";
-        recordEvent(response, model, task, latencyMs);
+        recordEvent(response, model, task, latencyMs, paid);
       } catch {
         // dexcost errors must never crash user code
       }
@@ -126,7 +140,8 @@ export async function instrumentCohere(
         finalizeAutoTask(task, "success", _buffer);
       }
       return response;
-    } catch (err) {
+    };
+    const fail = (err: unknown): never => {
       if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
         taskType: "cohere.chat", provider: "cohere", service: "chat",
         operation: "cohere.chat", component: "llm", model: body?.model, eventType: "llm_call",
@@ -135,15 +150,23 @@ export async function instrumentCohere(
         finalizeAutoTask(task, "failed", _buffer);
       }
       throw err;
-    }
+    };
+    let result: any;
+    try {
+      result = suppressNetworkEvent(() =>
+        runWithProviderCapture("cohere", () =>
+          runWithTask(task, () => _originalChat!.call(self, body, options))),
+      );
+    } catch (err) { return fail(err); }
+    return observeCohereResult(result, complete, fail);
   };
 
   if (_originalChatStream) {
-    ClientProto.chatStream = async function (
+    ClientProto.chatStream = function (
       this: any,
       body: any,
       options?: any,
-    ): Promise<any> {
+    ): any {
       if (currentProviderCaptureOwner() !== undefined) {
         return _originalChatStream!.call(this, body, options);
       }
@@ -165,14 +188,9 @@ export async function instrumentCohere(
 
       const startTime = performance.now();
       const self = this;
+      const paid = paidCohere(self, options);
       const model: string = body?.model ?? "command-r-plus";
-      try {
-        const rawStream = await suppressNetworkEvent(() =>
-          runWithProviderCapture("cohere", () =>
-            runWithTask(task, () => _originalChatStream!.call(self, body, options))),
-        );
-        return wrapStream(rawStream, model, task, startTime, autoCreated);
-      } catch (err) {
+      const fail = (err: unknown): never => {
         if (_pricing && _buffer) recordProviderFailure(_pricing, _buffer, task, {
           taskType: "cohere.chat_stream", provider: "cohere", service: "chat",
           operation: "cohere.chat_stream", component: "llm", model, eventType: "llm_call",
@@ -181,13 +199,19 @@ export async function instrumentCohere(
           finalizeAutoTask(task, "failed", _buffer);
         }
         throw err;
-      }
+      };
+      let result: any;
+      try {
+        result = suppressNetworkEvent(() =>
+          runWithProviderCapture("cohere", () =>
+            runWithTask(task, () => _originalChatStream!.call(self, body, options))),
+        );
+      } catch (err) { return fail(err); }
+      return observeCohereResult(result,
+        (rawStream) => wrapStream(rawStream, model, task, startTime, autoCreated, paid), fail);
     };
   }
 
-  for (const prototype of meteredPrototypes) patchMeteredMethods(prototype);
-
-  _patched = true;
 }
 
 /**
@@ -196,19 +220,16 @@ export async function instrumentCohere(
 export function uninstrumentCohere(): void {
   if (!_patched) return;
 
-  if (_patchedPrototype) {
-    if (_originalChat) _patchedPrototype.chat = _originalChat;
-    else delete _patchedPrototype.chat;
-    if (_originalChatStream) _patchedPrototype.chatStream = _originalChatStream;
-    else delete _patchedPrototype.chatStream;
+  for (const patch of _chatPatches.splice(0)) {
+    if (patch.chat) patch.prototype.chat = patch.chat;
+    else delete patch.prototype.chat;
+    if (patch.stream) patch.prototype.chatStream = patch.stream;
+    else delete patch.prototype.chatStream;
   }
   for (const patch of _meteredPatches.splice(0)) {
     patch.prototype[patch.name] = patch.original;
   }
 
-  _originalChat = null;
-  _originalChatStream = null;
-  _patchedPrototype = null;
   _buffer = null;
   _pricing = null;
   _patched = false;
@@ -218,6 +239,65 @@ export function uninstrumentCohere(): void {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+const COHERE_METADATA_HEADERS = new Set([
+  "x-fern-language", "x-fern-sdk-name", "x-fern-sdk-version",
+  "x-fern-runtime", "x-fern-runtime-version", "user-agent", "x-client-name",
+]);
+
+/** Observe native settlement once, before caller recovery callbacks. Keep the
+ * HttpResponsePromise surface and bound receiver for withRawResponse(). Raw
+ * stream helpers are passed through; their stream consumption is not captured.
+ */
+function observeCohereResult(raw: any, complete: (value: any) => any, fail: (error: unknown) => never): any {
+  if (raw == null || typeof raw.then !== "function") return complete(raw);
+  const observed = raw.then(complete, fail);
+  // An ignored SDK promise must not create an extra unhandled-rejection report.
+  void observed.catch(() => undefined);
+  return new Proxy(raw, {
+    get(target, property) {
+      if (property === "then" || property === "catch" || property === "finally") {
+        return observed[property].bind(observed);
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function ordinaryCohereHeaders(headers: unknown): boolean {
+  if (headers == null) return true;
+  if (typeof headers !== "object" || Array.isArray(headers)) return false;
+  const prototype = Object.getPrototypeOf(headers);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  // Cohere normalizes these metadata headers on every native client. Inspect
+  // names only: never evaluate a header supplier or read an auth secret value.
+  return Object.keys(headers).every(name => COHERE_METADATA_HEADERS.has(name.toLowerCase()));
+}
+
+function paidCohere(client: any, requestOptions: any): boolean {
+  // Reject all per-call options: they can contain alternate auth or routing.
+  const options = client?._options;
+  if (requestOptions != null || !options || !ordinaryCohereHeaders(options.headers) ||
+      options.fetcher != null || options.fetch != null) return false;
+  const endpoint = options.baseUrl ?? options.environment ?? "https://api.cohere.com";
+  return typeof endpoint === "string" && hasPaidProviderBilling(client, "cohere", endpoint);
+}
+function validCount(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function validChat(response: any, billed: any): boolean {
+  const reason = response?.delta?.finishReason ?? response?.finishReason ?? response?.finish_reason;
+  return ["COMPLETE", "STOP_SEQUENCE", "MAX_TOKENS", "TOOL_CALL"].includes(reason) &&
+    validCount(billed?.inputTokens ?? billed?.input_tokens) && validCount(billed?.outputTokens ?? billed?.output_tokens);
+}
+function billingDimensions(paid: boolean): Array<readonly [string, string]> {
+  return paid ? [["provider_billing_lane", "caller_paid_standard"]] : [];
+}
+function providerId(response: any): string | undefined {
+  const value = response?.id ?? response?.generationId ?? response?.generation_id ?? response?.responseId;
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 256) : undefined;
+}
+
 function nonNegativeNumber(value: unknown): number | undefined {
   const result = typeof value === "number" ? value : Number(value);
   return Number.isFinite(result) && result >= 0 ? result : undefined;
@@ -225,10 +305,10 @@ function nonNegativeNumber(value: unknown): number | undefined {
 
 function cohereBilledUnits(response: any): any {
   return response?.usage?.billedUnits ?? response?.usage?.billed_units ??
-    response?.meta?.billedUnits ?? response?.meta?.billed_units ?? {};
+    response?.meta?.billedUnits ?? response?.meta?.billed_units;
 }
 
-function meteredMeasurement(kind: "embed" | "rerank", response: any, model: string): any {
+function meteredMeasurement(kind: "embed" | "rerank", response: any, model: string, paid = false): any {
   const billed = cohereBilledUnits(response);
   const inputTokens = nonNegativeNumber(billed?.inputTokens ?? billed?.input_tokens);
   const imageTokens = nonNegativeNumber(billed?.imageTokens ?? billed?.image_tokens);
@@ -268,7 +348,11 @@ function meteredMeasurement(kind: "embed" | "rerank", response: any, model: stri
     responseModel: model,
     inputTokens,
     outputTokens,
-    providerService: kind === "embed" ? "embed" : undefined,
+    providerService: kind,
+    billingDimensions: billingDimensions(paid && (kind === "rerank"
+      ? validCount(billed?.searchUnits ?? billed?.search_units)
+      : validCount(billed?.inputTokens ?? billed?.input_tokens) &&
+        ((billed?.imageTokens ?? billed?.image_tokens) == null || validCount(billed?.imageTokens ?? billed?.image_tokens)))),
   };
 }
 
@@ -277,42 +361,45 @@ function patchMeteredMethods(prototype: any): void {
     if (typeof prototype?.[name] !== "function") continue;
     const original = prototype[name] as Function;
     _meteredPatches.push({ prototype, name, original });
-    prototype[name] = async function (this: any, body: any, options?: any): Promise<any> {
+    prototype[name] = function (this: any, body: any, options?: any): any {
       if (currentProviderCaptureOwner() !== undefined) return original.call(this, body, options);
       const requested = typeof body?.model === "string" && body.model.length > 0 ? body.model : "unknown";
       const model = name === "embed" && requested.startsWith("cohere/")
         ? requested.slice("cohere/".length)
         : requested;
       const service = name === "embed" ? "embeddings" : "rerank";
+      const paid = paidCohere(this, options);
       const session = new ProviderOperationSession(_pricing!, _buffer!, {
         taskType: `cohere.${name}`,
         provider: "cohere",
         service,
         operation: `cohere.${name}`,
-        component: name === "embed" ? "external" : "llm",
+        component: "external",
         model,
         eventType: "external_cost",
       });
-      try {
-        const response = await session.invoke(() => original.call(this, body, options));
-        session.finish(meteredMeasurement(name, response, model));
+      let result: any;
+      try { result = session.invoke(() => original.call(this, body, options)); }
+      catch (error) { session.fail(error); throw error; }
+      return observeCohereResult(result, (response) => {
+        session.finish(meteredMeasurement(name, response, model, paid));
         return response;
-      } catch (error) {
+      }, (error) => {
         session.fail(error);
         throw error;
-      }
+      });
     };
   }
 }
 
-function recordEvent(response: any, model: string, task: Task, latencyMs: number): void {
+function recordEvent(response: any, model: string, task: Task, latencyMs: number, paid = false): void {
   if (!_buffer || !_pricing) return;
 
-  const billedUnits = response?.meta?.billedUnits;
+  const billedUnits = cohereBilledUnits(response);
   const hasUsage = billedUnits != null;
 
-  const inputTokens: number = billedUnits?.inputTokens ?? 0;
-  const outputTokens: number = billedUnits?.outputTokens ?? 0;
+  const inputTokens: number = nonNegativeNumber(billedUnits?.inputTokens ?? billedUnits?.input_tokens) ?? 0;
+  const outputTokens: number = nonNegativeNumber(billedUnits?.outputTokens ?? billedUnits?.output_tokens) ?? 0;
 
   let costUsd: Decimal = new Decimal(0);
   let costConfidence: CostConfidence = "estimated";
@@ -338,6 +425,18 @@ function recordEvent(response: any, model: string, task: Task, latencyMs: number
     outputTokens,
     latencyMs,
     isRetry: false,
+    serviceName: "chat",
+    details: {
+      attribution_component: "llm", attribution_operation_name: "cohere.chat",
+      attribution_operation_status: ["ERROR", "TIMEOUT"].includes(response?.finishReason ?? response?.finish_reason) ? "failed" : "succeeded",
+      attribution_resource_type: "model", attribution_resource_id: model,
+      provider_record_id: providerId(response),
+      attribution_dimensions: billingDimensions(paid && validChat(response, billedUnits)).map(([key, value]) => ({key, value: {type: "string", value}})),
+      attribution_usage_lines: [
+        ...(inputTokens > 0 ? [{metric: "input_tokens", quantity: String(inputTokens), unit: "Tokens"}] : []),
+        ...(outputTokens > 0 ? [{metric: "output_tokens", quantity: String(outputTokens), unit: "Tokens"}] : []),
+      ],
+    },
   });
   stampAmbientAttribution(event);
 
@@ -357,11 +456,15 @@ function wrapStream(
   task: Task,
   startTime: number,
   autoCreated: boolean = false,
+  paid: boolean = false,
 ): AsyncIterable<any> {
   let inputTokens = 0;
   let outputTokens = 0;
   let hasUsage = false;
   let finalized = false;
+  let recordId: string | undefined;
+  let terminal: any;
+  let terminalBilled: any;
 
   const finalize = (status: "succeeded" | "failed" | "cancelled", error?: unknown): void => {
     if (finalized) return;
@@ -379,8 +482,10 @@ function wrapStream(
         costUsd: costResult.costUsd, costConfidence: costResult.costConfidence,
         pricingSource: costResult.pricingSource, provider: "cohere", model,
         inputTokens, outputTokens, latencyMs: Math.round(performance.now() - startTime),
-        isRetry: false,
+        isRetry: false, serviceName: "chat",
         details: {
+          provider_record_id: recordId,
+          attribution_dimensions: billingDimensions(paid && validChat(terminal, terminalBilled)).map(([key, value]) => ({key, value: {type: "string", value}})),
           attribution_component: "llm",
           attribution_operation_name: "cohere.chat_stream",
           attribution_operation_status: status,
@@ -423,22 +528,27 @@ function wrapStream(
             throw err;
           }
           if (result.done) {
-            finalize("succeeded");
+            finalize(["ERROR", "TIMEOUT"].includes(terminal?.delta?.finishReason ?? terminal?.finishReason) ? "failed" : "succeeded");
             return result;
           }
 
           const chunk = result.value;
-          // Cohere streaming events: look for usage in stream-end or meta events
-          if (chunk?.eventType === "stream-end" && chunk?.response?.meta?.billedUnits) {
+          // Preserve partial diagnostic usage without granting terminal admission.
+          const partial = cohereBilledUnits(chunk);
+          if (partial != null) {
             hasUsage = true;
-            inputTokens = chunk.response.meta.billedUnits.inputTokens ?? inputTokens;
-            outputTokens = chunk.response.meta.billedUnits.outputTokens ?? outputTokens;
+            inputTokens = nonNegativeNumber(partial.inputTokens ?? partial.input_tokens) ?? inputTokens;
+            outputTokens = nonNegativeNumber(partial.outputTokens ?? partial.output_tokens) ?? outputTokens;
           }
-          // Also check for meta.billedUnits directly on chunks
-          if (chunk?.meta?.billedUnits) {
-            hasUsage = true;
-            inputTokens = chunk.meta.billedUnits.inputTokens ?? inputTokens;
-            outputTokens = chunk.meta.billedUnits.outputTokens ?? outputTokens;
+          const type = chunk?.type ?? chunk?.eventType;
+          if (type === "message-start") recordId = providerId(chunk);
+          if (type === "message-end" || type === "stream-end") {
+            terminal = chunk?.response ?? chunk;
+            terminalBilled = type === "message-end" ? cohereBilledUnits(chunk?.delta) : cohereBilledUnits(terminal);
+            recordId = providerId(terminal) ?? recordId;
+            hasUsage = terminalBilled != null;
+            inputTokens = nonNegativeNumber(terminalBilled?.inputTokens ?? terminalBilled?.input_tokens) ?? 0;
+            outputTokens = nonNegativeNumber(terminalBilled?.outputTokens ?? terminalBilled?.output_tokens) ?? 0;
           }
           return result;
         },
@@ -471,5 +581,6 @@ function wrapStream(
 // Self-register so importing this module is enough to make the instrument available.
 registerInstrument("cohere", instrumentCohere, uninstrumentCohere, (ref: any) => {
   const mod = ref?.default ?? ref;
-  _setClientClass(mod?.CohereClient ?? mod);
+  const classes = [mod?.CohereClient, mod?.CohereClientV2].filter(Boolean);
+  _setClientClass(classes.length ? [...new Set(classes)] : mod);
 });

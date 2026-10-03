@@ -21,6 +21,8 @@ export { bindBrowserSession, recordBrowserSession, instrumentBrowserbase, uninst
 export type { BrowserSessionIdentity, BrowserSessionBinding, BrowserSessionUsage } from "./instruments/browser-sessions.js";
 export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
 export type { RuntimeResource } from "./instruments/runtime.js";
+export { instrumentObjectStorage, uninstrumentObjectStorage } from "./instruments/object-storage.js";
+export type { ObjectStorageBinding } from "./instruments/object-storage.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
 export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";
 export { CostTracker, TrackedTask } from "./core/tracker.js";
@@ -404,6 +406,7 @@ export type {
 
 // Debug mode
 export { bindApifyRun, recordApifyRun, bindFirecrawlJob, recordFirecrawlJob, recordFirecrawlSearch, instrumentApify, uninstrumentApify, instrumentFirecrawl, uninstrumentFirecrawl } from "./instruments/web-tools.js";
+export { bindLlamaParseJob, recordLlamaParseJob, instrumentLlamaParse, uninstrumentLlamaParse } from "./instruments/document-parse.js";
 export type { FirecrawlBinding } from "./instruments/web-tools.js";
 
 export { setDebugMode, isDebugMode } from "./core/debug.js";
@@ -413,3 +416,5 @@ export { validate, SchemaNotFoundError } from "./schema/validate.js";
 
 // Client Wrappers
 export { TrackedOpenAI, TrackedAnthropic, wrapOpenAI, wrapAnthropic } from "./clients.js";
+export { bindProviderBilling } from "./core/provider-billing.js";
+export type { ProviderBillingAssertion, ProviderBillingProvider, ProviderBillingTier } from "./core/provider-billing.js";

@@ -17,6 +17,11 @@ import {
   databaseResourceId,
   wrapRuntimeHandler,
   instrumentE2bSandbox,
+  bindProviderBilling,
+  instrumentLlamaParse,
+  uninstrumentLlamaParse,
+  instrumentObjectStorage,
+  uninstrumentObjectStorage,
   recordOutcome,
   recordRevenue,
   trackTool,
@@ -43,6 +48,32 @@ function checkDatabaseTypes(tracker: CostTracker): void {
   void pending; void id; stop(); uninstrumentRedisClient(redis);
 }
 void checkDatabaseTypes;
+
+function checkWaveTwoNativeTypes(tracker: CostTracker): void {
+  const parsing = {
+    parsing: {
+      parse: async (_options: { expand: string[] }) => ({ job: { id: "job" } }),
+    },
+  };
+  const wrappedParse: typeof parsing = instrumentLlamaParse(parsing, tracker, {
+    billingAccountId: "organization", projectId: "project",
+  });
+  const result: Promise<{ job: { id: string } }> = wrappedParse.parsing.parse({ expand: ["usage"] });
+  const nativeStorage = { send: async (_command: { input: { Bucket: string } }) => ({ ETag: "etag" }) };
+  const wrappedStorage: typeof nativeStorage = instrumentObjectStorage(nativeStorage, tracker, {
+    provider: "aws_s3", billingAccountId: "123456789012", bucketOwnerAccountId: "123456789012",
+    bucket: "example-bucket", region: "us-east-1", ownerPays: true,
+  });
+  const response: Promise<{ ETag: string }> = wrappedStorage.send({ input: { Bucket: "example-bucket" } });
+  const stop: () => void = bindProviderBilling({}, {
+    provider: "cohere", tier: "unknown", endpoint: "https://api.cohere.com",
+  });
+  void result; void response; stop();
+  uninstrumentLlamaParse(wrappedParse); uninstrumentObjectStorage(wrappedStorage);
+  // @ts-expect-error a billing tier is a constrained assertion, not an arbitrary string
+  bindProviderBilling({}, { provider: "cohere", tier: "enterprise", endpoint: "https://api.cohere.com" });
+}
+void checkWaveTwoNativeTypes;
 import {
   createExpressMiddleware,
   dexcostFastifyPlugin,

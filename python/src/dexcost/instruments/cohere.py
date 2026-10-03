@@ -60,6 +60,7 @@ from dexcost.instruments._provider_metering import (
 )
 from dexcost.models.capability import CapabilityIdentity
 from dexcost.models.event import Event
+from dexcost.provider_billing import _has_paid_billing
 
 _log = logging.getLogger(__name__)
 
@@ -333,6 +334,7 @@ def _sync_chat_wrapper(
     wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
     """wrapt wrapper for sync ``Client.chat``."""
+    paid = _paid_cohere(instance, kwargs)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -371,6 +373,7 @@ def _sync_chat_wrapper(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                paid=paid,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -424,6 +427,7 @@ def _async_chat_wrapper(
         task,
         capability,
         idempotency_key,
+        instance=instance,
     )
 
 
@@ -437,8 +441,10 @@ async def _async_chat_handler(
     task: Any = None,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    instance: Any = None,
 ) -> Any:
     """Await the async chat call and record the response."""
+    paid = _paid_cohere(instance, kwargs)
     if auto_task_obj is not None and auto_token is None:
         auto_token = set_current_task(auto_task_obj)
     try:
@@ -466,6 +472,7 @@ async def _async_chat_handler(
                 task or auto_task_obj,
                 capability,
                 idempotency_key,
+                paid=paid,
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -492,6 +499,35 @@ async def _async_chat_handler(
 # ---------------------------------------------------------------------------
 # Embedding and rerank wrappers
 # ---------------------------------------------------------------------------
+
+
+def _paid_cohere(instance: Any, kwargs: Mapping[str, Any]) -> bool:
+    # Options can override auth or routing; do not inherit an account assertion.
+    if kwargs.get("request_options") is not None:
+        return False
+    try:
+        endpoint = instance._client_wrapper.get_base_url()
+        return isinstance(endpoint, str) and _has_paid_billing(instance, "cohere", endpoint)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _valid_count(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 <= value <= 9_007_199_254_740_991
+        and value == int(value)
+    )
+
+
+def _valid_chat_billing(response: Any, billed: Any) -> bool:
+    reason = _value(_value(response, "delta"), "finish_reason") or _value(
+        response, "finish_reason"
+    )
+    return reason in {"COMPLETE", "STOP_SEQUENCE", "MAX_TOKENS", "TOOL_CALL"} and all(
+        _valid_count(_value(billed, key)) for key in ("input_tokens", "output_tokens")
+    )
 
 
 def _value(owner: Any, name: str, default: Any = None) -> Any:
@@ -555,6 +591,7 @@ def _metered_measurement(
     kind: _MeteredKind,
     response: Any,
     model: str,
+    paid: bool = False,
 ) -> OperationMeasurement:
     billed = _billed_units(response)
     input_tokens = _token_count(_value(billed, "input_tokens"))
@@ -589,7 +626,19 @@ def _metered_measurement(
         response_model=model,
         task_input_tokens=input_tokens,
         task_output_tokens=output_tokens,
-        provider_service="embed" if kind == "embed" else None,
+        provider_service=kind,
+        billing_dimensions=(("provider_billing_lane", "caller_paid_standard"),)
+        if paid
+        and (
+            _valid_count(_value(billed, "search_units"))
+            if kind == "rerank"
+            else _valid_count(_value(billed, "input_tokens"))
+            and (
+                _value(billed, "image_tokens") is None
+                or _valid_count(_value(billed, "image_tokens"))
+            )
+        )
+        else (),
     )
 
 
@@ -601,9 +650,9 @@ def _metered_session(kind: _MeteredKind, model: str) -> ProviderOperationSession
         provider="cohere",
         service=service,
         operation=f"cohere.{kind}",
-        component="external" if kind == "embed" else "llm",
+        component="external",
         model=model,
-        event_type="external_cost" if kind == "embed" else "llm_call",
+        event_type="external_cost",
     )
 
 
@@ -616,13 +665,14 @@ def _sync_metered_wrapper(kind: _MeteredKind) -> Any:
     ) -> Any:
         model = _metered_model(kind, kwargs)
         session = _metered_session(kind, model)
+        paid = _paid_cohere(instance, kwargs)
         try:
             with suppress_network_event():
                 response = wrapped(*args, **kwargs)
         except BaseException as exc:
             session.fail(exc)
             raise
-        session.succeed(_metered_measurement(kind, response, model))
+        session.succeed(_metered_measurement(kind, response, model, paid))
         return response
 
     return wrapper
@@ -640,13 +690,14 @@ def _async_metered_wrapper(kind: _MeteredKind) -> Any:
             # task's ContextVar cannot leak between concurrently created calls.
             model = _metered_model(kind, kwargs)
             session = _metered_session(kind, model)
+            paid = _paid_cohere(instance, kwargs)
             try:
                 with suppress_network_event():
                     response = await wrapped(*args, **kwargs)
             except BaseException as exc:
                 session.fail(exc)
                 raise
-            session.succeed(_metered_measurement(kind, response, model))
+            session.succeed(_metered_measurement(kind, response, model, paid))
             return response
 
         return invoke()
@@ -686,6 +737,7 @@ def _sync_chat_stream_wrapper(
     accumulates token usage from the terminal ``stream-end`` event and
     records an ``llm_call`` event once the stream is fully consumed.
     """
+    paid = _paid_cohere(instance, kwargs)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -722,6 +774,7 @@ def _sync_chat_stream_wrapper(
             auto_task_obj=auto_task_obj,
             capability=capability,
             idempotency_key=idempotency_key,
+            paid=paid,
         )
     finally:
         if auto and auto_token is not None:
@@ -736,6 +789,7 @@ def _async_chat_stream_wrapper(
     ``AsyncClient.chat_stream`` returns an async iterator directly, so the
     wrapper simply wraps it; usage is captured as the stream is consumed.
     """
+    paid = _paid_cohere(instance, kwargs)
     task = get_current_task()
     capability = get_capability()
     idempotency_key = capture_idempotency_key()
@@ -772,6 +826,7 @@ def _async_chat_stream_wrapper(
             auto_task_obj=auto_task_obj,
             capability=capability,
             idempotency_key=idempotency_key,
+            paid=paid,
         )
     finally:
         if auto and auto_token is not None:
@@ -784,7 +839,7 @@ def _extract_stream_usage(event: Any) -> Any | None:
     The terminal ``stream-end`` event carries the full response under
     ``event.response``; token counts live in ``response.meta.billed_units``.
     """
-    event_type = getattr(event, "event_type", None) or getattr(event, "type", None)
+    event_type = _value(event, "event_type") or _value(event, "type")
     if event_type not in ("stream-end", "message-end"):
         return None
     # V2 puts terminal usage on ``message-end.delta.usage`` and does not
@@ -799,7 +854,7 @@ def _extract_stream_usage(event: Any) -> Any | None:
 
 
 def _extract_stream_response(event: Any) -> Any | None:
-    event_type = getattr(event, "event_type", None) or getattr(event, "type", None)
+    event_type = _value(event, "event_type") or _value(event, "type")
     if event_type not in ("stream-end", "message-end"):
         return None
     return _value(event, "response") or event
@@ -832,10 +887,13 @@ class _SyncStreamWrapper(Iterator[Any]):
         auto_task_obj: Any = None,
         capability: CapabilityIdentity | None = None,
         idempotency_key: IdempotencyKey | None = None,
+        paid: bool = False,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
         self._model = model
+        self._paid = paid
+        self._record_id: str | None = None
         self._billed_units: Any | None = None
         self._terminal_response: Any | None = None
         self._tool_calls = 0
@@ -854,6 +912,8 @@ class _SyncStreamWrapper(Iterator[Any]):
             # happens on first iteration, after the method wrapper returned.
             with suppress_network_event():
                 event = next(self._stream)
+            if _value(event, "type") == "message-start":
+                self._record_id = _provider_record_id(event)
             usage = _extract_stream_usage(event)
             if usage is not None:
                 self._billed_units = usage
@@ -896,6 +956,8 @@ class _SyncStreamWrapper(Iterator[Any]):
                 tool_calls=self._tool_calls,
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
+                paid=self._paid,
+                record_id=self._record_id,
             )
             if self._auto_task_obj is not None and event is not None:
                 finalize_auto_task(
@@ -950,10 +1012,13 @@ class _AsyncStreamWrapper:
         auto_task_obj: Any = None,
         capability: CapabilityIdentity | None = None,
         idempotency_key: IdempotencyKey | None = None,
+        paid: bool = False,
     ) -> None:
         self._stream = stream
         self._start_time = start_time
         self._model = model
+        self._paid = paid
+        self._record_id: str | None = None
         self._billed_units: Any | None = None
         self._terminal_response: Any | None = None
         self._tool_calls = 0
@@ -972,6 +1037,8 @@ class _AsyncStreamWrapper:
             # lazy, so keep lower-level network attribution suppressed here.
             with suppress_network_event():
                 event = await self._stream.__anext__()
+            if _value(event, "type") == "message-start":
+                self._record_id = _provider_record_id(event)
             usage = _extract_stream_usage(event)
             if usage is not None:
                 self._billed_units = usage
@@ -1014,6 +1081,8 @@ class _AsyncStreamWrapper:
                 tool_calls=self._tool_calls,
                 capability=self._capability,
                 idempotency_key=self._idempotency_key,
+                paid=self._paid,
+                record_id=self._record_id,
             )
             if self._auto_task_obj is not None and event is not None:
                 finalize_auto_task(
@@ -1103,6 +1172,8 @@ def _record_from_stream_usage(
     tool_calls: int = 0,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    paid: bool = False,
+    record_id: str | None = None,
 ) -> Event | None:
     """Record an event from accumulated Cohere stream usage data."""
     tracker = _active_tracker
@@ -1128,7 +1199,8 @@ def _record_from_stream_usage(
         has_usage=has_usage,
         operation_status=status,
         error=error,
-        provider_record_id=_provider_record_id(response),
+        provider_record_id=_provider_record_id(response) or record_id,
+        paid=paid and _valid_chat_billing(response, billed_units),
         tool_calls=max(tool_calls, _tool_call_count(response)),
         capability=capability,
         idempotency_key=idempotency_key,
@@ -1142,6 +1214,8 @@ def _record_from_response(
     task: Any,
     capability: CapabilityIdentity | None,
     idempotency_key: IdempotencyKey | None,
+    *,
+    paid: bool = False,
 ) -> Event | None:
     """Extract fields from a Cohere chat response and record an event."""
     tracker = _active_tracker
@@ -1172,6 +1246,7 @@ def _record_from_response(
         has_usage=has_usage,
         operation_status=_response_status(response),
         provider_record_id=_provider_record_id(response),
+        paid=paid and _valid_chat_billing(response, billed_units),
         tool_calls=_tool_call_count(response),
         capability=capability,
         idempotency_key=idempotency_key,
@@ -1193,6 +1268,7 @@ def _insert_llm_event(
     tool_calls: int = 0,
     capability: CapabilityIdentity | None = None,
     idempotency_key: IdempotencyKey | None = None,
+    paid: bool = False,
 ) -> Event:
     """Create and persist an llm_call Event."""
     if has_usage:
@@ -1216,6 +1292,13 @@ def _insert_llm_event(
         "attribution_usage_lines": _usage_lines(input_tokens, output_tokens, tool_calls),
         "provider_usage_privacy": "quantities_only",
     }
+    if paid:
+        details["attribution_dimensions"] = [
+            {
+                "key": "provider_billing_lane",
+                "value": {"type": "string", "value": "caller_paid_standard"},
+            }
+        ]
     if provider_record_id is not None:
         details["provider_record_id"] = provider_record_id
     if error is not None:

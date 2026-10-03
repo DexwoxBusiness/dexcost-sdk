@@ -19,6 +19,9 @@
     { "id": "runtime.observation.v1", "role": "paired observed runtime weights, never billed seconds or money", "repository_path": "fixtures/runtime_conformance.json" },
     { "id": "browser.session.observation.v1", "role": "paired terminal browser meters; money remains invoice-authoritative", "repository_path": "fixtures/browser_session_conformance.json" },
     { "id": "web.tools.observation.v1", "role": "paired account-scoped Firecrawl credit and Apify run evidence; money remains server-owned", "repository_path": "fixtures/web_tool_conformance.json" },
-    { "id": "direct.foundation.pricing.v1", "role": "paired raw provider responses through canonical usage; exact server pricing expectations", "repository_path": "tests/fixtures/direct-foundation-pricing.json" }
+    { "id": "direct.foundation.pricing.v1", "role": "paired raw provider responses through canonical usage; exact server pricing expectations", "repository_path": "tests/fixtures/direct-foundation-pricing.json" },
+    { "id": "document.parse.observation.v1", "role": "paired final hosted parse credit snapshots; money remains reconciled-invoice authoritative", "repository_path": "fixtures/document_parse_conformance.json" },
+    { "id": "object.storage.observation.v1", "role": "paired account-scoped successful request evidence, never inferred byte-months or SDK money", "repository_path": "fixtures/object_storage_conformance.json" },
+    { "id": "direct.paid.pricing.v1", "role": "paired client-scoped paid eligibility and raw response meters with exact server pricing expectations", "repository_path": "tests/fixtures/direct-paid-pricing.json" }
   ]
 }

@@ -1,0 +1,91 @@
+{
+  "version": "2026-10-03.2",
+  "verified_at": "2026-10-03",
+  "verification_method": "Official public pricing rendered in Chrome using the computer-use browser; usage and model identity checked against official API docs. No account or paid API calls.",
+  "sources": [
+    {
+      "url": "https://cohere.com/pricing",
+      "rendered_tabs": [
+        "Generative models",
+        "Advanced retrieval models"
+      ],
+      "findings": [
+        "Command R: USD0.15 input/0.60 output per million billed tokens; R7B:0.0375/0.15.",
+        "Rerank v4.0 fast:USD2; pro:USD2.50 per1000 provider-reported search units.",
+        "Command A+ currently displays free API-key pricing: no positive token tariff added."
+      ]
+    },
+    {
+      "url": "https://docs.cohere.com/docs/models",
+      "findings": [
+        "Exact live IDs command-r-08-2024 and command-r7b-12-2024; deprecated generic aliases are not redirected."
+      ]
+    },
+    {
+      "url": "https://docs.cohere.com/docs/how-does-cohere-pricing-work",
+      "browser_verified": true,
+      "findings": [
+        "Trial keys are free. billed_units quantifies billable meters but does not prove that the account is production/paid.",
+        "Generic token counts may exceed billed tokens; only billed units feed these rules."
+      ]
+    },
+    {
+      "url": "https://docs.cohere.com/reference/chat-stream",
+      "findings": [
+        "V2 message-start supplies stable id; message-end delta carries finish reason and full usage. Do not sum cumulative snapshots."
+      ]
+    },
+    {
+      "url": "https://docs.cohere.com/reference/rerank",
+      "findings": [
+        "Use meta.billed_units.search_units; long documents can span chunks. Request document count is not a billed-unit substitute."
+      ]
+    },
+    {
+      "url": "https://github.com/cohere-ai/cohere-typescript/blob/main/src/BaseClient.ts",
+      "package_verified": "cohere-ai@8.1.0",
+      "findings": [
+        "Native normalization adds X-Fern runtime/SDK metadata and User-Agent headers. Only known transport metadata header names are accepted; header values and suppliers are never inspected by admission.",
+        "No-network integration fixtures execute actual V1 and bound V2 clients with their default normalized transport. Auth/routing header overrides remain unpriced."
+      ]
+    },
+    {
+      "url": "https://github.com/cohere-ai/cohere-typescript/blob/main/src/core/fetcher/HttpResponsePromise.ts",
+      "package_verified": "cohere-ai@8.1.0",
+      "findings": [
+        "Native chat, chatStream, embed and rerank expose withRawResponse(). Instrumentation retains its bound receiver, native data and response metadata without another request.",
+        "Provider settlement is observed once before caller catch/finally recovery. Recovered synthetic responses cannot acquire provider-paid evidence. Consuming chatStream exclusively through withRawResponse().data is preserved but not attributed."
+      ]
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "browser_verified": true,
+      "rendered_tabs": [
+        "Standard"
+      ],
+      "findings": [
+        "gemini-3.8-flash paid input/cache-read/output including thoughts per million:USD0.75/0.075/3.75 until 2027-01-01; announced rates from that date1.50/0.15/7.50.",
+        "gemini-3.5-flash-lite paid input/cache-read/output including thoughts per million:USD0.30/0.03/2.50.",
+        "Both expose free tiers, requiring caller-attested paid eligibility. Cache storage is independently time-billed and excluded."
+      ]
+    }
+  ],
+  "admission": [
+    "bind_provider_billing/bindProviderBilling binds a paid/free/unknown assertion to a weak native-client owner and exact direct endpoint.",
+    "Account classification is caller-attested, not derived from key contents, billed_units or token presence.",
+    "Eligibility is snapshotted before request invocation. Per-call HTTP/request options cannot inherit it. Changing credentials requires explicit rebinding.",
+    "Cohere existing Embed public-PAYG rules now require the same evidence. Raw HTTP observers retain usage but cannot synthesize paid evidence.",
+    "Gemini Flash requires TEXT modality evidence for every positive prompt/cache/output meter, exact response model and standard tier. Cached tokens substitute for input; thoughts are separate output. Existing Pro admission was not broadened.",
+    "TypeScript CohereClientV2 binds generated resource methods during construction. Enable instrumentation before constructing it; binding a previously constructed uninstrumented client alone does not wrap stale bound functions."
+  ],
+  "excluded": [
+    "Cohere trial/unknown/free, Command A+ free, generic or unsupported Command aliases, unverified A-family PAYG prices, ModelVault/private/Azure/Bedrock/Vertex/gateway routing.",
+    "Gemini batch/flex/priority, embeddings, grounding/tool fees, cache storage, unverified models/modalities/tiers, free/unknown accounts.",
+    "Discounts, prepaid credits, taxes, minimum commitments and invoice cash amounts."
+  ],
+  "usage_examples": {
+    "python": "instrument_cohere(tracker); client = cohere.ClientV2(...); unbind = bind_provider_billing(client, provider=\"cohere\", tier=\"paid\", endpoint=\"https://api.cohere.com\")",
+    "typescript": "await instrumentCohere(pricing, buffer); const client = new CohereClientV2(...); const unbind = bindProviderBilling(client, {provider:\"cohere\", tier:\"paid\", endpoint:\"https://api.cohere.com\"});",
+    "gemini": "Bind the Google GenAI native root client (Python Client; TypeScript GoogleGenAI) or its actual models resource to provider google and https://generativelanguage.googleapis.com. Never attest trial/free or a proxy/Vertex client as paid."
+  }
+}

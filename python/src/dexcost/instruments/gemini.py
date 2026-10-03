@@ -27,6 +27,7 @@ from dexcost.instruments._provider_metering import (
     SyncProviderStream,
 )
 from dexcost.models.provider_job import ProviderJobEventType, ProviderJobStatus
+from dexcost.provider_billing import _has_paid_billing
 from dexcost.provider_jobs import (
     AsyncProviderJobStream,
     ProviderJobSession,
@@ -346,8 +347,16 @@ def _direct_gemini_endpoint(instance: object, kwargs: dict[str, Any]) -> bool:
         return False
 
 
+def _paid_gemini(instance: object, kwargs: dict[str, Any]) -> bool:
+    # Per-call HTTP overrides may change credentials or routing; never inherit.
+    if _value(kwargs.get("config"), "http_options") is not None:
+        return False
+    endpoint = _value(_value(_value(instance, "_api_client"), "_http_options"), "base_url")
+    return isinstance(endpoint, str) and _has_paid_billing(instance, "google", endpoint)
+
+
 def _admit_direct_content(
-    measurement: OperationMeasurement, response: object, *, direct: bool
+    measurement: OperationMeasurement, response: object, *, direct: bool, paid: bool = False
 ) -> OperationMeasurement:
     usage = _value(response, "usage_metadata")
     prompt = _count(_value(usage, "prompt_token_count"))
@@ -360,7 +369,7 @@ def _admit_direct_content(
     def valid_details(name: str, total: int | None) -> bool:
         details = _value(usage, name)
         if details is None:
-            return True
+            return _value(response, "model_version") == "gemini-3.1-pro-preview" or total == 0
         if not isinstance(details, (list, tuple)):
             return False
         counts = [_count(_value(item, "token_count")) for item in details]
@@ -378,7 +387,14 @@ def _admit_direct_content(
     }
     if (
         direct
-        and _value(response, "model_version") == "gemini-3.1-pro-preview"
+        and (
+            _value(response, "model_version") == "gemini-3.1-pro-preview"
+            or (
+                paid
+                and _value(response, "model_version")
+                in {"gemini-3.8-flash", "gemini-3.5-flash-lite"}
+            )
+        )
         and _value(usage, "service_tier") == "standard"
         and prompt is not None
         and prompt > 0
@@ -399,7 +415,13 @@ def _admit_direct_content(
                 *measurement.billing_dimensions,
                 (
                     "direct_llm_pricing_lane",
-                    "standard_long" if prompt > 200_000 else "standard_short",
+                    (
+                        "caller_paid_standard"
+                        if _value(response, "model_version") != "gemini-3.1-pro-preview"
+                        else "standard_long"
+                        if prompt > 200_000
+                        else "standard_short"
+                    ),
                 ),
             ),
         )
@@ -1232,6 +1254,8 @@ def _sync_direct_call(
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
+    direct = _direct_gemini_endpoint(instance, kwargs)
+    paid = _paid_gemini(instance, kwargs)
     session = _session(
         instance,
         operation=operation,
@@ -1252,7 +1276,10 @@ def _sync_direct_call(
             measurement = extract(response, kwargs, vertex)
             if operation == "google.genai.models.generate_content":
                 measurement = _admit_direct_content(
-                    measurement, response, direct=_direct_gemini_endpoint(instance, kwargs)
+                    measurement,
+                    response,
+                    direct=direct,
+                    paid=paid,
                 )
         except Exception:
             _log.debug("dexcost: failed to extract Google provider usage", exc_info=True)
@@ -1277,6 +1304,8 @@ def _async_direct_call(
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
         vertex = _is_vertex(instance)
+        direct = _direct_gemini_endpoint(instance, kwargs)
+        paid = _paid_gemini(instance, kwargs)
         session = _session(
             instance,
             operation=operation,
@@ -1297,7 +1326,10 @@ def _async_direct_call(
                 measurement = extract(response, kwargs, vertex)
                 if operation == "google.genai.models.generate_content":
                     measurement = _admit_direct_content(
-                        measurement, response, direct=_direct_gemini_endpoint(instance, kwargs)
+                        measurement,
+                        response,
+                        direct=direct,
+                        paid=paid,
                     )
             except Exception:
                 _log.debug(
@@ -1314,8 +1346,11 @@ def _async_direct_call(
 
 
 class _ContentStreamMeter:
-    def __init__(self, kwargs: dict[str, Any], *, vertex: bool, direct: bool = False) -> None:
+    def __init__(
+        self, kwargs: dict[str, Any], *, vertex: bool, direct: bool = False, paid: bool = False
+    ) -> None:
         self.direct = direct
+        self.paid = paid
         self.kwargs = kwargs
         self.vertex = vertex
         self.terminal: object | None = None
@@ -1332,6 +1367,7 @@ class _ContentStreamMeter:
             _content_measurement(self.terminal, self.kwargs, vertex=self.vertex),
             self.terminal,
             direct=self.direct,
+            paid=self.paid,
         )
 
 
@@ -1373,6 +1409,8 @@ def _sync_stream_call(
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
+    direct = _direct_gemini_endpoint(instance, kwargs)
+    paid = _paid_gemini(instance, kwargs)
     session = _session(
         instance,
         operation="google.genai.models.generate_content_stream",
@@ -1390,7 +1428,10 @@ def _sync_stream_call(
             session.fail(exc)
             raise
         meter = _ContentStreamMeter(
-            kwargs, vertex=vertex, direct=_direct_gemini_endpoint(instance, kwargs)
+            kwargs,
+            vertex=vertex,
+            direct=direct,
+            paid=paid,
         )
         session.release_context()
         return SyncProviderStream(
@@ -1412,6 +1453,8 @@ def _async_stream_call(
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
         vertex = _is_vertex(instance)
+        direct = _direct_gemini_endpoint(instance, kwargs)
+        paid = _paid_gemini(instance, kwargs)
         session = _session(
             instance,
             operation="google.genai.models.generate_content_stream",
@@ -1429,7 +1472,10 @@ def _async_stream_call(
                 session.fail(exc)
                 raise
             meter = _ContentStreamMeter(
-                kwargs, vertex=vertex, direct=_direct_gemini_endpoint(instance, kwargs)
+                kwargs,
+                vertex=vertex,
+                direct=direct,
+                paid=paid,
             )
             session.release_context()
             return AsyncProviderStream(

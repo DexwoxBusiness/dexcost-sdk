@@ -43,7 +43,7 @@
     {
       "byte_size": 3607,
       "path": "golden/catalog-release.v1.json",
-      "sha256": "a108d45de61df52d23f6b32086019517cb11eca2d5787a679774349bdfce39cb"
+      "sha256": "1344f595e862051d4cbbe8c7417472773810c469ebbacf1381ed43445bd9e61e"
     },
     {
       "byte_size": 4683,
@@ -86,9 +86,9 @@
       "sha256": "cd2a9b0b22f68b06d7bd15050659c15257c52acc3c9e74030af9b31133b5187e"
     },
     {
-      "byte_size": 65896,
+      "byte_size": 67694,
       "path": "public-api.json",
-      "sha256": "f61d5e1b54384f58a9c1a8a7134082c4d74f1d501ba4fb2552fa54d5ae8a684f"
+      "sha256": "1a48a4ca2bace3c9b263084cc9df3392d4279e2af78175e180a375c82f8e61c0"
     },
     {
       "byte_size": 2375,
@@ -156,19 +156,19 @@
       "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
-      "byte_size": 44156,
+      "byte_size": 45907,
       "path": "typescript-api-map.json",
-      "sha256": "f8c32d712cef7ca78e652648a24a6ff0bf271e1bd79cca728868dc253cb92072"
+      "sha256": "93afa2f6a538853d79d34de6934f528957de2824b4bf894fa179b257375bc316"
     },
     {
-      "byte_size": 9294,
+      "byte_size": 9613,
       "path": "typescript-public-api.json",
-      "sha256": "6b8e96901c81aafdf2c64c98fca4718504dd4de04ba836cfe9cd4412adbfcdc6"
+      "sha256": "093ce3891d72ebbf5f7f10b23c59e5d626aca5622a84763fd7a44bc992702160"
     },
     {
-      "byte_size": 3438,
+      "byte_size": 4076,
       "path": "wire-schema-inventory.json",
-      "sha256": "072eb3352261894ba7715d3e3be09e70864058334698ed98da067449b9fcce20"
+      "sha256": "dd3afbe6cb88e7ccf00c96e7190d45c5f14f254cc6bb37b21ce36b81bc947cf4"
     }
   ],
   "attribution_contract": "3.2.0",
@@ -197,9 +197,19 @@
       "sha256": "0563d8b00219195221c13f9e112328404a1ef09f0429dd68afee954ea8c28df5"
     },
     {
+      "byte_size": 1062,
+      "path": "fixtures/document_parse_conformance.json",
+      "sha256": "97dacd160caba16576cae6dc50e130018d40f08656da6f41e8e6d2b089ef6546"
+    },
+    {
       "byte_size": 1789,
       "path": "fixtures/native_database_conformance.json",
       "sha256": "d2809e654f905f9b9c38bf2b8ad0ad19ff27ea9d42952f52cebf8f270fd9b489"
+    },
+    {
+      "byte_size": 5636,
+      "path": "fixtures/object_storage_conformance.json",
+      "sha256": "5eaf9e38254d10387a0b0bc015795c1b9506f0215a3612877bef1ef2de48b8a7"
     },
     {
       "byte_size": 765,
@@ -220,6 +230,11 @@
       "byte_size": 39361,
       "path": "tests/fixtures/direct-foundation-pricing.json",
       "sha256": "2e744d5683971d8e238cc7f278e9465d49dc566345b47a8ac4653e17aa98ec6b"
+    },
+    {
+      "byte_size": 6217,
+      "path": "tests/fixtures/direct-paid-pricing.json",
+      "sha256": "bef12a153bb985ce63bc34a686b0c4f117f3db9710889424530295e7fb6200b7"
     }
   ],
   "schema_version": "1",

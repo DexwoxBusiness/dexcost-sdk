@@ -36,6 +36,7 @@ class TestCatalogLoading:
         assert len(entries) > 0
         assert "tavily_search" in entries
         assert "pinecone_query" not in entries
+        assert {"cohere_rerank", "llamaparse", "unstructured_io"}.isdisjoint(entries)
 
     def test_entries_have_required_fields(self, catalog: ServiceCatalog) -> None:
         for key, entry in catalog.entries.items():
@@ -455,7 +456,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
                 "version": "test",
                 "service_count": 1,
                 "disabled_service_count": 1,
-                "safety_policy_version": "2026-10-03.1",
+                "safety_policy_version": "2026-10-03.2",
             },
             "custom_search": {
                 "display_name": "Custom Search",
@@ -470,7 +471,7 @@ def _remote_envelope(rate: str = "0.01") -> dict[str, object]:
         },
         "meta": {
             "catalog_version": "test",
-            "safety_policy_version": "2026-10-03.1",
+            "safety_policy_version": "2026-10-03.2",
             "source": "bundled",
             "service_count": 1,
             "disabled_service_count": 1,

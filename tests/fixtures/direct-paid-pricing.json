@@ -1,0 +1,232 @@
+{
+  "version": "2026-10-03.2",
+  "semantics": "Caller-asserted public PAYG eligibility; public marginal gross estimate, not invoice cash. Native direct route only.",
+  "cases": [
+    {
+      "id": "command-r-08-2024",
+      "provider": "cohere",
+      "service": "chat",
+      "component": "llm",
+      "model": "command-r-08-2024",
+      "endpoint": "https://api.cohere.com",
+      "dimension": "provider_billing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "id": "co-command-r-08-2024",
+        "finish_reason": "COMPLETE",
+        "usage": {
+          "billed_units": {
+            "input_tokens": 1000,
+            "output_tokens": 200
+          },
+          "tokens": {
+            "input_tokens": 1300,
+            "output_tokens": 450
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "200"
+      },
+      "expected_usd": "0.00027"
+    },
+    {
+      "id": "command-r7b-12-2024",
+      "provider": "cohere",
+      "service": "chat",
+      "component": "llm",
+      "model": "command-r7b-12-2024",
+      "endpoint": "https://api.cohere.com",
+      "dimension": "provider_billing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "id": "co-command-r7b-12-2024",
+        "finish_reason": "COMPLETE",
+        "usage": {
+          "billed_units": {
+            "input_tokens": 1000,
+            "output_tokens": 200
+          },
+          "tokens": {
+            "input_tokens": 1300,
+            "output_tokens": 450
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "200"
+      },
+      "expected_usd": "0.0000675"
+    },
+    {
+      "id": "rerank-v4.0-fast",
+      "provider": "cohere",
+      "service": "rerank",
+      "component": "external",
+      "model": "rerank-v4.0-fast",
+      "endpoint": "https://api.cohere.com",
+      "dimension": "provider_billing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "id": "co-rerank-v4.0-fast",
+        "meta": {
+          "api_version": {
+            "version": "2"
+          },
+          "billed_units": {
+            "search_units": 3
+          }
+        },
+        "results": []
+      },
+      "expected_usage": {
+        "search_units": "3"
+      },
+      "expected_usd": "0.006"
+    },
+    {
+      "id": "rerank-v4.0-pro",
+      "provider": "cohere",
+      "service": "rerank",
+      "component": "external",
+      "model": "rerank-v4.0-pro",
+      "endpoint": "https://api.cohere.com",
+      "dimension": "provider_billing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "id": "co-rerank-v4.0-pro",
+        "meta": {
+          "api_version": {
+            "version": "2"
+          },
+          "billed_units": {
+            "search_units": 3
+          }
+        },
+        "results": []
+      },
+      "expected_usage": {
+        "search_units": "3"
+      },
+      "expected_usd": "0.0075"
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "provider": "google",
+      "service": "gemini",
+      "component": "llm",
+      "model": "gemini-3.8-flash",
+      "endpoint": "https://generativelanguage.googleapis.com",
+      "dimension": "direct_llm_pricing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "responseId": "go-gemini-3.8-flash",
+        "modelVersion": "gemini-3.8-flash",
+        "usageMetadata": {
+          "serviceTier": "standard",
+          "promptTokenCount": 1000,
+          "cachedContentTokenCount": 200,
+          "candidatesTokenCount": 100,
+          "thoughtsTokenCount": 50,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1000
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 200
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 100
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "800",
+        "cache_read_input_tokens": "200",
+        "output_tokens": "100",
+        "reasoning_output_tokens": "50"
+      },
+      "expected_usd": "0.0011775"
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "provider": "google",
+      "service": "gemini",
+      "component": "llm",
+      "model": "gemini-3.5-flash-lite",
+      "endpoint": "https://generativelanguage.googleapis.com",
+      "dimension": "direct_llm_pricing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "responseId": "go-gemini-3.5-flash-lite",
+        "modelVersion": "gemini-3.5-flash-lite",
+        "usageMetadata": {
+          "serviceTier": "standard",
+          "promptTokenCount": 1000,
+          "cachedContentTokenCount": 200,
+          "candidatesTokenCount": 100,
+          "thoughtsTokenCount": 50,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1000
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 200
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 100
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "800",
+        "cache_read_input_tokens": "200",
+        "output_tokens": "100",
+        "reasoning_output_tokens": "50"
+      },
+      "expected_usd": "0.000621"
+    },
+    {
+      "id": "cohere-embed-paid-gating",
+      "provider": "cohere",
+      "service": "embed",
+      "component": "external",
+      "model": "embed-v4.0",
+      "endpoint": "https://api.cohere.com",
+      "dimension": "provider_billing_lane",
+      "lane": "caller_paid_standard",
+      "response": {
+        "id": "embed-paid",
+        "meta": {
+          "billed_units": {
+            "input_tokens": 1000,
+            "image_tokens": 200
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "input_image_tokens": "200"
+      },
+      "expected_usd": "0.000214"
+    }
+  ]
+}

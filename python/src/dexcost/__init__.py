@@ -170,6 +170,16 @@ from dexcost.instruments.database import (
     mongodb_command_listener,
     uninstrument_redis_client,
 )
+from dexcost.instruments.document_parse import (
+    bind_llamaparse_job,
+    instrument_llamaparse,
+    record_llamaparse_job,
+    uninstrument_llamaparse,
+)
+from dexcost.instruments.object_storage import (
+    instrument_object_storage,
+    uninstrument_object_storage,
+)
 from dexcost.instruments.runtime import (
     instrument_e2b_sandbox,
     uninstrument_e2b_sandbox,
@@ -223,6 +233,7 @@ from dexcost.models.revenue import (
 )
 from dexcost.models.tool import ToolQuantityInput, ToolUsage
 from dexcost.pricing import CostResult, PricingEngine
+from dexcost.provider_billing import bind_provider_billing
 from dexcost.rates import InfrastructureRateEntry, RateEntry, RateRegistry
 from dexcost.redaction import enforce_metadata_limit, hash_value, redact_dict
 from dexcost.schema import SchemaNotFoundError, validate
@@ -1379,6 +1390,8 @@ __all__ = [
     "bind_apify_run",
     "bind_browser_session",
     "bind_firecrawl_job",
+    "bind_llamaparse_job",
+    "bind_provider_billing",
     "capability_context",
     "catalog_status",
     "clear_context",
@@ -1410,7 +1423,9 @@ __all__ = [
     "instrument_gemini",
     "instrument_groq",
     "instrument_litellm",
+    "instrument_llamaparse",
     "instrument_mcp",
+    "instrument_object_storage",
     "instrument_ollama",
     "instrument_openai",
     "instrument_openrouter",
@@ -1423,6 +1438,7 @@ __all__ = [
     "record_cost",
     "record_firecrawl_job",
     "record_firecrawl_search",
+    "record_llamaparse_job",
     "record_outcome",
     "record_revenue",
     "redact_dict",
@@ -1453,7 +1469,9 @@ __all__ = [
     "uninstrument_gemini",
     "uninstrument_groq",
     "uninstrument_litellm",
+    "uninstrument_llamaparse",
     "uninstrument_mcp",
+    "uninstrument_object_storage",
     "uninstrument_ollama",
     "uninstrument_openai",
     "uninstrument_openrouter",

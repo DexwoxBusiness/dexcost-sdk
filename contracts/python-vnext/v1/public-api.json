@@ -1205,6 +1205,18 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.document_parse",
+      "name": "bind_llamaparse_job",
+      "signature": "(tracker: 'Any', response: 'Any', *, billing_account_id: 'str', project_id: 'str', tier: 'str | None' = None) -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.provider_billing",
+      "name": "bind_provider_billing",
+      "signature": "(client: 'Any', *, provider: 'ProviderBillingProvider', tier: 'ProviderBillingTier', endpoint: 'str') -> 'Callable[[], None]'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.capabilities",
       "name": "capability_context",
       "signature": "(capability: 'CapabilityIdentity') -> 'Generator[CapabilityIdentity, None, None]'"
@@ -1391,9 +1403,21 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.document_parse",
+      "name": "instrument_llamaparse",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', project_id: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.mcp",
       "name": "instrument_mcp",
       "signature": "(tracker: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.object_storage",
+      "name": "instrument_object_storage",
+      "signature": "(client: 'Any', tracker: 'Any', *, provider: \"Literal['aws_s3', 'r2_cloudflare']\", billing_account_id: 'str', bucket: 'str', region: 'str', bucket_owner_account_id: 'str | None' = None, owner_pays: 'bool' = False) -> 'Any'"
     },
     {
       "kind": "function",
@@ -1466,6 +1490,12 @@
       "module": "dexcost.instruments.web_tools",
       "name": "record_firecrawl_search",
       "signature": "(tracker: 'Any', response: 'Any', *, billing_account_id: 'str', resource_id: 'str', occurred_at: 'datetime', observed_at: 'datetime', revision: 'int' = 2) -> 'bool'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.document_parse",
+      "name": "record_llamaparse_job",
+      "signature": "(tracker: 'Any', response: 'Any', *, billing_account_id: 'str', project_id: 'str', revision: 'int' = 2) -> 'bool'"
     },
     {
       "kind": "function",
@@ -1649,9 +1679,21 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.document_parse",
+      "name": "uninstrument_llamaparse",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.mcp",
       "name": "uninstrument_mcp",
       "signature": "() -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.object_storage",
+      "name": "uninstrument_object_storage",
+      "signature": "(client: 'Any') -> 'None'"
     },
     {
       "kind": "function",
