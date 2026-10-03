@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.28.0...typescript/v0.29.0) (2026-10-03)
+
+
+### Features
+
+* **attribution:** add paid model, parse, and storage evidence ([#193](https://github.com/DexwoxBusiness/dexcost-sdk/issues/193)) ([a4ed424](https://github.com/DexwoxBusiness/dexcost-sdk/commit/a4ed424f46de1cec95783da6b123cb831f53e49c))
+* **attribution:** add verified LLM, web tools, and EC2 coverage ([#190](https://github.com/DexwoxBusiness/dexcost-sdk/issues/190)) ([a668b8e](https://github.com/DexwoxBusiness/dexcost-sdk/commit/a668b8eb6fb094796acf29af6626e0f033b84a5d))
+
 ## [0.28.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.27.0...typescript/v0.28.0) (2026-10-03)
 
 
