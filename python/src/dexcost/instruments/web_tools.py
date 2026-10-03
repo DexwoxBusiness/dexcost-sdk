@@ -38,6 +38,11 @@ def _id(value: Any) -> str:
     return value
 
 
+def _now() -> datetime:
+    value = datetime.now(timezone.utc)
+    return value.replace(microsecond=(value.microsecond // 1000) * 1000)
+
+
 def _bind(
     tracker: Any,
     provider: str,
@@ -218,7 +223,8 @@ def record_firecrawl_search(
     *,
     billing_account_id: str,
     resource_id: str,
-    occurred_at: datetime | None = None,
+    occurred_at: datetime,
+    observed_at: datetime,
     revision: int = 2,
 ) -> bool:
     """Record a synchronous v2 search response in its owning task.
@@ -226,6 +232,8 @@ def record_firecrawl_search(
     Exact response credits only. The account-scoped resource must match the
     reconciled Firecrawl invoice mapping. Provider id prevents replay charges.
     Search results, request text, scrapeOptions, and page bodies are not retained.
+    Supply the original request start and response-observed finish, not the time
+    an archived response is imported. Unknown request timing is not allocatable.
     """
     return _record_firecrawl_request(
         tracker,
@@ -233,6 +241,7 @@ def record_firecrawl_search(
         billing_account_id=billing_account_id,
         resource_id=resource_id,
         occurred_at=occurred_at,
+        observed_at=observed_at,
         revision=revision,
         operation="firecrawl.search",
     )
@@ -244,7 +253,8 @@ def _record_firecrawl_request(
     *,
     billing_account_id: str,
     resource_id: str,
-    occurred_at: datetime | None = None,
+    occurred_at: datetime,
+    observed_at: datetime,
     revision: int = 2,
     operation: str,
 ) -> bool:
@@ -255,17 +265,14 @@ def _record_firecrawl_request(
     credits = _field(response, "creditsUsed", "credits_used")
     if type(credits) is not int or not 0 <= credits <= 9_007_199_254_740_991:
         raise ValueError("Firecrawl creditsUsed must be an exact nonnegative integer")
-    old = tracker.storage.get_provider_job("firecrawl", "web", record)
-    started = (
-        old.submitted_at
-        if old is not None
-        else _date(occurred_at or datetime.now(timezone.utc).replace(microsecond=0))
-    )
+    started, ended = _date(occurred_at), _date(observed_at)
+    if ended < started:
+        raise ValueError("Response observation cannot precede request start")
     if not _bind(tracker, "firecrawl", "web", record, resource, started, operation):
         return False
     old = tracker.storage.get_provider_job("firecrawl", "web", record)
     usage = (ProviderJobUsageLine("firecrawl.credits", credits, "Credits"),) if credits else ()
-    return _record(tracker, old, revision, started, "succeeded", usage)
+    return _record(tracker, old, revision, ended, "succeeded", usage)
 
 
 class _NativeWebTools:
@@ -319,9 +326,10 @@ class _NativeWebTools:
 
         def invoke(*args: Any, **kwargs: Any) -> Any:
             task = get_current_task()
-            started = datetime.now(timezone.utc).replace(microsecond=0)
+            started = _now()
 
             def capture(result: Any) -> Any:
+                ended = _now()
                 if not self._state[0]:
                     return result
                 # Instrumentation errors cannot alter the provider operation.
@@ -355,6 +363,7 @@ class _NativeWebTools:
                                 billing_account_id=self._account,
                                 resource_id=self._resource,
                                 occurred_at=started,
+                                observed_at=ended,
                                 operation="firecrawl.scrape",
                             )
                         else:
@@ -370,6 +379,7 @@ class _NativeWebTools:
                                 billing_account_id=self._account,
                                 resource_id=self._resource,
                                 occurred_at=started,
+                                observed_at=ended,
                             )
                     finally:
                         _current_task.reset(token)

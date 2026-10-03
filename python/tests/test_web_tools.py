@@ -19,6 +19,7 @@ from dexcost import (
     uninstrument_firecrawl,
 )
 from dexcost.context import _current_task
+from dexcost.instruments import web_tools
 from dexcost.models.task import Task
 from dexcost.storage.sqlite import SQLiteStorage
 
@@ -80,6 +81,8 @@ def test_missing_or_invalid_credits_are_not_free(setup, bad):
             {"success": True, "id": "search", "creditsUsed": bad},
             billing_account_id="account",
             resource_id="resource",
+            occurred_at=START,
+            observed_at=START,
         )
     assert tracker.storage.get_provider_job("firecrawl", "web", "account/search") is None
 
@@ -165,3 +168,72 @@ def test_scope_mismatch_and_native_error_preserved(setup):
     )
     with pytest.raises(RuntimeError, match="native-error"):
         client.scrape("url")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("operation", ["scrape", "search"])
+def test_native_request_preserves_cross_period_response_time(
+    setup, monkeypatch, asynchronous, operation
+):
+    tracker, _ = setup
+    started = datetime.fromisoformat(DATA["crossing_start"].replace("Z", "+00:00"))
+    ended = datetime.fromisoformat(DATA["crossing_end"].replace("Z", "+00:00"))
+    clock = iter([started, ended])
+    monkeypatch.setattr(web_tools, "_now", lambda: next(clock))
+    response = (
+        {"metadata": {"scrapeId": "crossing", "creditsUsed": 4}}
+        if operation == "scrape"
+        else {"id": "crossing", "creditsUsed": 4}
+    )
+
+    def sync_call():
+        return response
+
+    async def async_call():
+        await asyncio.sleep(0)
+        return response
+
+    client = instrument_firecrawl(
+        SimpleNamespace(**{operation: async_call if asynchronous else sync_call}),
+        tracker,
+        billing_account_id="account",
+        resource_id="resource",
+    )
+    result = getattr(client, operation)()
+    assert (asyncio.run(result) if asynchronous else result) is response
+    job = tracker.storage.get_provider_job("firecrawl", "web", "account/crossing")
+    assert job.submitted_at == started and job.observed_at == ended
+    observation = job.to_attribution_observation()
+    assert observation["usage_period"] == {
+        "start_at": DATA["crossing_start"],
+        "end_at": DATA["crossing_end"],
+    }
+
+
+def test_raw_request_requires_original_times_and_replays_without_retiming(setup):
+    tracker, _ = setup
+    started = datetime.fromisoformat(DATA["crossing_start"].replace("Z", "+00:00"))
+    ended = datetime.fromisoformat(DATA["crossing_end"].replace("Z", "+00:00"))
+    response = {"success": True, "id": "raw", "creditsUsed": 4}
+    options = dict(
+        billing_account_id="account",
+        resource_id="resource",
+        occurred_at=started,
+        observed_at=ended,
+    )
+    assert record_firecrawl_search(tracker, response, **options)
+    assert record_firecrawl_search(tracker, response, **options)
+    job = tracker.storage.get_provider_job("firecrawl", "web", "account/raw")
+    assert job.observed_at == ended and job.submitted_at == started and job.revision == 2
+    with pytest.raises(ValueError):
+        record_firecrawl_search(tracker, response, **{**options, "occurred_at": ended})
+    for invalid in [
+        {"occurred_at": None},
+        {"observed_at": None},
+        {"observed_at": started.replace(day=29)},
+    ]:
+        with pytest.raises(ValueError):
+            record_firecrawl_search(
+                tracker, {**response, "id": "invalid"}, **{**options, **invalid}
+            )
+        assert tracker.storage.get_provider_job("firecrawl", "web", "account/invalid") is None

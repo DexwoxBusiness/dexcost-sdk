@@ -33,6 +33,13 @@ Firecrawl scrape capture requires explicit native metadata `scrape_id` and
 Current Python `SearchData` strips ID/credits, so search is **manual raw-response
 capture**, not fully automatic. `record_firecrawl_search` / `recordFirecrawlSearch`
 requires the original successful v2 API envelope with ID and integral credits.
+Manual search also requires `occurred_at` / `occurredAt` (original request start)
+and `observed_at` / `observedAt` (when its response was observed), both timezone-
+aware at millisecond precision. Preserve these timestamps on archived replays;
+do not substitute the later import time. Unknown request timing remains unknown.
+Native scrape/search facades capture both times around the real provider call.
+A request crossing billing windows stays residual in both windows; it is not
+collapsed into a zero-duration request at its start.
 For async crawl/batch, bind using `bind_firecrawl_job` / `bindFirecrawlJob` in the
 owning task with original provider `createdAt`, then record terminal status,
 `completedAt`, and exact `creditsUsed` via `record_firecrawl_job` /

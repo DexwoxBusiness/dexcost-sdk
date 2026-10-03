@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { bindApifyRun, bindFirecrawlJob, instrumentApify, instrumentFirecrawl, recordApifyRun, recordFirecrawlJob, recordFirecrawlSearch, uninstrumentApify, uninstrumentFirecrawl } from "../src/instruments/web-tools.js";
 import { runWithTask } from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
@@ -8,7 +8,7 @@ import { EventBuffer } from "../src/transport/buffer.js";
 import type { CostTracker } from "../src/core/tracker.js";
 const data = JSON.parse(readFileSync(new URL("../../fixtures/web_tool_conformance.json", import.meta.url), "utf8"));
 const buffers: EventBuffer[] = [];
-afterEach(() => buffers.splice(0).forEach(b => b.close()));
+afterEach(() => { buffers.splice(0).forEach(b => b.close()); vi.useRealTimers(); });
 function setup() {
   const buffer = new EventBuffer(":memory:"); buffers.push(buffer);
   const task = createTask({ taskId: data.task_id, taskType: "web" }); buffer.upsertTask(task);
@@ -16,6 +16,37 @@ function setup() {
   return { tracker, task, job: (provider: string, service: string, id: string) => providerJobFromDict(buffer.getProviderJob(provider, service, id)!) };
 }
 describe("paired web tool evidence", () => {
+  it.each(["scrape", "search"] as const)("preserves native %s response time across a billing boundary", async operation => {
+    const { tracker, task, job } = setup();
+    for (const asynchronous of [false, true]) {
+      vi.useFakeTimers(); vi.setSystemTime(new Date(data.crossing_start));
+      const id = asynchronous ? "async" : "sync";
+      const response = operation === "scrape" ? { metadata: { scrapeId: id, creditsUsed: 4 } } : { id, creditsUsed: 4 };
+      const invoke = () => { vi.setSystemTime(new Date(data.crossing_end)); return response; };
+      const native = { [operation]: asynchronous ? async () => { await Promise.resolve(); return invoke(); } : invoke };
+      const client = instrumentFirecrawl(native, tracker, { billingAccountId: "account", resourceId: "resource" });
+      expect(await runWithTask(task, () => client[operation]())).toBe(response);
+      expect(job("firecrawl", "web", `account/${id}`).toAttributionObservation().usage_period)
+        .toEqual({ start_at: data.crossing_start, end_at: data.crossing_end });
+    }
+  });
+  it("requires original raw-response timing and never retimes replay or ownership", () => {
+    const { tracker, task, job } = setup();
+    const response = { success: true, id: "raw", creditsUsed: 4 };
+    const options = { billingAccountId: "account", resourceId: "resource", occurredAt: new Date(data.crossing_start), observedAt: new Date(data.crossing_end) };
+    runWithTask(task, () => {
+      expect(recordFirecrawlSearch(tracker, response, options)).toBe(true);
+      expect(recordFirecrawlSearch(tracker, response, options)).toBe(true);
+      expect(() => recordFirecrawlSearch(tracker, response, { ...options, occurredAt: options.observedAt })).toThrow();
+      for (const invalid of [{ occurredAt: undefined }, { observedAt: undefined }, { observedAt: new Date("2026-09-29T00:00:00Z") }]) {
+        expect(() => recordFirecrawlSearch(tracker, { ...response, id: "invalid" }, { ...options, ...invalid } as any)).toThrow();
+        expect(tracker.buffer.getProviderJob("firecrawl", "web", "account/invalid")).toBeUndefined();
+      }
+    });
+    expect(job("firecrawl", "web", "account/raw").revision).toBe(2);
+    expect(job("firecrawl", "web", "account/raw").toAttributionObservation().usage_period)
+      .toEqual({ start_at: data.crossing_start, end_at: data.crossing_end });
+  });
   it("uses full credit snapshots, replay, zero and restore without money", () => {
     const { tracker, task, job } = setup();
     const binding = { billingAccountId: "account", resourceId: "resource", jobId: "job", startedAt: new Date(data.started_at), operation: "crawl" as const };
@@ -30,7 +61,7 @@ describe("paired web tool evidence", () => {
   });
   it.each([undefined, true, -1, 1.5, "2", 9007199254740992])("rejects invalid meter %s", value => {
     const { tracker, task } = setup();
-    expect(() => runWithTask(task, () => recordFirecrawlSearch(tracker, { success: true, id: "search", creditsUsed: value }, { billingAccountId: "account", resourceId: "resource" }))).toThrow();
+    expect(() => runWithTask(task, () => recordFirecrawlSearch(tracker, { success: true, id: "search", creditsUsed: value }, { billingAccountId: "account", resourceId: "resource", occurredAt: new Date(data.started_at), observedAt: new Date(data.ended_at) }))).toThrow();
     expect(tracker.buffer.getProviderJob("firecrawl", "web", "account/search")).toBeUndefined();
   });
   it("captures Apify identity only and ignores running cost", () => {

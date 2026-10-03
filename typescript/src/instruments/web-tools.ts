@@ -87,17 +87,20 @@ export function recordFirecrawlJob(tracker: CostTracker, response: NativeRespons
   if (old.submittedAt.getTime() !== date(response.createdAt).getTime()) throw new Error("Firecrawl job identity changed");
   return record(tracker, old, options.revision ?? 2, date(response.completedAt), status, credits(response.creditsUsed));
 }
-/** Synchronous search native response in its owning task; account-scoped invoice resource, no guessed cash. */
-export function recordFirecrawlSearch(tracker: CostTracker, response: NativeResponse, options: { billingAccountId: string; resourceId: string; occurredAt?: Date; revision?: number }): boolean {
+/** Synchronous search native response in its owning task; account-scoped invoice resource, no guessed cash.
+ * Requires original request start and response-observed finish, not later archived-response import time.
+ */
+export function recordFirecrawlSearch(tracker: CostTracker, response: NativeResponse, options: { billingAccountId: string; resourceId: string; occurredAt: Date; observedAt: Date; revision?: number }): boolean {
   return recordFirecrawlRequest(tracker, response, options, "firecrawl.search");
 }
-function recordFirecrawlRequest(tracker: CostTracker, response: NativeResponse, options: { billingAccountId: string; resourceId: string; occurredAt?: Date; revision?: number }, operation: string): boolean {
+function recordFirecrawlRequest(tracker: CostTracker, response: NativeResponse, options: { billingAccountId: string; resourceId: string; occurredAt: Date; observedAt: Date; revision?: number }, operation: string): boolean {
   if (response.success !== true) return false;
   const key = databaseResourceId(options.billingAccountId, id(response.id)), resource = databaseResourceId(options.billingAccountId, options.resourceId);
-  const usage = credits(response.creditsUsed), old = previous(tracker, "firecrawl", "web", key);
-  const started = old?.submittedAt ?? date(options.occurredAt ?? new Date(Math.floor(Date.now() / 1000) * 1000));
+  const usage = credits(response.creditsUsed);
+  const started = date(options.occurredAt), ended = date(options.observedAt);
+  if (ended < started) throw new Error("Response observation cannot precede request start");
   if (!bind(tracker, "firecrawl", "web", key, resource, started, operation)) return false;
-  return record(tracker, previous(tracker, "firecrawl", "web", key)!, options.revision ?? 2, started, "succeeded", usage);
+  return record(tracker, previous(tracker, "firecrawl", "web", key)!, options.revision ?? 2, ended, "succeeded", usage);
 }
 
 type WebToolScope = { billingAccountId: string; resourceId?: string };
@@ -119,8 +122,9 @@ function instrument<T extends object>(client: T, tracker: CostTracker, scope: We
       if (!enabled) return native.bind(target);
       return (...args: unknown[]) => {
         if (!state.active || providerCaptureIsClaimed()) return Reflect.apply(native, target, args);
-        const task = getCurrentTask(), started = new Date(Math.floor(Date.now() / 1000) * 1000);
+        const task = getCurrentTask(), started = new Date();
         const capture = (result: NativeResponse) => {
+          const ended = new Date();
           if (!state.active) return result;
           const save = () => {
             try {
@@ -133,7 +137,7 @@ function instrument<T extends object>(client: T, tracker: CostTracker, scope: We
                 const metadata = result?.metadata as NativeResponse | undefined;
                 const payload = name === "scrape" ? { success: true, id: metadata?.scrapeId, creditsUsed: metadata?.creditsUsed } :
                   { success: true, id: result?.id, creditsUsed: result?.creditsUsed };
-                recordFirecrawlRequest(tracker, payload, { billingAccountId: scope.billingAccountId, resourceId: scope.resourceId!, occurredAt: started }, `firecrawl.${String(name)}`);
+                recordFirecrawlRequest(tracker, payload, { billingAccountId: scope.billingAccountId, resourceId: scope.resourceId!, occurredAt: started, observedAt: ended }, `firecrawl.${String(name)}`);
               }
             } catch { /* Telemetry never changes native provider behavior. */ }
           };
