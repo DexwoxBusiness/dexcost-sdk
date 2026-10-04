@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Socket } from "node:net";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { instrumentTextract, instrumentDocumentAI, uninstrumentOcr } from "../src/instruments/ocr.js";
 import { runWithTask } from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
@@ -12,6 +13,10 @@ import { runWithProviderCapture } from "../src/instruments/provider-capture.js";
 
 const data = JSON.parse(readFileSync(new URL("../../fixtures/ocr_conformance.json", import.meta.url), "utf8"));
 const require = createRequire(import.meta.url), buffers: EventBuffer[] = [];
+let nativeGoogleV1: typeof import("@google-cloud/documentai").v1;
+// Loading the generated package/protobuf graph is setup, not an OCR request.
+// Cold Windows filesystem reads can exceed the ordinary 5s request-test budget.
+beforeAll(() => { nativeGoogleV1 = require("@google-cloud/documentai").v1; }, 30_000);
 afterEach(() => { buffers.splice(0).forEach(b => b.close()); vi.useRealTimers(); vi.restoreAllMocks(); });
 function setup() {
   const buffer = new EventBuffer(":memory:"); buffers.push(buffer);
@@ -101,9 +106,15 @@ describe("paired hosted OCR evidence", () => {
     client.destroy();
   });
   it("runs real Google generated processDocument with tuple response and native request routing", async () => {
-    const { v1 } = require("@google-cloud/documentai");
+    const noNetwork = () => { throw new Error("Native OCR fixture must not access the network"); };
+    const socketConnect = vi.spyOn(Socket.prototype, "connect").mockImplementation(noNetwork);
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(noNetwork);
     const { tracker, task } = setup(), { request, response } = nativeGoogle(data.document_ai[0]);
-    const client = new v1.DocumentProcessorServiceClient({ apiEndpoint: "us-documentai.googleapis.com", fallback: true });
+    const client = new nativeGoogleV1.DocumentProcessorServiceClient({
+      apiEndpoint: "us-documentai.googleapis.com", fallback: true,
+      projectId: "synthetic-ocr-test",
+      credentials: { client_email: "synthetic@example.invalid", private_key: "synthetic" },
+    });
     const initialize = vi.spyOn(client, "initialize").mockResolvedValue({});
     const rpc = vi.fn(async (_req, options) => { expect(options.retry).toBeNull(); expect(options.otherArgs.headers["x-goog-request-params"]).toContain("name="); return response; });
     client.innerApiCalls.processDocument = rpc;
@@ -115,6 +126,8 @@ describe("paired hosted OCR evidence", () => {
     // Reusing that normal options object must not silently disable capture.
     await runWithTask(task, () => wrapped.processDocument(request, options));
     expect(tracker.buffer.getPendingEvents()).toHaveLength(2);
+    expect(socketConnect).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("does not attribute custom account headers, shards, inline input or unsupported formats", async () => {
     const { tracker, task } = setup();
