@@ -777,7 +777,8 @@ def _count_tokens_measurement(response: Any, model: str | None) -> OperationMeas
     return OperationMeasurement(
         pricing_usage={},
         usage_lines=(ProviderUsageLine("counted_input_tokens", input_tokens, "Tokens"),),
-        provider_cost_usd=Decimal(0),
+        # CountTokens reports usage, not a monetary amount. Its documented
+        # no-charge policy is a diagnostic, not exact provider cost evidence.
         response_model=model,
         billing_dimensions=(("billing_status", "no_charge"),),
     )

@@ -67,7 +67,9 @@ test("rejects duplicate case identities across streams", () => {
 
 test("rejects an unresolvable mutation fixture", () => {
   const candidate = inputs();
-  candidate.corpus.invalid_observations[1].mutate_from = "missing.base.case";
+  candidate.corpus.invalid_observations.find(
+    (entry) => entry.id === "observation.invalid.numeric_quantity",
+  ).mutate_from = "missing.base.case";
   expectIssue(
     validateAttributionV3Corpus(candidate),
     "observation.invalid.numeric_quantity references unknown mutate_from missing.base.case",
@@ -86,7 +88,9 @@ test("rejects unstable line identity in a revision sequence", () => {
 
 test("rejects SDK evidence that claims invoice authority", () => {
   const candidate = inputs();
-  candidate.corpus.valid_observations[0].event.cost_evidence.confidence = "exact";
+  candidate.corpus.valid_observations.find(
+    (entry) => entry.id === "observation.final_known_meter",
+  ).event.cost_evidence.confidence = "exact";
   expectIssue(
     validateAttributionV3Corpus(candidate),
     "observation.final_known_meter SDK cost evidence cannot claim exact confidence",
@@ -104,7 +108,9 @@ test("rejects privacy fixtures that leak a forbidden value", () => {
 
 test("rejects a valid observation missing a required contract field", () => {
   const candidate = inputs();
-  delete candidate.corpus.valid_observations[0].event.event_id;
+  delete candidate.corpus.valid_observations.find(
+    (entry) => entry.id === "observation.final_known_meter",
+  ).event.event_id;
   expectIssue(
     validateAttributionV3Corpus(candidate),
     "observation.final_known_meter valid record fails the observation contract at event_id",

@@ -140,6 +140,12 @@
     "better-sqlite3": "12.8.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1146.0",
+    "@aws-sdk/client-textract": "3.1146.0",
+    "@google-cloud/documentai": "10.1.1",
+    "@perplexity-ai/perplexity_ai": "0.38.7",
+    "@pinecone-database/pinecone": "9.0.0",
+    "@turbopuffer/turbopuffer": "2.9.0",
     "@openrouter/agent": "0.9.0",
     "@openrouter/sdk": "1.2.42",
     "@opentelemetry/api": "^1.9.1",

@@ -291,16 +291,69 @@
         "type": "object",
         "description": "Cross-provider identity for the reusable tool, skill, workflow, or extension that caused the observed work.",
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$", "maxLength": 128 },
-          "kind": { "type": "string", "enum": ["tool", "skill", "workflow", "extension", "other"] },
-          "namespace": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$", "maxLength": 128 },
-          "version": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "source": { "type": "string", "enum": ["built_in", "project", "user", "plugin", "marketplace", "remote", "other"] },
-          "source_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "invocation": { "type": "string", "enum": ["explicit", "automatic", "nested", "scheduled", "remote", "other"] }
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tool",
+              "skill",
+              "workflow",
+              "extension",
+              "other"
+            ]
+          },
+          "namespace": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+            "maxLength": 128
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "built_in",
+              "project",
+              "user",
+              "plugin",
+              "marketplace",
+              "remote",
+              "other"
+            ]
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "invocation": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "automatic",
+              "nested",
+              "scheduled",
+              "remote",
+              "other"
+            ]
+          }
         },
-        "required": ["name", "kind"],
-        "dependentRequired": { "source_id": ["source"] },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "dependentRequired": {
+          "source_id": [
+            "source"
+          ]
+        },
         "additionalProperties": false
       },
       "AttributionTraceIdentity": {
@@ -434,12 +487,23 @@
       },
       "AttributionCostEvidence": {
         "type": "object",
-        "description": "Non-authoritative cost evidence. Customer-visible value is selected by the control plane.",
+        "description": "Non-authoritative cost evidence. Customer-visible value is selected by the control plane. Zero requires explicit exact provider-reported evidence; missing cost is not zero.",
         "properties": {
           "amount": {
             "type": "string",
-            "pattern": "^(?=.*[1-9])(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$",
-            "description": "Positive plain decimal string. JSON numbers, zero, negatives, whitespace, and scientific notation are rejected."
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?=.*[1-9])(?:0|[1-9]\\d{0,25})(?:\\.\\d{1,12})?$",
+                "description": "Positive plain decimal string. JSON numbers, zero, negatives, whitespace, and scientific notation are rejected."
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "0"
+                ]
+              }
+            ]
           },
           "currency": {
             "type": "string",
@@ -477,7 +541,33 @@
           "source",
           "confidence"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "if": {
+          "properties": {
+            "amount": {
+              "enum": [
+                "0"
+              ]
+            }
+          },
+          "required": [
+            "amount"
+          ]
+        },
+        "then": {
+          "properties": {
+            "source": {
+              "enum": [
+                "provider_reported"
+              ]
+            },
+            "confidence": {
+              "enum": [
+                "exact"
+              ]
+            }
+          }
+        }
       },
       "AttributionLifecycle": {
         "type": "object",

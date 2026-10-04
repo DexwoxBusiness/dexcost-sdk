@@ -24,7 +24,9 @@ import {
   ProviderOperationSession,
   providerJobMeasurementFields,
   recordProviderFailure,
+  wrapProviderStream,
 } from "./provider-metering.js";
+import { novaRequestEligible, novaMeasurement, NovaStreamMeter } from "./bedrock-converse.js";
 import type { OperationMeasurement } from "./provider-metering.js";
 import { ProviderJobRevision, providerJobFromDict } from "../core/provider-jobs.js";
 import { currentProviderCaptureOwner, runWithProviderCapture } from "./provider-capture.js";
@@ -68,8 +70,8 @@ export async function instrumentBedrock(
   } else {
     // @aws-sdk/client-bedrock-runtime is an optional peer dependency; the
     // dynamic import only succeeds at runtime if the user has installed it.
-    // @ts-expect-error -- aws-sdk types are not bundled with dexcost
-    const bedrockModule = await import("@aws-sdk/client-bedrock-runtime");
+    const packageName = "@aws-sdk/client-bedrock-runtime";
+    const bedrockModule = await import(packageName);
     const mod = bedrockModule.default ?? bedrockModule;
     ClientProto = mod.BedrockRuntimeClient.prototype;
   }
@@ -79,17 +81,21 @@ export async function instrumentBedrock(
   _buffer = buffer;
   _pricing = pricing;
 
-  ClientProto.send = async function (
+  ClientProto.send = function (
     this: any,
     command: any,
     ...rest: any[]
-  ): Promise<any> {
+  ): any {
+    if (rest.some((item) => typeof item === "function")) return _original!.call(this, command, ...rest);
     const commandName: string = command?.constructor?.name ?? "";
-    if (!["InvokeModelCommand", "StartAsyncInvokeCommand", "GetAsyncInvokeCommand"].includes(commandName)) {
+    if (!["ConverseCommand", "ConverseStreamCommand", "InvokeModelCommand", "StartAsyncInvokeCommand", "GetAsyncInvokeCommand"].includes(commandName)) {
       return _original!.call(this, command, ...rest);
     }
     if (currentProviderCaptureOwner() !== undefined) {
       return _original!.call(this, command, ...rest);
+    }
+    if (["ConverseCommand", "ConverseStreamCommand"].includes(commandName)) {
+      return handleConverse(this, command, rest, commandName === "ConverseStreamCommand");
     }
 
     if (commandName === "StartAsyncInvokeCommand") {
@@ -105,6 +111,7 @@ export async function instrumentBedrock(
       return handleMeteredInvoke(this, command, rest, requestedModel, mode!);
     }
 
+    return (async () => {
     let task = getCurrentTask();
     let autoCreated = false;
 
@@ -151,6 +158,7 @@ export async function instrumentBedrock(
       }
       throw err;
     }
+    })();
   };
 
   _patched = true;
@@ -196,6 +204,30 @@ function canonicalBedrockModel(value: unknown): string {
   return /^[a-z0-9.-]+$/.test(normalized)
     ? `bedrock-${normalized}`.slice(0, 128)
     : "bedrock-resource";
+}
+
+async function handleConverse(receiver: any, command: any, rest: any[], streaming: boolean): Promise<any> {
+  // AWS send's callback overload is deliberately left native: awaiting it would
+  // alter its return contract and does not expose a completed response here.
+  if (rest.some((item) => typeof item === "function")) return _original!.call(receiver, command, ...rest);
+  const input = command?.input ?? {};
+  const eligible = await novaRequestEligible(receiver, input);
+  const session = new ProviderOperationSession(_pricing!, _buffer!, {
+    taskType: streaming ? "bedrock.converse_stream" : "bedrock.converse",
+    provider: "aws_bedrock", service: "bedrock_runtime", component: "llm",
+    operation: streaming ? "bedrock.converse_stream" : "bedrock.converse",
+    model: input.modelId ?? "unknown", eventType: "llm_call",
+  });
+  try {
+    const response = await session.invoke(() => _original!.call(receiver, command, ...rest));
+    if (streaming && response?.stream) {
+      const meter = new NovaStreamMeter(input, eligible, response?.$metadata?.requestId);
+      return { ...response, stream: wrapProviderStream(response.stream, session,
+        (chunk) => meter.observe(chunk), () => meter.measurement(), () => meter.status()) };
+    }
+    session.finish(novaMeasurement(input, response, eligible), streaming ? "unknown" : "succeeded");
+    return response;
+  } catch (error) { session.fail(error); throw error; }
 }
 
 function parsedResponseBody(response: any): any {

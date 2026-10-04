@@ -1,0 +1,30 @@
+{
+  "verified_at": "2026-10-04",
+  "sources": ["https://docs.pinecone.io/guides/manage-cost/understanding-cost", "https://sdk.pinecone.io/python/reference/grpc.html", "https://sdk.pinecone.io/typescript/classes/Index.html", "https://turbopuffer.com/docs/query", "https://turbopuffer.com/docs/write"],
+  "pinecone_host": "memory-abc.svc.aped-4627-b74a.pinecone.io",
+  "pinecone_region": "us-east-1",
+  "turbopuffer_region": "gcp-us-central1",
+  "namespace": "agent-memory",
+  "cases": [
+    {"id":"pinecone_fractional", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":0.25}}, "usage":[["pinecone.read_units_rounded","0.25","ReadUnits"]]},
+    {"id":"pinecone_fetch", "provider":"pinecone", "operation":"fetch", "response":{"namespace":"agent-memory","usage":{"read_units":0.75}}, "usage":[["pinecone.read_units_rounded","0.75","ReadUnits"]]},
+    {"id":"pinecone_zero", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":0}}},
+    {"id":"pinecone_missing", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory"}},
+    {"id":"pinecone_bool", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":true}}},
+    {"id":"pinecone_string", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":"0.25"}}},
+    {"id":"pinecone_conflicting", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"read_units":1,"readUnits":2}}},
+    {"id":"pinecone_wrong_namespace", "provider":"pinecone", "operation":"query", "response":{"namespace":"other","usage":{"readUnits":1}}},
+    {"id":"pinecone_missing_namespace", "provider":"pinecone", "operation":"query", "response":{"usage":{"readUnits":1}}},
+    {"id":"pinecone_negative", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":-1}}},
+    {"id":"pinecone_subprecision", "provider":"pinecone", "operation":"query", "response":{"namespace":"agent-memory","usage":{"readUnits":0.0000000000001}}},
+    {"id":"pinecone_write_unmeasured", "provider":"pinecone", "operation":"upsert", "response":{"namespace":"agent-memory","usage":{"writeUnits":100}}},
+    {"id":"turbo_query", "provider":"turbopuffer", "operation":"query", "response":{"billing":{"billable_logical_bytes_queried":1280000000,"billable_logical_bytes_returned":150}}, "usage":[["turbopuffer.logical_bytes_queried","1280000000","Bytes"],["turbopuffer.logical_bytes_returned","150","Bytes"]]},
+    {"id":"turbo_write", "provider":"turbopuffer", "operation":"write", "response":{"billing":{"billable_logical_bytes_written":8192}}, "usage":[["turbopuffer.logical_bytes_written","8192","Bytes"]]},
+    {"id":"turbo_write_query", "provider":"turbopuffer", "operation":"write", "response":{"billing":{"billable_logical_bytes_written":10240,"query":{"billable_logical_bytes_queried":1280000000,"billable_logical_bytes_returned":0}}}, "usage":[["turbopuffer.logical_bytes_written","10240","Bytes"],["turbopuffer.logical_bytes_queried","1280000000","Bytes"]]},
+    {"id":"turbo_missing_returned", "provider":"turbopuffer", "operation":"query", "response":{"billing":{"billable_logical_bytes_queried":1280000000}}},
+    {"id":"turbo_raw_bytes_not_billable", "provider":"turbopuffer", "operation":"write", "response":{"billing":{"logical_bytes_written":100}}},
+    {"id":"turbo_fractional_bytes", "provider":"turbopuffer", "operation":"write", "response":{"billing":{"billable_logical_bytes_written":1.25}}},
+    {"id":"turbo_unsafe_bytes", "provider":"turbopuffer", "operation":"write", "response":{"billing":{"billable_logical_bytes_written":9007199254740992}}},
+    {"id":"turbo_zero", "provider":"turbopuffer", "operation":"query", "response":{"billing":{"billable_logical_bytes_queried":0,"billable_logical_bytes_returned":0}}}
+  ]
+}

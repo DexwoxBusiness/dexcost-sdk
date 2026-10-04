@@ -386,7 +386,7 @@ export function toAttributionObservationV3(
   }
   if (environment !== undefined) converted.environment = environment;
   if (event.eventType !== "gpu_utilization_signal") {
-    const evidence = attributionEvidenceFor(event);
+    const evidence = attributionEvidenceFor(event, true);
     if (evidence !== undefined) converted.cost_evidence = evidence;
   }
   const hasTimeBasedUsage = usage.some((line) =>
@@ -394,7 +394,7 @@ export function toAttributionObservationV3(
     line.unit === ATTRIBUTION_UNIT_BY_METRIC[line.metric as AttributionUsageMetric] &&
     line.unit.endsWith("Seconds"),
   );
-  if (hasTimeBasedUsage || (mapped.durationSeconds !== undefined && mapped.durationSeconds > 0)) {
+  if (hasTimeBasedUsage || (mapped.durationSeconds !== undefined && mapped.durationSeconds >= 0)) {
     const durationMs = mapped.durationSeconds !== undefined && mapped.durationSeconds > 0
       ? mapped.durationSeconds * 1_000
       : 0;

@@ -218,6 +218,10 @@ function validateObservationSemantics(event) {
   }
 
   const evidence = event.cost_evidence;
+  if (evidence?.amount === "0" &&
+      (evidence.source !== "provider_reported" || evidence.confidence !== "exact")) {
+    addIssue(issues, "cost_evidence.amount", "zero requires exact provider-reported evidence");
+  }
   if (evidence?.source === "provider_reported" && !["exact", "estimated"].includes(evidence.confidence)) {
     addIssue(issues, "cost_evidence.confidence", "provider-reported evidence must be exact or estimated");
   }

@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from dexcost.attribution.convert import to_attribution_event_v2
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.attribution.v3_types import ATTRIBUTION_V3_CONTRACT_VERSION
 from dexcost.attribution.v3_validate import validate_attribution_observation_v3
@@ -131,6 +132,56 @@ def test_llm_conversion_has_stable_operation_and_usage_identities() -> None:
     assert all(line["dimensions"] == [] for line in first["usage"])
     assert len({line["line_id"] for line in first["usage"]}) == 4
     assert validate_attribution_observation_v3(first).success
+
+
+@pytest.mark.parametrize("amount", ["0", "0.000", "0.125"])
+def test_explicit_provider_charge_is_preserved_in_v3(amount: str) -> None:
+    event = _event(
+        event_type="external_cost",
+        service_name="perplexity",
+        cost_usd=Decimal("0"),
+        details={
+            "provider_reported_cost_amount": amount,
+            "provider_reported_cost_currency": "USD",
+        },
+    )
+    observation = to_attribution_observation_v3(event)
+    assert observation is not None
+    assert observation["cost_evidence"] == {
+        "amount": "0" if Decimal(amount) == 0 else amount,
+        "currency": "USD",
+        "source": "provider_reported",
+        "confidence": "exact",
+    }
+    assert validate_attribution_observation_v3(observation).success
+    if Decimal(amount) == 0:
+        legacy = to_attribution_event_v2(event)
+        assert legacy is not None and "cost_evidence" not in legacy
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {},
+        {"provider_reported_cost_usd": "0"},
+        {"provider_reported_cost_amount": "0"},
+        {"provider_reported_cost_amount": None, "provider_reported_cost_currency": "USD"},
+        {"provider_reported_cost_amount": False, "provider_reported_cost_currency": "USD"},
+        {"provider_reported_cost_amount": "-1", "provider_reported_cost_currency": "USD"},
+        {"provider_reported_cost_amount": "0", "provider_reported_cost_currency": "usd"},
+    ],
+)
+def test_missing_provider_charge_does_not_invent_zero(details: dict[str, Any]) -> None:
+    observation = to_attribution_observation_v3(
+        _event(
+            event_type="external_cost",
+            service_name="perplexity",
+            cost_usd=Decimal("0"),
+            pricing_source="provider_response",
+            details=details,
+        )
+    )
+    assert observation is not None and "cost_evidence" not in observation
 
 
 def test_llm_conversion_preserves_provider_native_multiline_usage() -> None:

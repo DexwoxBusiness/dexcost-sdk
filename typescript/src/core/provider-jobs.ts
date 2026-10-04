@@ -181,7 +181,12 @@ export class ProviderJobRevision {
       throw new Error("provider job cost amount, source, and confidence are atomic");
     }
     if (this.costAmount !== undefined) {
-      if (!this.costAmount.isFinite() || !this.costAmount.gt(0)) throw new Error("provider job cost evidence must be positive");
+      const exactProviderZero = this.costAmount.isZero() && this.costSource === "provider_reported" &&
+        this.costConfidence === "exact" && this.status === "succeeded";
+      if (!this.costAmount.isFinite() || this.costAmount.isNegative() ||
+          (this.costAmount.isZero() && !exactProviderZero)) {
+        throw new Error("zero provider job cost requires succeeded exact provider evidence");
+      }
       if (this.costSource === "provider_reported" && !["exact", "estimated"].includes(this.costConfidence!)) {
         throw new Error("provider-reported cost must be exact or estimated");
       }
@@ -285,6 +290,11 @@ export class ProviderJobRevision {
         dimensions,
       })),
     };
+    // Preserve explicit native region evidence; never infer it from IDs.
+    const region = this.billingDimensions.find(([key]) => key === "region")?.[1];
+    if (region !== undefined && CANONICAL.test(region)) {
+      (result["provider"] as Record<string, unknown>)["region"] = region;
+    }
     if (environment !== undefined) result["environment"] = environment;
     if (this.capability !== undefined) result["capability"] = capabilityToDict(this.capability);
     if (this.costAmount !== undefined) {

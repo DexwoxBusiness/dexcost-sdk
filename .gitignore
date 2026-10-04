@@ -26,6 +26,7 @@ python/dist/
 # and are always disposable test output, never SDK source.
 python/.pytest-*/
 python/.test-tmp*/
+/.test-temp/
 .mypy_cache/
 .ruff_cache/
 .coverage

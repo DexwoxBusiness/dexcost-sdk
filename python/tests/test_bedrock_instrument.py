@@ -149,7 +149,7 @@ def _uninstall_fake_botocore() -> None:
     """Remove our fake botocore modules from ``sys.modules``."""
     for key in list(sys.modules):
         if key == "botocore" or key.startswith("botocore."):
-            sys.modules[key] = None  # type: ignore[assignment]
+            sys.modules.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +173,23 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 
 @pytest.fixture(autouse=True)
 def _fake_botocore() -> Generator[None, None, None]:
-    """Install/uninstall fake botocore for every test and ensure uninstrument."""
+    """Restore the installed SDK graph after every fake-module test."""
+    original_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "botocore" or name.startswith("botocore.")
+    }
     _install_fake_botocore()
-    yield
-    # Always uninstrument after each test to reset module-level state
-    from dexcost.instruments.bedrock import uninstrument_bedrock
+    try:
+        yield
+    finally:
+        # Cached boto3 modules retain references to this exact module graph.
+        # Reimporting only botocore would leave those references inconsistent.
+        from dexcost.instruments.bedrock import uninstrument_bedrock
 
-    uninstrument_bedrock()
-    _uninstall_fake_botocore()
+        uninstrument_bedrock()
+        _uninstall_fake_botocore()
+        sys.modules.update(original_modules)
 
 
 # ---------------------------------------------------------------------------

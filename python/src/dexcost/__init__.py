@@ -180,10 +180,23 @@ from dexcost.instruments.object_storage import (
     instrument_object_storage,
     uninstrument_object_storage,
 )
+from dexcost.instruments.ocr import (
+    instrument_document_ai,
+    instrument_textract,
+    uninstrument_document_ai,
+    uninstrument_textract,
+)
 from dexcost.instruments.runtime import (
     instrument_e2b_sandbox,
     uninstrument_e2b_sandbox,
     wrap_runtime_handler,
+)
+from dexcost.instruments.vector_database import (
+    instrument_pinecone,
+    instrument_turbopuffer,
+    uninstrument_pinecone,
+    uninstrument_turbopuffer,
+    vector_database_resource_id,
 )
 from dexcost.instruments.web_tools import (
     bind_apify_run,
@@ -1417,6 +1430,7 @@ __all__ = [
     "instrument_bedrock",
     "instrument_browserbase",
     "instrument_cohere",
+    "instrument_document_ai",
     "instrument_e2b_sandbox",
     "instrument_fal",
     "instrument_firecrawl",
@@ -1430,7 +1444,10 @@ __all__ = [
     "instrument_openai",
     "instrument_openrouter",
     "instrument_perplexity",
+    "instrument_pinecone",
     "instrument_redis_client",
+    "instrument_textract",
+    "instrument_turbopuffer",
     "mongodb_command_listener",
     "on_delivery_error",
     "record_apify_run",
@@ -1463,6 +1480,7 @@ __all__ = [
     "uninstrument_bedrock",
     "uninstrument_browserbase",
     "uninstrument_cohere",
+    "uninstrument_document_ai",
     "uninstrument_e2b_sandbox",
     "uninstrument_fal",
     "uninstrument_firecrawl",
@@ -1476,11 +1494,15 @@ __all__ = [
     "uninstrument_openai",
     "uninstrument_openrouter",
     "uninstrument_perplexity",
+    "uninstrument_pinecone",
     "uninstrument_redis_client",
+    "uninstrument_textract",
+    "uninstrument_turbopuffer",
     "validate",
     "validate_api_key",
     "validate_attribution_event_v2",
     "validate_attribution_observation_v3",
+    "vector_database_resource_id",
     "verify_webhook_signature",
     "wrap_runtime_handler",
 ]

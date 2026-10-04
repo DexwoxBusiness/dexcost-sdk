@@ -210,13 +210,20 @@ def _resource_for(event: Event) -> AttributionResourceV2 | None:
     return None
 
 
-def _evidence_for(event: Event) -> AttributionCostEvidenceV2 | None:
-    provider_amount = _positive_quantity(
-        _decimal_detail(event.details, "provider_reported_cost_amount")
+def _evidence_for(
+    event: Event, *, allow_reported_zero: bool = False
+) -> AttributionCostEvidenceV2 | None:
+    reported_amount = _string_detail(event.details, "provider_reported_cost_amount")
+    # Do not mistake the SDK's default cost_usd for a provider-reported zero.
+    # The v2 caller retains its positive-only wire contract.
+    provider_amount = (
+        "0"
+        if allow_reported_zero
+        and reported_amount is not None
+        and re.fullmatch(r"0(?:\.0+)?", reported_amount.strip())
+        else _positive_quantity(_decimal_detail(event.details, "provider_reported_cost_amount"))
     )
-    provider_currency = _string_detail(
-        event.details, "provider_reported_cost_currency"
-    )
+    provider_currency = _string_detail(event.details, "provider_reported_cost_currency")
     if (
         provider_amount is not None
         and provider_currency is not None

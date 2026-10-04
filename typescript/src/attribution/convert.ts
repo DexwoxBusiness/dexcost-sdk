@@ -163,10 +163,15 @@ export function attributionResourceFor(event: CostEvent): AttributionResourceV2 
   return undefined;
 }
 
-export function attributionEvidenceFor(event: CostEvent): AttributionCostEvidenceV2 | undefined {
-  const providerAmount = positiveQuantity(
-    stringDetail(event.details, "provider_reported_cost_amount"),
-  );
+export function attributionEvidenceFor(
+  event: CostEvent,
+  allowReportedZero = false,
+): AttributionCostEvidenceV2 | undefined {
+  const reportedAmount = stringDetail(event.details, "provider_reported_cost_amount");
+  // Zero is evidence only when explicitly reported, never from the SDK's
+  // default costUsd. Keep v2's positive-only wire contract unchanged.
+  const providerAmount = allowReportedZero && /^0(?:\.0+)?$/.test(reportedAmount ?? "")
+    ? "0" : positiveQuantity(reportedAmount);
   const providerCurrency = stringDetail(
     event.details,
     "provider_reported_cost_currency",

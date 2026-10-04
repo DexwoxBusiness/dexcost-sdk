@@ -13,6 +13,7 @@ const REQUIRED_COVERAGE = Object.freeze([
   "business.user_product_assignment",
   "business.workflow_agent_assignment",
   "cost.no_synthetic_zero",
+  "cost.explicit_provider_zero",
   "cost.sdk_evidence_diagnostic",
   "lifecycle.failed_final_no_usage",
   "lifecycle.final",
@@ -318,8 +319,8 @@ function validateRedactionCase(testCase, issues) {
 
 export function validateAttributionV3Corpus({ manifest, corpus }) {
   const issues = [];
-  if (manifest?.contracts?.observation !== "3.2.0") {
-    issues.push("observation contract version must remain 3.2.0");
+  if (manifest?.contracts?.observation !== "3.3.0") {
+    issues.push("observation contract version must remain 3.3.0");
   }
   if (manifest?.contracts?.business_attribution !== "1.1.0") {
     issues.push("business attribution contract version must remain 1.1.0");

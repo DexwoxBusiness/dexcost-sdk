@@ -292,6 +292,14 @@ def _semantic_issues(value: object) -> list[AttributionV3ValidationIssue]:
             )
         )
 
+    if cost is not None and cost.get("amount") == "0" and (
+        cost.get("source") != "provider_reported" or cost.get("confidence") != "exact"
+    ):
+        issues.append(
+            AttributionV3ValidationIssue(
+                "cost_evidence.amount", "Zero requires exact provider-reported evidence"
+            )
+        )
     if (
         cost is not None
         and cost.get("source") == "provider_reported"

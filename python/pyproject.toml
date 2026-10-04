@@ -34,6 +34,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ocr-test = ["google-cloud-documentai==3.16.0"]
+vectors = ["pinecone>=10.0.0,<11", "turbopuffer>=2.10.2,<3"]
 databases = ["pymongo>=4.13,<5", "redis>=5,<7"]
 crewai = [
     # CrewAI currently declares Python <3.14. Keep the core SDK available on
@@ -97,6 +99,8 @@ gpu = [
     "nvidia-ml-py>=12.535,<14.0",
 ]
 all = [
+    "pinecone>=10.0.0,<11",
+    "turbopuffer>=2.10.2,<3",
     "pymongo>=4.13,<5",
     "redis>=5,<7",
     "openai>=1.0,<3.0",

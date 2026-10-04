@@ -46,6 +46,8 @@ const overrides = new Map(Object.entries({
   task_context: ["runWithTask"],
   to_business_identity_revision_v1: ["toBusinessIdentityRevision"],
   instrument_litellm: ["instrumentLiteLLM"],
+  instrument_document_ai: ["instrumentDocumentAI"],
+  uninstrument_document_ai: ["uninstrumentDocumentAI"],
   bind_llamaparse_job: ["bindLlamaParseJob"],
   record_llamaparse_job: ["recordLlamaParseJob"],
   instrument_llamaparse: ["instrumentLlamaParse"],

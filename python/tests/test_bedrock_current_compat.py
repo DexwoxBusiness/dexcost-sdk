@@ -44,7 +44,9 @@ def tracker(storage: SQLiteStorage) -> CostTracker:
 
 
 @pytest.fixture(autouse=True)
-def _reset_instrumentation() -> Iterator[None]:
+def _reset_instrumentation(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Restore instrumentation before monkeypatch restores the real SDK method;
+    # the reverse order would reinstall this test's fake as the native method.
     from dexcost.instruments.bedrock import uninstrument_bedrock
 
     uninstrument_bedrock()

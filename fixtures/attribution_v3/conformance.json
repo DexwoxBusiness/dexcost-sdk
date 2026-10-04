@@ -1,9 +1,28 @@
 {
   "schema_version": "1",
   "corpus_version": "2026-08-20.1",
-  "observation_contract_version": "3.2.0",
+  "observation_contract_version": "3.3.0",
   "business_contract_version": "1.1.0",
   "valid_observations": [
+    {
+      "id": "observation.explicit_provider_zero",
+      "covers": ["cost.explicit_provider_zero"],
+      "event": {
+        "schema_version": "3",
+        "event_id": "11111111-1111-4111-8111-111111111118",
+        "task_id": "22222222-2222-4222-8222-222222222222",
+        "occurred_at": "2026-10-04T10:00:00Z",
+        "observed_at": "2026-10-04T10:00:01Z",
+        "component": "llm",
+        "provider": { "name": "perplexity", "service": "agent", "record_id": "agent-zero" },
+        "resource": { "type": "model", "id": "provider-model" },
+        "operation": { "id": "33333333-3333-4333-8333-333333333340", "name": "agent.create", "status": "succeeded", "attempt": { "id": "44444444-4444-4444-8444-444444444452", "number": 1 } },
+        "lifecycle": { "state": "final", "revision": 1 },
+        "usage_snapshot": "full",
+        "usage": [{ "line_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8", "metric": "request_count", "quantity": "1", "unit": "Requests", "dimensions": [] }],
+        "cost_evidence": { "amount": "0", "currency": "USD", "source": "provider_reported", "confidence": "exact" }
+      }
+    },
     {
       "id": "observation.final_known_meter",
       "covers": ["observation.known_meter", "observation.typed_dimensions", "observation.operation_attempt_trace", "lifecycle.final", "quantity.exact_decimal", "unit.canonical_mapping", "cost.sdk_evidence_diagnostic"],
@@ -154,6 +173,8 @@
     }
   ],
   "invalid_observations": [
+    { "id": "observation.invalid.synthetic_literal_zero", "covers": ["cost.no_synthetic_zero"], "expected_error_path": "cost_evidence.amount", "mutate_from": "observation.final_known_meter", "set": { "cost_evidence.amount": "0" } },
+    { "id": "observation.invalid.estimated_provider_zero", "covers": ["cost.explicit_provider_zero"], "expected_error_path": "cost_evidence.amount", "mutate_from": "observation.explicit_provider_zero", "set": { "cost_evidence.confidence": "estimated" } },
     { "id": "observation.invalid.old_schema", "covers": [], "expected_error_path": "schema_version", "event": { "schema_version": "2" } },
     { "id": "observation.invalid.numeric_quantity", "covers": ["quantity.reject_float_or_scientific"], "expected_error_path": "usage.0.quantity", "mutate_from": "observation.final_known_meter", "set": { "usage.0.quantity": 1.5 } },
     { "id": "observation.invalid.scientific_quantity", "covers": ["quantity.reject_float_or_scientific"], "expected_error_path": "usage.0.quantity", "mutate_from": "observation.final_known_meter", "set": { "usage.0.quantity": "1e3" } },

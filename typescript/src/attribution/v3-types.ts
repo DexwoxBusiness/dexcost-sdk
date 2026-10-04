@@ -6,7 +6,7 @@ import type {
   AttributionResourceV2,
 } from "./types.js";
 
-export const ATTRIBUTION_V3_CONTRACT_VERSION = "3.2.0";
+export const ATTRIBUTION_V3_CONTRACT_VERSION = "3.3.0";
 
 export type AttributionBillingDimensionValue =
   | { type: "string"; value: string }

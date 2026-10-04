@@ -3,13 +3,14 @@ import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import {
-  mapProviderResult,
   providerJobMeasurementFields,
   ProviderOperationSession,
   wrapProviderStream,
   type OperationMeasurement,
 } from "./provider-metering.js";
 import { nonNegativeInteger, prefixedModel, tokenMeasurement } from "./provider-extract.js";
+import { Decimal } from "../core/models.js";
+import { currentProviderCaptureOwner } from "./provider-capture.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -18,6 +19,40 @@ let providedModule: any;
 let patched = false;
 
 type Kind = "responses" | "sonar" | "search" | "embeddings" | "contextualized_embeddings";
+
+/** Observe native settlement before caller recovery, without consuming a body
+ * merely because the caller requested asResponse(). Cache the mapping so a
+ * repeated await/withResponse cannot wrap or finalize the same stream twice. */
+function mapPerplexityResult(raw: any, complete: (value: any) => any, fail: (error: unknown) => never): any {
+  if (raw == null || typeof raw.then !== "function") return complete(raw);
+  let mapped = false;
+  let value: any;
+  let observed: Promise<any> | undefined;
+  const once = (native: any) => {
+    if (!mapped) { value = complete(native); mapped = true; }
+    return value;
+  };
+  const observe = () => {
+    if (!observed) {
+      observed = raw.then(once, fail);
+      void observed!.catch(() => undefined);
+    }
+    return observed!;
+  };
+  return new Proxy(raw, {
+    get(target, property) {
+      if (property === "then" || property === "catch" || property === "finally") return observe()[property].bind(observe());
+      if (property === "withResponse" && typeof target.withResponse === "function") {
+        return (...args: any[]) => target.withResponse(...args).then((payload: any) => {
+          const data = once(payload.data);
+          return data === payload.data ? payload : { ...payload, data };
+        }, fail);
+      }
+      const member = Reflect.get(target, property, target);
+      return typeof member === "function" ? member.bind(target) : member;
+    },
+  });
+}
 
 function kindFor(ownerName: string): Kind {
   const value = ownerName.toLowerCase();
@@ -34,7 +69,44 @@ function requestedModel(kind: Kind, body: any): string {
   return prefixedModel("perplexity", selected);
 }
 
-function measurement(kind: Kind, response: any, requested: string): OperationMeasurement {
+function directAgentClient(client: any): boolean {
+  return typeof client?.baseURL === "string" &&
+    client.baseURL.replace(/\/$/, "") === "https://api.perplexity.ai";
+}
+
+function agentMeasurement(response: any, requested: string, eligible: boolean): OperationMeasurement {
+  const usage = response?.usage;
+  const rawCost = usage?.cost?.total_cost;
+  let cost: Decimal | undefined;
+  if (eligible && response?.status === "completed" && response?.object === "response" &&
+      response?.error == null && typeof response?.id === "string" &&
+      response.id.length > 0 && response.id.length <= 256 && usage?.cost?.currency === "USD" &&
+      (typeof rawCost === "string" || typeof rawCost === "number")) {
+    try {
+      const parsed = new Decimal(String(rawCost));
+      if (parsed.isFinite() && !parsed.isNegative() && parsed.decimalPlaces() <= 12 &&
+          parsed.lte(Number.MAX_SAFE_INTEGER)) cost = parsed;
+    } catch { /* Missing/malformed provider money is unknown, not free. */ }
+  }
+  return {
+    // The reported total includes model, cache and tools. One inclusive line
+    // avoids inventing an allocation or pricing those constituent meters again.
+    usageLines: [{ metric: "request_count", quantity: 1, unit: "Requests" }],
+    pricingUsage: {}, providerCostUsd: cost, providerService: "agent",
+    providerRecordId: typeof response?.id === "string" && response.id.length <= 256 ? response.id : undefined,
+    responseModel: prefixedModel("perplexity", response?.model ?? requested),
+    inputTokens: typeof usage?.input_tokens === "number" && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : undefined,
+    outputTokens: typeof usage?.output_tokens === "number" && Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : undefined,
+    cachedTokens: typeof usage?.input_tokens_details?.cache_read_input_tokens === "number" &&
+      Number.isSafeInteger(usage.input_tokens_details.cache_read_input_tokens) &&
+      usage.input_tokens_details.cache_read_input_tokens >= 0
+      ? usage.input_tokens_details.cache_read_input_tokens : undefined,
+    billingDimensions: [["gateway", "perplexity"], ["cost_scope", "inclusive_request"]],
+  };
+}
+
+function measurement(kind: Kind, response: any, requested: string, eligible = false): OperationMeasurement {
+  if (kind === "responses") return agentMeasurement(response, requested, eligible);
   if (kind === "search") {
     return {
       usageLines: [
@@ -107,36 +179,49 @@ function insertNewJob(
   session: ProviderOperationSession,
   response: any,
   requested: string,
+  eligible = false,
 ): void {
   const id = response?.id ?? response?.response_id;
-  if (typeof id !== "string" || id.length === 0) return;
+  if (typeof id !== "string" || id.length === 0 || id.length > 256) {
+    session.finalizeWithoutEvent();
+    return;
+  }
   const status = jobStatus(response);
-  const meter = status === "succeeded" ? measurement("responses", response, requested) : undefined;
-  buffer.insertProviderJobRevision(new ProviderJobRevision({
-    taskId: session.task.taskId, provider: "perplexity", service: "responses",
+  const meter = status === "succeeded" ? measurement("responses", response, requested, eligible) : undefined;
+  try { buffer.insertProviderJobRevision(new ProviderJobRevision({
+    taskId: session.task.taskId, provider: "perplexity", service: "agent",
     providerRecordId: id, operation: "perplexity.responses.create", component: "llm",
     eventType: "llm_call", resourceType: "model", resourceId: requested, status,
     ownsTask: session.autoCreated, billingDimensions: [["gateway", "perplexity"]],
     ...providerJobMeasurementFields(pricing, requested, meter),
-  }));
+  })); } catch { session.finalizeWithoutEvent(); return; }
   session.releaseForProviderJob();
 }
 
-function reconcileJob(pricing: PricingEngine, buffer: EventBuffer, response: any, id: string, cancelled: boolean): void {
-  const raw = buffer.getProviderJob("perplexity", "responses", id);
+function reconcileJob(pricing: PricingEngine, buffer: EventBuffer, response: any, id: string, cancelled: boolean, eligible = false): void {
+  if (response?.id !== id) return;
+  try {
+  const raw = buffer.getProviderJob("perplexity", "agent", id);
   if (raw === undefined) return;
   const previous = providerJobFromDict(raw);
   const status = jobStatus(response, cancelled);
-  const meter = status === "succeeded" ? measurement("responses", response, previous.resourceId) : undefined;
-  buffer.insertProviderJobRevision(new ProviderJobRevision({
+  const meter = status === "succeeded" && response?.id === id ? measurement("responses", response, previous.resourceId, eligible) : undefined;
+  const next = new ProviderJobRevision({
     eventId: previous.eventId, revision: previous.revision + 1,
     taskId: previous.taskId, provider: previous.provider, service: previous.service,
     providerRecordId: id, operation: previous.operation, component: previous.component,
     eventType: previous.eventType, resourceType: previous.resourceType,
     resourceId: previous.resourceId, status, submittedAt: previous.submittedAt,
     ownsTask: previous.ownsTask, billingDimensions: previous.billingDimensions,
+    capability: previous.capability,
     ...providerJobMeasurementFields(pricing, previous.resourceId, meter),
-  }));
+  });
+  const economicSnapshot = (job: ProviderJobRevision) => {
+    const snapshot = job.toDict(); delete snapshot.revision; delete snapshot.observed_at;
+    return JSON.stringify(snapshot);
+  };
+  if (economicSnapshot(next) !== economicSnapshot(previous)) buffer.insertProviderJobRevision(next);
+  } catch { /* Telemetry must not replace a successful provider poll. */ }
 }
 
 function patchMethod(owner: any, ownerName: string, name: string, pricing: PricingEngine, buffer: EventBuffer): void {
@@ -144,13 +229,15 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
   if (patches.some((item) => item.owner === owner && item.name === name)) return;
   const original = owner[name] as (...args: any[]) => any;
   owner[name] = function (this: any, ...args: any[]): any {
+    if (currentProviderCaptureOwner() !== undefined) return original.apply(this, args);
     const kind = kindFor(ownerName);
+    const eligible = directAgentClient(this?._client);
     const body = args[0] ?? {};
     const id = typeof body === "string" ? body : body.response_id ?? body.responseId ?? args[0];
     const isReconcile = kind === "responses" && ["retrieve", "cancel"].includes(name);
     const requested = requestedModel(kind, body);
     const session = new ProviderOperationSession(pricing, buffer, {
-      taskType: `perplexity.${kind}.${name}`, provider: "perplexity", service: kind,
+      taskType: `perplexity.${kind}.${name}`, provider: "perplexity", service: kind === "responses" ? "agent" : kind,
       operation: `perplexity.${kind}.${name}`, component: kind === "search" ? "external" : "llm",
       model: requested, eventType: kind === "search" ? "external_cost" : "llm_call",
     });
@@ -159,25 +246,28 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
     catch (error) { session.fail(error); throw error; }
     const complete = (response: any): any => {
       if (isReconcile && typeof id === "string") {
-        reconcileJob(pricing, buffer, response, id, name === "cancel");
+        reconcileJob(pricing, buffer, response, id, name === "cancel", eligible);
         session.finalizeWithoutEvent();
         return response;
       }
       if (kind === "responses" && name === "create" && body.background === true) {
-        insertNewJob(pricing, buffer, session, response, requested);
+        insertNewJob(pricing, buffer, session, response, requested, eligible);
         return response;
       }
       if (body.stream === true) {
         let terminal = response;
+        let failed = false;
         return wrapProviderStream(response, session, (chunk) => {
           const item = chunk as any;
-          terminal = item?.response?.usage ? item.response : item;
-        }, () => measurement(kind, terminal, requested));
+          if (item?.type === "response.failed") failed = true;
+          if (kind !== "responses" || item?.type === "response.completed") terminal = item?.response?.usage ? item.response : item;
+        }, () => measurement(kind, terminal, requested, eligible && !failed),
+        () => failed ? "failed" : kind === "responses" && terminal?.status !== "completed" ? "unknown" : "succeeded");
       }
-      session.finish(measurement(kind, response, requested), jobStatus(response) === "failed" ? "failed" : "succeeded");
+      session.finish(measurement(kind, response, requested, eligible), jobStatus(response) === "failed" ? "failed" : kind === "responses" && response?.status !== "completed" ? "unknown" : "succeeded");
       return response;
     };
-    return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
+    return mapPerplexityResult(result, complete, (error) => { session.fail(error); throw error; });
   };
   patches.push({ owner, name, original });
 }
@@ -191,6 +281,11 @@ interface TransportRoute {
 function transportRoute(verb: string, rawPath: unknown): TransportRoute | undefined {
   if (typeof rawPath !== "string") return undefined;
   const path = rawPath.split("?", 1)[0]?.replace(/\/$/, "") ?? "";
+  if (verb === "post" && ["/v1/agent", "/v1/responses"].includes(path)) return { kind: "responses", action: "create" };
+  const agent = /^\/v1\/(?:agent|responses)\/([A-Za-z0-9_-]+)(\/cancel)?$/.exec(path);
+  if (agent && ((verb === "get" && !agent[2]) || (verb === "post" && agent[2]))) {
+    return { kind: "responses", action: agent[2] ? "cancel" : "retrieve", id: agent[1] };
+  }
   if (verb === "post" && path === "/chat/completions") return { kind: "sonar", action: "create" };
   if (verb === "post" && path === "/search") return { kind: "search", action: "create" };
   if (verb === "post" && path === "/embeddings") return { kind: "embeddings", action: "create" };
@@ -219,7 +314,9 @@ function patchTransportMethod(
   if (patches.some((item) => item.owner === owner && item.name === name)) return;
   const original = owner[name] as (...args: any[]) => any;
   owner[name] = function (this: any, ...args: any[]): any {
+    if (currentProviderCaptureOwner() !== undefined) return original.apply(this, args);
     const route = transportRoute(name, args[0]);
+    const eligible = directAgentClient(this) && /^\/v1\/(agent|responses)(\/|$)/.test(args[0]);
     const options = args[1];
     if (route === undefined || (options !== undefined && typeof options?.then === "function")) {
       return original.apply(this, args);
@@ -229,7 +326,7 @@ function patchTransportMethod(
     const isReconcile = route.action !== "create";
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: `perplexity.${route.kind}.${route.action}`,
-      provider: "perplexity", service: route.kind,
+      provider: "perplexity", service: route.kind === "responses" ? "agent" : route.kind,
       operation: `perplexity.${route.kind}.${route.action}`,
       component: route.kind === "search" ? "external" : "llm",
       model: requested, eventType: route.kind === "search" ? "external_cost" : "llm_call",
@@ -239,28 +336,31 @@ function patchTransportMethod(
     catch (error) { session.fail(error); throw error; }
     const complete = (response: any): any => {
       if (isReconcile && route.id !== undefined) {
-        reconcileJob(pricing, buffer, response, route.id, route.action === "cancel");
+        reconcileJob(pricing, buffer, response, route.id, route.action === "cancel", eligible);
         session.finalizeWithoutEvent();
         return response;
       }
       if (route.kind === "responses" && body.background === true) {
-        insertNewJob(pricing, buffer, session, response, requested);
+        insertNewJob(pricing, buffer, session, response, requested, eligible);
         return response;
       }
       if (body.stream === true) {
         let terminal = response;
+        let failed = false;
         return wrapProviderStream(response, session, (chunk) => {
           const item = chunk as any;
-          terminal = item?.response?.usage ? item.response : item;
-        }, () => measurement(route.kind, terminal, requested));
+          if (item?.type === "response.failed") failed = true;
+          if (route.kind !== "responses" || item?.type === "response.completed") terminal = item?.response?.usage ? item.response : item;
+        }, () => measurement(route.kind, terminal, requested, eligible && !failed),
+        () => failed ? "failed" : route.kind === "responses" && terminal?.status !== "completed" ? "unknown" : "succeeded");
       }
       session.finish(
-        measurement(route.kind, response, requested),
-        jobStatus(response) === "failed" ? "failed" : "succeeded",
+        measurement(route.kind, response, requested, eligible),
+        jobStatus(response) === "failed" ? "failed" : route.kind === "responses" && response?.status !== "completed" ? "unknown" : "succeeded",
       );
       return response;
     };
-    return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
+    return mapPerplexityResult(result, complete, (error) => { session.fail(error); throw error; });
   };
   patches.push({ owner, name, original });
 }
@@ -293,8 +393,8 @@ export async function instrumentPerplexity(pricing: PricingEngine, buffer: Event
   if (patched) return;
   let mod = providedModule;
   if (!mod) {
-    // @ts-expect-error optional official SDK
-    mod = await import("@perplexity-ai/perplexity_ai");
+    const packageName = "@perplexity-ai/perplexity_ai";
+    mod = await import(packageName);
   }
   discover(mod, pricing, buffer);
   if (patches.length === 0) {

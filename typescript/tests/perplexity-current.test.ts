@@ -87,13 +87,12 @@ describe("current official Perplexity attribution", () => {
     await instrumentPerplexity(new PricingEngine(), buffer);
     const client = new FakePerplexity();
     await client.responses.create({ model: "sonar-pro", background: true });
-    expect(buffer.getProviderJob("perplexity", "responses", "resp-bg")?.status).toBe("submitted");
+    expect(buffer.getProviderJob("perplexity", "agent", "resp-bg")?.status).toBe("submitted");
     await client.responses.retrieve("resp-bg");
-    const final = buffer.getProviderJob("perplexity", "responses", "resp-bg");
+    const final = buffer.getProviderJob("perplexity", "agent", "resp-bg");
     expect(final).toMatchObject({ status: "succeeded", revision: 2 });
     expect(final?.usage).toEqual(expect.arrayContaining([
-      expect.objectContaining({ metric: "input_tokens", quantity: "90" }),
-      expect.objectContaining({ metric: "output_tokens", quantity: "11" }),
+      expect.objectContaining({ metric: "request_count", quantity: "1" }),
     ]));
   });
 });

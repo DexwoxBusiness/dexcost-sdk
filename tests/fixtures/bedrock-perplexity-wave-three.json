@@ -1,0 +1,187 @@
+{
+  "version": "2026-10-04.1",
+  "verified_at": "2026-10-04",
+  "perplexity_expected_provider_service": "agent",
+  "perplexity_expected_cached_tokens": 3584,
+  "bedrock_cases": [
+    {
+      "id": "nova-micro-standard",
+      "provider": "aws",
+      "service": "bedrock",
+      "region": "us-east-1",
+      "model": "amazon.nova-micro-v1:0",
+      "request": {
+        "modelId": "amazon.nova-micro-v1:0",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "usage": {
+          "inputTokens": 1000,
+          "outputTokens": 250,
+          "totalTokens": 1250,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0
+        },
+        "stopReason": "end_turn",
+        "serviceTier": {
+          "type": "default"
+        },
+        "performanceConfig": {
+          "latency": "standard"
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "250"
+      },
+      "expected_usd": "0.00007"
+    },
+    {
+      "id": "nova-lite-standard",
+      "provider": "aws",
+      "service": "bedrock",
+      "region": "us-east-1",
+      "model": "amazon.nova-lite-v1:0",
+      "request": {
+        "modelId": "amazon.nova-lite-v1:0",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "usage": {
+          "inputTokens": 1000,
+          "outputTokens": 250,
+          "totalTokens": 1250,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0
+        },
+        "stopReason": "end_turn",
+        "serviceTier": {
+          "type": "default"
+        },
+        "performanceConfig": {
+          "latency": "standard"
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "250"
+      },
+      "expected_usd": "0.00012"
+    },
+    {
+      "id": "nova-pro-standard",
+      "provider": "aws",
+      "service": "bedrock",
+      "region": "us-east-1",
+      "model": "amazon.nova-pro-v1:0",
+      "request": {
+        "modelId": "amazon.nova-pro-v1:0",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "usage": {
+          "inputTokens": 1000,
+          "outputTokens": 250,
+          "totalTokens": 1250,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0
+        },
+        "stopReason": "end_turn",
+        "serviceTier": {
+          "type": "default"
+        },
+        "performanceConfig": {
+          "latency": "standard"
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "250"
+      },
+      "expected_usd": "0.0016"
+    }
+  ],
+  "perplexity_response": {
+    "id": "resp_agent_fixture",
+    "object": "response",
+    "created_at": 1791072000,
+    "model": "openai/gpt-5.6-sol",
+    "status": "completed",
+    "error": null,
+    "output": [],
+    "usage": {
+      "input_tokens": 5870,
+      "output_tokens": 679,
+      "total_tokens": 6549,
+      "cost": {
+        "currency": "USD",
+        "input_cost": 0.00914,
+        "output_cost": 0.01358,
+        "cache_read_cost": 0.00143,
+        "tool_calls_cost": 0.0025,
+        "total_cost": 0.02665
+      },
+      "input_tokens_details": {
+        "cache_read_input_tokens": 3584
+      },
+      "tool_calls_details": {
+        "search_web": {
+          "invocation": 1
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/20261003001138/us-east-1/index.json",
+      "verification": "Official immutable public price feed HTTP200; version20261003001138 published2026-10-03, standard us-east-1 On-demand Inference terms effective2026-10-01. Numeric rates verified from feed, not browser: Bedrock and Nova browser price tables were empty."
+    },
+    {
+      "url": "https://docs.aws.amazon.com/nova/latest/userguide/using-converse-api.html",
+      "verification": "Exact foundation model IDs and Converse/ConverseStream documented. Inference-profile us.* IDs explicitly excluded."
+    },
+    {
+      "url": "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html",
+      "verification": "Native usage counters, serviceTier, performanceConfig and trace. This slice requires served default + standard, complete totals and no cache."
+    },
+    {
+      "url": "https://docs.perplexity.ai/docs/getting-started/pricing",
+      "verification": "Rendered browser page verified2026-10-04 by main integration lane: completed response usage.cost.total_cost is calculated request cost when present. Includes model/tools; do not sum again."
+    },
+    {
+      "url": "https://docs.perplexity.ai/docs/agent-api/openai-compatibility",
+      "verification": "Canonical /v1/agent; /v1/responses explicitly documented alias and current official SDK route."
+    }
+  ],
+  "exclusions": [
+    "Bedrock other regions/models/profiles/ARNs, custom endpoints/resolvers, priority/flex/reserved/optimized, caching, multimodal input, guardrails, tools, InvokeModel, callback overload, account discounts/commitments/credits/taxes.",
+    "Perplexity unknown/non-USD/missing/malformed totals, non-completed responses, custom gateways, raw HTTP/OpenAI-compatible clients; no expansion of retired Sonar. Native background reconciliation supported only for observed submissions. Provider total is provider-reported request cost, not an invoice-cash guarantee."
+  ]
+}

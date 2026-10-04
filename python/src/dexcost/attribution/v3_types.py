@@ -11,7 +11,7 @@ from dexcost.attribution.types import (
     AttributionLifecycleState,
 )
 
-ATTRIBUTION_V3_CONTRACT_VERSION = "3.2.0"
+ATTRIBUTION_V3_CONTRACT_VERSION = "3.3.0"
 
 AttributionUsageMetricV3 = str
 AttributionUsageUnitV3 = str

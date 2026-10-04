@@ -236,7 +236,7 @@ def test_official_sdk_all_core_billable_resources_and_background_lifecycle(
         assert chat_lines["citation_tokens"] == "11"
         assert chat_lines["query_count"] == "2"
 
-        responses = by_service["responses"]
+        responses = by_service["agent"]
         assert responses.model == "perplexity/openai/gpt-5.4"
         assert responses.cost_usd == Decimal("0.0165")
         assert responses.cached_tokens == 10
@@ -244,9 +244,7 @@ def test_official_sdk_all_core_billable_resources_and_background_lifecycle(
             line["metric"]: line["quantity"]
             for line in responses.details["attribution_usage_lines"]
         }
-        assert response_lines["cache_write_input_tokens"] == "5"
-        assert response_lines["tool_fetch_url_invocation_count"] == "2"
-        assert response_lines["tool_search_web_invocation_count"] == "1"
+        assert response_lines == {"request_count": "1"}  # Inclusive model + tools total.
 
         search = by_service["search"]
         assert search.model == "perplexity/search"
@@ -255,7 +253,7 @@ def test_official_sdk_all_core_billable_resources_and_background_lifecycle(
         assert by_service["embeddings"].cost_usd == Decimal("0.000004")
         assert by_service["contextualized_embeddings"].cost_usd == Decimal("0.000016")
 
-        job = storage.get_provider_job("perplexity", "responses", "pplx-job-1")
+        job = storage.get_provider_job("perplexity", "agent", "pplx-job-1")
         assert job is not None
         assert job.status == "succeeded"
         assert job.cost_amount == Decimal("0.0165")
@@ -413,7 +411,7 @@ def test_capability_idempotency_job_and_native_failure_contract(tmp_path: Path) 
         event = storage.query_events(task_id=str(task.task_id))[0]
         assert event.details["attribution_capability"] == capability.to_dict()
         assert len(event.details["_dexcost_idempotency_sha256"]) == 64
-        job = storage.get_provider_job("perplexity", "responses", "pplx-job-1")
+        job = storage.get_provider_job("perplexity", "agent", "pplx-job-1")
         assert job is not None
         assert job.capability == capability
 
