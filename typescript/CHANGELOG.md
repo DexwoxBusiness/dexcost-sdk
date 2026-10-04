@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.29.0...typescript/v0.30.0) (2026-10-04)
+
+
+### Features
+
+* **attribution:** add Bedrock, Agent, OCR and vector coverage ([#195](https://github.com/DexwoxBusiness/dexcost-sdk/issues/195)) ([a5cd891](https://github.com/DexwoxBusiness/dexcost-sdk/commit/a5cd891e4a00b177d8a5e2a4dd145db22c031a00))
+
 ## [0.29.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.28.0...typescript/v0.29.0) (2026-10-03)
 
 
