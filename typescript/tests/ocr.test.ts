@@ -107,8 +107,25 @@ describe("paired hosted OCR evidence", () => {
     const initialize = vi.spyOn(client, "initialize").mockResolvedValue({});
     const rpc = vi.fn(async (_req, options) => { expect(options.retry).toBeNull(); expect(options.otherArgs.headers["x-goog-request-params"]).toContain("name="); return response; });
     client.innerApiCalls.processDocument = rpc;
-    const value = await runWithTask(task, () => instrumentDocumentAI(client, tracker, googleScope).processDocument(request, { retry: null }));
+    const options = { retry: null }, wrapped = instrumentDocumentAI(client, tracker, googleScope);
+    const value = await runWithTask(task, () => wrapped.processDocument(request, options));
     expect(value[0]).toBe(response[0]); expect(initialize).toHaveBeenCalled(); expect(rpc).toHaveBeenCalledTimes(1);
     expect(tracker.buffer.getPendingEvents()).toHaveLength(1);
+    // Native code adds x-goog-request-params to the caller's options object.
+    // Reusing that normal options object must not silently disable capture.
+    await runWithTask(task, () => wrapped.processDocument(request, options));
+    expect(tracker.buffer.getPendingEvents()).toHaveLength(2);
+  });
+  it("does not attribute custom account headers, shards, inline input or unsupported formats", async () => {
+    const { tracker, task } = setup();
+    for (const change of ["headers", "shard", "inline", "format"]) {
+      const { client, request, response, call } = nativeGoogle(data.document_ai[0]);
+      if (change === "headers") (call as any).otherArgs = { headers: { "x-goog-user-project": "other-account" } };
+      if (change === "shard") (response[0] as any).document.shardInfo = { shardCount: 2 };
+      if (change === "inline") (request as any).inlineDocument = { text: "PRIVATE" };
+      if (change === "format") request.rawDocument.mimeType = "text/html";
+      await runWithTask(task, () => instrumentDocumentAI(client, tracker, googleScope).processDocument(request, call));
+    }
+    expect(tracker.buffer.getPendingEvents()).toHaveLength(0);
   });
 });

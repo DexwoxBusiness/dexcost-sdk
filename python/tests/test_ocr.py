@@ -323,3 +323,38 @@ def test_actual_native_packages(setup, monkeypatch, tmp_path):
 
         asyncio.run(run())
     assert len(tracker.storage.query_events_for_sync()) == 2
+
+
+def test_google_async_ownership_and_account_override(setup):
+    tracker, owner = setup
+    client, request, response, call = google(DATA["document_ai"][0], asynchronous=True)
+    wrapped = instrument_document_ai(client, tracker, **GOOGLE_SCOPE)
+    pending = wrapped.process_document(request, **call)
+    token = _current_task.set(Task(task_type="other"))
+    try:
+        assert asyncio.run(pending) is response
+    finally:
+        _current_task.reset(token)
+    events = tracker.storage.query_events_for_sync()
+    assert len(events) == 1 and events[0].task_id == owner.task_id
+    asyncio.run(
+        wrapped.process_document(request, retry=None, metadata=(("x-goog-user-project", "other"),))
+    )
+    assert len(tracker.storage.query_events_for_sync()) == 1
+
+
+@pytest.mark.parametrize("change", ["shard", "inline", "format"])
+def test_google_partial_or_unsupported(setup, change):
+    tracker, _ = setup
+    client, request, response, call = google(DATA["document_ai"][0])
+    if change == "shard":
+        response["document"]["shard_info"] = {"shard_count": 2}
+    if change == "inline":
+        request["inline_document"] = {"text": "PRIVATE"}
+    if change == "format":
+        request["raw_document"]["mime_type"] = "text/html"
+    assert (
+        instrument_document_ai(client, tracker, **GOOGLE_SCOPE).process_document(request, **call)
+        is response
+    )
+    assert tracker.storage.query_events_for_sync() == []
