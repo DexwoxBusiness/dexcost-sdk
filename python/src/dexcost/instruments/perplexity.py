@@ -249,7 +249,61 @@ def _embedding_measurement(response: Any, requested: str) -> OperationMeasuremen
     )
 
 
-def _measurement(kind: _Kind, response: Any, requested: str) -> OperationMeasurement:
+def _direct_agent_client(resource: Any) -> bool:
+    client = getattr(resource, "_client", None)
+    # The current generated resource stores a transport adapter, not the
+    # public client. Unwrap only that documented native adapter boundary.
+    if type(client).__module__ == "perplexity._generated_transport":
+        client = getattr(client, "_client", None)
+    return str(getattr(client, "base_url", "")).rstrip("/") == "https://api.perplexity.ai"
+
+
+def _agent_measurement(response: Any, requested: str, eligible: bool) -> OperationMeasurement:
+    usage = _value(response, "usage")
+    cost = _value(usage, "cost")
+    record_id = _value(response, "id")
+    parsed = _decimal(_value(cost, "total_cost"))
+    # Pydantic's generated float fields coerce JSON booleans and decimal
+    # strings. Prefer the raw-JSON validation snapshot recorded before casting.
+    snapshot = getattr(response, "_dexcost_agent_cost_snapshot", None)
+    if isinstance(snapshot, tuple):
+        parsed = snapshot[0]
+        eligible = eligible and snapshot[1]
+    valid = (
+        eligible
+        and _value(response, "status") == "completed"
+        and _value(response, "object") == "response"
+        and _value(response, "error") is None
+        and isinstance(record_id, str)
+        and 0 < len(record_id) <= 256
+        and _value(cost, "currency") == "USD"
+        and parsed is not None
+        and parsed <= 9007199254740991
+        and parsed.as_tuple().exponent >= -12
+    )
+    return OperationMeasurement(
+        # Inclusive provider total: do not charge model/cache/tool components again.
+        usage_lines=(ProviderUsageLine("request_count", 1, "Requests"),),
+        pricing_usage={},
+        provider_cost_usd=parsed if valid else None,
+        provider_record_id=record_id
+        if isinstance(record_id, str) and len(record_id) <= 256
+        else None,
+        response_model=_model(_value(response, "model") or requested),
+        task_input_tokens=_integer(_value(usage, "input_tokens")),
+        task_output_tokens=_integer(_value(usage, "output_tokens")),
+        task_cached_tokens=_integer(
+            _value(_value(usage, "input_tokens_details"), "cache_read_input_tokens")
+        ),
+        billing_dimensions=(("gateway", "perplexity"), ("cost_scope", "inclusive_request")),
+    )
+
+
+def _measurement(
+    kind: _Kind, response: Any, requested: str, eligible: bool = False
+) -> OperationMeasurement:
+    if kind == "responses":
+        return _agent_measurement(response, requested, eligible)
     if kind == "search":
         return _search_measurement(response)
     if kind in {"embeddings", "contextualized_embeddings"}:
@@ -269,16 +323,17 @@ def _status(response: Any, *, terminal_required: bool = False) -> OperationStatu
             return "cancelled"
         if terminal_required:
             return "unknown"
-    return "succeeded"
+    return "unknown" if terminal_required else "succeeded"
 
 
 class _StreamMeter:
-    def __init__(self, kind: _Kind, requested: str) -> None:
+    def __init__(self, kind: _Kind, requested: str, eligible: bool = False) -> None:
         self.kind = kind
         self.requested = requested
         self.latest: Any = None
         self.terminal: Any = None
         self.failed = False
+        self.eligible = eligible
 
     def observe(self, item: Any) -> None:
         self.latest = item
@@ -287,11 +342,15 @@ class _StreamMeter:
             self.failed = True
         nested = _value(item, "response")
         candidate = nested if nested is not None else item
-        if _value(candidate, "usage") is not None:
+        if _value(candidate, "usage") is not None and (
+            self.kind != "responses" or event_type == "response.completed"
+        ):
             self.terminal = candidate
 
     def measurement(self) -> OperationMeasurement:
-        return _measurement(self.kind, self.terminal or self.latest, self.requested)
+        return _measurement(
+            self.kind, self.terminal, self.requested, self.eligible and not self.failed
+        )
 
     def completion_status(self) -> OperationStatus:
         if self.failed:
@@ -337,6 +396,7 @@ def _sync_call(
     kind: _Kind,
 ) -> Any:
     requested = _requested_model(kind, kwargs)
+    eligible = _direct_agent_client(self)
     if kind == "responses" and kwargs.get("background") is True:
         job = ProviderJobSession(
             tracker=_active_tracker,
@@ -360,7 +420,9 @@ def _sync_call(
             job.fail(ValueError("Perplexity background response omitted its id"))
             return result
         status = _job_status(result)
-        measurement = _measurement(kind, result, requested) if status == "succeeded" else None
+        measurement = (
+            _measurement(kind, result, requested, eligible) if status == "succeeded" else None
+        )
         job.submit(record_id, status=status, measurement=measurement)
         return result
     session = _session(kind, requested)
@@ -370,7 +432,7 @@ def _sync_call(
         session.fail(exc)
         raise
     if kwargs.get("stream") is True and hasattr(result, "__next__"):
-        meter = _StreamMeter(kind, requested)
+        meter = _StreamMeter(kind, requested, eligible)
         session.release_context()
         return SyncProviderStream(
             result,
@@ -379,7 +441,10 @@ def _sync_call(
             measurement=meter.measurement,
             completion_status=meter.completion_status,
         )
-    session.finish(_measurement(kind, result, requested), _status(result))
+    session.finish(
+        _measurement(kind, result, requested, eligible),
+        _status(result, terminal_required=kind == "responses"),
+    )
     return result
 
 
@@ -391,6 +456,7 @@ async def _async_call(
     kind: _Kind,
 ) -> Any:
     requested = _requested_model(kind, kwargs)
+    eligible = _direct_agent_client(self)
     if kind == "responses" and kwargs.get("background") is True:
         job = ProviderJobSession(
             tracker=_active_tracker,
@@ -414,7 +480,9 @@ async def _async_call(
             job.fail(ValueError("Perplexity background response omitted its id"))
             return result
         status = _job_status(result)
-        measurement = _measurement(kind, result, requested) if status == "succeeded" else None
+        measurement = (
+            _measurement(kind, result, requested, eligible) if status == "succeeded" else None
+        )
         job.submit(record_id, status=status, measurement=measurement)
         return result
     session = _session(kind, requested)
@@ -424,7 +492,7 @@ async def _async_call(
         session.fail(exc)
         raise
     if kwargs.get("stream") is True and hasattr(result, "__anext__"):
-        meter = _StreamMeter(kind, requested)
+        meter = _StreamMeter(kind, requested, eligible)
         session.release_context()
         return AsyncProviderStream(
             result,
@@ -433,7 +501,10 @@ async def _async_call(
             measurement=meter.measurement,
             completion_status=meter.completion_status,
         )
-    session.finish(_measurement(kind, result, requested), _status(result))
+    session.finish(
+        _measurement(kind, result, requested, eligible),
+        _status(result, terminal_required=kind == "responses"),
+    )
     return result
 
 
@@ -458,7 +529,9 @@ def _response_id(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> str | None
     return value if isinstance(value, str) and value else None
 
 
-def _reconcile_response(result: Any, response_id: str, *, cancelled: bool = False) -> None:
+def _reconcile_response(
+    result: Any, response_id: str, *, cancelled: bool = False, eligible: bool = False
+) -> None:
     tracker = _active_tracker
     if tracker is None:
         return
@@ -467,7 +540,9 @@ def _reconcile_response(result: Any, response_id: str, *, cancelled: bool = Fals
         return
     status = "cancelled" if cancelled else _job_status(result)
     measurement = (
-        _measurement("responses", result, previous.resource_id) if status == "succeeded" else None
+        _measurement("responses", result, previous.resource_id, eligible)
+        if status == "succeeded" and _value(result, "id") == response_id
+        else None
     )
     reconcile_provider_job(
         tracker=tracker,
@@ -481,11 +556,12 @@ def _reconcile_response(result: Any, response_id: str, *, cancelled: bool = Fals
 
 def _sync_reconcile(key: str, *, cancelled: bool = False) -> Any:
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        eligible = _direct_agent_client(self)
         result = _originals[key][2](self, *args, **kwargs)
         response_id = _response_id(args, kwargs)
         if response_id is not None:
             with suppress(Exception):
-                _reconcile_response(result, response_id, cancelled=cancelled)
+                _reconcile_response(result, response_id, cancelled=cancelled, eligible=eligible)
         return result
 
     return wrapper
@@ -493,11 +569,12 @@ def _sync_reconcile(key: str, *, cancelled: bool = False) -> Any:
 
 def _async_reconcile(key: str, *, cancelled: bool = False) -> Any:
     async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        eligible = _direct_agent_client(self)
         result = await _originals[key][2](self, *args, **kwargs)
         response_id = _response_id(args, kwargs)
         if response_id is not None:
             with suppress(Exception):
-                _reconcile_response(result, response_id, cancelled=cancelled)
+                _reconcile_response(result, response_id, cancelled=cancelled, eligible=eligible)
         return result
 
     return wrapper
@@ -530,10 +607,49 @@ def instrument_perplexity(tracker: Any) -> None:
         api = import_module("perplexity.generated.api")
     except ImportError as exc:
         raise ImportError(
-            "Perplexity instrumentation requires 'perplexityai'; " "install dexcost[perplexity]"
+            "Perplexity instrumentation requires 'perplexityai'; install dexcost[perplexity]"
         ) from exc
     _active_tracker = tracker
     try:
+        from perplexity._base_client import BaseClient
+
+        original_process = BaseClient._process_response_data
+
+        def process(self: Any, *, data: Any, cast_to: Any, response: Any) -> Any:
+            result = original_process(self, data=data, cast_to=cast_to, response=response)
+            url = response.request.url
+            direct = (
+                url.scheme == "https"
+                and url.host == "api.perplexity.ai"
+                and url.port in {None, 443}
+            )
+            route = (
+                re.fullmatch(r"/v1/(?:agent|responses)(?:/[A-Za-z0-9_-]+)?", url.path) is not None
+            )
+            raw = (
+                data.get("response")
+                if isinstance(data, dict) and data.get("type") == "response.completed"
+                else data
+            )
+            target = (
+                _value(result, "response")
+                if isinstance(data, dict) and data.get("type") == "response.completed"
+                else result
+            )
+            if isinstance(raw, dict) and raw.get("object") == "response" and target is not None:
+                raw_usage = raw.get("usage")
+                raw_cost = raw_usage.get("cost") if isinstance(raw_usage, dict) else None
+                amount = (
+                    _decimal(raw_cost.get("total_cost")) if isinstance(raw_cost, dict) else None
+                )
+                with suppress(AttributeError, TypeError):
+                    object.__setattr__(
+                        target, "_dexcost_agent_cost_snapshot", (amount, direct and route)
+                    )
+            return result
+
+        _originals["raw_process"] = (BaseClient, "_process_response_data", original_process)
+        BaseClient._process_response_data = process
         for class_name, method_name, kind, is_async in _METHODS:
             owner = getattr(api, class_name)
             key = f"perplexity.generated.api:{class_name}:{method_name}"

@@ -244,9 +244,7 @@ def test_official_sdk_all_core_billable_resources_and_background_lifecycle(
             line["metric"]: line["quantity"]
             for line in responses.details["attribution_usage_lines"]
         }
-        assert response_lines["cache_write_input_tokens"] == "5"
-        assert response_lines["tool_fetch_url_invocation_count"] == "2"
-        assert response_lines["tool_search_web_invocation_count"] == "1"
+        assert response_lines == {"request_count": "1"}  # Inclusive model + tools total.
 
         search = by_service["search"]
         assert search.model == "perplexity/search"

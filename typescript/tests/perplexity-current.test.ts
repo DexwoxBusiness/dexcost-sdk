@@ -92,8 +92,7 @@ describe("current official Perplexity attribution", () => {
     const final = buffer.getProviderJob("perplexity", "responses", "resp-bg");
     expect(final).toMatchObject({ status: "succeeded", revision: 2 });
     expect(final?.usage).toEqual(expect.arrayContaining([
-      expect.objectContaining({ metric: "input_tokens", quantity: "90" }),
-      expect.objectContaining({ metric: "output_tokens", quantity: "11" }),
+      expect.objectContaining({ metric: "request_count", quantity: "1" }),
     ]));
   });
 });
