@@ -324,3 +324,13 @@ def instrument_document_ai(
 def uninstrument_ocr(client: Any) -> None:
     if isinstance(client, (_Textract, _DocumentAI)):
         client._active = False
+
+
+def uninstrument_textract(client: Any) -> None:
+    """Disable capture on the facade returned by instrument_textract."""
+    uninstrument_ocr(client)
+
+
+def uninstrument_document_ai(client: Any) -> None:
+    """Disable capture on the facade returned by instrument_document_ai."""
+    uninstrument_ocr(client)

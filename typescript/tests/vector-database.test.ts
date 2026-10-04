@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { instrumentPinecone, instrumentTurbopuffer, uninstrumentVectorDatabase, vectorDatabaseResourceId } from "../src/instruments/vector-database.js";
+import { instrumentPinecone, instrumentTurbopuffer, uninstrumentPinecone, vectorDatabaseResourceId } from "../src/instruments/vector-database.js";
 import { runWithTask } from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
 import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
@@ -67,7 +67,7 @@ describe("native vector meters and explicit invoice identities", () => {
   });
   it("leaves nested/disabled calls unchanged and isolates parallel billing accounts", async () => {
     const { tracker, task } = setup(), c = data.cases[0], { client } = native(c), wrapped = bind(client, tracker, "pinecone");
-    await runWithTask(task, () => runWithProviderCapture("outer", () => wrapped.query({}))); uninstrumentVectorDatabase(wrapped);
+    await runWithTask(task, () => runWithProviderCapture("outer", () => wrapped.query({}))); uninstrumentPinecone(wrapped);
     expect(await runWithTask(task, () => wrapped.query({}))).toBe(c.response); expect(jobs(tracker)).toHaveLength(0);
     await runWithTask(task, () => Promise.all(["account-a", "account-b"].map(account => bind(native(c).client, tracker, "pinecone", account).query({}))));
     expect(new Set(jobs(tracker).map(j => j.details.attribution_resource_id)).size).toBe(2);

@@ -9,7 +9,7 @@ import pytest
 from dexcost import (
     instrument_pinecone,
     instrument_turbopuffer,
-    uninstrument_vector_database,
+    uninstrument_pinecone,
     vector_database_resource_id,
 )
 from dexcost.attribution import to_attribution_observation_v3
@@ -166,7 +166,7 @@ def test_disable_outer_capture_error_and_concurrent_account_isolation(setup):
     wrapped = bind(client, tracker, "pinecone")
     with provider_capture_scope("outer"):
         wrapped.query(namespace=DATA["namespace"])
-    uninstrument_vector_database(wrapped)
+    uninstrument_pinecone(wrapped)
     assert wrapped.query(namespace=DATA["namespace"]) is case["response"]
     assert not tracker.storage.query_events_for_sync()
     error = RuntimeError("native")

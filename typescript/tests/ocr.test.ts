@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Socket } from "node:net";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { instrumentTextract, instrumentDocumentAI, uninstrumentOcr } from "../src/instruments/ocr.js";
+import { instrumentTextract, instrumentDocumentAI, uninstrumentDocumentAI } from "../src/instruments/ocr.js";
 import { runWithTask } from "../src/core/context.js";
 import { createTask } from "../src/core/models.js";
 import { providerJobFromDict } from "../src/core/provider-jobs.js";
@@ -89,7 +89,7 @@ describe("paired hosted OCR evidence", () => {
     await runWithTask(task, () => runWithProviderCapture("outer", () => wrapped.processDocument(request, call)));
     const error = new Error("PRIVATE"); client.processDocument = vi.fn(async () => { throw error; });
     expect(await runWithTask(task, () => wrapped.processDocument(request, call).catch(() => response))).toBe(response);
-    uninstrumentOcr(wrapped); client.processDocument = vi.fn(async () => response);
+    uninstrumentDocumentAI(wrapped); client.processDocument = vi.fn(async () => response);
     await runWithTask(task, () => wrapped.processDocument(request, call));
     expect(tracker.buffer.getPendingEvents()).toHaveLength(0);
   });

@@ -4,6 +4,12 @@ Verified 2026-10-04 against official API documentation and the public pricing pa
 rendered in the browser. This is opt-in usage capture plus normalized invoice
 allocation, **not automatic invoice retrieval or per-request cash pricing**.
 
+To disable capture on an instrumented facade, call Python
+`uninstrument_pinecone(facade)` / `uninstrument_turbopuffer(facade)`, or TypeScript
+`uninstrumentPinecone(facade)` / `uninstrumentTurbopuffer(facade)`, matching the
+instrumenter used. These public cleanup functions are idempotent; they do not
+close or change the native provider client.
+
 ## Admitted operations
 
 | Provider | Native calls | Provider evidence |

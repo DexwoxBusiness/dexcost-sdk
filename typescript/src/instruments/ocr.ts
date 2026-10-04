@@ -125,3 +125,9 @@ export function instrumentDocumentAI<T extends object>(client: T, tracker: CostT
   states.set(facade, state); return facade;
 }
 export function uninstrumentOcr(client: object): void { const state = states.get(client); if (state) state.active = false; }
+
+/** Disable capture on the facade returned by instrumentTextract. */
+export function uninstrumentTextract(client: object): void { uninstrumentOcr(client); }
+
+/** Disable capture on the facade returned by instrumentDocumentAI. */
+export function uninstrumentDocumentAI(client: object): void { uninstrumentOcr(client); }

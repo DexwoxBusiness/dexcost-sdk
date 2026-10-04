@@ -129,3 +129,9 @@ export function instrumentTurbopuffer<T extends object>(resource: T, tracker: Co
   return facade(resource, tracker, "turbopuffer", options, `${options.region}.turbopuffer.com`);
 }
 export function uninstrumentVectorDatabase(client: object): void { const state = states.get(client); if (state) state.active = false; }
+
+/** Disable capture on the facade returned by instrumentPinecone. */
+export function uninstrumentPinecone(client: object): void { uninstrumentVectorDatabase(client); }
+
+/** Disable capture on the facade returned by instrumentTurbopuffer. */
+export function uninstrumentTurbopuffer(client: object): void { uninstrumentVectorDatabase(client); }

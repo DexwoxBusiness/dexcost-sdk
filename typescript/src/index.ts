@@ -22,7 +22,7 @@ export type { BrowserSessionIdentity, BrowserSessionBinding, BrowserSessionUsage
 export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
 export type { RuntimeResource } from "./instruments/runtime.js";
 export { instrumentObjectStorage, uninstrumentObjectStorage } from "./instruments/object-storage.js";
-export { instrumentPinecone, instrumentTurbopuffer, uninstrumentVectorDatabase, vectorDatabaseResourceId } from "./instruments/vector-database.js";
+export { instrumentPinecone, instrumentTurbopuffer, uninstrumentPinecone, uninstrumentTurbopuffer, vectorDatabaseResourceId } from "./instruments/vector-database.js";
 export type { PineconeBinding, VectorDatabaseBinding } from "./instruments/vector-database.js";
 export type { ObjectStorageBinding } from "./instruments/object-storage.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
@@ -409,7 +409,7 @@ export type {
 // Debug mode
 export { bindApifyRun, recordApifyRun, bindFirecrawlJob, recordFirecrawlJob, recordFirecrawlSearch, instrumentApify, uninstrumentApify, instrumentFirecrawl, uninstrumentFirecrawl } from "./instruments/web-tools.js";
 export { bindLlamaParseJob, recordLlamaParseJob, instrumentLlamaParse, uninstrumentLlamaParse } from "./instruments/document-parse.js";
-export { instrumentTextract, instrumentDocumentAI, uninstrumentOcr, type TextractBinding, type DocumentAIBinding } from "./instruments/ocr.js";
+export { instrumentTextract, instrumentDocumentAI, uninstrumentTextract, uninstrumentDocumentAI, type TextractBinding, type DocumentAIBinding } from "./instruments/ocr.js";
 export type { FirecrawlBinding } from "./instruments/web-tools.js";
 
 export { setDebugMode, isDebugMode } from "./core/debug.js";

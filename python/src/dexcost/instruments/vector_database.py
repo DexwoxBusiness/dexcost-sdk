@@ -313,3 +313,13 @@ def instrument_turbopuffer(
 def uninstrument_vector_database(client: Any) -> None:
     if isinstance(client, _VectorFacade):
         client._active = False
+
+
+def uninstrument_pinecone(client: Any) -> None:
+    """Disable capture on the facade returned by instrument_pinecone."""
+    uninstrument_vector_database(client)
+
+
+def uninstrument_turbopuffer(client: Any) -> None:
+    """Disable capture on the facade returned by instrument_turbopuffer."""
+    uninstrument_vector_database(client)

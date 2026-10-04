@@ -10,7 +10,10 @@ in ``dexcost.__all__``. They catch the silent-export-gap class of bugs (e.g.
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
+
+import pytest
 
 import dexcost
 
@@ -75,6 +78,32 @@ def test_instrument_uninstrument_pairs_are_symmetric() -> None:
     assert (
         not only_uninstrument
     ), f"uninstrument_X exported without matching instrument_X: {only_uninstrument}"
+
+
+@pytest.mark.parametrize(
+    ("provider", "module_name", "internal_cleanup"),
+    [
+        ("textract", "ocr", "uninstrument_ocr"),
+        ("document_ai", "ocr", "uninstrument_ocr"),
+        ("pinecone", "vector_database", "uninstrument_vector_database"),
+        ("turbopuffer", "vector_database", "uninstrument_vector_database"),
+    ],
+)
+def test_provider_cleanup_aliases_are_public_and_delegate(
+    monkeypatch, provider, module_name, internal_cleanup
+) -> None:
+    instrument = f"instrument_{provider}"
+    cleanup = f"uninstrument_{provider}"
+    assert instrument in dexcost.__all__ and callable(getattr(dexcost, instrument))
+    assert cleanup in dexcost.__all__ and callable(getattr(dexcost, cleanup))
+    assert internal_cleanup not in dexcost.__all__
+    assert not hasattr(dexcost, internal_cleanup)
+    calls = []
+    module = importlib.import_module(f"dexcost.instruments.{module_name}")
+    monkeypatch.setattr(module, internal_cleanup, calls.append)
+    facade = object()
+    assert getattr(dexcost, cleanup)(facade) is None
+    assert calls == [facade]
 
 
 def test_mcp_helpers_specifically_exported() -> None:

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dexcost import instrument_document_ai, instrument_textract, uninstrument_ocr
+from dexcost import instrument_document_ai, instrument_textract, uninstrument_document_ai
 from dexcost.attribution.v3_convert import to_attribution_observation_v3
 from dexcost.context import _current_task
 from dexcost.instruments import ocr
@@ -210,7 +210,7 @@ def test_transparency(setup):
     wrapped = instrument_document_ai(client, tracker, **GOOGLE_SCOPE)
     with provider_capture_scope("outer"):
         assert wrapped.process_document(request, **call) is result
-    uninstrument_ocr(wrapped)
+    uninstrument_document_ai(wrapped)
     assert wrapped.process_document(request, **call) is result
     assert tracker.storage.query_events_for_sync() == []
     error = RuntimeError("PRIVATE")

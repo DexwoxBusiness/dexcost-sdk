@@ -180,7 +180,12 @@ from dexcost.instruments.object_storage import (
     instrument_object_storage,
     uninstrument_object_storage,
 )
-from dexcost.instruments.ocr import instrument_document_ai, instrument_textract, uninstrument_ocr
+from dexcost.instruments.ocr import (
+    instrument_document_ai,
+    instrument_textract,
+    uninstrument_document_ai,
+    uninstrument_textract,
+)
 from dexcost.instruments.runtime import (
     instrument_e2b_sandbox,
     uninstrument_e2b_sandbox,
@@ -189,7 +194,8 @@ from dexcost.instruments.runtime import (
 from dexcost.instruments.vector_database import (
     instrument_pinecone,
     instrument_turbopuffer,
-    uninstrument_vector_database,
+    uninstrument_pinecone,
+    uninstrument_turbopuffer,
     vector_database_resource_id,
 )
 from dexcost.instruments.web_tools import (
@@ -1474,6 +1480,7 @@ __all__ = [
     "uninstrument_bedrock",
     "uninstrument_browserbase",
     "uninstrument_cohere",
+    "uninstrument_document_ai",
     "uninstrument_e2b_sandbox",
     "uninstrument_fal",
     "uninstrument_firecrawl",
@@ -1483,13 +1490,14 @@ __all__ = [
     "uninstrument_llamaparse",
     "uninstrument_mcp",
     "uninstrument_object_storage",
-    "uninstrument_ocr",
     "uninstrument_ollama",
     "uninstrument_openai",
     "uninstrument_openrouter",
     "uninstrument_perplexity",
+    "uninstrument_pinecone",
     "uninstrument_redis_client",
-    "uninstrument_vector_database",
+    "uninstrument_textract",
+    "uninstrument_turbopuffer",
     "validate",
     "validate_api_key",
     "validate_attribution_event_v2",
