@@ -163,6 +163,55 @@ def test_real_boto3_converse(tracker):
     client.close()
 
 
+def test_real_perplexity_background_zero(tracker):
+    from perplexity import Perplexity
+
+    raw = copy.deepcopy(FIXTURE["perplexity_response"])
+    raw["usage"]["cost"]["total_cost"] = 0
+
+    def respond(request):
+        result = {**raw, "status": "queued", "usage": None} if request.method == "POST" else raw
+        return httpx.Response(200, json=result)
+
+    perplexity.instrument_perplexity(tracker)
+    with Perplexity(
+        api_key="fixture", http_client=httpx.Client(transport=httpx.MockTransport(respond))
+    ) as client:
+        with tracker.task("background-zero") as task:
+            client.responses.create(model=raw["model"], input="fixture", background=True)
+            pending = tracker._storage.get_provider_job("perplexity", "responses", raw["id"])
+            assert pending.cost_amount is None
+            client.responses.retrieve(raw["id"])
+            final = tracker._storage.get_provider_job("perplexity", "responses", raw["id"])
+            assert final.cost_amount == Decimal(0)
+            assert final.cost_source == "provider_reported"
+            client.responses.retrieve(raw["id"])
+            assert (
+                tracker._storage.get_provider_job("perplexity", "responses", raw["id"]).revision
+                == final.revision
+            )
+        assert tracker._storage.query_events(task_id=str(task.task_id)) == []
+
+
+@pytest.mark.parametrize("field", ["serviceTier", "performanceConfig", "ResponseMetadata"])
+def test_null_bedrock_metadata_does_not_replace_native_success(field, tracker):
+    case = FIXTURE["bedrock_cases"][0]
+    response = copy.deepcopy(case["response"])
+    response["ResponseMetadata"] = {"RequestId": "native-nova"}
+    response[field] = None
+    client = SimpleNamespace(
+        meta=SimpleNamespace(region_name="us-east-1"),
+        _endpoint=SimpleNamespace(host="https://bedrock-runtime.us-east-1.amazonaws.com"),
+    )
+    with tracker.task("nullable-metadata") as task:
+        assert (
+            converse_call(lambda: response, client, (), {}, case["request"], tracker, False)
+            is response
+        )
+    event = tracker._storage.query_events(task_id=str(task.task_id))[0]
+    assert _lane(to_attribution_observation_v3(event)) is None
+
+
 @pytest.mark.parametrize(
     "reason", ["positive", "zero", "missing", "currency", "incomplete", "malformed", "gateway"]
 )

@@ -83,6 +83,59 @@ describe("paired Bedrock native response -> v3 server vectors", () => {
 });
 
 describe("real official packages, mocked I/O only", () => {
+  it("reconciles a native background Agent request to explicit zero exactly once", async () => {
+    const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
+    const raw = structuredClone(fixture.perplexity_response); raw.usage.cost.total_cost = 0;
+    const client = new Perplexity({ apiKey: "fixture", fetch: async (url: any, init: any) => {
+      const result = init?.method === "POST" ? { ...raw, status: "queued", usage: null } : raw;
+      return new Response(JSON.stringify(result), { headers: { "content-type": "application/json" } });
+    } });
+    await instrumentPerplexity(setup(), buffer);
+    await client.responses.create({ model: raw.model, input: "fixture", background: true });
+    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.cost_amount).toBeUndefined();
+    await client.responses.retrieve(raw.id);
+    const final = buffer.getProviderJob("perplexity", "responses", raw.id)!;
+    expect(final.cost_amount).toBe("0");
+    expect(final.cost_source).toBe("provider_reported");
+    expect(final.usage).toEqual([{ metric: "request_count", quantity: "1", unit: "Requests" }]);
+    await client.responses.retrieve(raw.id);
+    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.cost_amount).toBe("0");
+    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.revision).toBe(final.revision);
+    expect(buffer.getAllEvents()).toHaveLength(0); // No second synchronous event for polling.
+  });
+
+  it("observes Perplexity helpers once and does not price caller-recovered responses", async () => {
+    const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
+    let requests = 0;
+    const client = new Perplexity({ apiKey: "fixture", maxRetries: 0,
+      fetch: async () => { requests++; return new Response(JSON.stringify(fixture.perplexity_response), { headers: { "content-type": "application/json" } }); },
+    });
+    await instrumentPerplexity(setup(), buffer);
+    const promise = client.responses.create({ model: "fixture", input: "fixture" });
+    const payload = await promise.withResponse();
+    expect(await promise.finally(() => undefined)).toEqual(payload.data);
+    expect(await promise).toEqual(payload.data);
+    expect(requests).toBe(1);
+    expect(buffer.getAllEvents()).toHaveLength(1);
+    const failing = new Perplexity({ apiKey: "fixture", maxRetries: 0,
+      fetch: async () => new Response(JSON.stringify({ error: { message: "fixture failure" } }), { status: 500, headers: { "content-type": "application/json" } }),
+    });
+    await failing.responses.create({ model: "fixture", input: "fixture" }).catch(() => fixture.perplexity_response);
+    expect(buffer.getAllEvents()).toHaveLength(2);
+    const failed = buffer.getAllEvents().find(e => e.details?.attribution_operation_status === "failed")!;
+    expect(failed.pricingSource).toBe("unknown");
+    expect(failed.details?.provider_reported_cost_usd).toBeUndefined();
+  });
+
+  it("keeps asResponse body readable without eagerly consuming it", async () => {
+    const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
+    const client = new Perplexity({ apiKey: "fixture", fetch: async () => new Response(JSON.stringify(fixture.perplexity_response), { headers: { "content-type": "application/json" } }) });
+    await instrumentPerplexity(setup(), buffer);
+    const response = await client.responses.create({ model: "fixture", input: "fixture" }).asResponse();
+    expect(await response.json()).toEqual(fixture.perplexity_response);
+    expect(buffer.getAllEvents()).toHaveLength(0); // Raw-only helpers intentionally do not inspect bodies.
+  });
+
   it("admits an actual AWS generated client and command without losing native response", async () => {
     const { BedrockRuntimeClient, ConverseCommand } = require("@aws-sdk/client-bedrock-runtime");
     const sent: any[] = [];
@@ -105,7 +158,7 @@ describe("real official packages, mocked I/O only", () => {
   });
 
   for (const stream of [false, true]) it.each(["positive", "zero", "missing", "currency", "incomplete", "malformed", "gateway"])("Perplexity %s stream=" + stream, async reason => {
-    const { Perplexity } = require("@perplexity-ai/perplexity_ai");
+    const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
     const raw = structuredClone(fixture.perplexity_response);
     if (reason === "zero") raw.usage.cost.total_cost = 0;
     if (reason === "missing") delete raw.usage.cost.total_cost;

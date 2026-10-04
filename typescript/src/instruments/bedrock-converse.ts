@@ -36,7 +36,9 @@ export function novaMeasurement(input: any, response: any, eligible: boolean): O
     usage.totalTokens === usage.inputTokens + usage.outputTokens;
   const noCache = [usage?.cacheReadInputTokens, usage?.cacheWriteInputTokens].every((v) => v == null || v === 0) &&
     (usage?.cacheDetails == null || (Array.isArray(usage.cacheDetails) && usage.cacheDetails.length === 0));
-  const priced = eligible && valid && noCache && response?.serviceTier?.type === "default" &&
+  const rawId = response?.$metadata?.requestId;
+  const recordId = typeof rawId === "string" && rawId.length > 0 && rawId.length <= 256 ? rawId : undefined;
+  const priced = eligible && valid && noCache && recordId !== undefined && response?.serviceTier?.type === "default" &&
     response?.performanceConfig?.latency === "standard" && response?.trace == null &&
     ["end_turn", "max_tokens", "stop_sequence"].includes(response?.stopReason);
   return {
@@ -45,7 +47,7 @@ export function novaMeasurement(input: any, response: any, eligible: boolean): O
       { metric: "output_tokens", quantity: usage.outputTokens, unit: "Tokens" },
     ] : [],
     pricingUsage: {}, responseModel: input?.modelId,
-    providerRecordId: response?.$metadata?.requestId,
+    providerRecordId: recordId,
     inputTokens: valid ? usage.inputTokens : undefined, outputTokens: valid ? usage.outputTokens : undefined,
     billingDimensions: priced ? [["bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"]] : [],
   };

@@ -246,8 +246,16 @@ class ProviderJobRevision:
             if not all(value is not None for value in cost_fields):
                 raise ValueError("provider job cost amount, source, and confidence are atomic")
             amount = _decimal(cast(Decimal, self.cost_amount), "cost_amount")
-            if amount <= 0:
-                raise ValueError("provider job cost evidence must be positive")
+            exact_provider_zero = (
+                amount == 0
+                and self.cost_source == "provider_reported"
+                and self.cost_confidence == "exact"
+                and self.status == "succeeded"
+            )
+            if amount < 0 or (amount == 0 and not exact_provider_zero):
+                raise ValueError(
+                    "zero provider job cost requires succeeded exact provider evidence"
+                )
             object.__setattr__(self, "cost_amount", amount)
             if self.cost_source not in _COST_SOURCES:
                 raise ValueError(f"unsupported provider job cost source {self.cost_source!r}")

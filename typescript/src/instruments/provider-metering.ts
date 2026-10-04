@@ -140,7 +140,7 @@ export function providerJobMeasurementFields(
   let pricingVersion: string | undefined;
   if (measurement.providerCostUsd !== undefined) {
     const amount = toDecimal(measurement.providerCostUsd);
-    if (amount.gt(0)) {
+    if (amount.gte(0)) {
       costAmount = amount;
       costSource = "provider_reported";
       costConfidence = "exact";

@@ -14,6 +14,10 @@ from dexcost.instruments._provider_metering import (
 NOVA_MODELS = {"amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0", "amazon.nova-pro-v1:0"}
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _count(value: Any) -> bool:
     return (
         isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9007199254740991
@@ -68,14 +72,17 @@ def measurement(body: dict[str, Any], response: Any, eligible: bool) -> Operatio
         for key in ("cacheReadInputTokens", "cacheWriteInputTokens")
     )
     no_cache = no_cache and (usage.get("cacheDetails") is None or usage["cacheDetails"] == [])
+    record_id = _mapping(response.get("ResponseMetadata")).get("RequestId")
+    record_id = record_id if isinstance(record_id, str) and 0 < len(record_id) <= 256 else None
     priced = (
         eligible
         and valid
         and no_cache
-        and response.get("serviceTier", {}).get("type") == "default"
-        and response.get("performanceConfig", {}).get("latency") == "standard"
+        and record_id is not None
+        and _mapping(response.get("serviceTier")).get("type") == "default"
+        and _mapping(response.get("performanceConfig")).get("latency") == "standard"
         and response.get("trace") is None
-        and response.get("stopReason") in {"end_turn", "max_tokens", "stop_sequence"}
+        and response.get("stopReason") in ("end_turn", "max_tokens", "stop_sequence")
     )
     return OperationMeasurement(
         pricing_usage={},
@@ -89,7 +96,7 @@ def measurement(body: dict[str, Any], response: Any, eligible: bool) -> Operatio
         if valid
         else (),
         response_model=body.get("modelId"),
-        provider_record_id=response.get("ResponseMetadata", {}).get("RequestId"),
+        provider_record_id=record_id,
         task_input_tokens=usage.get("inputTokens") if valid else None,
         task_output_tokens=usage.get("outputTokens") if valid else None,
         billing_dimensions=(("bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"),)
@@ -183,7 +190,9 @@ def converse_call(
         session.fail(exc)
         raise
     if streaming and isinstance(result, dict) and result.get("stream") is not None:
-        meter = StreamMeter(body, eligible, result.get("ResponseMetadata", {}).get("RequestId"))
+        meter = StreamMeter(
+            body, eligible, _mapping(result.get("ResponseMetadata")).get("RequestId")
+        )
         session.release_context()
         return {
             **result,

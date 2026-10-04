@@ -127,7 +127,7 @@ def _measurement_fields(
     )
     if measurement.provider_cost_usd is not None:
         provider_amount = Decimal(str(measurement.provider_cost_usd))
-        if provider_amount > 0:
+        if provider_amount >= 0:
             amount: Decimal | None = provider_amount
             source: ProviderJobCostSource | None = "provider_reported"
             confidence: ProviderJobCostConfidence | None = "exact"

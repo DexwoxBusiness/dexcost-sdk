@@ -3,7 +3,6 @@ import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
 import { registerInstrument } from "./index.js";
 import {
-  mapProviderResult,
   providerJobMeasurementFields,
   ProviderOperationSession,
   wrapProviderStream,
@@ -20,6 +19,40 @@ let providedModule: any;
 let patched = false;
 
 type Kind = "responses" | "sonar" | "search" | "embeddings" | "contextualized_embeddings";
+
+/** Observe native settlement before caller recovery, without consuming a body
+ * merely because the caller requested asResponse(). Cache the mapping so a
+ * repeated await/withResponse cannot wrap or finalize the same stream twice. */
+function mapPerplexityResult(raw: any, complete: (value: any) => any, fail: (error: unknown) => never): any {
+  if (raw == null || typeof raw.then !== "function") return complete(raw);
+  let mapped = false;
+  let value: any;
+  let observed: Promise<any> | undefined;
+  const once = (native: any) => {
+    if (!mapped) { value = complete(native); mapped = true; }
+    return value;
+  };
+  const observe = () => {
+    if (!observed) {
+      observed = raw.then(once, fail);
+      void observed!.catch(() => undefined);
+    }
+    return observed!;
+  };
+  return new Proxy(raw, {
+    get(target, property) {
+      if (property === "then" || property === "catch" || property === "finally") return observe()[property].bind(observe());
+      if (property === "withResponse" && typeof target.withResponse === "function") {
+        return (...args: any[]) => target.withResponse(...args).then((payload: any) => {
+          const data = once(payload.data);
+          return data === payload.data ? payload : { ...payload, data };
+        }, fail);
+      }
+      const member = Reflect.get(target, property, target);
+      return typeof member === "function" ? member.bind(target) : member;
+    },
+  });
+}
 
 function kindFor(ownerName: string): Kind {
   const value = ownerName.toLowerCase();
@@ -145,34 +178,46 @@ function insertNewJob(
   eligible = false,
 ): void {
   const id = response?.id ?? response?.response_id;
-  if (typeof id !== "string" || id.length === 0) return;
+  if (typeof id !== "string" || id.length === 0 || id.length > 256) {
+    session.finalizeWithoutEvent();
+    return;
+  }
   const status = jobStatus(response);
   const meter = status === "succeeded" ? measurement("responses", response, requested, eligible) : undefined;
-  buffer.insertProviderJobRevision(new ProviderJobRevision({
+  try { buffer.insertProviderJobRevision(new ProviderJobRevision({
     taskId: session.task.taskId, provider: "perplexity", service: "responses",
     providerRecordId: id, operation: "perplexity.responses.create", component: "llm",
     eventType: "llm_call", resourceType: "model", resourceId: requested, status,
     ownsTask: session.autoCreated, billingDimensions: [["gateway", "perplexity"]],
     ...providerJobMeasurementFields(pricing, requested, meter),
-  }));
+  })); } catch { session.finalizeWithoutEvent(); return; }
   session.releaseForProviderJob();
 }
 
 function reconcileJob(pricing: PricingEngine, buffer: EventBuffer, response: any, id: string, cancelled: boolean, eligible = false): void {
+  if (response?.id !== id) return;
+  try {
   const raw = buffer.getProviderJob("perplexity", "responses", id);
   if (raw === undefined) return;
   const previous = providerJobFromDict(raw);
   const status = jobStatus(response, cancelled);
   const meter = status === "succeeded" && response?.id === id ? measurement("responses", response, previous.resourceId, eligible) : undefined;
-  buffer.insertProviderJobRevision(new ProviderJobRevision({
+  const next = new ProviderJobRevision({
     eventId: previous.eventId, revision: previous.revision + 1,
     taskId: previous.taskId, provider: previous.provider, service: previous.service,
     providerRecordId: id, operation: previous.operation, component: previous.component,
     eventType: previous.eventType, resourceType: previous.resourceType,
     resourceId: previous.resourceId, status, submittedAt: previous.submittedAt,
     ownsTask: previous.ownsTask, billingDimensions: previous.billingDimensions,
+    capability: previous.capability,
     ...providerJobMeasurementFields(pricing, previous.resourceId, meter),
-  }));
+  });
+  const economicSnapshot = (job: ProviderJobRevision) => {
+    const snapshot = job.toDict(); delete snapshot.revision; delete snapshot.observed_at;
+    return JSON.stringify(snapshot);
+  };
+  if (economicSnapshot(next) !== economicSnapshot(previous)) buffer.insertProviderJobRevision(next);
+  } catch { /* Telemetry must not replace a successful provider poll. */ }
 }
 
 function patchMethod(owner: any, ownerName: string, name: string, pricing: PricingEngine, buffer: EventBuffer): void {
@@ -218,7 +263,7 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
       session.finish(measurement(kind, response, requested, eligible), jobStatus(response) === "failed" ? "failed" : kind === "responses" && response?.status !== "completed" ? "unknown" : "succeeded");
       return response;
     };
-    return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
+    return mapPerplexityResult(result, complete, (error) => { session.fail(error); throw error; });
   };
   patches.push({ owner, name, original });
 }
@@ -311,7 +356,7 @@ function patchTransportMethod(
       );
       return response;
     };
-    return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
+    return mapPerplexityResult(result, complete, (error) => { session.fail(error); throw error; });
   };
   patches.push({ owner, name, original });
 }
