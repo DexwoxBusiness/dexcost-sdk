@@ -34,6 +34,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
+ocr-test = ["google-cloud-documentai==3.16.0"]
 databases = ["pymongo>=4.13,<5", "redis>=5,<7"]
 crewai = [
     # CrewAI currently declares Python <3.14. Keep the core SDK available on

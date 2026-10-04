@@ -542,7 +542,7 @@ def to_attribution_observation_v3(
         and line["unit"].endswith("Seconds")
         for line in usage
     )
-    if has_time_based_usage or (duration_seconds is not None and duration_seconds > 0):
+    if has_time_based_usage or (duration_seconds is not None and duration_seconds >= 0):
         offset_microseconds = 0
         if duration_seconds is not None and duration_seconds > 0:
             offset_microseconds = int(

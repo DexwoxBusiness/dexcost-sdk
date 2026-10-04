@@ -180,6 +180,7 @@ from dexcost.instruments.object_storage import (
     instrument_object_storage,
     uninstrument_object_storage,
 )
+from dexcost.instruments.ocr import instrument_document_ai, instrument_textract, uninstrument_ocr
 from dexcost.instruments.runtime import (
     instrument_e2b_sandbox,
     uninstrument_e2b_sandbox,
@@ -1417,6 +1418,7 @@ __all__ = [
     "instrument_bedrock",
     "instrument_browserbase",
     "instrument_cohere",
+    "instrument_document_ai",
     "instrument_e2b_sandbox",
     "instrument_fal",
     "instrument_firecrawl",
@@ -1431,6 +1433,7 @@ __all__ = [
     "instrument_openrouter",
     "instrument_perplexity",
     "instrument_redis_client",
+    "instrument_textract",
     "mongodb_command_listener",
     "on_delivery_error",
     "record_apify_run",
@@ -1472,6 +1475,7 @@ __all__ = [
     "uninstrument_llamaparse",
     "uninstrument_mcp",
     "uninstrument_object_storage",
+    "uninstrument_ocr",
     "uninstrument_ollama",
     "uninstrument_openai",
     "uninstrument_openrouter",

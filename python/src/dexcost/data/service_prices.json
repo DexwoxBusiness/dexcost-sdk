@@ -397,38 +397,6 @@
     "source": "https://replicate.com/pricing",
     "last_verified": "2026-04-07"
   },
-  "amazon_textract": {
-    "display_name": "Amazon Textract",
-    "domains": [
-      "textract.*.amazonaws.com"
-    ],
-    "category": "document",
-    "pricing_model": "per_page",
-    "cost_per_page_usd": "0.0015",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://aws.amazon.com/textract/pricing/",
-    "last_verified": "2026-04-07"
-  },
-  "google_document_ai": {
-    "display_name": "Google Document AI",
-    "domains": [
-      "*.googleapis.com"
-    ],
-    "endpoints": [
-      "/v1/projects/*/locations/*/processors"
-    ],
-    "category": "document",
-    "pricing_model": "per_page",
-    "cost_per_page_usd": "0.01",
-    "note": "General form processor. OCR is $0.0015/page.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://cloud.google.com/document-ai/pricing",
-    "last_verified": "2026-04-07"
-  },
   "twelve_data": {
     "display_name": "Twelve Data",
     "domains": [
