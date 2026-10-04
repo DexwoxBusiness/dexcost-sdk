@@ -21,13 +21,13 @@ from dexcost.tracker import CostTracker
 def job():
     now = datetime.now(timezone.utc)
     return ProviderJobRevision(
-        event_id=provider_job_event_id("perplexity", "responses", "zero-job"),
+        event_id=provider_job_event_id("perplexity", "agent", "zero-job"),
         revision=1,
         submitted_at=now,
         observed_at=now,
         task_id=uuid4(),
         provider="perplexity",
-        service="responses",
+        service="agent",
         provider_record_id="zero-job",
         operation="perplexity.responses.create",
         component="llm",
@@ -62,7 +62,7 @@ def test_explicit_zero_model_and_storage(tmp_path):
         )
         revision = job()
         storage.insert_provider_job_revision(revision)
-        restored = storage.get_provider_job("perplexity", "responses", "zero-job")
+        restored = storage.get_provider_job("perplexity", "agent", "zero-job")
         assert restored.to_dict()["cost_amount"] == "0"
         storage.insert_provider_job_revision(revision)
         assert len(storage.query_provider_jobs_for_sync()) == 1

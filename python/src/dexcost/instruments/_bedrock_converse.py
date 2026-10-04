@@ -97,6 +97,7 @@ def measurement(body: dict[str, Any], response: Any, eligible: bool) -> Operatio
         else (),
         response_model=body.get("modelId"),
         provider_record_id=record_id,
+        provider_region="us-east-1" if eligible else None,
         task_input_tokens=usage.get("inputTokens") if valid else None,
         task_output_tokens=usage.get("outputTokens") if valid else None,
         billing_dimensions=(("bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"),)

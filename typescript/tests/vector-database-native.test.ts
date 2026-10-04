@@ -12,21 +12,22 @@ import { PricingEngine } from "../src/pricing/engine.js";
 import type { CostTracker } from "../src/core/tracker.js";
 const require = createRequire(import.meta.url);
 const { Turbopuffer } = require("@turbopuffer/turbopuffer");
+const supportsNativePinecone = Number(process.versions.node.split(".")[0]) >= 22;
 let Pinecone: any;
 beforeAll(() => {
   // Generated SDK loading is setup, not part of the mocked request deadline.
   // Do not import the upstream Node22-only package on the Node20 test job.
-  if (Number(process.versions.node.split(".")[0]) >= 22) {
+  if (supportsNativePinecone) {
     ({ Pinecone } = require("@pinecone-database/pinecone"));
   }
 }, 30_000);
 const buffers: EventBuffer[] = [];
 afterEach(() => { untrackHttp(); clearRecordedEvents(); buffers.splice(0).forEach(buffer => buffer.close()); });
 describe("real vector SDK serialization and HTTP deduplication", () => {
-  it.each(["pinecone", "turbopuffer"])("observes %s native responses once with generic HTTP enabled", async (provider, context) => {
+  for (const provider of ["pinecone", "turbopuffer"]) {
     // Provider SDK 9 officially requires Node22; the core facade/conformance gate
     // still runs on the SDK's complete Node matrix without a runtime dependency.
-    if (provider === "pinecone" && Number(process.versions.node.split(".")[0]) < 22) { context.skip(); return; }
+    it.skipIf(provider === "pinecone" && !supportsNativePinecone)(`observes ${provider} native responses once with generic HTTP enabled`, async () => {
     const buffer = new EventBuffer(":memory:"); buffers.push(buffer);
     const task = createTask({ taskId: randomUUID(), taskType: "memory" }); buffer.upsertTask(task);
     const tracker = { buffer, pricing: new PricingEngine() } as unknown as CostTracker;
@@ -65,4 +66,5 @@ describe("real vector SDK serialization and HTTP deduplication", () => {
     expect(JSON.stringify(jobs)).not.toContain("PRIVATE"); expect(JSON.stringify(jobs)).not.toContain("mock-not-a-credential");
     if (provider === "pinecone") expect(jobs.map(job => (job.details.attribution_usage_lines as any[])[0].quantity)).toEqual(["0.25", "0.25"]);
   });
+  }
 });

@@ -35,6 +35,8 @@ export interface OperationMeasurement {
   pricingUsage?: Readonly<Record<string, string | number | bigint | Decimal>>;
   /** Canonical provider service used to correlate provider-owned request records. */
   providerService?: string;
+  /** Verified native execution region, never inferred from a model alias. */
+  providerRegion?: string;
   providerRecordId?: string;
   providerCostUsd?: string | number | Decimal;
   providerUpstreamCostUsd?: string | number | Decimal;
@@ -80,6 +82,9 @@ function providerQuantity(name: string, value: unknown): Decimal {
 export function validateOperationMeasurement(measurement: OperationMeasurement): void {
   if (measurement.providerService !== undefined && !CANONICAL.test(measurement.providerService)) {
     throw new TypeError(`invalid provider service '${measurement.providerService}'`);
+  }
+  if (measurement.providerRegion !== undefined && !CANONICAL.test(measurement.providerRegion)) {
+    throw new TypeError(`invalid provider region '${measurement.providerRegion}'`);
   }
   const positiveLines = new Set<string>();
   for (const line of measurement.usageLines ?? []) {
@@ -309,6 +314,7 @@ function recordProviderOperation(
   if (measurement.providerService !== undefined) {
     details["attribution_provider_service"] = measurement.providerService;
   }
+  if (measurement.providerRegion !== undefined) details["region"] = measurement.providerRegion;
   if (measurement.billingDimensions?.length) {
     details["attribution_dimensions"] = measurement.billingDimensions.map(([key, value]) => ({
       key, value: { type: "string", value },

@@ -1,11 +1,14 @@
 {
   "version": "2026-10-04.1",
   "verified_at": "2026-10-04",
+  "perplexity_expected_provider_service": "agent",
+  "perplexity_expected_cached_tokens": 3584,
   "bedrock_cases": [
     {
       "id": "nova-micro-standard",
       "provider": "aws",
       "service": "bedrock",
+      "region": "us-east-1",
       "model": "amazon.nova-micro-v1:0",
       "request": {
         "modelId": "amazon.nova-micro-v1:0",
@@ -46,6 +49,7 @@
       "id": "nova-lite-standard",
       "provider": "aws",
       "service": "bedrock",
+      "region": "us-east-1",
       "model": "amazon.nova-lite-v1:0",
       "request": {
         "modelId": "amazon.nova-lite-v1:0",
@@ -86,6 +90,7 @@
       "id": "nova-pro-standard",
       "provider": "aws",
       "service": "bedrock",
+      "region": "us-east-1",
       "model": "amazon.nova-pro-v1:0",
       "request": {
         "modelId": "amazon.nova-pro-v1:0",

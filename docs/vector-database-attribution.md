@@ -92,7 +92,7 @@ Submit actual final amounts through `/v1/provider-billing-costs`:
 {
   "schema_version": "1", "service_key": "pinecone_query", "charge_category": "read_units",
   "provider_record_id": "invoice-2026-09-read-units", "billing_account_id": "account-a",
-  "revision": 1, "invoice_reconciled": true,
+  "revision": 1, "invoice_reconciled": true, "region": "us-east-1",
   "scope": {"type": "resource", "id": "REPLACE_WITH_INVOICE_RESOURCE"},
   "resource": {"type": "endpoint", "id": "REPLACE_WITH_INVOICE_RESOURCE"},
   "billing_period": {"start_at": "2026-09-01T00:00:00Z", "end_at": "2026-10-01T00:00:00Z"},
@@ -110,7 +110,12 @@ Use stable line IDs and sequential revisions for credits and corrections. Final
 zero amounts remain restorable; replay does not append another charge.
 
 The amount and denominator must cover the SAME account/resource/period/currency/
-charge population. If only a whole-account bill is available, do not fabricate
+charge population. A denominator for these regional meters requires an explicit
+canonical `region` matching the native observation; a resource hash does not
+replace that assertion. Missing or different observation regions are not
+allocated. The same guard applies to raw canonical pools, so omitting their
+provider region cannot turn the regional driver into a wildcard.
+If only a whole-account bill is available, do not fabricate
 namespace subtotals or copy the bill once per namespace: retain it unallocated
 until reconciled subtotals exist. A known amount without a denominator stays
 residual. Storage, minimum commitments and unmeasured categories stay residual.

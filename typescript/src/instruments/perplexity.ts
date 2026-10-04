@@ -92,11 +92,15 @@ function agentMeasurement(response: any, requested: string, eligible: boolean): 
     // The reported total includes model, cache and tools. One inclusive line
     // avoids inventing an allocation or pricing those constituent meters again.
     usageLines: [{ metric: "request_count", quantity: 1, unit: "Requests" }],
-    pricingUsage: {}, providerCostUsd: cost, providerService: "responses",
+    pricingUsage: {}, providerCostUsd: cost, providerService: "agent",
     providerRecordId: typeof response?.id === "string" && response.id.length <= 256 ? response.id : undefined,
     responseModel: prefixedModel("perplexity", response?.model ?? requested),
     inputTokens: typeof usage?.input_tokens === "number" && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : undefined,
     outputTokens: typeof usage?.output_tokens === "number" && Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : undefined,
+    cachedTokens: typeof usage?.input_tokens_details?.cache_read_input_tokens === "number" &&
+      Number.isSafeInteger(usage.input_tokens_details.cache_read_input_tokens) &&
+      usage.input_tokens_details.cache_read_input_tokens >= 0
+      ? usage.input_tokens_details.cache_read_input_tokens : undefined,
     billingDimensions: [["gateway", "perplexity"], ["cost_scope", "inclusive_request"]],
   };
 }
@@ -185,7 +189,7 @@ function insertNewJob(
   const status = jobStatus(response);
   const meter = status === "succeeded" ? measurement("responses", response, requested, eligible) : undefined;
   try { buffer.insertProviderJobRevision(new ProviderJobRevision({
-    taskId: session.task.taskId, provider: "perplexity", service: "responses",
+    taskId: session.task.taskId, provider: "perplexity", service: "agent",
     providerRecordId: id, operation: "perplexity.responses.create", component: "llm",
     eventType: "llm_call", resourceType: "model", resourceId: requested, status,
     ownsTask: session.autoCreated, billingDimensions: [["gateway", "perplexity"]],
@@ -197,7 +201,7 @@ function insertNewJob(
 function reconcileJob(pricing: PricingEngine, buffer: EventBuffer, response: any, id: string, cancelled: boolean, eligible = false): void {
   if (response?.id !== id) return;
   try {
-  const raw = buffer.getProviderJob("perplexity", "responses", id);
+  const raw = buffer.getProviderJob("perplexity", "agent", id);
   if (raw === undefined) return;
   const previous = providerJobFromDict(raw);
   const status = jobStatus(response, cancelled);
@@ -233,7 +237,7 @@ function patchMethod(owner: any, ownerName: string, name: string, pricing: Prici
     const isReconcile = kind === "responses" && ["retrieve", "cancel"].includes(name);
     const requested = requestedModel(kind, body);
     const session = new ProviderOperationSession(pricing, buffer, {
-      taskType: `perplexity.${kind}.${name}`, provider: "perplexity", service: kind,
+      taskType: `perplexity.${kind}.${name}`, provider: "perplexity", service: kind === "responses" ? "agent" : kind,
       operation: `perplexity.${kind}.${name}`, component: kind === "search" ? "external" : "llm",
       model: requested, eventType: kind === "search" ? "external_cost" : "llm_call",
     });
@@ -322,7 +326,7 @@ function patchTransportMethod(
     const isReconcile = route.action !== "create";
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: `perplexity.${route.kind}.${route.action}`,
-      provider: "perplexity", service: route.kind,
+      provider: "perplexity", service: route.kind === "responses" ? "agent" : route.kind,
       operation: `perplexity.${route.kind}.${route.action}`,
       component: route.kind === "search" ? "external" : "llm",
       model: requested, eventType: route.kind === "search" ? "external_cost" : "llm_call",

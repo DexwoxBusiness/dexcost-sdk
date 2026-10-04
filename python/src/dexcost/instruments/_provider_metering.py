@@ -85,6 +85,7 @@ class OperationMeasurement:
     task_output_tokens: int | None = None
     task_cached_tokens: int | None = None
     provider_service: str | None = None
+    provider_region: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -92,6 +93,11 @@ class OperationMeasurement:
             and _CANONICAL_NAME.fullmatch(self.provider_service) is None
         ):
             raise ValueError(f"invalid provider service {self.provider_service!r}")
+        if (
+            self.provider_region is not None
+            and _CANONICAL_NAME.fullmatch(self.provider_region) is None
+        ):
+            raise ValueError(f"invalid provider region {self.provider_region!r}")
         for cost_field in (
             "provider_cost_usd",
             "provider_upstream_cost_usd",
@@ -238,6 +244,8 @@ def record_provider_operation(
     }
     if measurement.provider_service is not None:
         details["attribution_provider_service"] = measurement.provider_service
+    if measurement.provider_region is not None:
+        details["region"] = measurement.provider_region
     if measurement.billing_dimensions:
         details["attribution_dimensions"] = [
             {"key": key, "value": {"type": "string", "value": value}}

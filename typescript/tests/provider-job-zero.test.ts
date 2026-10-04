@@ -12,7 +12,7 @@ import { EventBuffer } from "../src/transport/buffer.js";
 let buffer: EventBuffer;
 let directory: string;
 afterEach(() => { buffer?.close(); if (directory) rmSync(directory, { recursive: true, force: true }); });
-const base = () => ({ taskId: randomUUID(), provider: "perplexity", service: "responses", providerRecordId: "zero-job",
+const base = () => ({ taskId: randomUUID(), provider: "perplexity", service: "agent", providerRecordId: "zero-job",
   operation: "perplexity.responses.create", component: "llm", eventType: "llm_call" as const,
   resourceType: "model" as const, resourceId: "perplexity/fixture", status: "succeeded" as const,
   usage: [{ metric: "request_count", quantity: new Decimal(1), unit: "Requests" }],
@@ -27,11 +27,11 @@ it("preserves explicit provider zero through measurement, storage and v3 wire; m
   const job = new ProviderJobRevision({ ...base(), ...exact });
   directory = mkdtempSync(join(tmpdir(), "dexcost-job-zero-")); buffer = new EventBuffer(join(directory, "events.db"));
   buffer.insertProviderJobRevision(job);
-  const restored = providerJobFromDict(buffer.getProviderJob("perplexity", "responses", "zero-job")!);
+  const restored = providerJobFromDict(buffer.getProviderJob("perplexity", "agent", "zero-job")!);
   expect(restored.toAttributionObservation().cost_evidence).toEqual({ amount: "0", currency: "USD", source: "provider_reported", confidence: "exact" });
   expect(restored.toDict().cost_amount).toBe("0");
   expect(() => buffer.insertProviderJobRevision(job)).not.toThrow();
-  expect(buffer.getProviderJob("perplexity", "responses", "zero-job")?.revision).toBe(1);
+  expect(buffer.getProviderJob("perplexity", "agent", "zero-job")?.revision).toBe(1);
 });
 
 it.each([

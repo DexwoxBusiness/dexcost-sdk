@@ -52,6 +52,8 @@ def _nova(tracker, case, stream=False, reason=None):
     )
     if reason == "region":
         client.meta.region_name = "us-west-2"
+    if reason == "missing_region":
+        client.meta.region_name = None
     if reason == "endpoint":
         client._endpoint.host = "https://gateway.example"
     if reason == "profile":
@@ -103,6 +105,7 @@ def test_nova_paired_capture(case, stream, tracker):
         "name": "aws",
         "service": "bedrock",
         "record_id": "nova-request",
+        "region": case["region"],
     }
     assert observation["resource"] == {"type": "model", "id": case["model"]}
     assert {line["metric"]: line["quantity"] for line in observation["usage"]} == case[
@@ -116,6 +119,7 @@ def test_nova_paired_capture(case, stream, tracker):
     "reason",
     [
         "region",
+        "missing_region",
         "endpoint",
         "profile",
         "tier",
@@ -133,6 +137,8 @@ def test_nova_paired_capture(case, stream, tracker):
 def test_nova_fail_open(reason, stream, tracker):
     _, observation = _nova(tracker, FIXTURE["bedrock_cases"][0], stream, reason)
     assert _lane(observation) is None
+    if reason in {"region", "missing_region", "endpoint"}:
+        assert "region" not in observation["provider"]
 
 
 def test_real_boto3_converse(tracker):
@@ -159,7 +165,9 @@ def test_real_boto3_converse(tracker):
             result = client.converse(**case["request"])
         assert result["usage"]["totalTokens"] == 1250
     event = tracker._storage.query_events(task_id=str(task.task_id))[0]
-    assert _lane(to_attribution_observation_v3(event)) == "us_east_1_nova_standard_no_cache"
+    observation = to_attribution_observation_v3(event)
+    assert observation["provider"]["region"] == case["region"]
+    assert _lane(observation) == "us_east_1_nova_standard_no_cache"
     client.close()
 
 
@@ -179,18 +187,80 @@ def test_real_perplexity_background_zero(tracker):
     ) as client:
         with tracker.task("background-zero") as task:
             client.responses.create(model=raw["model"], input="fixture", background=True)
-            pending = tracker._storage.get_provider_job("perplexity", "responses", raw["id"])
+            pending = tracker._storage.get_provider_job("perplexity", "agent", raw["id"])
             assert pending.cost_amount is None
             client.responses.retrieve(raw["id"])
-            final = tracker._storage.get_provider_job("perplexity", "responses", raw["id"])
+            final = tracker._storage.get_provider_job("perplexity", "agent", raw["id"])
             assert final.cost_amount == Decimal(0)
             assert final.cost_source == "provider_reported"
+            assert final.task_cached_tokens == FIXTURE["perplexity_expected_cached_tokens"]
+            assert final.to_attribution_observation()["provider"] == {
+                "name": "perplexity", "service": "agent", "record_id": raw["id"]
+            }
             client.responses.retrieve(raw["id"])
             assert (
-                tracker._storage.get_provider_job("perplexity", "responses", raw["id"]).revision
+                tracker._storage.get_provider_job("perplexity", "agent", raw["id"]).revision
                 == final.revision
             )
         assert tracker._storage.query_events(task_id=str(task.task_id)) == []
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("action", ["retrieve", "cancel"])
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_native_agent_mismatched_id_cannot_change_job(status, action, asynchronous, tracker):
+    from perplexity import AsyncPerplexity, Perplexity
+
+    raw = copy.deepcopy(FIXTURE["perplexity_response"])
+    wrong = {**raw, "id": "another-agent-job", "status": status}
+    answer = wrong
+
+    def respond(request):
+        result = (
+            {**raw, "status": "queued", "usage": None}
+            if request.method == "POST" and request.url.path == "/v1/responses"
+            else answer
+        )
+        return httpx.Response(200, json=result)
+
+    def current():
+        return tracker._storage.get_provider_job("perplexity", "agent", raw["id"])
+
+    perplexity.instrument_perplexity(tracker)
+    with tracker.task("mismatched-agent-job"):
+        if asynchronous:
+            async def call():
+                nonlocal answer
+                async with AsyncPerplexity(
+                    api_key="fixture",
+                    http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+                ) as client:
+                    await client.responses.create(
+                        model=raw["model"], input="fixture", background=True
+                    )
+                    before = current().to_dict()
+                    result = await getattr(client.responses, action)(raw["id"])
+                    assert result.id == wrong["id"]
+                    assert current().to_dict() == before
+                    answer = raw
+                    await client.responses.retrieve(raw["id"])
+            asyncio.run(call())
+        else:
+            with Perplexity(
+                api_key="fixture",
+                http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+            ) as client:
+                client.responses.create(model=raw["model"], input="fixture", background=True)
+                before = current().to_dict()
+                result = getattr(client.responses, action)(raw["id"])
+                assert result.id == wrong["id"]
+                assert current().to_dict() == before
+                answer = raw
+                client.responses.retrieve(raw["id"])
+        final = current()
+        assert final.status == "succeeded"
+        assert final.cost_amount == Decimal("0.02665")
+        assert final.task_cached_tokens == FIXTURE["perplexity_expected_cached_tokens"]
 
 
 @pytest.mark.parametrize("field", ["serviceTier", "performanceConfig", "ResponseMetadata"])
@@ -282,10 +352,14 @@ def test_real_perplexity_agent(reason, stream, asynchronous, tracker):
     observation = to_attribution_observation_v3(event)
     assert observation is not None
     assert observation["provider"] == {
-        "name": "perplexity", "service": "responses", "record_id": raw["id"]
+        "name": "perplexity", "service": "agent", "record_id": raw["id"]
     }
     assert event.input_tokens == 5870
     assert event.output_tokens == 679
+    assert event.cached_tokens == FIXTURE["perplexity_expected_cached_tokens"]
+    assert tracker._storage.get_task(str(task.task_id)).total_cached_tokens == (
+        FIXTURE["perplexity_expected_cached_tokens"]
+    )
     assert event.details["attribution_usage_lines"] == [
         {"metric": "request_count", "quantity": "1", "unit": "Requests"}
     ]

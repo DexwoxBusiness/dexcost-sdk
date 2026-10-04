@@ -288,7 +288,7 @@ def _agent_measurement(response: Any, requested: str, eligible: bool) -> Operati
         usage_lines=(ProviderUsageLine("request_count", 1, "Requests"),),
         pricing_usage={},
         provider_cost_usd=parsed if valid else None,
-        provider_service="responses",
+        provider_service="agent",
         provider_record_id=record_id
         if isinstance(record_id, str) and len(record_id) <= 256
         else None,
@@ -369,7 +369,7 @@ def _session(kind: _Kind, requested: str) -> ProviderOperationSession:
         tracker=_active_tracker,
         task_type=f"perplexity.{kind}.create",
         provider="perplexity",
-        service=kind,
+        service="agent" if kind == "responses" else kind,
         operation=f"perplexity.{kind}.create",
         component="external" if kind == "search" else "llm",
         model=requested,
@@ -405,7 +405,7 @@ def _sync_call(
             tracker=_active_tracker,
             task_type="perplexity.responses.create",
             provider="perplexity",
-            service="responses",
+            service="agent",
             operation="perplexity.responses.create",
             component="llm",
             event_type="llm_call",
@@ -465,7 +465,7 @@ async def _async_call(
             tracker=_active_tracker,
             task_type="perplexity.responses.create",
             provider="perplexity",
-            service="responses",
+            service="agent",
             operation="perplexity.responses.create",
             component="llm",
             event_type="llm_call",
@@ -535,22 +535,25 @@ def _response_id(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> str | None
 def _reconcile_response(
     result: Any, response_id: str, *, cancelled: bool = False, eligible: bool = False
 ) -> None:
+    # A response for another job must not finalize or cancel the requested job.
+    if _value(result, "id") != response_id:
+        return
     tracker = _active_tracker
     if tracker is None:
         return
-    previous = tracker._storage.get_provider_job("perplexity", "responses", response_id)
+    previous = tracker._storage.get_provider_job("perplexity", "agent", response_id)
     if previous is None:
         return
     status = "cancelled" if cancelled else _job_status(result)
     measurement = (
         _measurement("responses", result, previous.resource_id, eligible)
-        if status == "succeeded" and _value(result, "id") == response_id
+        if status == "succeeded"
         else None
     )
     reconcile_provider_job(
         tracker=tracker,
         provider="perplexity",
-        service="responses",
+        service="agent",
         provider_record_id=response_id,
         status=status,
         measurement=measurement,

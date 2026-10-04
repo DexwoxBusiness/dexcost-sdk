@@ -48,6 +48,7 @@ export function novaMeasurement(input: any, response: any, eligible: boolean): O
     ] : [],
     pricingUsage: {}, responseModel: input?.modelId,
     providerRecordId: recordId,
+    providerRegion: eligible ? "us-east-1" : undefined,
     inputTokens: valid ? usage.inputTokens : undefined, outputTokens: valid ? usage.outputTokens : undefined,
     billingDimensions: priced ? [["bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"]] : [],
   };

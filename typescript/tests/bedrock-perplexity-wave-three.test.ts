@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
+import { providerJobFromDict } from "../src/core/provider-jobs.js";
 import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import { instrumentBedrock, uninstrumentBedrock, _setClientClass, _resetClientClass } from "../src/instruments/bedrock.js";
 import { instrumentPerplexity, uninstrumentPerplexity, providePerplexityModule } from "../src/instruments/perplexity.js";
@@ -55,15 +56,16 @@ describe("paired Bedrock native response -> v3 server vectors", () => {
   for (const stream of [false, true]) {
     it.each(fixture.bedrock_cases)("captures $id stream=" + stream, async testCase => {
       const event = await nova(testCase, stream);
-      expect(event.provider).toMatchObject({ name: "aws", service: "bedrock", record_id: "nova-request" });
+      expect(event.provider).toEqual({ name: "aws", service: "bedrock", record_id: "nova-request", region: testCase.region });
       expect(event.resource).toEqual({ type: "model", id: testCase.model });
       expect(Object.fromEntries(event.usage.map((line: any) => [line.metric, line.quantity]))).toEqual(testCase.expected_usage);
       expect(lane(event)).toBe("us_east_1_nova_standard_no_cache");
       expect(buffer.getAllEvents()[0].pricingSource).toBe("unknown"); // No SDK tariff.
     });
-    it.each(["region", "endpoint", "resolver", "profile", "tier", "latency", "cache", "cache_bool", "usage", "total", "guardrail", "multimodal", "missing_tier"])("rejects %s stream=" + stream, async reason => {
+    it.each(["region", "missing_region", "endpoint", "resolver", "profile", "tier", "latency", "cache", "cache_bool", "usage", "total", "guardrail", "multimodal", "missing_tier"])("rejects %s stream=" + stream, async reason => {
       const event = await nova(fixture.bedrock_cases[0], stream, (input, response, config) => {
         if (reason === "region") config.region = async () => "us-west-2";
+        if (reason === "missing_region") delete config.region;
         if (reason === "endpoint") config.endpoint = async () => new URL("https://gateway.example");
         if (reason === "resolver") config.endpointProvider = function custom() {};
         if (reason === "profile") input.modelId = "us.amazon.nova-micro-v1:0";
@@ -78,11 +80,39 @@ describe("paired Bedrock native response -> v3 server vectors", () => {
         if (reason === "missing_tier") delete response.serviceTier;
       });
       expect(lane(event)).toBeUndefined();
+      if (["region", "missing_region", "endpoint", "resolver"].includes(reason)) expect(event.provider.region).toBeUndefined();
     });
   }
 });
 
 describe("real official packages, mocked I/O only", () => {
+  it("keeps canonical Agent identity aligned with the shared v3 corpus", () => {
+    const corpus = JSON.parse(readFileSync(new URL("../../fixtures/attribution_v3/conformance.json", import.meta.url), "utf8"));
+    expect(corpus.valid_observations.find((item: any) => item.id === "observation.explicit_provider_zero").event.provider.service)
+      .toBe(fixture.perplexity_expected_provider_service);
+  });
+
+  for (const action of ["retrieve", "cancel"] as const) it.each(["completed", "failed", "cancelled"])("ignores another Agent job's %s status via " + action, async status => {
+    const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
+    const raw = structuredClone(fixture.perplexity_response);
+    const wrong = { ...raw, id: "another-agent-job", status };
+    let answer = wrong;
+    const client = new Perplexity({ apiKey: "fixture", fetch: async (url: any, init: any) => {
+      const result = init?.method === "POST" && new URL(String(url)).pathname === "/v1/responses"
+        ? { ...raw, status: "queued", usage: null } : answer;
+      return new Response(JSON.stringify(result), { headers: { "content-type": "application/json" } });
+    } });
+    await instrumentPerplexity(setup(), buffer);
+    await client.responses.create({ model: raw.model, input: "fixture", background: true });
+    const before = buffer.getProviderJob("perplexity", "agent", raw.id)!;
+    const result = await client.responses[action](raw.id);
+    expect(result.id).toBe(wrong.id);
+    expect(buffer.getProviderJob("perplexity", "agent", raw.id)).toEqual(before);
+    answer = raw;
+    await client.responses.retrieve(raw.id);
+    expect(buffer.getProviderJob("perplexity", "agent", raw.id)).toMatchObject({ status: "succeeded", cost_amount: "0.02665", task_cached_tokens: fixture.perplexity_expected_cached_tokens });
+  });
+
   it("reconciles a native background Agent request to explicit zero exactly once", async () => {
     const { Perplexity } = await import("@perplexity-ai/perplexity_ai");
     const raw = structuredClone(fixture.perplexity_response); raw.usage.cost.total_cost = 0;
@@ -92,15 +122,20 @@ describe("real official packages, mocked I/O only", () => {
     } });
     await instrumentPerplexity(setup(), buffer);
     await client.responses.create({ model: raw.model, input: "fixture", background: true });
-    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.cost_amount).toBeUndefined();
+    expect(buffer.getProviderJob("perplexity", "agent", raw.id)?.cost_amount).toBeUndefined();
     await client.responses.retrieve(raw.id);
-    const final = buffer.getProviderJob("perplexity", "responses", raw.id)!;
+    const final = buffer.getProviderJob("perplexity", "agent", raw.id)!;
     expect(final.cost_amount).toBe("0");
     expect(final.cost_source).toBe("provider_reported");
+    expect(final.task_cached_tokens).toBe(fixture.perplexity_expected_cached_tokens);
+    expect(buffer.getAllTasks()[0]?.totalCachedTokens).toBe(fixture.perplexity_expected_cached_tokens);
+    expect(providerJobFromDict(final).toAttributionObservation().provider).toEqual({
+      name: "perplexity", service: "agent", record_id: raw.id,
+    });
     expect(final.usage).toEqual([{ metric: "request_count", quantity: "1", unit: "Requests" }]);
     await client.responses.retrieve(raw.id);
-    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.cost_amount).toBe("0");
-    expect(buffer.getProviderJob("perplexity", "responses", raw.id)?.revision).toBe(final.revision);
+    expect(buffer.getProviderJob("perplexity", "agent", raw.id)?.cost_amount).toBe("0");
+    expect(buffer.getProviderJob("perplexity", "agent", raw.id)?.revision).toBe(final.revision);
     expect(buffer.getAllEvents()).toHaveLength(0); // No second synchronous event for polling.
   });
 
@@ -154,6 +189,7 @@ describe("real official packages, mocked I/O only", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].host).toBe("bedrock-runtime.us-east-1.amazonaws.com");
     expect(lane(observed())).toBe("us_east_1_nova_standard_no_cache");
+    expect(observed().provider.region).toBe(body.region);
     client.destroy();
   });
 
@@ -185,9 +221,11 @@ describe("real official packages, mocked I/O only", () => {
     const event = buffer.getAllEvents()[0];
     expect(buffer.getAllEvents()).toHaveLength(1);
     const observation = toAttributionObservationV3(event)!;
-    expect(observation.provider).toEqual({ name: "perplexity", service: "responses", record_id: raw.id });
+    expect(observation.provider).toEqual({ name: "perplexity", service: "agent", record_id: raw.id });
     expect(event.inputTokens).toBe(5870);
     expect(event.outputTokens).toBe(679);
+    expect(event.cachedTokens).toBe(fixture.perplexity_expected_cached_tokens);
+    expect(buffer.getAllTasks()[0]?.totalCachedTokens).toBe(fixture.perplexity_expected_cached_tokens);
     expect(event.details?.attribution_usage_lines).toEqual([{ metric: "request_count", quantity: "1", unit: "Requests" }]);
     if (["positive", "zero"].includes(reason)) {
       expect(event.pricingSource).toBe("provider_response");

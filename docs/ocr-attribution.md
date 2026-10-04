@@ -8,7 +8,7 @@ Wrap native clients with Python `instrument_textract` / `instrument_document_ai`
 
 The server JSON profile owns the allowed page meter and resource identity. Submit closed, reconciled OCR-only money through `/v1/provider-billing-costs`, with the stable invoice population record, revision, exact decimal amount/currency, account, matching resource and billing period. When supplying `allocation_basis_quantity`, set `allocation_population: "all_usage_including_free"` and include **all successfully processed pages in that exact invoice population**: free-tier pages, all volume tiers, and uninstrumented/external usage. Do not allocate a paid-tier subtotal using all pages, nor divide an account invoice independently among processors or regions. Aggregate reconciled tier/free lines into a single matched population first, or leave unmatched money unallocated. Discounts/credits included in that reconciled subtotal reduce its actual net money; unrelated tax, add-ons, storage, minimums or unclassified adjustments remain residual.
 
-This population assertion is validated as an explicit caller attestation; DexCost does not independently authenticate the provider invoice, account ownership or completeness. Raw canonical cost-pools remain a trusted ingestion boundary, not OCR-adapter-verified invoices. Missing denominator => entire pool residual; missing invoice => usage unpriced. Neither means free. The allocator requires the entire observed call interval inside the period. External usage keeps its share residual. Replays are idempotent; invoice revisions can correct positive to negative, zero and back without changing stable identity.
+This population assertion is validated as an explicit caller attestation; DexCost does not independently authenticate the provider invoice, account ownership or completeness. Raw canonical cost-pools remain a trusted ingestion boundary, not OCR-adapter-verified invoices. When supplying a denominator, the normalized invoice must also include an explicit canonical `region` matching the native AWS region or Google processor location. Raw pools using these same regional meters cannot allocate without that region either. Missing denominator => entire pool residual; missing invoice => usage unpriced. Neither means free. If observed pages exceed the claimed complete denominator, the entire amount stays residual and previous task allocations are withdrawn until the usage or invoice denominator is corrected; the allocator never silently caps this inconsistent population. The allocator requires the entire observed call interval inside the period. External usage keeps its share residual. Replays are idempotent; invoice revisions can correct positive to negative, zero and back without changing stable identity.
 
 ## Amazon Textract
 
@@ -20,7 +20,7 @@ Native actual request routing is observed with a read-only botocore before-send 
 
 Resource identity: `PAYER/USAGE_ACCOUNT.REGION.detect_document_text`.
 Profile: `amazon_textract`; category `detect_document_text_pages`; meter `amazon_textract.detect_document_text_pages` / `Pages`.
-Both account IDs are explicit 12-digit AWS IDs, not discovered or verified by the SDK. The verified native region is retained in the durable job's `region` billing dimension and emitted as `provider.region`, so an invoice may supply the matching `region` explicitly.
+Both account IDs are explicit 12-digit AWS IDs, not discovered or verified by the SDK. The verified native region is retained in the durable job's `region` billing dimension and emitted as `provider.region`. An invoice with a denominator must supply that matching `region` explicitly, for example `us-east-1`.
 
 Excluded: AnalyzeDocument/forms/tables/queries/signatures/layout, expenses/IDs/lending, async Start/Get job APIs, nonstandard endpoints/partitions and SDK-derived money.
 
@@ -36,7 +36,7 @@ The official generated SDK retries ProcessDocument by default. For this slice, t
 
 Resource identity: `BILLING_ACCOUNT/PROJECT.LOCATION.PROCESSOR.enterprise_ocr`.
 Profile: `google_document_ai`; category `enterprise_ocr_pages`; meter `google_document_ai.enterprise_ocr_pages` / `Pages`.
-The bound processor location is emitted as `provider.region`; an invoice may supply that matching location as `region`. Missing or different observation regions never match an explicitly region-scoped invoice.
+The bound processor location is emitted as `provider.region`; an invoice with a denominator must supply that matching location as `region`, for example `us`. Missing or different observation regions never match that invoice.
 
 Supported packages: Google Python v1 synchronous and asynchronous ProcessDocument; Node `v1.DocumentProcessorServiceClient.processDocument` promise API preserving its native tuple values. Callback, batch, human review, streaming, premium OCR, forms/custom processors, partial results and local/self-hosted tools remain outside scope.
 
