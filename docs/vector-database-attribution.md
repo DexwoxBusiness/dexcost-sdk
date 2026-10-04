@@ -97,15 +97,22 @@ Submit actual final amounts through `/v1/provider-billing-costs`:
   "resource": {"type": "endpoint", "id": "REPLACE_WITH_INVOICE_RESOURCE"},
   "billing_period": {"start_at": "2026-09-01T00:00:00Z", "end_at": "2026-10-01T00:00:00Z"},
   "currency": "USD", "amount": "8", "allocation_basis_quantity": "2",
+  "allocation_population": "all_usage_including_free",
   "effective_at": "2026-10-01T00:00:00Z", "observed_at": "2026-10-02T00:00:00Z"
 }
 ```
 
 The numbers are a test illustration, not provider prices: `.25 + .75` observed RU
 against a **provider-reconciled total of 2 RU** allocates half of the actual $8
-invoice slice and leaves $4 residual. Supply the whole matching population,
-including free/included usage where it belongs; never use captured task usage as
-the denominator. RU can be fractional; billable-byte denominators must be integers.
+invoice slice and leaves $4 residual. Every Pinecone or Turbopuffer denominator
+requires `allocation_population: "all_usage_including_free"`, asserting the whole
+matching population includes free/included, external and uninstrumented usage.
+Never use only captured task usage or only paid-tier usage as the denominator.
+This is a caller attestation, not independent provider verification. If matching
+observed usage exceeds the claimed complete denominator, the entire amount stays
+residual and previous task allocations are withdrawn until the usage or invoice
+denominator is corrected. RU can be fractional; billable-byte denominators must
+be integers.
 Use stable line IDs and sequential revisions for credits and corrections. Final
 zero amounts remain restorable; replay does not append another charge.
 

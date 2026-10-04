@@ -24,6 +24,16 @@ function native(c: any) {
 }
 function jobs(tracker: CostTracker) { return tracker.buffer.getPendingEvents(); }
 describe("native vector meters and explicit invoice identities", () => {
+  it("documents a complete-population attestation for every vector invoice denominator", () => {
+    const guide = readFileSync(new URL("../../docs/vector-database-attribution.md", import.meta.url), "utf8");
+    const examples = [...guide.matchAll(/```json\s*([\s\S]*?)```/g)].map(match => JSON.parse(match[1]));
+    const invoices = examples.filter(example => example.allocation_basis_quantity !== undefined);
+    expect(invoices.length).toBeGreaterThan(0);
+    for (const invoice of invoices) {
+      expect(invoice.allocation_population).toBe("all_usage_including_free");
+      expect(invoice.region).toBeTruthy();
+    }
+  });
   it.each(data.cases)("captures $id once without content or money", async c => {
     const { tracker, task } = setup(), { client, called } = native(c), wrapped = bind(client, tracker, c.provider);
     const promise = runWithTask(task, () => wrapped[c.operation]({ namespace: data.namespace, vector: "PRIVATE-VECTOR", filter: "PRIVATE-FILTER" }));
