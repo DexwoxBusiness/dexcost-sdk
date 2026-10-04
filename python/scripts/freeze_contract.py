@@ -261,7 +261,7 @@ def manifest_snapshot(overrides: Mapping[str, bytes]) -> dict[str, object]:
         "freeze_id": "python-vnext-v1",
         "sequence_owner": "python",
         "catalog_sdk_contract": 1,
-        "attribution_contract": "3.2.0",
+        "attribution_contract": "3.3.0",
         "business_attribution_contract": "1.1.0",
         "classification_states": ["implemented", "intentionally_excluded", "required"],
         "artifacts": _artifact_entries(overrides),

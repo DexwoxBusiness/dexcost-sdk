@@ -268,6 +268,10 @@ function semanticIssues(value: unknown): AttributionV3ValidationIssue[] {
     });
   }
 
+  if (costEvidence?.amount === "0" &&
+      (costEvidence.source !== "provider_reported" || costEvidence.confidence !== "exact")) {
+    issues.push({ path: "cost_evidence.amount", message: "Zero requires exact provider-reported evidence" });
+  }
   if (costEvidence?.source === "provider_reported" &&
       costEvidence.confidence !== "exact" && costEvidence.confidence !== "estimated") {
     issues.push({

@@ -171,7 +171,7 @@
       "sha256": "dd3afbe6cb88e7ccf00c96e7190d45c5f14f254cc6bb37b21ce36b81bc947cf4"
     }
   ],
-  "attribution_contract": "3.2.0",
+  "attribution_contract": "3.3.0",
   "business_attribution_contract": "1.1.0",
   "catalog_sdk_contract": 1,
   "classification_states": [
@@ -182,14 +182,14 @@
   "freeze_id": "python-vnext-v1",
   "referenced_artifacts": [
     {
-      "byte_size": 22057,
+      "byte_size": 23669,
       "path": "fixtures/attribution_v3/conformance.json",
-      "sha256": "5e1b7d8a5852d9dc97ed13376fc37bef694e8c46aae9b3464483ef7cedfa7b58"
+      "sha256": "e931f5bf0865c4b9b53b5092d07413ae6744a09ac66dff2f7a3b4580d4aa0999"
     },
     {
-      "byte_size": 42078,
+      "byte_size": 43566,
       "path": "fixtures/attribution_v3/schemas.json",
-      "sha256": "5af456be6a9e8d3c1fc3a672c886286b938814081ba4d1557a3fb957b6296cc7"
+      "sha256": "89195e43e26d29a7b4e6ad91a806a18ab9300844287ee203d58964456f785953"
     },
     {
       "byte_size": 1154,

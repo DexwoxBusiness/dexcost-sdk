@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { createCostEvent } from "../src/core/models.js";
+import { toAttributionEventV2 } from "../src/attribution/convert.js";
 import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import { ATTRIBUTION_V3_CONTRACT_VERSION } from "../src/attribution/v3-types.js";
 import { validateAttributionObservationV3 } from "../src/attribution/v3-validate.js";
@@ -166,6 +167,38 @@ describe("durable v1 capture to attribution v3 conversion", () => {
       details: {},
     }));
     expect(converted).toBeNull();
+  });
+
+  it.each(["0", "0.000", "0.125"])("preserves an explicit provider charge %s in v3", (amount) => {
+    const event = createCostEvent({
+      ...base, eventType: "external_cost", serviceName: "perplexity", costUsd: "0",
+      details: {
+        provider_reported_cost_amount: amount,
+        provider_reported_cost_currency: "USD",
+      },
+    });
+    const observation = toAttributionObservationV3(event);
+    expect(observation?.cost_evidence).toEqual({
+      amount: amount === "0.000" ? "0" : amount,
+      currency: "USD", source: "provider_reported", confidence: "exact",
+    });
+    expect(validateAttributionObservationV3(observation).success).toBe(true);
+    if (Number(amount) === 0) expect(toAttributionEventV2(event)?.cost_evidence).toBeUndefined();
+  });
+
+  it.each([
+    {}, { provider_reported_cost_usd: "0" },
+    { provider_reported_cost_amount: "0" },
+    { provider_reported_cost_amount: null, provider_reported_cost_currency: "USD" },
+    { provider_reported_cost_amount: false, provider_reported_cost_currency: "USD" },
+    { provider_reported_cost_amount: "-1", provider_reported_cost_currency: "USD" },
+    { provider_reported_cost_amount: "0", provider_reported_cost_currency: "usd" },
+  ])("does not invent a provider zero from missing or malformed evidence %j", (details) => {
+    const event = createCostEvent({
+      ...base, eventType: "external_cost", serviceName: "perplexity", costUsd: "0",
+      pricingSource: "provider_response", details,
+    });
+    expect(toAttributionObservationV3(event)?.cost_evidence).toBeUndefined();
   });
 
   it("places retry linkage on the operation attempt", () => {

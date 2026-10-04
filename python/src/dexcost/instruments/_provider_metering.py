@@ -252,6 +252,8 @@ def record_provider_operation(
         details["pricing_unpriced_dimensions"] = list(pricing.unpriced_dimensions)
     if provider_cost is not None:
         details["provider_reported_cost_usd"] = canonical_decimal(provider_cost)
+        details["provider_reported_cost_amount"] = canonical_decimal(provider_cost)
+        details["provider_reported_cost_currency"] = "USD"
     if computed_cost is not None:
         details["sdk_computed_cost_usd"] = canonical_decimal(computed_cost)
         if measurement.computed_cost_source == "litellm":

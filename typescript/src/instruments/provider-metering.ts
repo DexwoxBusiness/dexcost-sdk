@@ -329,7 +329,10 @@ function recordProviderOperation(
   }
   if (measurement.providerRecordId) details["provider_record_id"] = measurement.providerRecordId.slice(0, 256);
   if (measurement.providerCostUsd !== undefined) {
-    details["provider_reported_cost_usd"] = canonicalDecimal(toDecimal(measurement.providerCostUsd));
+    const reportedAmount = canonicalDecimal(toDecimal(measurement.providerCostUsd));
+    details["provider_reported_cost_usd"] = reportedAmount;
+    details["provider_reported_cost_amount"] = reportedAmount;
+    details["provider_reported_cost_currency"] = "USD";
   }
   if (measurement.providerUpstreamCostUsd !== undefined) {
     details["provider_upstream_cost_usd"] = canonicalDecimal(toDecimal(measurement.providerUpstreamCostUsd));

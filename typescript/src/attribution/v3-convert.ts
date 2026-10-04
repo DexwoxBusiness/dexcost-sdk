@@ -386,7 +386,7 @@ export function toAttributionObservationV3(
   }
   if (environment !== undefined) converted.environment = environment;
   if (event.eventType !== "gpu_utilization_signal") {
-    const evidence = attributionEvidenceFor(event);
+    const evidence = attributionEvidenceFor(event, true);
     if (evidence !== undefined) converted.cost_evidence = evidence;
   }
   const hasTimeBasedUsage = usage.some((line) =>

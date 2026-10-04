@@ -533,7 +533,7 @@ def to_attribution_observation_v3(
     if capability is not None:
         converted["capability"] = capability
     if event.event_type != "gpu_utilization_signal":
-        evidence = _evidence_for(event)
+        evidence = _evidence_for(event, allow_reported_zero=True)
         if evidence is not None:
             converted["cost_evidence"] = evidence
     has_time_based_usage = any(

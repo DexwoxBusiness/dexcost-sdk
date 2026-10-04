@@ -1,7 +1,7 @@
 {
   "corpus_version": "2026-08-20.1",
   "contracts": {
-    "observation": "3.2.0",
+    "observation": "3.3.0",
     "business_attribution": "1.1.0"
   },
   "contract_authority": {
@@ -20,6 +20,7 @@
     "business.user_product_assignment",
     "business.workflow_agent_assignment",
     "cost.no_synthetic_zero",
+    "cost.explicit_provider_zero",
     "cost.sdk_evidence_diagnostic",
     "lifecycle.failed_final_no_usage",
     "lifecycle.final",
