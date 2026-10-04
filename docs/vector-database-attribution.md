@@ -74,12 +74,15 @@ const invoiceResource = vectorDatabaseResourceId("turbopuffer", "account-a",
   "gcp-us-central1", "gcp-us-central1.turbopuffer.com", "agent-memory");
 ```
 
-Use the returned `account/SHA256(JSON([provider,region,host,rawNamespace]))` value
+Use the returned `account/SHA256(JSON([provider,region,host,canonicalNamespace]))` value
 as BOTH `resource.id` and `scope.id` (`endpoint` resource, `resource` scope).
-Raw empty and literal `__default__` names produce different identities. Choose
-one consistent spelling when binding a provider's default namespace. Namespaces
-are not persisted in plain text. Different accounts, regions, endpoints and
-namespaces cannot match the same allocation resource.
+Pinecone's empty namespace and reserved `__default__` name identify the same
+default namespace, so both canonicalize to `__default__` before hashing, matching
+its [Python namespace semantics](https://sdk.pinecone.io/python/how-to/vectors/namespaces.html)
+and [TypeScript namespace semantics](https://sdk.pinecone.io/typescript/documents/data-operations_namespaces.html).
+Turbopuffer requires a nonempty namespace. Namespaces are not persisted in plain
+text. Different accounts, regions, endpoints and distinct namespaces cannot
+match the same allocation resource.
 
 ## Invoice admission and money boundary
 

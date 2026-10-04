@@ -73,9 +73,9 @@ def vector_database_resource_id(
             raise ValueError("An explicit hosted Pinecone index endpoint is required")
     elif host != f"{region}.turbopuffer.com" or namespace == "":
         raise ValueError("turbopuffer requires its regional endpoint and a named namespace")
-    _namespace(namespace)
+    canonical_namespace = _namespace(namespace)
     identity = json.dumps(
-        [provider, region, host, namespace], ensure_ascii=False, separators=(",", ":")
+        [provider, region, host, canonical_namespace], ensure_ascii=False, separators=(",", ":")
     )
     return database_resource_id(billing_account_id, hashlib.sha256(identity.encode()).hexdigest())
 
@@ -243,6 +243,7 @@ class _VectorFacade:
                                 cost_confidence="unknown",
                                 latency_ms=milliseconds,
                                 details={
+                                    "region": self._region,
                                     "attribution_component": component,
                                     "attribution_resource_type": "endpoint",
                                     "attribution_resource_id": self._resource,

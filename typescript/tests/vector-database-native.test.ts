@@ -1,7 +1,7 @@
 /** Actual provider SDK clients, mock fetch only. Native modules are dev dependencies. */
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { instrumentPinecone, instrumentTurbopuffer } from "../src/instruments/vector-database.js";
 import { currentProviderCaptureOwner } from "../src/instruments/provider-capture.js";
 import { createDexcostFetch, clearRecordedEvents, getRecordedEvents, untrackHttp } from "../src/adapters/http.js";
@@ -12,6 +12,14 @@ import { PricingEngine } from "../src/pricing/engine.js";
 import type { CostTracker } from "../src/core/tracker.js";
 const require = createRequire(import.meta.url);
 const { Turbopuffer } = require("@turbopuffer/turbopuffer");
+let Pinecone: any;
+beforeAll(() => {
+  // Generated SDK loading is setup, not part of the mocked request deadline.
+  // Do not import the upstream Node22-only package on the Node20 test job.
+  if (Number(process.versions.node.split(".")[0]) >= 22) {
+    ({ Pinecone } = require("@pinecone-database/pinecone"));
+  }
+}, 30_000);
 const buffers: EventBuffer[] = [];
 afterEach(() => { untrackHttp(); clearRecordedEvents(); buffers.splice(0).forEach(buffer => buffer.close()); });
 describe("real vector SDK serialization and HTTP deduplication", () => {
@@ -36,7 +44,6 @@ describe("real vector SDK serialization and HTTP deduplication", () => {
     const trackedFetch = createDexcostFetch({ tracker, fetch: fakeFetch });
     await runWithTask(task, async () => {
       if (provider === "pinecone") {
-        const { Pinecone } = require("@pinecone-database/pinecone");
         const indexHost = "memory-abc.svc.aped-4627-b74a.pinecone.io";
         const index = new Pinecone({ apiKey: "mock-not-a-credential", fetchApi: trackedFetch }).index({ host: indexHost, namespace: "memory" });
         const wrapped = instrumentPinecone(index, tracker, { billingAccountId: "account-a", region: "us-east-1", indexHost, namespace: "memory" });

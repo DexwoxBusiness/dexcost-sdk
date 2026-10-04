@@ -1367,6 +1367,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.ocr",
+      "name": "instrument_document_ai",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', processor_version: 'str', processor_type: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.runtime",
       "name": "instrument_e2b_sandbox",
       "signature": "(sandbox: 'Any', tracker: 'Any', *, billing_account_id: 'str', vcpu_count: 'int | None' = None, memory_mib: 'int | None' = None) -> 'Any'"
@@ -1445,9 +1451,27 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.vector_database",
+      "name": "instrument_pinecone",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', index_host: 'str', namespace: 'str' = '') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.database",
       "name": "instrument_redis_client",
       "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.ocr",
+      "name": "instrument_textract",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', usage_account_id: 'str', region: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.vector_database",
+      "name": "instrument_turbopuffer",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', namespace: 'str') -> 'Any'"
     },
     {
       "kind": "function",
@@ -1643,6 +1667,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.ocr",
+      "name": "uninstrument_document_ai",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.runtime",
       "name": "uninstrument_e2b_sandbox",
       "signature": "(sandbox: 'Any') -> 'None'"
@@ -1721,8 +1751,26 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.vector_database",
+      "name": "uninstrument_pinecone",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.database",
       "name": "uninstrument_redis_client",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.ocr",
+      "name": "uninstrument_textract",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.vector_database",
+      "name": "uninstrument_turbopuffer",
       "signature": "(client: 'Any') -> 'None'"
     },
     {
@@ -1748,6 +1796,12 @@
       "module": "dexcost.attribution.v3_validate",
       "name": "validate_attribution_observation_v3",
       "signature": "(value: 'object') -> 'AttributionV3ValidationResult'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.vector_database",
+      "name": "vector_database_resource_id",
+      "signature": "(provider: 'Provider', billing_account_id: 'str', region: 'str', endpoint_host: 'str', namespace: 'str') -> 'str'"
     },
     {
       "kind": "function",

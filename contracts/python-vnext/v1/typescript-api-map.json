@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 200,
-  "typescript_export_count": 365,
-  "equivalent_count": 197,
+  "python_export_count": 209,
+  "typescript_export_count": 378,
+  "equivalent_count": 206,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -1213,6 +1213,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_document_ai",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentDocumentAI"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
       "python_name": "instrument_e2b_sandbox",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1330,6 +1339,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_pinecone",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentPinecone"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "instrument_redis_client",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1337,6 +1355,24 @@
         "instrumentRedisClient"
       ],
       "notes": "Python instruments a redis-py client instance and returns an undo callback; TypeScript returns a node-redis client proxy and close handle. Both require explicit account/resource identity and emit unknown-cost command observations."
+    },
+    {
+      "python_name": "instrument_textract",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentTextract"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_turbopuffer",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentTurbopuffer"
+      ],
+      "notes": null
     },
     {
       "python_name": "mongodb_command_listener",
@@ -1623,6 +1659,15 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_document_ai",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentDocumentAI"
+      ],
+      "notes": "Intentional TypeScript naming/API-shape equivalent."
+    },
+    {
       "python_name": "uninstrument_e2b_sandbox",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1740,6 +1785,15 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_pinecone",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentPinecone"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "uninstrument_redis_client",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1747,6 +1801,24 @@
         "uninstrumentRedisClient"
       ],
       "notes": "Python accepts the original instrumented client; TypeScript accepts the returned instrumentation handle. Both stop recording without closing the application-owned connection."
+    },
+    {
+      "python_name": "uninstrument_textract",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentTextract"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_turbopuffer",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentTurbopuffer"
+      ],
+      "notes": null
     },
     {
       "python_name": "validate",
@@ -1781,6 +1853,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "validateAttributionObservationV3"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "vector_database_resource_id",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "vectorDatabaseResourceId"
       ],
       "notes": null
     },

@@ -279,6 +279,11 @@ def test_real_perplexity_agent(reason, stream, asynchronous, tracker):
     events = tracker._storage.query_events(task_id=str(task.task_id))
     assert len(events) == 1
     event = events[0]
+    observation = to_attribution_observation_v3(event)
+    assert observation is not None
+    assert observation["provider"] == {
+        "name": "perplexity", "service": "responses", "record_id": raw["id"]
+    }
     assert event.input_tokens == 5870
     assert event.output_tokens == 679
     assert event.details["attribution_usage_lines"] == [
@@ -290,5 +295,12 @@ def test_real_perplexity_agent(reason, stream, asynchronous, tracker):
         assert event.details["provider_reported_cost_usd"] == (
             "0" if reason == "zero" else "0.02665"
         )
+        assert observation["cost_evidence"] == {
+            "amount": "0" if reason == "zero" else "0.02665",
+            "currency": "USD",
+            "source": "provider_reported",
+            "confidence": "exact",
+        }
     else:
         assert event.pricing_source == "unknown"
+        assert "cost_evidence" not in observation

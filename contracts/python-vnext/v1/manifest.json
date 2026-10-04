@@ -86,9 +86,9 @@
       "sha256": "cd2a9b0b22f68b06d7bd15050659c15257c52acc3c9e74030af9b31133b5187e"
     },
     {
-      "byte_size": 67694,
+      "byte_size": 69723,
       "path": "public-api.json",
-      "sha256": "1a48a4ca2bace3c9b263084cc9df3392d4279e2af78175e180a375c82f8e61c0"
+      "sha256": "4e8e9c35f181f1e17eb0c1f29547e6e7fabb4c1fed181deac1741c2997da8bb7"
     },
     {
       "byte_size": 2375,
@@ -156,14 +156,14 @@
       "sha256": "79235c668bd8ef907df7e9b7f10a2bd2e1085c208ddfc42cc7044ce79dd0db97"
     },
     {
-      "byte_size": 45907,
+      "byte_size": 48001,
       "path": "typescript-api-map.json",
-      "sha256": "93afa2f6a538853d79d34de6934f528957de2824b4bf894fa179b257375bc316"
+      "sha256": "5ece6b82ba22e178d591763b847d79c0d63ba577189ae3cd5e5ddddddaf11dce"
     },
     {
-      "byte_size": 9613,
+      "byte_size": 9971,
       "path": "typescript-public-api.json",
-      "sha256": "093ce3891d72ebbf5f7f10b23c59e5d626aca5622a84763fd7a44bc992702160"
+      "sha256": "bc3711a68dcb5094785d388760bae3d13dc6634eaec05779b19a3be2c7e22bc9"
     },
     {
       "byte_size": 4076,

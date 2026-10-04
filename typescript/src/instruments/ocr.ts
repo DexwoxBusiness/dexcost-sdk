@@ -62,6 +62,7 @@ export function instrumentTextract<T extends object>(client: T, tracker: CostTra
             taskId: task!.taskId, provider: "amazon_textract", service: "ocr", providerRecordId: record,
             operation: "ocr.detect_document_text", component: "external", eventType: "external_cost", resourceType: "endpoint", resourceId: resource,
             status: "succeeded", revision: 1, submittedAt: started, observedAt: new Date(),
+            billingDimensions: [["region", scope.region]],
             usage: [{ metric: "amazon_textract.detect_document_text_pages", quantity: new Decimal(pages), unit: "Pages" }],
           }));
         } catch { /* Telemetry cannot alter native values or expose document errors. */ }
@@ -110,7 +111,7 @@ export function instrumentDocumentAI<T extends object>(client: T, tracker: CostT
             if (ended < started) return response;
             tracker.buffer.addEvent(createCostEvent({ eventId: randomUUID(), taskId: task!.taskId, occurredAt: ended,
               eventType: "external_cost", costConfidence: "unknown", provider: "google_document_ai", serviceName: "ocr",
-              details: { attribution_component: "external", attribution_resource_type: "endpoint", attribution_resource_id: resource,
+              details: { region: match[2], attribution_component: "external", attribution_resource_type: "endpoint", attribution_resource_id: resource,
                 attribution_operation_name: "ocr.process_document", attribution_operation_status: "succeeded",
                 attribution_usage_duration_seconds: (ended.getTime() - started.getTime()) / 1000,
                 attribution_usage_lines: [{ metric: "google_document_ai.enterprise_ocr_pages", quantity: String(pages.length), unit: "Pages" }],

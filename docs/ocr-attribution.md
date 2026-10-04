@@ -20,7 +20,7 @@ Native actual request routing is observed with a read-only botocore before-send 
 
 Resource identity: `PAYER/USAGE_ACCOUNT.REGION.detect_document_text`.
 Profile: `amazon_textract`; category `detect_document_text_pages`; meter `amazon_textract.detect_document_text_pages` / `Pages`.
-Both account IDs are explicit 12-digit AWS IDs, not discovered or verified by the SDK.
+Both account IDs are explicit 12-digit AWS IDs, not discovered or verified by the SDK. The verified native region is retained in the durable job's `region` billing dimension and emitted as `provider.region`, so an invoice may supply the matching `region` explicitly.
 
 Excluded: AnalyzeDocument/forms/tables/queries/signatures/layout, expenses/IDs/lending, async Start/Get job APIs, nonstandard endpoints/partitions and SDK-derived money.
 
@@ -36,6 +36,7 @@ The official generated SDK retries ProcessDocument by default. For this slice, t
 
 Resource identity: `BILLING_ACCOUNT/PROJECT.LOCATION.PROCESSOR.enterprise_ocr`.
 Profile: `google_document_ai`; category `enterprise_ocr_pages`; meter `google_document_ai.enterprise_ocr_pages` / `Pages`.
+The bound processor location is emitted as `provider.region`; an invoice may supply that matching location as `region`. Missing or different observation regions never match an explicitly region-scoped invoice.
 
 Supported packages: Google Python v1 synchronous and asynchronous ProcessDocument; Node `v1.DocumentProcessorServiceClient.processDocument` promise API preserving its native tuple values. Callback, batch, human review, streaming, premium OCR, forms/custom processors, partial results and local/self-hosted tools remain outside scope.
 

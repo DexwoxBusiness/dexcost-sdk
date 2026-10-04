@@ -52,6 +52,8 @@ describe("paired hosted OCR evidence", () => {
     const raw = tracker.buffer.getProviderJob("amazon_textract", "ocr", `${awsResource}/${c.id}`);
     if (!c.capture) { expect(raw).toBeUndefined(); return; }
     const event = providerJobFromDict(raw!).toAttributionObservation();
+    expect(event.provider).toMatchObject({ region: data.region });
+    expect(providerJobFromDict(raw!).billingDimensions).toEqual([["region", data.region]]);
     expect(event.usage[0]).toMatchObject({ metric: "amazon_textract.detect_document_text_pages", quantity: "2", unit: "Pages" });
     expect(event.resource?.id).toBe(awsResource); expect(event).not.toHaveProperty("cost_evidence");
     expect(JSON.stringify(raw)).not.toContain("PRIVATE");
@@ -65,9 +67,22 @@ describe("paired hosted OCR evidence", () => {
     const events = tracker.buffer.getPendingEvents(); expect(events).toHaveLength(c.capture ? 1 : 0);
     if (c.capture) {
       const event = toAttributionObservationV3(events[0])!;
+      expect(event.provider.region).toBe("us");
       expect(event.usage[0]).toMatchObject({ metric: "google_document_ai.enterprise_ocr_pages", quantity: "2", unit: "Pages" });
       expect(event.resource?.id).toBe(`${data.google_account}/agent-project.us.abc123.enterprise_ocr`);
       expect(event).not.toHaveProperty("cost_evidence"); expect(JSON.stringify(events)).not.toContain("PRIVATE");
+    }
+  });
+  it("uses only a canonical unique explicit job region and preserves it through storage", async () => {
+    const { tracker, task } = setup(), c = data.textract[0], { client, command } = nativeAws(c);
+    await runWithTask(task, () => instrumentTextract(client, tracker, awsScope).send(command));
+    const raw = tracker.buffer.getProviderJob("amazon_textract", "ocr", `${awsResource}/${c.id}`)!;
+    expect(providerJobFromDict(raw).toAttributionObservation().provider).toMatchObject({ region: data.region });
+    for (const billing_dimensions of [[], [{ key: "region", value: "INVALID REGION" }], [{ key: "region", value: "x".repeat(129) }]]) {
+      expect(providerJobFromDict({ ...raw, billing_dimensions }).toAttributionObservation().provider).not.toHaveProperty("region");
+    }
+    for (const billing_dimensions of [[{ key: "region", value: "" }], [{ key: "region", value: "us-east-1" }, { key: "region", value: "us-west-2" }]]) {
+      expect(() => providerJobFromDict({ ...raw, billing_dimensions })).toThrow();
     }
   });
   it("preserves exact interval including zero-duration completed responses, task ownership and once-only await", async () => {

@@ -482,6 +482,11 @@ class ProviderJobRevision:
             },
             "usage": usage,
         }
+        # Preserve an explicitly observed region through durable job storage.
+        # Never infer it from model/resource IDs or normalize unknown values.
+        region = next((value for key, value in self.billing_dimensions if key == "region"), None)
+        if region is not None and _CANONICAL_NAME.fullmatch(region):
+            result["provider"]["region"] = region
         if environment is not None:
             result["environment"] = environment
         if self.capability is not None:

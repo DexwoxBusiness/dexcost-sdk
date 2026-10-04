@@ -29,8 +29,8 @@ export function vectorDatabaseResourceId(provider: Provider, billingAccountId: s
   if (!["pinecone", "turbopuffer"].includes(provider) || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(region)) throw new Error("An explicit supported provider and region are required");
   if (host(endpointHost) !== endpointHost || endpointHost.length > 253) throw new Error("Use a lowercase provider hostname, not a URL");
   if (provider === "pinecone" ? !/^[a-z0-9.-]+\.svc(?:\.[a-z0-9-]+)?\.pinecone\.io$/.test(endpointHost) : endpointHost !== `${region}.turbopuffer.com` || namespaceName === "") throw new Error("A hosted endpoint and namespace are required");
-  namespace(namespaceName);
-  const digest = createHash("sha256").update(JSON.stringify([provider, region, endpointHost, namespaceName])).digest("hex");
+  const canonicalNamespace = namespace(namespaceName);
+  const digest = createHash("sha256").update(JSON.stringify([provider, region, endpointHost, canonicalNamespace])).digest("hex");
   return databaseResourceId(billingAccountId, digest);
 }
 function count(value: unknown): number {
@@ -99,7 +99,7 @@ function facade<T extends object>(client: T, tracker: CostTracker, provider: Pro
             if (!lines.length) continue;
             tracker.buffer.addEvent(createCostEvent({ eventId: randomUUID(), taskId: task!.taskId,
               occurredAt: ended, provider, serviceName: "vector_database", eventType: "external_cost", costConfidence: "unknown", latencyMs: milliseconds,
-              details: { attribution_component: component, attribution_resource_type: "endpoint", attribution_resource_id: resource,
+              details: { region: scope.region, attribution_component: component, attribution_resource_type: "endpoint", attribution_resource_id: resource,
                 attribution_operation_name: `vector_database.${String(key)}`, attribution_operation_status: "succeeded",
                 attribution_usage_duration_seconds: new Decimal(milliseconds).div(1000).toFixed(),
                 attribution_usage_lines: lines.map(line => ({ ...line, quantity: line.quantity.toFixed() })),

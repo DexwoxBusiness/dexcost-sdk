@@ -92,7 +92,7 @@ function agentMeasurement(response: any, requested: string, eligible: boolean): 
     // The reported total includes model, cache and tools. One inclusive line
     // avoids inventing an allocation or pricing those constituent meters again.
     usageLines: [{ metric: "request_count", quantity: 1, unit: "Requests" }],
-    pricingUsage: {}, providerCostUsd: cost,
+    pricingUsage: {}, providerCostUsd: cost, providerService: "responses",
     providerRecordId: typeof response?.id === "string" && response.id.length <= 256 ? response.id : undefined,
     responseModel: prefixedModel("perplexity", response?.model ?? requested),
     inputTokens: typeof usage?.input_tokens === "number" && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : undefined,

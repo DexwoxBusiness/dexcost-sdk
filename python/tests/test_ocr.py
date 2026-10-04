@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -140,6 +141,8 @@ def test_textract(setup, case, asynchronous):
         assert job is None
         return
     event = job.to_attribution_observation()
+    assert event["provider"]["region"] == DATA["region"]
+    assert job.billing_dimensions == (("region", DATA["region"]),)
     assert event["usage"][0]["quantity"] == "2"
     assert event["resource"]["id"] == AWS_RESOURCE
     assert "cost_evidence" not in event
@@ -163,6 +166,7 @@ def test_document_ai(setup, case, asynchronous):
     assert len(events) == (1 if case.get("capture") else 0)
     if case.get("capture"):
         event = to_attribution_observation_v3(events[0])
+        assert event["provider"]["region"] == "us"
         assert event["usage"][0]["quantity"] == "2"
         assert (
             event["resource"]["id"]
@@ -170,6 +174,20 @@ def test_document_ai(setup, case, asynchronous):
         )
         assert "cost_evidence" not in event
         assert "PRIVATE" not in json.dumps(events[0].to_dict())
+
+
+def test_job_region_requires_canonical_unique_explicit_evidence(setup):
+    tracker, _ = setup
+    case = DATA["textract"][0]
+    client, _ = aws(case)
+    instrument_textract(client, tracker, **AWS_SCOPE).detect_document_text(Document={})
+    job = tracker.storage.get_provider_job("amazon_textract", "ocr", f"{AWS_RESOURCE}/{case['id']}")
+    assert job is not None
+    for dimensions in [(), (("region", "INVALID REGION"),), (("region", "x" * 129),)]:
+        assert "region" not in replace(job, billing_dimensions=dimensions).to_attribution_observation()["provider"]
+    for dimensions in [(("region", ""),), (("region", "us-east-1"), ("region", "us-west-2"))]:
+        with pytest.raises(ValueError):
+            replace(job, billing_dimensions=dimensions)
 
 
 def test_interval_and_zero_duration(setup, monkeypatch):

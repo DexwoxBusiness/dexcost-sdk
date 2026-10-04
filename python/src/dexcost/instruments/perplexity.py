@@ -288,6 +288,7 @@ def _agent_measurement(response: Any, requested: str, eligible: bool) -> Operati
         usage_lines=(ProviderUsageLine("request_count", 1, "Requests"),),
         pricing_usage={},
         provider_cost_usd=parsed if valid else None,
+        provider_service="responses",
         provider_record_id=record_id
         if isinstance(record_id, str) and len(record_id) <= 256
         else None,

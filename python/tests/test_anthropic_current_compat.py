@@ -519,8 +519,9 @@ def test_current_token_counting_and_legacy_completion_are_honest(
     assert count.input_tokens == 13
     count_event = tracker._storage.query_events(task_id=str(count_task.task_id))[0]
     assert count_event.cost_usd == Decimal(0)
-    assert count_event.cost_confidence == "exact"
-    assert count_event.pricing_source == "provider_response"
+    assert count_event.cost_confidence == "unknown"
+    assert count_event.pricing_source == "unknown"
+    assert "provider_reported_cost_amount" not in count_event.details
     assert count_event.input_tokens is None
     assert count_event.details["attribution_usage_lines"] == [
         {"metric": "counted_input_tokens", "quantity": "13", "unit": "Tokens"}
@@ -1075,7 +1076,8 @@ async def test_current_async_beta_jobs_and_session_usage_are_captured(
     assert count.input_tokens == 13
     count_event = tracker._storage.query_events(task_id=str(count_task.task_id))[0]
     assert count_event.cost_usd == Decimal(0)
-    assert count_event.cost_confidence == "exact"
+    assert count_event.cost_confidence == "unknown"
+    assert "provider_reported_cost_amount" not in count_event.details
     assert session_events == []
     session_revision = tracker._storage.get_provider_job(
         "anthropic", "managed_sessions", "session-current-1"

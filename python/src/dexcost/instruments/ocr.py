@@ -135,6 +135,7 @@ class _Textract:
                                 status="succeeded",
                                 submitted_at=started,
                                 observed_at=_now(),
+                                billing_dimensions=(("region", self._region),),
                                 usage=(
                                     ProviderJobUsageLine(
                                         "amazon_textract.detect_document_text_pages",
@@ -198,6 +199,7 @@ class _DocumentAI:
         identifier: str,
     ):
         self._client, self._tracker, self._processor = client, tracker, processor
+        self._location = location
         self._host, self._active = f"{location}-documentai.googleapis.com", True
         # Billing population is the processor, not one mutable processor version.
         self._resource = database_resource_id(
@@ -261,6 +263,7 @@ class _DocumentAI:
                             provider="google_document_ai",
                             service_name="ocr",
                             details={
+                                "region": self._location,
                                 "attribution_component": "external",
                                 "attribution_resource_type": "endpoint",
                                 "attribution_resource_id": self._resource,

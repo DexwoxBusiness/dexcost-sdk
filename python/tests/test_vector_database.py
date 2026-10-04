@@ -105,6 +105,11 @@ def test_paired_native_vectors(setup, case, asynchronous):
         assert "cost" not in event
         assert "cost_evidence" not in event
         assert "provider_record_id" not in event
+        assert all(
+            to_attribution_observation_v3(job)["provider"]["region"]
+            == DATA[f"{case['provider']}_region"]
+            for job in jobs
+        )
         assert event["usage_period"]["start_at"] < event["usage_period"]["end_at"]
         assert tracker.storage.query_provider_jobs_for_sync() == []
 
@@ -122,7 +127,7 @@ def test_binding_identity_all_boundaries():
         changed = base.copy()
         changed[index] = value
         assert vector_database_resource_id(*changed) != identity
-    assert vector_database_resource_id(*base[:-1], "") != vector_database_resource_id(
+    assert vector_database_resource_id(*base[:-1], "") == vector_database_resource_id(
         *base[:-1], "__default__"
     )
     for index, value in [

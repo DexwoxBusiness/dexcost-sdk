@@ -184,6 +184,8 @@ describe("real official packages, mocked I/O only", () => {
     expect(new URL(requests[0]).pathname).toBe("/v1/responses");
     const event = buffer.getAllEvents()[0];
     expect(buffer.getAllEvents()).toHaveLength(1);
+    const observation = toAttributionObservationV3(event)!;
+    expect(observation.provider).toEqual({ name: "perplexity", service: "responses", record_id: raw.id });
     expect(event.inputTokens).toBe(5870);
     expect(event.outputTokens).toBe(679);
     expect(event.details?.attribution_usage_lines).toEqual([{ metric: "request_count", quantity: "1", unit: "Requests" }]);
@@ -191,6 +193,12 @@ describe("real official packages, mocked I/O only", () => {
       expect(event.pricingSource).toBe("provider_response");
       expect(event.costUsd.toString()).toBe(reason === "zero" ? "0" : "0.02665");
       expect(event.details?.provider_reported_cost_usd).toBe(reason === "zero" ? "0" : "0.02665");
-    } else expect(event.pricingSource).toBe("unknown");
+      expect(observation.cost_evidence).toEqual({
+        amount: reason === "zero" ? "0" : "0.02665", currency: "USD", source: "provider_reported", confidence: "exact",
+      });
+    } else {
+      expect(event.pricingSource).toBe("unknown");
+      expect(observation.cost_evidence).toBeUndefined();
+    }
   });
 });

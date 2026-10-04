@@ -290,6 +290,11 @@ export class ProviderJobRevision {
         dimensions,
       })),
     };
+    // Preserve explicit native region evidence; never infer it from IDs.
+    const region = this.billingDimensions.find(([key]) => key === "region")?.[1];
+    if (region !== undefined && CANONICAL.test(region)) {
+      (result["provider"] as Record<string, unknown>)["region"] = region;
+    }
     if (environment !== undefined) result["environment"] = environment;
     if (this.capability !== undefined) result["capability"] = capabilityToDict(this.capability);
     if (this.costAmount !== undefined) {

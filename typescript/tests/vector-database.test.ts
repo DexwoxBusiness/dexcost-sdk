@@ -35,16 +35,17 @@ describe("native vector meters and explicit invoice identities", () => {
       expect(observed.flatMap(job => toAttributionObservationV3(job)!.usage.map(u => [u.metric, u.quantity, u.unit]))).toEqual(c.usage);
       expect(event.task_id).toBe(task.taskId); expect(event).not.toHaveProperty("cost");
       expect(event).not.toHaveProperty("cost_evidence"); expect(event).not.toHaveProperty("provider_record_id");
+      expect(observed.every(job => toAttributionObservationV3(job)!.provider.region === data[`${c.provider}_region`])).toBe(true);
       expect(event.usage_period!.start_at < event.usage_period!.end_at).toBe(true);
       expect(tracker.buffer.getPendingLedger("provider_job")).toHaveLength(0);
       expect(JSON.stringify(observed[0].details)).not.toContain("PRIVATE");
       expect(JSON.stringify(observed[0].details)).not.toContain(data.namespace);
     }
   });
-  it("isolates every mapped identity and distinguishes empty and literal default namespace identities", () => {
+  it("isolates every mapped identity and canonicalizes Pinecone default namespace aliases", () => {
     const id = (account = "account-a", region = "us-east-1", host = data.pinecone_host, ns = data.namespace) => vectorDatabaseResourceId("pinecone", account, region, host, ns);
     expect(new Set([id(), id("account-b"), id("account-a", "us-west-2"), id("account-a", "us-east-1", "other.svc.pinecone.io"), id("account-a", "us-east-1", data.pinecone_host, "other")]).size).toBe(5);
-    expect(id("account-a", "us-east-1", data.pinecone_host, "")).not.toBe(id("account-a", "us-east-1", data.pinecone_host, "__default__"));
+    expect(id("account-a", "us-east-1", data.pinecone_host, "")).toBe(id("account-a", "us-east-1", data.pinecone_host, "__default__"));
     expect(() => id("account/secret")).toThrow(); expect(() => id("account-a", "", "https://private.invalid")).toThrow();
   });
   it.each(["host", "namespace", "headers"])("fails open for unknown %s without changing native behavior", async change => {
