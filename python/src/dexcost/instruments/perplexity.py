@@ -269,6 +269,7 @@ def _agent_measurement(response: Any, requested: str, eligible: bool) -> Operati
     if isinstance(snapshot, tuple):
         parsed = snapshot[0]
         eligible = eligible and snapshot[1]
+    exponent = parsed.as_tuple().exponent if parsed is not None else None
     valid = (
         eligible
         and _value(response, "status") == "completed"
@@ -279,7 +280,8 @@ def _agent_measurement(response: Any, requested: str, eligible: bool) -> Operati
         and _value(cost, "currency") == "USD"
         and parsed is not None
         and parsed <= 9007199254740991
-        and parsed.as_tuple().exponent >= -12
+        and isinstance(exponent, int)
+        and exponent >= -12
     )
     return OperationMeasurement(
         # Inclusive provider total: do not charge model/cache/tool components again.
@@ -649,7 +651,8 @@ def instrument_perplexity(tracker: Any) -> None:
             return result
 
         _originals["raw_process"] = (BaseClient, "_process_response_data", original_process)
-        BaseClient._process_response_data = process
+        owner, method_name, _ = _originals["raw_process"]
+        setattr(owner, method_name, process)
         for class_name, method_name, kind, is_async in _METHODS:
             owner = getattr(api, class_name)
             key = f"perplexity.generated.api:{class_name}:{method_name}"
