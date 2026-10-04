@@ -22,6 +22,8 @@ export type { BrowserSessionIdentity, BrowserSessionBinding, BrowserSessionUsage
 export { wrapRuntimeHandler, instrumentE2bSandbox, uninstrumentE2bSandbox } from "./instruments/runtime.js";
 export type { RuntimeResource } from "./instruments/runtime.js";
 export { instrumentObjectStorage, uninstrumentObjectStorage } from "./instruments/object-storage.js";
+export { instrumentPinecone, instrumentTurbopuffer, uninstrumentVectorDatabase, vectorDatabaseResourceId } from "./instruments/vector-database.js";
+export type { PineconeBinding, VectorDatabaseBinding } from "./instruments/vector-database.js";
 export type { ObjectStorageBinding } from "./instruments/object-storage.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
 export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";

@@ -186,6 +186,12 @@ from dexcost.instruments.runtime import (
     uninstrument_e2b_sandbox,
     wrap_runtime_handler,
 )
+from dexcost.instruments.vector_database import (
+    instrument_pinecone,
+    instrument_turbopuffer,
+    uninstrument_vector_database,
+    vector_database_resource_id,
+)
 from dexcost.instruments.web_tools import (
     bind_apify_run,
     bind_firecrawl_job,
@@ -1432,8 +1438,10 @@ __all__ = [
     "instrument_openai",
     "instrument_openrouter",
     "instrument_perplexity",
+    "instrument_pinecone",
     "instrument_redis_client",
     "instrument_textract",
+    "instrument_turbopuffer",
     "mongodb_command_listener",
     "on_delivery_error",
     "record_apify_run",
@@ -1481,10 +1489,12 @@ __all__ = [
     "uninstrument_openrouter",
     "uninstrument_perplexity",
     "uninstrument_redis_client",
+    "uninstrument_vector_database",
     "validate",
     "validate_api_key",
     "validate_attribution_event_v2",
     "validate_attribution_observation_v3",
+    "vector_database_resource_id",
     "verify_webhook_signature",
     "wrap_runtime_handler",
 ]
