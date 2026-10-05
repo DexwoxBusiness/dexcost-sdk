@@ -57,6 +57,13 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.27.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.26.0...python/v0.27.0) (2026-10-05)
+
+
+### Features
+
+* **attribution:** add Bedrock, Agent, OCR and vector coverage ([#195](https://github.com/DexwoxBusiness/dexcost-sdk/issues/195)) ([a5cd891](https://github.com/DexwoxBusiness/dexcost-sdk/commit/a5cd891e4a00b177d8a5e2a4dd145db22c031a00))
+
 ## [0.26.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.25.0...python/v0.26.0) (2026-10-03)
 
 
