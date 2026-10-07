@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,11 +7,15 @@ import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
 import { toAttributionObservationV3 } from "../src/attribution/v3-convert.js";
 import { instrumentGoogleGenAI, provideGoogleGenAIModule, uninstrumentGoogleGenAI } from "../src/instruments/google-genai.js";
+import { vertexNativeFetchFixture } from "./helpers/vertex-native-fetch.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../../tests/fixtures/vertex-wave-five.json", import.meta.url), "utf8"));
 let directory: string;
 let buffer: EventBuffer;
 const transports: { project: string; send(url: string, init?: RequestInit): Promise<Response> }[] = [];
+let nativeNetwork: Awaited<ReturnType<typeof vertexNativeFetchFixture>>;
+beforeAll(async () => { nativeNetwork = await vertexNativeFetchFixture(); });
+afterAll(async () => { await nativeNetwork?.close(); });
 function setup() {
   directory = mkdtempSync(join(tmpdir(), "dexcost-vertex-wave-five-"));
   buffer = new EventBuffer(join(directory, "events.db"));
@@ -45,8 +49,8 @@ function client(c: any, stream = false, edit: (raw: any, body: any, opts: any) =
     const response = new Response(stream ? "data: " + JSON.stringify(interim) + "\n\ndata: " + JSON.stringify(raw) + "\n\n" : JSON.stringify(raw), {
       status: 200, headers: { "content-type": stream ? "text/event-stream" : "application/json" },
     });
-    // Mock the network boundary, not GenAI's custom fetch option. Real fetch
-    // supplies this final URL; a bare/synthetic Response intentionally does not.
+    // The fixture goes through actual Node fetch and native Undici wire events.
+    // Explicit metadata overrides below still exercise fabricated final routes.
     Object.defineProperty(response, "url", { value: String(url), configurable: true });
     return response;
   } };
@@ -54,7 +58,7 @@ function client(c: any, stream = false, edit: (raw: any, body: any, opts: any) =
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
     const transport = transports.find(item => url.includes(`/projects/${item.project}/`)) ?? transports.at(-1)!;
-    return transport.send(url, init);
+    return nativeNetwork.fetch(input, init, () => transport.send(url, init));
   });
   const native: any = new GoogleGenAI(opts);
   // Mock only native authentication and I/O; no ADC lookup, secret or paid call.

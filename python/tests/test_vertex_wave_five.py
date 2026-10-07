@@ -491,6 +491,80 @@ def test_transport_observers_restore_and_reinstall_on_same_client(tracker):
         client.close()
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("consume_first", [False, True])
+@pytest.mark.parametrize("reinstall", [False, True])
+def test_retired_stream_evidence_never_reactivates(
+    tracker, tmp_path, asynchronous, consume_first, reinstall
+):
+    client, body, raw, requests = make_client(CASES[0], stream=True)
+    next_storage = SQLiteStorage(str(tmp_path / "next-events.db"))
+    next_tracker = CostTracker(
+        storage=next_storage, auto_update_pricing=False, auto_instrument=[]
+    )
+    gemini.instrument_gemini(tracker)
+
+    def retire(evidence):
+        assert len(requests) == int(consume_first)
+        assert evidence.verified is consume_first
+        gemini.uninstrument_gemini()
+        assert evidence.admitted_project() is None
+        if reinstall:
+            gemini.instrument_gemini(next_tracker)
+
+    def check_retired(evidence, chunks):
+        assert len(chunks) == 2
+        assert all(chunk.response_id == raw["responseId"] for chunk in chunks)
+        # A new generation's HTTPX observers must not populate an old proof.
+        assert evidence.sends == evidence.attempts == int(consume_first)
+        assert evidence.admitted_project() is None
+
+    try:
+        if asynchronous:
+
+            async def run():
+                try:
+                    stream = await client.aio.models.generate_content_stream(**body)
+                    evidence = stream._stream._evidence
+                    chunks = [await anext(stream)] if consume_first else []
+                    retire(evidence)
+                    chunks.extend([chunk async for chunk in stream])
+                    check_retired(evidence, chunks)
+                    if reinstall:
+                        fresh = await client.aio.models.generate_content_stream(**body)
+                        assert len([chunk async for chunk in fresh]) == 2
+                finally:
+                    await client.aio.aclose()
+
+            asyncio.run(run())
+        else:
+            stream = client.models.generate_content_stream(**body)
+            evidence = stream._stream._evidence
+            chunks = [next(stream)] if consume_first else []
+            retire(evidence)
+            chunks.extend(stream)
+            check_retired(evidence, chunks)
+            if reinstall:
+                assert len(list(client.models.generate_content_stream(**body))) == 2
+
+        old_events = tracker.storage.query_events()
+        new_events = next_storage.query_events()
+        assert len(old_events) == 1
+        old_event = to_attribution_observation_v3(old_events[0])
+        assert old_event["operation"]["status"] == "succeeded"
+        assert old_event["usage"]
+        assert lane(old_event) is None
+        assert len(new_events) == int(reinstall)
+        if reinstall:
+            vector(to_attribution_observation_v3(new_events[0]), CASES[0])
+        assert len(requests) == 1 + int(reinstall)
+        assert gemini._vertex_transport_context.get() is None
+    finally:
+        gemini.uninstrument_gemini()
+        next_storage.close()
+        client.close()
+
+
 @pytest.mark.parametrize("gemini_first", [False, True])
 def test_http_capture_uninstalled_out_of_order_does_not_reactivate_observers(
     tracker, gemini_first
@@ -519,6 +593,75 @@ def test_http_capture_uninstalled_out_of_order_does_not_reactivate_observers(
     finally:
         http.untrack_http()
         gemini.uninstrument_gemini()
+        client.close()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("streamed", [False, True])
+def test_retained_public_method_cannot_acquire_new_generation_proof(
+    tracker, tmp_path, asynchronous, streamed
+):
+    client, body, raw, requests = make_client(CASES[0], stream=streamed)
+    next_storage = SQLiteStorage(str(tmp_path / "next-retained-events.db"))
+    next_tracker = CostTracker(
+        storage=next_storage, auto_update_pricing=False, auto_instrument=[]
+    )
+    gemini.instrument_gemini(tracker)
+    models = client.aio.models if asynchronous else client.models
+    method_name = "generate_content_stream" if streamed else "generate_content"
+    retained = getattr(models, method_name)
+    gemini.uninstrument_gemini()
+    gemini.instrument_gemini(next_tracker)
+
+    def check_retained():
+        assert tracker.storage.query_events() == []
+        events = next_storage.query_events()
+        assert len(events) == 1
+        event = to_attribution_observation_v3(events[0])
+        assert event["operation"]["status"] == "succeeded"
+        assert event["usage"]
+        assert lane(event) is None
+
+    try:
+        if asynchronous:
+
+            async def run():
+                try:
+                    result = await retained(**body)
+                    chunks = [chunk async for chunk in result] if streamed else [result]
+                    assert all(chunk.response_id == raw["responseId"] for chunk in chunks)
+                    assert len(chunks) == (2 if streamed else 1)
+                    check_retained()
+                    fresh = await getattr(models, method_name)(**body)
+                    if streamed:
+                        assert len([chunk async for chunk in fresh]) == 2
+                    else:
+                        assert fresh.response_id == raw["responseId"]
+                finally:
+                    await client.aio.aclose()
+
+            asyncio.run(run())
+        else:
+            result = retained(**body)
+            chunks = list(result) if streamed else [result]
+            assert all(chunk.response_id == raw["responseId"] for chunk in chunks)
+            assert len(chunks) == (2 if streamed else 1)
+            check_retained()
+            fresh = getattr(models, method_name)(**body)
+            if streamed:
+                assert len(list(fresh)) == 2
+            else:
+                assert fresh.response_id == raw["responseId"]
+        assert tracker.storage.query_events() == []
+        events = [to_attribution_observation_v3(event) for event in next_storage.query_events()]
+        assert len(events) == 2
+        admitted = [event for event in events if lane(event) is not None]
+        assert len(admitted) == 1
+        vector(admitted[0], CASES[0])
+        assert len(requests) == 2
+    finally:
+        gemini.uninstrument_gemini()
+        next_storage.close()
         client.close()
 
 
@@ -707,6 +850,7 @@ def test_async_eligibility_snapshot_precedes_native_io(tracker, monkeypatch):
                 extract=lambda response, kwargs, vertex: gemini._content_measurement(
                     response, kwargs, vertex=vertex
                 ),
+                vertex_generation=gemini._vertex_transport_generation,
             )
         )
         await started.wait()

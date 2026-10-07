@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { channel } from "node:diagnostics_channel";
 import { ProviderJobRevision, providerJobFromDict, type ProviderJobStatus } from "../core/provider-jobs.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
@@ -24,9 +25,61 @@ let patched = false;
 
 interface VertexTransportProof {
   client: any; project: string; stream: boolean; calls: number; verified: boolean;
+  generation: object;
+  requestUrl?: string;
+  native: { requests: number; writes: number; headers: number; eligible: boolean; status?: number; complete: boolean; failed: boolean };
 }
 const vertexTransport = new AsyncLocalStorage<VertexTransportProof>();
+const vertexNativeTransport = new AsyncLocalStorage<VertexTransportProof>();
 let vertexTransportObservers = new WeakMap<object, (...args: any[]) => any>();
+let vertexNativeRequests = new WeakMap<object, VertexTransportProof>();
+let vertexGeneration: object | undefined;
+const vertexNativeSubscriptions: { name: string; listener: (message: unknown) => void }[] = [];
+
+function currentVertexProof(proof: VertexTransportProof | undefined): proof is VertexTransportProof {
+  return proof !== undefined && vertexGeneration !== undefined && proof.generation === vertexGeneration;
+}
+
+/** Response metadata can also be returned by a global fetch cache or recovery
+ * wrapper. Require a fresh native wire request in this apiCall's context. Never
+ * retain headers, request bodies or response bodies, and never alter I/O. */
+function observeVertexNativeTransport(): void {
+  if (vertexNativeSubscriptions.length) return;
+  for (const name of ["undici:request:create", "undici:client:sendHeaders", "undici:request:headers",
+    "undici:request:trailers", "undici:request:error"]) {
+    const listener = (message: unknown): void => {
+      try {
+        const { request, response } = message as any;
+        if (!request || typeof request !== "object") return;
+        const proof = name === "undici:request:create"
+          ? vertexNativeTransport.getStore() : vertexNativeRequests.get(request);
+        if (!currentVertexProof(proof)) return;
+        if (name === "undici:request:create") {
+          vertexNativeRequests.set(request, proof);
+          proof.native.requests++;
+          proof.native.eligible &&= request.method === "POST" && proof.requestUrl !== undefined &&
+            vertexRequestUrl(String(request.origin) + request.path, proof) === proof.requestUrl;
+        } else if (name === "undici:client:sendHeaders") {
+          proof.native.writes++;
+          proof.native.eligible &&= request.method === "POST" && proof.requestUrl !== undefined &&
+            vertexRequestUrl(String(request.origin) + request.path, proof) === proof.requestUrl;
+        } else if (name === "undici:request:headers") {
+          proof.native.headers++;
+          proof.native.status = response?.statusCode;
+        } else if (name === "undici:request:trailers") proof.native.complete = true;
+        else proof.native.failed = true;
+      } catch { /* Unknown native diagnostics cannot establish monetary evidence. */ }
+    };
+    channel(name).subscribe(listener);
+    vertexNativeSubscriptions.push({ name, listener });
+  }
+}
+
+function verifiedVertexProof(proof: VertexTransportProof | undefined): boolean {
+  return currentVertexProof(proof) && proof.calls === 1 && proof.verified &&
+    proof.native.requests === 1 && proof.native.writes === 1 && proof.native.headers === 1 &&
+    proof.native.eligible && proof.native.status === 200 && proof.native.complete && !proof.native.failed;
+}
 
 function vertexRequestUrl(value: unknown, proof: VertexTransportProof): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -46,7 +99,8 @@ function vertexRequestUrl(value: unknown, proof: VertexTransportProof): string |
  * response body. Observe its actual request/final Response before Google drops
  * route metadata while decoding unary responses or synthesizing SSE chunks. */
 function observeVertexTransport(client: any): boolean {
-  if (!client || typeof client !== "object") return false;
+  const generation = vertexGeneration;
+  if (!generation || !client || typeof client !== "object") return false;
   const installed = vertexTransportObservers.get(client);
   if (installed) return client.apiCall === installed;
   const prototype = Object.getPrototypeOf(client);
@@ -56,7 +110,7 @@ function observeVertexTransport(client: any): boolean {
   const original = client.apiCall;
   const wrapper = async function (this: any, ...args: any[]): Promise<any> {
     const proof = vertexTransport.getStore();
-    if (!proof || proof.client !== this) return original.apply(this, args);
+    if (!currentVertexProof(proof) || proof.generation !== generation || proof.client !== this) return original.apply(this, args);
     proof.calls++;
     // apiCall's sixth argument is the effective per-call/client fetch override.
     // A custom fetch may reroute or fabricate results even with a valid base URL.
@@ -64,7 +118,8 @@ function observeVertexTransport(client: any): boolean {
     // Without retry options, the pinned native apiCall performs exactly one
     // fetch. Configured retry policies remain usage-only without changing them.
     const eligible = args[1]?.method === "POST" && args[2] == null && args[5] == null && requestUrl !== undefined;
-    const response = await original.apply(this, args);
+    proof.requestUrl = requestUrl;
+    const response = await vertexNativeTransport.run(proof, () => original.apply(this, args));
     try {
       proof.verified = eligible && response instanceof Response && response.status === 200 &&
         response.redirected === false && vertexRequestUrl(response.url, proof) === requestUrl;
@@ -75,6 +130,7 @@ function observeVertexTransport(client: any): boolean {
   if (client.apiCall !== wrapper) return false;
   patches.push({ kind: "method", owner: client, name: "apiCall", original, inherited: true });
   vertexTransportObservers.set(client, wrapper);
+  observeVertexNativeTransport();
   return true;
 }
 
@@ -472,6 +528,7 @@ function patchDirect(
   if (!owner || typeof owner[name] !== "function") return;
   if (patches.some((item) => item.kind === "method" && item.owner === owner && item.name === name)) return;
   const original = owner[name] as (...args: any[]) => any;
+  const generation = vertexGeneration;
   owner[name] = function (this: any, ...args: any[]): any {
     const body = args[0] ?? {};
     let endpoint: unknown;
@@ -481,11 +538,12 @@ function patchDirect(
       hasPaidProviderBilling(this, "google", endpoint);
     const project = vertexProject(this, body, vertex);
     const proof: VertexTransportProof | undefined = project && spec.kind === "content" &&
-      observeVertexTransport(this?.apiClient) ? {
+      generation && generation === vertexGeneration && observeVertexTransport(this?.apiClient) ? {
         client: this.apiClient, project, stream: name.endsWith("Stream") || body?.stream === true,
-        calls: 0, verified: false,
+        calls: 0, verified: false, generation,
+        native: { requests: 0, writes: 0, headers: 0, eligible: true, complete: false, failed: false },
       } : undefined;
-    const verifiedProject = () => proof?.calls === 1 && proof.verified ? project : undefined;
+    const verifiedProject = () => verifiedVertexProof(proof) ? project : undefined;
     const operation = `google.genai.${ownerName}.${name}`.toLowerCase();
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: operation, provider: "google", service: service(vertex), operation,
@@ -709,6 +767,7 @@ export async function instrumentGoogleGenAI(pricing: PricingEngine, buffer: Even
   if (!mod) {
     mod = await import("@google/genai");
   }
+  vertexGeneration = {};
   discover(mod, pricing, buffer);
   if (!patches.some((item) => item.kind === "method")) {
     uninstrumentGoogleGenAI();
@@ -721,6 +780,10 @@ export async function instrumentGoogleGenAI(pricing: PricingEngine, buffer: Even
 }
 
 export function uninstrumentGoogleGenAI(): void {
+  // Invalidate in-flight unary calls and lazy streams before removing observers.
+  vertexGeneration = undefined;
+  for (const { name, listener } of vertexNativeSubscriptions.splice(0)) channel(name).unsubscribe(listener);
+  vertexNativeRequests = new WeakMap();
   for (const item of patches.splice(0).reverse()) {
     if (item.kind === "method") {
       if (item.inherited) delete item.owner[item.name];

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+from functools import partial
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -453,6 +454,7 @@ class _VertexTransportEvidence:
     client: Any
     project: str
     url: str
+    generation: object
     sends: int = 0
     attempts: int = 0
     response: Any = None
@@ -477,7 +479,14 @@ class _VertexTransportEvidence:
             self.invalid = True
 
     def admitted_project(self) -> str | None:
-        return self.project if self.verified and not self.invalid else None
+        return (
+            self.project
+            if _vertex_transport_generation is not None
+            and self.generation is _vertex_transport_generation
+            and self.verified
+            and not self.invalid
+            else None
+        )
 
 
 _vertex_transport_context: ContextVar[_VertexTransportEvidence | None] = ContextVar(
@@ -498,7 +507,8 @@ def _vertex_transport_evidence(
     instance: object, project: str | None, *, asynchronous: bool, stream: bool = False
 ) -> _VertexTransportEvidence | None:
     """Admit only observable native HTTPX I/O; custom/aiohttp transports stay unpriced."""
-    if project is None:
+    generation = _vertex_transport_generation
+    if project is None or generation is None:
         return None
     try:
         import httpx
@@ -564,7 +574,7 @@ def _vertex_transport_evidence(
             f"https://aiplatform.googleapis.com/{version}/projects/{project}/locations/global/"
             f"publishers/google/models/gemini-3.5-flash-lite:{operation}"
         )
-        return _VertexTransportEvidence(client, project, url)
+        return _VertexTransportEvidence(client, project, url, generation)
     except Exception:
         return None
 
@@ -580,7 +590,11 @@ def _vertex_http_observer(*, asynchronous: bool, transport: bool) -> Callable[..
             if generation is not None and generation is _vertex_transport_generation
             else None
         )
-        if evidence is not None and (transport or instance is evidence.client):
+        if (
+            evidence is not None
+            and evidence.generation is generation
+            and (transport or instance is evidence.client)
+        ):
             try:
                 request = args[0] if args else kwargs["request"]
                 if transport:
@@ -1667,13 +1681,18 @@ def _sync_direct_call(
     component: str,
     event_type: str,
     extract: MeasurementExtractor,
+    vertex_generation: object | None = None,
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
     vertex_project = _vertex_project(instance, kwargs)
-    vertex_evidence = _vertex_transport_evidence(instance, vertex_project, asynchronous=False)
+    vertex_evidence = (
+        _vertex_transport_evidence(instance, vertex_project, asynchronous=False)
+        if vertex_generation is _vertex_transport_generation
+        else None
+    )
     session = _session(
         instance,
         operation=operation,
@@ -1723,6 +1742,7 @@ def _async_direct_call(
     component: str,
     event_type: str,
     extract: MeasurementExtractor,
+    vertex_generation: object | None = None,
 ) -> Any:
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
@@ -1730,7 +1750,11 @@ def _async_direct_call(
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
         vertex_project = _vertex_project(instance, kwargs)
-        vertex_evidence = _vertex_transport_evidence(instance, vertex_project, asynchronous=True)
+        vertex_evidence = (
+            _vertex_transport_evidence(instance, vertex_project, asynchronous=True)
+            if vertex_generation is _vertex_transport_generation
+            else None
+        )
         session = _session(
             instance,
             operation=operation,
@@ -1850,14 +1874,18 @@ def _sync_stream_call(
     instance: object,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
+    *,
+    vertex_generation: object | None = None,
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
     vertex_project = _vertex_project(instance, kwargs)
-    vertex_evidence = _vertex_transport_evidence(
-        instance, vertex_project, asynchronous=False, stream=True
+    vertex_evidence = (
+        _vertex_transport_evidence(instance, vertex_project, asynchronous=False, stream=True)
+        if vertex_generation is _vertex_transport_generation
+        else None
     )
     session = _session(
         instance,
@@ -1898,6 +1926,8 @@ def _async_stream_call(
     instance: object,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
+    *,
+    vertex_generation: object | None = None,
 ) -> Any:
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
@@ -1905,8 +1935,10 @@ def _async_stream_call(
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
         vertex_project = _vertex_project(instance, kwargs)
-        vertex_evidence = _vertex_transport_evidence(
-            instance, vertex_project, asynchronous=True, stream=True
+        vertex_evidence = (
+            _vertex_transport_evidence(instance, vertex_project, asynchronous=True, stream=True)
+            if vertex_generation is _vertex_transport_generation
+            else None
         )
         session = _session(
             instance,
@@ -2548,6 +2580,8 @@ def _image_extract(operation: str) -> MeasurementExtractor:
 def _sync_direct_wrapper(
     operation: str, *, event_type: str, extract: MeasurementExtractor
 ) -> Callable[..., Any]:
+    generation = _vertex_transport_generation
+
     def wrapper(
         wrapped: Any,
         instance: object,
@@ -2563,6 +2597,7 @@ def _sync_direct_wrapper(
             component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
+            vertex_generation=generation,
         )
 
     return wrapper
@@ -2571,6 +2606,8 @@ def _sync_direct_wrapper(
 def _async_direct_wrapper(
     operation: str, *, event_type: str, extract: MeasurementExtractor
 ) -> Callable[..., Any]:
+    generation = _vertex_transport_generation
+
     def wrapper(
         wrapped: Any,
         instance: object,
@@ -2586,6 +2623,7 @@ def _async_direct_wrapper(
             component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
+            vertex_generation=generation,
         )
 
     return wrapper
@@ -2856,7 +2894,10 @@ def instrument_gemini(tracker: Any) -> None:
                     key,
                     provider_capture_wrapper(
                         "google_genai",
-                        _async_stream_call if async_owner else _sync_stream_call,
+                        partial(
+                            _async_stream_call if async_owner else _sync_stream_call,
+                            vertex_generation=_vertex_transport_generation,
+                        ),
                     ),
                 )
         _patch_interactions()
