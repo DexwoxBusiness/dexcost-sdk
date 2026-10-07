@@ -204,7 +204,8 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     const route = providerForResource(self, requestedModel);
     if (!responsesApi && (body?.tools != null || body?.functions != null ||
         body?.audio != null || (body?.modalities != null &&
-          (!Array.isArray(body.modalities) || body.modalities.length !== 1 || body.modalities[0] !== "text")))) {
+          (!Array.isArray(body.modalities) || body.modalities.length !== 1 || body.modalities[0] !== "text")) ||
+        body?.extra_body != null || options?.body !== undefined || !chatMessagesTextOnly(body?.messages))) {
       route.directOpenai = false;
     }
     const serviceTier = requestServiceTier(route, body);
@@ -287,6 +288,35 @@ export function uninstrumentOpenai(): void {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+function chatMessagesTextOnly(messages: unknown): boolean {
+  try {
+    if (!Array.isArray(messages) || messages.length === 0) return false;
+    for (const message of messages) {
+      if (message == null || typeof message !== "object" || Array.isArray(message) ||
+          Object.keys(message).some(key => !["role", "content", "name"].includes(key)) ||
+          !["developer", "system", "user", "assistant"].includes(message.role) ||
+          ("name" in message && typeof message.name !== "string")) return false;
+      const content = message.content;
+      if (typeof content === "string") continue;
+      if (!Array.isArray(content) || content.length === 0) return false;
+      for (const part of content) {
+        if (part == null || typeof part !== "object" || Array.isArray(part) ||
+            Object.keys(part).some(key => !["type", "text", "prompt_cache_breakpoint"].includes(key)) ||
+            part.type !== "text" || typeof part.text !== "string") return false;
+        if ("prompt_cache_breakpoint" in part) {
+          const breakpoint = part.prompt_cache_breakpoint;
+          if (breakpoint == null || typeof breakpoint !== "object" || Array.isArray(breakpoint) ||
+              Object.keys(breakpoint).length !== 1 || breakpoint.mode !== "explicit") return false;
+        }
+      }
+    }
+    return true;
+  } catch {
+    // Telemetry must not replace native request validation or consume iterables.
+    return false;
+  }
+}
 
 interface RoutedIdentity {
   provider: string;

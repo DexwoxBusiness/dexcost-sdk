@@ -147,12 +147,50 @@ def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | N
     return "priority" if value == "priority" else "default"
 
 
+def _chat_messages_text_only(messages: Any) -> bool:
+    """Inspect concrete text messages without consuming caller-owned iterators."""
+    try:
+        if not isinstance(messages, (list, tuple)) or not messages:
+            return False
+        for message in messages:
+            if (
+                not isinstance(message, Mapping)
+                or set(message) - {"role", "content", "name"}
+                or message.get("role") not in {"developer", "system", "user", "assistant"}
+                or ("name" in message and not isinstance(message["name"], str))
+            ):
+                return False
+            content = message.get("content")
+            if isinstance(content, str):
+                continue
+            if not isinstance(content, (list, tuple)) or not content:
+                return False
+            for part in content:
+                if (
+                    not isinstance(part, Mapping)
+                    or set(part) - {"type", "text", "prompt_cache_breakpoint"}
+                    or part.get("type") != "text"
+                    or not isinstance(part.get("text"), str)
+                    or (
+                        "prompt_cache_breakpoint" in part
+                        and part["prompt_cache_breakpoint"] != {"mode": "explicit"}
+                    )
+                ):
+                    return False
+        return True
+    except Exception:
+        # Telemetry must not replace native request validation or mutate inputs.
+        return False
+
+
 def _request_service_tier(provider: str, kwargs: Mapping[str, Any], operation: str = "") -> object:
     """Retain only the request tier needed to select a verified pricing lane."""
     if provider == "openai" and _direct_openai_endpoint.get():
         if operation == "openai.chat" and (
             any(kwargs.get(key) is not None for key in ("tools", "functions", "audio"))
             or (kwargs.get("modalities") is not None and kwargs["modalities"] != ["text"])
+            or kwargs.get("extra_body") is not None
+            or not _chat_messages_text_only(kwargs.get("messages"))
         ):
             return None
         return "direct_openai"

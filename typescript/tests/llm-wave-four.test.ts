@@ -11,6 +11,7 @@ import { instrumentBedrock, uninstrumentBedrock, _setClientClass, _resetClientCl
 
 const require = createRequire(import.meta.url);
 const fixture = JSON.parse(readFileSync(new URL("../../tests/fixtures/llm-wave-four.json", import.meta.url), "utf8"));
+const messageCases = JSON.parse(readFileSync(new URL("../../tests/fixtures/openai-chat-message-admission.json", import.meta.url), "utf8")).cases;
 // Official openai7.30.0 requires Node22; core facade capture stays tested on20.
 const nativeOpenAiSupported = Number(process.versions.node.split(".")[0]) >= 22;
 let directory: string;
@@ -52,6 +53,10 @@ async function chat(testCase: any, stream: boolean, reason = "positive", native 
   if (reason === "audio") raw.usage.prompt_tokens_details.audio_tokens = 1;
   if (reason === "bool_audio") raw.usage.prompt_tokens_details.audio_tokens = false;
   if (reason === "tools") request.tools = [];
+  if (reason === "extra_body") request.extra_body = { messages: messageCases[3].messages };
+  const options = reason === "body_override" ? { body: { ...request, messages: messageCases[3].messages } } : undefined;
+  const originalRequest = structuredClone(request);
+  const originalOptions = structuredClone(options);
   if (reason === "missing_model") delete raw.model;
   if (reason === "missing_id") delete raw.id;
   if (reason === "unfinished") raw.choices[0].finish_reason = null;
@@ -64,8 +69,9 @@ async function chat(testCase: any, stream: boolean, reason = "positive", native 
   if (native) {
     const { default: OpenAI } = await import("openai");
     client = new OpenAI({ apiKey: "fixture", maxRetries: 0, baseURL,
-    fetch: async (url: any) => {
+    fetch: async (url: any, init: any) => {
       calls++; expect(new URL(String(url)).pathname).toBe("/v1/chat/completions");
+      expect(JSON.parse(init.body).messages).toEqual(options?.body.messages ?? request.messages);
       if (reason === "failed") return new Response('{"error":{"message":"fixture"}}', { status: 500, headers: { "content-type": "application/json" } });
       return new Response(stream ? chunks.map(c => "data: " + JSON.stringify(c) + "\n\n").join("") + "data: [DONE]\n\n" : JSON.stringify(raw), {
         headers: { "content-type": stream ? "text/event-stream" : "application/json" },
@@ -75,7 +81,8 @@ async function chat(testCase: any, stream: boolean, reason = "positive", native 
   } else {
     class Chat {
       _client = { baseURL };
-      async create(_request: any): Promise<any> {
+      async create(_request: any, _options: any): Promise<any> {
+        expect(_request).toBe(request); expect(_options).toBe(options);
         calls++;
         if (reason === "failed") throw new Error("fixture");
         return stream ? (async function* () { yield* chunks; })() : raw;
@@ -86,7 +93,7 @@ async function chat(testCase: any, stream: boolean, reason = "positive", native 
     client = { chat: { completions: new Chat() } };
   }
   await instrumentOpenai(setup(), buffer);
-  const promise = client.chat.completions.create(request);
+  const promise = client.chat.completions.create(request, options);
   if (native) expect(typeof promise.withResponse).toBe("function");
   if (reason === "failed") await expect(promise).rejects.toThrow();
   else {
@@ -95,20 +102,49 @@ async function chat(testCase: any, stream: boolean, reason = "positive", native 
     else expect(result.choices[0].message.content).toBe("fixture");
   }
   expect(calls).toBe(1);
+  expect(request).toEqual(originalRequest); expect(options).toEqual(originalOptions);
   return observed();
 }
 for (const native of [false, true]) describe.skipIf(native && !nativeOpenAiSupported)(`${native ? "native openai7.30" : "paired facade"} Chat Completions -> v3 -> exact shared server vectors`, () => {
   for (const stream of [false, true]) {
+    it.each(messageCases)("text-only message admission $id stream=" + stream, async messageCase => {
+      const testCase = structuredClone(fixture.cases[0]);
+      testCase.request.messages = structuredClone(messageCase.messages);
+      expect(lane(await chat(testCase, stream, "positive", native))).toBe(messageCase.admitted ? testCase.lane : undefined);
+    });
+    it("preserves native failure for nontext messages stream=" + stream, async () => {
+      const testCase = structuredClone(fixture.cases[0]);
+      testCase.request.messages = structuredClone(messageCases[3].messages);
+      expect(lane(await chat(testCase, stream, "failed", native))).toBeUndefined();
+    });
     it.each(fixture.cases.filter((c: any) => c.provider === "openai"))("captures $id stream=" + stream, async testCase => {
       assertVector(await chat(testCase, stream, "positive", native), testCase);
     });
-    it.each(["missing_usage", "missing_input", "wrong_total", "tier", "missing_tier", "cache_overlap", "reasoning_overlap", "malformed_details", "audio", "bool_audio", "tools", "missing_model", "missing_id", "unfinished", "gateway", "regional", "failed"])("fails open %s stream=" + stream, async reason => {
+    it.each(["missing_usage", "missing_input", "wrong_total", "tier", "missing_tier", "cache_overlap", "reasoning_overlap", "malformed_details", "audio", "bool_audio", "tools", "extra_body", "body_override", "missing_model", "missing_id", "unfinished", "gateway", "regional", "failed"])("fails open %s stream=" + stream, async reason => {
       expect(lane(await chat(fixture.cases[0], stream, reason, native))).toBeUndefined();
     });
   }
   it("does not price cancelled stream before final usage", async () => {
     expect(lane(await chat(fixture.cases[0], true, "cancelled", native))).toBeUndefined();
   });
+});
+
+it.each(["messages", "content"])("does not consume caller-owned %s iterators", async field => {
+  const item = field === "messages" ? { role: "user", content: "fixture" } : { type: "text", text: "fixture" };
+  const iterator = (function* () { yield item; })();
+  const request = { model: fixture.cases[0].model, messages: field === "messages" ? iterator : [{ role: "user", content: iterator }] };
+  let calls = 0;
+  class Chat {
+    _client = { baseURL: "https://api.openai.com/v1" };
+    async create(body: any) { calls++; expect(body).toBe(request); return fixture.cases[0].response; }
+  }
+  class Responses { async create() { return {}; } }
+  _setCompletionsClass(Chat); _setResponsesClass(Responses);
+  await instrumentOpenai(setup(), buffer);
+  const response = await new Chat().create(request);
+  expect(response).toBe(fixture.cases[0].response);
+  expect(calls).toBe(1); expect(iterator.next()).toEqual({ value: item, done: false });
+  expect(lane(observed())).toBeUndefined();
 });
 
 async function claude(testCase: any, stream: boolean, reason = "positive") {

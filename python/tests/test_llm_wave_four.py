@@ -16,6 +16,9 @@ from dexcost.storage.sqlite import SQLiteStorage
 from dexcost.tracker import CostTracker
 
 FIXTURE = json.loads((Path(__file__).parents[2] / "tests/fixtures/llm-wave-four.json").read_text())
+MESSAGE_CASES = json.loads(
+    (Path(__file__).parents[2] / "tests/fixtures/openai-chat-message-admission.json").read_text()
+)["cases"]
 CHAT = [c for c in FIXTURE["cases"] if c["provider"] == "openai"]
 CLAUDE = [c for c in FIXTURE["cases"] if c["provider"] == "aws"]
 
@@ -80,6 +83,8 @@ def chat(tracker, case, stream, asynchronous, reason="positive"):
         raw["usage"]["prompt_tokens_details"]["audio_tokens"] = 1 if reason == "audio" else False
     if reason == "tools":
         request["tools"] = []
+    if reason == "body_override":
+        request["extra_body"] = {"messages": MESSAGE_CASES[3]["messages"]}
     if reason == "missing_model":
         del raw["model"]
     if reason == "missing_id":
@@ -99,6 +104,7 @@ def chat(tracker, case, stream, asynchronous, reason="positive"):
         final,
     ]
     requests = []
+    original_request = copy.deepcopy(request)
 
     def respond(http_request):
         requests.append(http_request)
@@ -164,6 +170,9 @@ def chat(tracker, case, stream, asynchronous, reason="positive"):
                     else:
                         assert result.choices[0].message.content == "fixture"
     assert len(requests) == 1
+    assert request == original_request
+    sent_messages = json.loads(requests[0].content)["messages"]
+    assert sent_messages == request.get("extra_body", {}).get("messages", request["messages"])
     events = tracker._storage.query_events(task_id=str(task.task_id))
     assert len(events) == 1
     return to_attribution_observation_v3(events[0])
@@ -174,6 +183,34 @@ def chat(tracker, case, stream, asynchronous, reason="positive"):
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_real_chat_shared_vector(case, stream, asynchronous, tracker):
     vector(chat(tracker, case, stream, asynchronous), case)
+
+
+@pytest.mark.parametrize("message_case", MESSAGE_CASES, ids=lambda c: c["id"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_chat_text_only_messages(message_case, stream, asynchronous, tracker):
+    case = copy.deepcopy(CHAT[0])
+    case["request"]["messages"] = copy.deepcopy(message_case["messages"])
+    event = chat(tracker, case, stream, asynchronous)
+    assert lane(event) == (case["lane"] if message_case["admitted"] else None)
+
+
+def test_chat_message_validation_does_not_consume_iterators():
+    messages = iter([{"role": "user", "content": "fixture"}])
+    assert not openai._chat_messages_text_only(messages)
+    assert list(messages) == [{"role": "user", "content": "fixture"}]
+    parts = iter([{"type": "text", "text": "fixture"}])
+    assert not openai._chat_messages_text_only([{"role": "user", "content": parts}])
+    assert list(parts) == [{"type": "text", "text": "fixture"}]
+    assert not openai._chat_messages_text_only(None)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_chat_nontext_preserves_native_failure(stream, asynchronous, tracker):
+    case = copy.deepcopy(CHAT[0])
+    case["request"]["messages"] = copy.deepcopy(MESSAGE_CASES[3]["messages"])
+    assert lane(chat(tracker, case, stream, asynchronous, "failed")) is None
 
 
 @pytest.mark.parametrize(
@@ -189,6 +226,7 @@ def test_real_chat_shared_vector(case, stream, asynchronous, tracker):
         "malformed_details",
         "audio",
         "tools",
+        "body_override",
         "missing_model",
         "missing_id",
         "unfinished",
