@@ -202,6 +202,11 @@ function patchCreate(prototype: any, taskType: string, responsesApi: boolean): v
     const startTime = performance.now();
     const self = this;
     const route = providerForResource(self, requestedModel);
+    if (!responsesApi && (body?.tools != null || body?.functions != null ||
+        body?.audio != null || (body?.modalities != null &&
+          (!Array.isArray(body.modalities) || body.modalities.length !== 1 || body.modalities[0] !== "text")))) {
+      route.directOpenai = false;
+    }
     const serviceTier = requestServiceTier(route, body);
     const capability = getCapability();
     const idempotencyKey = captureIdempotencyKey();
@@ -388,6 +393,26 @@ function recordEvent(
   );
 }
 
+/** A final Chat aggregate is required; requested tier/model are not billing evidence. */
+function directChatComplete(response: any): boolean {
+  const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const usage = response?.usage;
+  if (typeof response?.model !== "string" || !response.model ||
+      typeof response?.id !== "string" || !response.id || response.id.length > 256 ||
+      !count(usage?.prompt_tokens) || !count(usage?.completion_tokens) || !count(usage?.total_tokens) ||
+      usage.total_tokens !== usage.prompt_tokens + usage.completion_tokens) return false;
+  for (const details of [usage.prompt_tokens_details, usage.completion_tokens_details]) {
+    if (details != null && (typeof details !== "object" || Array.isArray(details))) return false;
+    if (details?.audio_tokens != null && details.audio_tokens !== 0) return false;
+  }
+  return Array.isArray(response.choices) && (
+    (response.object === "chat.completion.chunk" && response.choices.length === 0) ||
+    (response.object === "chat.completion" && response.choices.length > 0 && response.choices.every(
+      (choice: any) => ["stop", "length", "content_filter"].includes(choice?.finish_reason) &&
+        choice?.message?.tool_calls == null && choice?.message?.function_call == null))
+  );
+}
+
 function recordUsageEvent(
   task: Task,
   model: string,
@@ -428,6 +453,9 @@ function recordUsageEvent(
     attribution_resource_type: "model",
     attribution_resource_id: model,
   };
+  if (provider === "openai" && route.gateway === undefined && !responsesApi) {
+    details.attribution_provider_service = "chat";
+  }
 
   if (typeof providerRecordId === "string" && providerRecordId.length > 0) {
     details.provider_record_id = providerRecordId;
@@ -524,9 +552,10 @@ function recordUsageEvent(
     }
   }
   const directResponse = rawResponse as { service_tier?: unknown; status?: unknown } | undefined;
-  if (route.directOpenai === true && responsesApi && status === "succeeded" &&
+  if (route.directOpenai === true && status === "succeeded" &&
       rawUsage != null && details.openai_usage_error === undefined && inputTokens > 0 &&
-      directResponse?.service_tier === "default" && directResponse?.status === "completed") {
+      directResponse?.service_tier === "default" &&
+      (responsesApi ? directResponse?.status === "completed" : directChatComplete(rawResponse))) {
     details.attribution_dimensions = [{ key: "direct_llm_pricing_lane", value: {
       type: "string", value: inputTokens > 272_000 ? "standard_long" : "standard_short",
     } }];

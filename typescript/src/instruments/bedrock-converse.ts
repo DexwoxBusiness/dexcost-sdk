@@ -2,6 +2,11 @@ import type { OperationMeasurement } from "./provider-metering.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const NOVA_MODELS = new Set(["amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0", "amazon.nova-pro-v1:0"]);
+// Source region is us-east-1; these exact profiles route globally, not in-region.
+export const CLAUDE_GLOBAL_MODELS = new Set([
+  "global.anthropic.claude-sonnet-5-5",
+  "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+]);
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const textBlocks = (blocks: any): boolean => Array.isArray(blocks) && blocks.every((block) =>
   block && Object.keys(block).length === 1 && typeof block.text === "string");
@@ -20,7 +25,7 @@ export async function novaRequestEligible(client: any, input: any): Promise<bool
 }
 
 export function novaInputEligible(input: any): boolean {
-  return NOVA_MODELS.has(input?.modelId) &&
+  return (NOVA_MODELS.has(input?.modelId) || CLAUDE_GLOBAL_MODELS.has(input?.modelId)) &&
     (input.serviceTier == null || input.serviceTier.type === "default") &&
     (input.performanceConfig == null || input.performanceConfig.latency === "standard") &&
     input.guardrailConfig == null && input.additionalModelRequestFields == null &&
@@ -50,7 +55,8 @@ export function novaMeasurement(input: any, response: any, eligible: boolean): O
     providerRecordId: recordId,
     providerRegion: eligible ? "us-east-1" : undefined,
     inputTokens: valid ? usage.inputTokens : undefined, outputTokens: valid ? usage.outputTokens : undefined,
-    billingDimensions: priced ? [["bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"]] : [],
+    billingDimensions: priced ? [["bedrock_pricing_lane", CLAUDE_GLOBAL_MODELS.has(input?.modelId)
+      ? "us_east_1_claude_global_standard_no_cache" : "us_east_1_nova_standard_no_cache"]] : [],
   };
 }
 

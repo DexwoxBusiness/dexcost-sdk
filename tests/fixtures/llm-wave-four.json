@@ -1,0 +1,560 @@
+{
+  "verified_at": "2026-10-07",
+  "basis": "Public standard marginal gross USD; not invoice cash. Native SDK shapes, mocked I/O.",
+  "cases": [
+    {
+      "id": "gpt-6-astra-standard_short",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6-astra",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_short",
+      "request": {
+        "model": "gpt-6-astra",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6-astra-standard_short",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6-astra",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272000,
+          "completion_tokens": 5000,
+          "total_tokens": 277000,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269000",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "2.9545"
+    },
+    {
+      "id": "gpt-6-astra-standard_long",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6-astra",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_long",
+      "request": {
+        "model": "gpt-6-astra",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6-astra-standard_long",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6-astra",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272001,
+          "completion_tokens": 5000,
+          "total_tokens": 277001,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269001",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "5.78402"
+    },
+    {
+      "id": "gpt-6.1-sol-standard_short",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6.1-sol",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_short",
+      "request": {
+        "model": "gpt-6.1-sol",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6.1-sol-standard_short",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6.1-sol",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272000,
+          "completion_tokens": 5000,
+          "total_tokens": 277000,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269000",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "0.5907"
+    },
+    {
+      "id": "gpt-6.1-sol-standard_long",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6.1-sol",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_long",
+      "request": {
+        "model": "gpt-6.1-sol",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6.1-sol-standard_long",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6.1-sol",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272001,
+          "completion_tokens": 5000,
+          "total_tokens": 277001,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269001",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "1.156404"
+    },
+    {
+      "id": "gpt-6-luna-standard_short",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6-luna",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_short",
+      "request": {
+        "model": "gpt-6-luna",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6-luna-standard_short",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6-luna",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272000,
+          "completion_tokens": 5000,
+          "total_tokens": 277000,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269000",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "0.029545"
+    },
+    {
+      "id": "gpt-6-luna-standard_long",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-6-luna",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_long",
+      "request": {
+        "model": "gpt-6-luna",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-6-luna-standard_long",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-6-luna",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272001,
+          "completion_tokens": 5000,
+          "total_tokens": 277001,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269001",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "0.0578402"
+    },
+    {
+      "id": "gpt-5.6-luna-standard_short",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-5.6-luna",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_short",
+      "request": {
+        "model": "gpt-5.6-luna",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-5.6-luna-standard_short",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-5.6-luna",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272000,
+          "completion_tokens": 5000,
+          "total_tokens": 277000,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269000",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "0.06009"
+    },
+    {
+      "id": "gpt-5.6-luna-standard_long",
+      "provider": "openai",
+      "service": "chat",
+      "model": "gpt-5.6-luna",
+      "endpoint": "https://api.openai.com/v1",
+      "lane": "standard_long",
+      "request": {
+        "model": "gpt-5.6-luna",
+        "messages": [
+          {
+            "role": "user",
+            "content": "fixture"
+          }
+        ]
+      },
+      "response": {
+        "id": "chatcmpl-gpt-5.6-luna-standard_long",
+        "object": "chat.completion",
+        "created": 1791331200,
+        "model": "gpt-5.6-luna",
+        "service_tier": "default",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "fixture"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 272001,
+          "completion_tokens": 5000,
+          "total_tokens": 277001,
+          "prompt_tokens_details": {
+            "cached_tokens": 2000,
+            "cache_write_tokens": 1000,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1000,
+            "audio_tokens": 0
+          }
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "269001",
+        "cache_read_input_tokens": "2000",
+        "cache_write_input_tokens": "1000",
+        "output_tokens": "4000",
+        "reasoning_output_tokens": "1000"
+      },
+      "expected_usd": "0.1171804"
+    },
+    {
+      "id": "global.anthropic.claude-sonnet-5-5",
+      "provider": "aws",
+      "service": "bedrock",
+      "model": "global.anthropic.claude-sonnet-5-5",
+      "region": "us-east-1",
+      "lane": "us_east_1_claude_global_standard_no_cache",
+      "request": {
+        "modelId": "global.anthropic.claude-sonnet-5-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "output": {
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        },
+        "usage": {
+          "inputTokens": 1000,
+          "outputTokens": 500,
+          "totalTokens": 1500
+        },
+        "stopReason": "end_turn",
+        "serviceTier": {
+          "type": "default"
+        },
+        "performanceConfig": {
+          "latency": "standard"
+        },
+        "metrics": {
+          "latencyMs": 1
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "500"
+      },
+      "expected_usd": "0.007"
+    },
+    {
+      "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "provider": "aws",
+      "service": "bedrock",
+      "model": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1",
+      "lane": "us_east_1_claude_global_standard_no_cache",
+      "request": {
+        "modelId": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "output": {
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "text": "fixture"
+              }
+            ]
+          }
+        },
+        "usage": {
+          "inputTokens": 1000,
+          "outputTokens": 500,
+          "totalTokens": 1500
+        },
+        "stopReason": "end_turn",
+        "serviceTier": {
+          "type": "default"
+        },
+        "performanceConfig": {
+          "latency": "standard"
+        },
+        "metrics": {
+          "latencyMs": 1
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "1000",
+        "output_tokens": "500"
+      },
+      "expected_usd": "0.0035"
+    }
+  ]
+}

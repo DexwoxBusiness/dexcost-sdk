@@ -147,9 +147,14 @@ def _fireworks_service_tier(provider: str, kwargs: Mapping[str, Any]) -> str | N
     return "priority" if value == "priority" else "default"
 
 
-def _request_service_tier(provider: str, kwargs: Mapping[str, Any]) -> object:
+def _request_service_tier(provider: str, kwargs: Mapping[str, Any], operation: str = "") -> object:
     """Retain only the request tier needed to select a verified pricing lane."""
     if provider == "openai" and _direct_openai_endpoint.get():
+        if operation == "openai.chat" and (
+            any(kwargs.get(key) is not None for key in ("tools", "functions", "audio"))
+            or (kwargs.get("modalities") is not None and kwargs["modalities"] != ["text"])
+        ):
+            return None
         return "direct_openai"
     if provider == "fireworks_ai":
         return _fireworks_service_tier(provider, kwargs)
@@ -952,7 +957,7 @@ def _sync_create_common(
                 capability,
                 idempotency_key,
                 task_type,
-                _request_service_tier(_current_provider(), kwargs),
+                _request_service_tier(_current_provider(), kwargs, task_type),
             )
 
         try:
@@ -981,7 +986,7 @@ def _sync_create_common(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=task_type,
-                service_tier=_request_service_tier(_current_provider(), kwargs),
+                service_tier=_request_service_tier(_current_provider(), kwargs, task_type),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -1133,7 +1138,7 @@ async def _async_non_stream_handler(
                 capability=capability,
                 idempotency_key=idempotency_key,
                 operation_name=operation_name,
-                service_tier=_request_service_tier(_current_provider(), kwargs),
+                service_tier=_request_service_tier(_current_provider(), kwargs, operation_name),
             )
         except Exception:
             _log.debug("dexcost: failed to record event", exc_info=True)
@@ -1195,7 +1200,7 @@ async def _async_stream_handler(
             capability,
             idempotency_key,
             operation_name,
-            _request_service_tier(_current_provider(), kwargs),
+            _request_service_tier(_current_provider(), kwargs, operation_name),
         )
     finally:
         if auto_token is not None:
@@ -1292,6 +1297,8 @@ class _SyncStreamWrapper(Iterator[Any]):
 
     def _process_chunk(self, chunk: Any) -> None:
         """Extract model and usage info from streaming chunks."""
+        if not self._responses_stream:
+            self._completed_response = chunk
         if self._responses_stream and getattr(chunk, "type", None) == "response.completed":
             response = getattr(chunk, "response", None)
             if response is not None:
@@ -1473,6 +1480,8 @@ class _AsyncStreamWrapper:
 
     def _process_chunk(self, chunk: Any) -> None:
         """Extract model and usage info from streaming chunks."""
+        if not self._responses_stream:
+            self._completed_response = chunk
         if self._responses_stream and getattr(chunk, "type", None) == "response.completed":
             response = getattr(chunk, "response", None)
             if response is not None:
@@ -2076,18 +2085,62 @@ def _direct_openai_lane(
     total_input: int,
     valid: bool,
 ) -> str | None:
-    """Only direct global Standard Responses are admitted to public gross pricing."""
+    """Only final direct global Standard aggregates admit public gross pricing."""
     if (
         valid
         and provider == "openai"
-        and operation == "openai.responses"
+        and operation in {"openai.responses", "openai.chat"}
         and route == "direct_openai"
         and total_input > 0
         and _value(response, "service_tier") == "default"
-        and _value(response, "status") == "completed"
+        and (
+            _value(response, "status") == "completed"
+            if operation == "openai.responses"
+            else _direct_chat_complete(response)
+        )
     ):
         return "standard_long" if total_input > 272_000 else "standard_short"
     return None
+
+
+def _direct_chat_complete(response: Any) -> bool:
+    usage = _value(response, "usage")
+    counts = [_value(usage, key) for key in ("prompt_tokens", "completion_tokens", "total_tokens")]
+    if not all(type(value) is int and 0 <= value <= 9007199254740991 for value in counts):
+        return False
+    if counts[2] != counts[0] + counts[1]:
+        return False
+    if not isinstance(_value(response, "model"), str) or not _value(response, "model"):
+        return False
+    record_id = _value(response, "id")
+    if not isinstance(record_id, str) or not 0 < len(record_id) <= 256:
+        return False
+    for key in ("prompt_tokens_details", "completion_tokens_details"):
+        details = _value(usage, key)
+        if (
+            details is not None
+            and not isinstance(details, Mapping)
+            and not hasattr(details, "__dict__")
+        ):
+            return False
+        audio = _value(details, "audio_tokens")
+        if audio is not None and (type(audio) is not int or audio != 0):
+            return False
+    choices = _value(response, "choices")
+    if not isinstance(choices, list):
+        return False
+    if _value(response, "object") == "chat.completion.chunk":
+        return not choices
+    return (
+        _value(response, "object") == "chat.completion"
+        and bool(choices)
+        and all(
+            _value(choice, "finish_reason") in {"stop", "length", "content_filter"}
+            and _value(_value(choice, "message"), "tool_calls") is None
+            and _value(_value(choice, "message"), "function_call") is None
+            for choice in choices
+        )
+    )
 
 
 def _insert_llm_event(
@@ -2155,6 +2208,8 @@ def _insert_llm_event(
         status=operation_status,
         record_id=record_id,
     )
+    if provider == "openai" and operation_name == "openai.chat":
+        details["attribution_provider_service"] = "chat"
     usage_lines: list[dict[str, str]] = []
     billable_input_tokens = max(0, input_tokens - cached_tokens - cache_write_tokens)
     visible_output_tokens = max(0, output_tokens - reasoning_tokens)

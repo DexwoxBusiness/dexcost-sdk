@@ -12,6 +12,12 @@ from dexcost.instruments._provider_metering import (
 )
 
 NOVA_MODELS = {"amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0", "amazon.nova-pro-v1:0"}
+# Source region is us-east-1; these exact profiles route globally, not in-region.
+CLAUDE_GLOBAL_MODELS = {
+    "global.anthropic.claude-sonnet-5-5",
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+}
+CONVERSE_MODELS = NOVA_MODELS | CLAUDE_GLOBAL_MODELS
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -36,7 +42,7 @@ def request_eligible(client: Any, body: dict[str, Any]) -> bool:
         getattr(getattr(client, "meta", None), "region_name", None) == "us-east-1"
         and getattr(getattr(client, "_endpoint", None), "host", None)
         == "https://bedrock-runtime.us-east-1.amazonaws.com"
-        and body.get("modelId") in NOVA_MODELS
+        and body.get("modelId") in CONVERSE_MODELS
         and (body.get("serviceTier") is None or body["serviceTier"].get("type") == "default")
         and (
             body.get("performanceConfig") is None
@@ -100,7 +106,14 @@ def measurement(body: dict[str, Any], response: Any, eligible: bool) -> Operatio
         provider_region="us-east-1" if eligible else None,
         task_input_tokens=usage.get("inputTokens") if valid else None,
         task_output_tokens=usage.get("outputTokens") if valid else None,
-        billing_dimensions=(("bedrock_pricing_lane", "us_east_1_nova_standard_no_cache"),)
+        billing_dimensions=(
+            (
+                "bedrock_pricing_lane",
+                "us_east_1_claude_global_standard_no_cache"
+                if body.get("modelId") in CLAUDE_GLOBAL_MODELS
+                else "us_east_1_nova_standard_no_cache",
+            ),
+        )
         if priced
         else (),
     )

@@ -22,6 +22,12 @@ import {
   uninstrumentLlamaParse,
   instrumentObjectStorage,
   uninstrumentObjectStorage,
+  cloudVectorResourceId,
+  instrumentQdrant,
+  uninstrumentQdrant,
+  instrumentZilliz,
+  uninstrumentZilliz,
+  type CloudVectorBinding,
   recordOutcome,
   recordRevenue,
   trackTool,
@@ -74,6 +80,26 @@ function checkWaveTwoNativeTypes(tracker: CostTracker): void {
   bindProviderBilling({}, { provider: "cohere", tier: "enterprise", endpoint: "https://api.cohere.com" });
 }
 void checkWaveTwoNativeTypes;
+
+function checkCloudVectorTypes(tracker: CostTracker): void {
+  const binding: CloudVectorBinding = {
+    billingAccountId: "account", region: "us-east-1", clusterHost: "cluster.cloud.qdrant.io",
+  };
+  const client = { query: async (_collection: string, _query: { limit: number }) => ({ points: [] as string[] }) };
+  const captured: typeof client = instrumentQdrant(client, tracker, binding);
+  const result: Promise<{ points: string[] }> = captured.query("example", { limit: 1 });
+  const zillizClient = { search: async (_request: { collection_name: string }) => ({ results: [] as string[] }) };
+  const capturedZilliz: typeof zillizClient = instrumentZilliz(zillizClient, tracker, {
+    ...binding, clusterHost: "cluster.serverless.us-east-1.vectordb.zillizcloud.com",
+  });
+  const search: Promise<{ results: string[] }> = capturedZilliz.search({ collection_name: "example" });
+  const identity: string = cloudVectorResourceId("qdrant_cloud", binding.billingAccountId, binding.region, binding.clusterHost);
+  void result; void search; void identity;
+  uninstrumentQdrant(captured); uninstrumentZilliz(capturedZilliz);
+  // @ts-expect-error provider is a bounded hosted vector provider, not an arbitrary service
+  cloudVectorResourceId("unverified", binding.billingAccountId, binding.region, binding.clusterHost);
+}
+void checkCloudVectorTypes;
 import {
   createExpressMiddleware,
   dexcostFastifyPlugin,

@@ -1241,6 +1241,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.cloud_vector",
+      "name": "cloud_vector_resource_id",
+      "signature": "(provider: 'Provider', billing_account_id: 'str', region: 'str', cluster_host: 'str') -> 'str'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.database",
       "name": "database_resource_id",
       "signature": "(billing_account_id: 'str', resource_id: 'str') -> 'str'"
@@ -1457,6 +1463,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.cloud_vector",
+      "name": "instrument_qdrant",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', cluster_host: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.database",
       "name": "instrument_redis_client",
       "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', resource_id: 'str') -> 'Any'"
@@ -1472,6 +1484,12 @@
       "module": "dexcost.instruments.vector_database",
       "name": "instrument_turbopuffer",
       "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', namespace: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.cloud_vector",
+      "name": "instrument_zilliz",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', cluster_host: 'str') -> 'Any'"
     },
     {
       "kind": "function",
@@ -1757,6 +1775,12 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.cloud_vector",
+      "name": "uninstrument_qdrant",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.database",
       "name": "uninstrument_redis_client",
       "signature": "(client: 'Any') -> 'None'"
@@ -1771,6 +1795,12 @@
       "kind": "function",
       "module": "dexcost.instruments.vector_database",
       "name": "uninstrument_turbopuffer",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.cloud_vector",
+      "name": "uninstrument_zilliz",
       "signature": "(client: 'Any') -> 'None'"
     },
     {

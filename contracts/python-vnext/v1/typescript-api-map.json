@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 209,
-  "typescript_export_count": 378,
-  "equivalent_count": 206,
+  "python_export_count": 214,
+  "typescript_export_count": 384,
+  "equivalent_count": 211,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -1024,6 +1024,15 @@
       "notes": null
     },
     {
+      "python_name": "cloud_vector_resource_id",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "cloudVectorResourceId"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "database_resource_id",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1348,6 +1357,15 @@
       "notes": null
     },
     {
+      "python_name": "instrument_qdrant",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentQdrant"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "instrument_redis_client",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1371,6 +1389,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "instrumentTurbopuffer"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "instrument_zilliz",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentZilliz"
       ],
       "notes": null
     },
@@ -1794,6 +1821,15 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_qdrant",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentQdrant"
+      ],
+      "notes": null
+    },
+    {
       "python_name": "uninstrument_redis_client",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1817,6 +1853,15 @@
       "classification": "equivalent",
       "typescript_exports": [
         "uninstrumentTurbopuffer"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_zilliz",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentZilliz"
       ],
       "notes": null
     },
