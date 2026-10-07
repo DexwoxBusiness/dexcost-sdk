@@ -1,8 +1,8 @@
 {
   "_meta": {
     "version": "3.0.2",
-    "last_updated": "2026-10-04",
-    "service_count": 63,
+    "last_updated": "2026-10-08",
+    "service_count": 60,
     "description": "Dexcost Service Catalog — per-request pricing for non-LLM services commonly used by AI agents. Community-maintained, open-source. Submit PRs to add new services.",
     "how_cost_is_extracted": {
       "response_body": "Read a field from the JSON response body (e.g. credits_used)",
@@ -10,8 +10,8 @@
       "endpoint_match": "Fixed cost per request, matched by URL path",
       "fixed": "Fixed cost per request regardless of endpoint"
     },
-    "disabled_service_count": 104,
-    "safety_policy_version": "2026-10-04.1"
+    "disabled_service_count": 107,
+    "safety_policy_version": "2026-10-08.1"
   },
   "tavily_search": {
     "display_name": "Tavily Search",
@@ -550,36 +550,6 @@
     "source": "https://novu.co/pricing/",
     "last_verified": "2026-05-11"
   },
-  "upstash_redis": {
-    "display_name": "Upstash Redis",
-    "domains": [
-      "*.upstash.io"
-    ],
-    "category": "database",
-    "pricing_model": "per_command",
-    "cost_per_request_usd": "0.000002",
-    "note": "PAYG: $0.20/100K commands = $0.000002/command. Free: 500K commands/mo.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://upstash.com/pricing/redis",
-    "last_verified": "2026-05-11"
-  },
-  "upstash_kafka": {
-    "display_name": "Upstash Kafka",
-    "domains": [
-      "*.upstash.io"
-    ],
-    "category": "database",
-    "pricing_model": "per_message",
-    "cost_per_request_usd": "0.00006",
-    "note": "PAYG: $0.60/100K messages. Free: 10K messages/day.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://upstash.com/pricing/kafka",
-    "last_verified": "2026-05-11"
-  },
   "cloudinary": {
     "display_name": "Cloudinary",
     "domains": [
@@ -828,21 +798,6 @@
       "type": "endpoint_match"
     },
     "source": "https://developers.google.com/custom-search/v1/overview",
-    "last_verified": "2026-05-11"
-  },
-  "you_search": {
-    "display_name": "You.com Search API",
-    "domains": [
-      "api.ydc-index.io"
-    ],
-    "category": "search",
-    "pricing_model": "per_request",
-    "cost_per_request_usd": "0.005",
-    "note": "Web Search: $0.005/req. News: $0.005/req. RAG: $0.005/req. Free tier available.",
-    "cost_extraction": {
-      "type": "fixed"
-    },
-    "source": "https://api.you.com/pricing",
     "last_verified": "2026-05-11"
   },
   "cloudflare_workers": {

@@ -1,0 +1,73 @@
+{
+  "version": "2026-10-08.1",
+  "verified_at": "2026-10-07T19:01:21Z",
+  "local_verification_date": "2026-10-08 (Asia/Calcutta)",
+  "coverage": {
+    "provider": "google",
+    "service": "vertex_ai",
+    "model": "gemini-3.5-flash-lite",
+    "provider_region": "global",
+    "route": "https://aiplatform.googleapis.com/{v1|v1beta1}/projects/{project}/locations/global/publishers/google/models/gemini-3.5-flash-lite:{generateContent|streamGenerateContent}",
+    "captured_methods": [
+      "Python google.genai Models/AsyncModels generate_content and generate_content_stream",
+      "TypeScript @google/genai exact native client models.generateContent/generateContentStream"
+    ],
+    "new_rules": 4,
+    "provider_model_pair_count_gain": 0,
+    "note": "New canonical Vertex route for an already cataloged Google/model pair; not a new provider or model count."
+  },
+  "prices": {
+    "basis": "USD per 1,000,000 tokens, standard model global public marginal gross. Not invoice cash or net spend.",
+    "input": "0.30",
+    "cache_read_input": "0.03",
+    "output": "2.50",
+    "reasoning_output": "2.50",
+    "context": "Same published rates for <=200K and >200K input. Prompt includes cached tokens; subtract cache reads once. Candidate output and thought counts are disjoint."
+  },
+  "sources": [
+    {
+      "url": "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+      "verification": "Rendered by root browser on local 2026-10-08: Standard Model, discounts OFF, Global Gemini 3.5 Flash-Lite row and both context bands. Numeric rates directly verified.",
+      "supports": "Standard global rates; only successful 200 requests charged; non-global routing has a 10% uplift. Advertised 3.8 Flash promotion has net-credit conditions and is excluded."
+    },
+    {
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite",
+      "verification": "Official model documentation read",
+      "supports": "Exact model ID, global endpoint availability, text output and PAYG/provisioned support; model name alone does not prove PAYG."
+    },
+    {
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/GenerateContentResponse",
+      "verification": "Official API response schema read",
+      "supports": "trafficType ON_DEMAND identifies standard pay-as-you-go; PROVISIONED_THROUGHPUT/ON_DEMAND_PRIORITY/ON_DEMAND_FLEX excluded. Explicit prompt/cache/candidate/thought/total counts and modality details."
+    },
+    {
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.publishers.models/streamGenerateContent",
+      "verification": "Official streaming endpoint schema read",
+      "supports": "Project/location/publisher/model resource route and cumulative response usage."
+    }
+  ],
+  "admission": [
+    "Snapshot the eligible native client project/global endpoint before invoking the provider method, then require call-local transport evidence: exact dispatched request and final response URL, successful HTTP status, and no redirects. Configuration alone is not route proof; unavailable evidence stays unpriced.",
+    "TypeScript additionally requires fresh call-local native Undici request, wire-send, successful response and body-completion evidence. A replaced global fetch returning cached, fabricated or recovered responses without that evidence cannot establish the admitted lane; runtimes without the native diagnostics remain unpriced. Custom TypeScript httpOptions.fetch, configured TypeScript retryOptions, and unsupported Python HTTP clients/transports remain excluded. Python transport evidence currently covers native HTTPX only; optional aiohttp and mTLS Google-auth session paths remain unpriced. Transport observation preserves native options, results, errors and streaming behavior; it does not rewrite routing/retries or consume response bodies.",
+    "Transport proofs and captured public-method wrappers belong to one instrumentation installation. Both observation and final pricing admission require the same still-active installation. Streams retained across uninstall/reinstall can finish with usage-only observations in their original tracker, never with a stale priced lane or new-tracker ownership. Retained Python methods invoked after reinstall keep their established current-tracker usage ownership but cannot acquire a new installation's pricing proof.",
+    "Successful native completion only, response trafficType exactly ON_DEMAND; response exact modelVersion and nonblank responseId required.",
+    "All five prompt/cache/candidate/thought/total counters must be explicitly present nonnegative safe integers; unknown optional counters are NOT synthesized as zero for admission. This intentionally leaves incomplete native responses unpriced.",
+    "total == prompt + candidates + thoughts, cache <= prompt, no tool-use tokens. Positive prompt/cache/candidate counters require matching TEXT-only modality totals.",
+    "Request contents and optional system instruction are bounded concrete text shapes; no one-shot iterable consumption. Tool/media/explicit-cache/unknown configs, HTTP/body/resource-scope/auth-header overrides and cross-project model paths unpriced.",
+    "Finish reason STOP/MAX_TOKENS, exactly one text candidate; grounding and URL tools excluded. Streams use last cumulative usage snapshot only, and incomplete/error/cancelled streams cannot receive succeeded pricing.",
+    "Usage dimensions include cloud_project and vertex_pricing_lane=global_standard_paygo_text; provider.region=global is an independent server selector."
+  ],
+  "excluded": [
+    "Regional endpoints/uplifts, Express mode/API-key-only routes without verified project, gateways/Mantle/other providers, other models or aliases",
+    "Provisioned throughput, priority, flex, batch, context-cache creation/storage, search/tools/grounding, media and unknown modalities",
+    "Promotional credits, negotiated rates, reservations/commitments, invoice cash/net spend, taxes or account-level fees",
+    "Gemini 3.8 Flash promotion: current .75/.075/3.75 table footnote is 50% credits back on NET spend, not safe unconditional public gross; Jan1 2027 standard tariff is not effective now"
+  ],
+  "verification": {
+    "python_native": "google-genai 1.73.1, real Models/AsyncModels and typed native response parser with native HTTPX transport I/O mocked and anonymous test credentials; unsupported custom transports are negative cases",
+    "typescript_native": "@google/genai 2.27.0, real GoogleGenAI/Models with anonymous test auth and native Node fetch connected to a loopback-only HTTP fixture through a pinned test-only Undici dispatcher. Positive cases exercise real native diagnostics; fabricated/cached global fetch and custom client fetch are negative cases. No provider network requests are made.",
+    "money": "Identical SDK/server JSON vectors link raw provider-shaped response through v3 identity, disjoint metric quantities and dimensions to exact server scaled-BigInt USD totals and replay checks.",
+    "boundary": "Observed native transport routing/status and normalized response usage are independent admission requirements. Python Pydantic may coerce raw JSON scalar types; raw-helper boolean rejection is tested without falsely claiming pre-parser raw-wire scalar validation. Arbitrary hostile code that forges native transport metadata is outside this in-process observer's trust boundary.",
+    "no_paid_requests": true
+  }
+}

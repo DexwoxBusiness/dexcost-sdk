@@ -180,5 +180,6 @@ describe("CLI: rates command", () => {
     // Verify the exported file can be re-imported
     const reImportOutput = runCli(["rates", "--import", exportFile, "--list"]);
     expect(reImportOutput).toContain("sendgrid_email");
-  });
+    // Two cold CLI processes can exceed the default 5s under parallel CI load.
+  }, 15_000);
 });

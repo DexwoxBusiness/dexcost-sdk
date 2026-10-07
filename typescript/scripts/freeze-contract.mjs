@@ -54,6 +54,7 @@ const overrides = new Map(Object.entries({
   uninstrument_llamaparse: ["uninstrumentLlamaParse"],
   mongodb_command_listener: ["instrumentMongoClient"],
   instrument_gemini: ["instrumentGoogleGenAI"],
+  instrument_you_search: ["createYouSearchFetch"],
   instrument_openai: ["instrumentOpenAI"],
   instrument_openrouter: ["instrumentOpenRouter"],
   uninstrument_litellm: ["uninstrumentLiteLLM"],
@@ -63,6 +64,9 @@ const overrides = new Map(Object.entries({
 }));
 
 const equivalenceNotes = new Map(Object.entries({
+  instrument_you_search: "Python instruments a youdotcom client instance; TypeScript wraps the application fetch function because the provider's TypeScript SDK is deprecated. Both require a paid direct Search binding and a successful provider search UUID, and capture the same base-search meter without add-on prices.",
+  uninstrument_you_search: "Python accepts the returned capture facade; TypeScript accepts the wrapped fetch function. Both stop capture without closing application-owned clients or transports.",
+  instrument_upstash_redis: "Both languages wrap an explicitly bound single-region PAYG REST client, with retries and automatic pipelining disabled by the caller. Supported successful commands are allocation weights, never request-local money.",
   uninstrument_e2b_sandbox: "Python accepts the returned sandbox facade; TypeScript accepts the capture handle. Both stop capture idempotently without terminating provider resources.",
   instrument_e2b_sandbox: "Python returns a stoppable sandbox facade; TypeScript returns {sandbox, close}. Both capture completed commands/run-code as observed task weights, never provider-billed runtime. Lifecycle methods pass through; wrap any new sandbox returned by connect separately.",
   mongodb_command_listener: "Python supplies a PyMongo CommandListener at client construction; TypeScript attaches listeners to a monitorCommands-enabled MongoClient. Both return a per-resource stoppable capture, not a global monkey patch.",

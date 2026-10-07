@@ -84,7 +84,7 @@ function release(sequence: number, expires = "2035-01-01T00:00:00Z") {
     channel: "stable",
     published_at: "2026-01-01T00:00:00Z",
     expires_at: expires,
-    safety_policy_version: "2026-10-03.2",
+    safety_policy_version: "2026-10-08.1",
     sdk_contract: { min: 1, max: 1 },
     server_pricing_reference: { catalog_version: "server-v1", activation_id: "10" },
     artifacts: descriptors,
