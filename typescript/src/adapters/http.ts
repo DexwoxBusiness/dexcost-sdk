@@ -1796,11 +1796,25 @@ function _wrapResponseForByteCounting(
     },
   }, { highWaterMark: 0 });
 
-  return new Response(earlyAbortWrapper, {
+  const wrapped = new Response(earlyAbortWrapper, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
   });
+  // A constructed Response has an empty URL and redirected=false regardless
+  // of the actual transport. Preserve route evidence for native integrations
+  // (and their clones), rather than accidentally making redirects look direct.
+  const preserveMetadata = (target: Response): Response => {
+    const clone = target.clone.bind(target);
+    Object.defineProperties(target, {
+      url: { value: response.url },
+      redirected: { value: response.redirected },
+      type: { value: response.type },
+      clone: { value: () => preserveMetadata(clone()) },
+    });
+    return target;
+  };
+  return preserveMetadata(wrapped);
 }
 
 function _requestModel(ctx: _HttpCallContext): string | undefined {

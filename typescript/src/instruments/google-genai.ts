@@ -87,6 +87,76 @@ function contentMeasurement(response: any, body: any, vertex: boolean): Operatio
   };
 }
 
+function vertexText(value: any, depth = 0): boolean {
+  if (depth > 4) return false;
+  if (typeof value === "string") return true;
+  if (Array.isArray(value)) return value.length > 0 && value.every(item => vertexText(item, depth + 1));
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  const keys = Object.keys(value).filter(key => value[key] != null);
+  if (keys.length === 1 && keys[0] === "text") return typeof value.text === "string";
+  return keys.every(key => ["role", "parts"].includes(key)) &&
+    [undefined, null, "user", "model", "system"].includes(value.role) &&
+    Array.isArray(value.parts) && vertexText(value.parts, depth + 1);
+}
+
+function vertexProject(owner: any, body: any, vertex: boolean): string | undefined {
+  try {
+    const client = owner?.apiClient;
+    const endpoint = new URL(String(client?.getBaseUrl?.() ?? ""));
+    const project = client?.getProject?.();
+    const options = client?.clientOptions?.httpOptions;
+    const config = body?.config ?? {};
+    if (!vertex || client?.isVertexAI?.() !== true || client?.getLocation?.() !== "global" ||
+        typeof project !== "string" || !/^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})$/.test(project) ||
+        endpoint.protocol !== "https:" || endpoint.hostname !== "aiplatform.googleapis.com" ||
+        endpoint.port !== "" || !["", "/"].includes(endpoint.pathname) ||
+        endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+        !["v1", "v1beta1"].includes(client?.getApiVersion?.()) ||
+        options?.baseUrlResourceScope != null || options?.extraBody != null ||
+        typeof config !== "object" || Array.isArray(config) ||
+        Object.keys(config).some(key => config[key] != null && ![
+          "systemInstruction", "temperature", "topP", "topK", "maxOutputTokens", "stopSequences",
+          "seed", "responseMimeType", "responseSchema", "responseJsonSchema", "thinkingConfig",
+          "safetySettings", "candidateCount",
+        ].includes(key)) || (config.candidateCount ?? 1) !== 1 ||
+        !vertexText(body?.contents) || (config.systemInstruction != null && !vertexText(config.systemInstruction))) return undefined;
+    const headers = client?.getHeaders?.();
+    if (!headers || typeof headers !== "object" || Array.isArray(headers) ||
+        Object.keys(headers).some(key => !["content-type", "user-agent", "x-goog-api-client"].includes(key.toLowerCase()))) return undefined;
+    const model = "gemini-3.5-flash-lite";
+    if (![model, `publishers/google/models/${model}`,
+      `projects/${project}/locations/global/publishers/google/models/${model}`].includes(body?.model)) return undefined;
+    return project;
+  } catch { return undefined; }
+}
+
+function admitVertexContent(measurement: OperationMeasurement, response: any, project?: string): OperationMeasurement {
+  try {
+    const usage = response?.usageMetadata;
+    const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+    const prompt = usage?.promptTokenCount, cached = usage?.cachedContentTokenCount;
+    const output = usage?.candidatesTokenCount, thoughts = usage?.thoughtsTokenCount;
+    if (!project || response?.modelVersion !== "gemini-3.5-flash-lite" ||
+        typeof response?.responseId !== "string" || !response.responseId.trim() || response.responseId.length > 256 ||
+        usage?.trafficType !== "ON_DEMAND" ||
+        ![prompt, cached, output, thoughts, usage?.totalTokenCount].every(count) ||
+        prompt <= 0 || cached > prompt || usage.totalTokenCount !== prompt + output + thoughts ||
+        (usage?.toolUsePromptTokenCount != null && usage.toolUsePromptTokenCount !== 0) ||
+        !Array.isArray(response.candidates) || response.candidates.length !== 1 ||
+        !["STOP", "MAX_TOKENS"].includes(response.candidates[0]?.finishReason) ||
+        !vertexText(response.candidates[0]?.content) || response.candidates[0]?.groundingMetadata != null ||
+        response.candidates[0]?.urlContextMetadata != null) return measurement;
+    const details = [usage.promptTokensDetails, usage.cacheTokensDetails, usage.candidatesTokensDetails];
+    const totals = [prompt, cached, output];
+    if (!details.every((items, index) => items == null && totals[index] === 0 ||
+        Array.isArray(items) && items.every(item => item?.modality === "TEXT" && count(item?.tokenCount)) &&
+        items.reduce((sum, item) => sum + item.tokenCount, 0) === totals[index])) return measurement;
+    return { ...measurement, responseModel: "gemini-3.5-flash-lite", providerService: "vertex_ai",
+      providerRegion: "global", billingDimensions: [...(measurement.billingDimensions ?? []),
+        ["cloud_project", project], ["vertex_pricing_lane", "global_standard_paygo_text"]] };
+  } catch { return measurement; }
+}
+
 function admitDirectContent(measurement: OperationMeasurement, response: any, owner: any, body: any, vertex: boolean, paid = false): OperationMeasurement {
   try {
     const raw = body?.config?.httpOptions?.baseUrl ?? owner?.apiClient?.getBaseUrl?.();
@@ -328,6 +398,7 @@ function patchDirect(
     const routeOwner = { apiClient: { getBaseUrl: () => endpoint } };
     const paid = body?.config?.httpOptions == null && typeof endpoint === "string" &&
       hasPaidProviderBilling(this, "google", endpoint);
+    const project = vertexProject(this, body, vertex);
     const operation = `google.genai.${ownerName}.${name}`.toLowerCase();
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: operation, provider: "google", service: service(vertex), operation,
@@ -343,11 +414,15 @@ function patchDirect(
           terminal = (chunk as any)?.response ?? chunk;
         }, () => {
           const measurement = directMeasurement(spec.kind, terminal, body, vertex, name);
-          return spec.kind === "content" ? admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid) : measurement;
+          return spec.kind === "content" ? admitVertexContent(
+            admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid), terminal, project,
+          ) : measurement;
         });
       }
       const measurement = directMeasurement(spec.kind, response, body, vertex, name);
-      session.finish(spec.kind === "content" ? admitDirectContent(measurement, response, routeOwner, {}, vertex, paid) : measurement);
+      session.finish(spec.kind === "content" ? admitVertexContent(
+        admitDirectContent(measurement, response, routeOwner, {}, vertex, paid), response, project,
+      ) : measurement);
       return response;
     };
     return mapProviderResult(result, complete, (error) => { session.fail(error); throw error; });
@@ -544,7 +619,6 @@ export async function instrumentGoogleGenAI(pricing: PricingEngine, buffer: Even
   if (patched) return;
   let mod = providedModule;
   if (!mod) {
-    // @ts-expect-error optional current official SDK
     mod = await import("@google/genai");
   }
   discover(mod, pricing, buffer);

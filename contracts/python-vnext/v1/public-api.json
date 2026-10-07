@@ -1487,6 +1487,18 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.upstash_redis",
+      "name": "instrument_upstash_redis",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', database_id: 'str', endpoint_host: 'str', billing_plan: 'str', topology: 'str') -> 'Any'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.you_search",
+      "name": "instrument_you_search",
+      "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', endpoint: 'str', billing_tier: \"Literal['paid', 'free', 'unknown']\") -> 'Any'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.cloud_vector",
       "name": "instrument_zilliz",
       "signature": "(client: 'Any', tracker: 'Any', *, billing_account_id: 'str', region: 'str', cluster_host: 'str') -> 'Any'"
@@ -1799,9 +1811,27 @@
     },
     {
       "kind": "function",
+      "module": "dexcost.instruments.upstash_redis",
+      "name": "uninstrument_upstash_redis",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.you_search",
+      "name": "uninstrument_you_search",
+      "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
       "module": "dexcost.instruments.cloud_vector",
       "name": "uninstrument_zilliz",
       "signature": "(client: 'Any') -> 'None'"
+    },
+    {
+      "kind": "function",
+      "module": "dexcost.instruments.upstash_redis",
+      "name": "upstash_redis_resource_id",
+      "signature": "(billing_account_id: 'str', region: 'str', database_id: 'str', endpoint_host: 'str') -> 'str'"
     },
     {
       "kind": "function",

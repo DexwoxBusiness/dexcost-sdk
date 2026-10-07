@@ -8,6 +8,7 @@ recording only provider-reported quantities and bounded opaque response IDs.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
@@ -331,6 +332,181 @@ def _measurement_from_usage(
         task_output_tokens=task_output,
         task_cached_tokens=cache_total,
     )
+
+
+def _vertex_fields(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if item is not None}
+    if type(value).__module__ == "google.genai.types":
+        return cast(dict[str, Any], value.model_dump(exclude_none=True))
+    return None
+
+
+def _vertex_text(value: Any, depth: int = 0) -> bool:
+    if depth > 4:
+        return False
+    if isinstance(value, str):
+        return True
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(_vertex_text(item, depth + 1) for item in value)
+    fields = _vertex_fields(value)
+    if fields is None:
+        return False
+    if set(fields) == {"text"}:
+        return isinstance(fields["text"], str)
+    return (
+        not (set(fields) - {"role", "parts"})
+        and fields.get("role") in (None, "user", "model", "system")
+        and isinstance(fields.get("parts"), (list, tuple))
+        and _vertex_text(fields["parts"], depth + 1)
+    )
+
+
+def _vertex_project(instance: object, kwargs: dict[str, Any]) -> str | None:
+    """Snapshot the actual global project route before invoking the native client."""
+    try:
+        client = _value(instance, "_api_client")
+        options = _value(client, "_http_options")
+        project = _value(client, "project")
+        endpoint = urlparse(str(_value(options, "base_url") or ""))
+        config = _vertex_fields(kwargs.get("config")) if kwargs.get("config") is not None else {}
+        if (
+            not _is_vertex(instance)
+            or _value(client, "location") != "global"
+            or not isinstance(project, str)
+            or re.fullmatch(r"(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})", project) is None
+            or endpoint.scheme != "https"
+            or endpoint.hostname != "aiplatform.googleapis.com"
+            or endpoint.port not in (None, 443)
+            or endpoint.path not in ("", "/")
+            or endpoint.username
+            or endpoint.password
+            or endpoint.query
+            or endpoint.fragment
+            or _value(options, "api_version") not in ("v1", "v1beta1")
+            or _value(options, "base_url_resource_scope") is not None
+            or _value(options, "extra_body") is not None
+            or config is None
+            or set(config)
+            - {
+                "system_instruction",
+                "temperature",
+                "top_p",
+                "top_k",
+                "max_output_tokens",
+                "stop_sequences",
+                "seed",
+                "response_mime_type",
+                "response_schema",
+                "response_json_schema",
+                "thinking_config",
+                "safety_settings",
+                "candidate_count",
+            }
+            or config.get("candidate_count", 1) != 1
+            or isinstance(config.get("candidate_count"), bool)
+            or not _vertex_text(kwargs.get("contents"))
+            or ("system_instruction" in config and not _vertex_text(config["system_instruction"]))
+        ):
+            return None
+        headers = _value(options, "headers")
+        if headers is not None and (
+            not isinstance(headers, Mapping)
+            or any(
+                str(key).lower() not in {"content-type", "user-agent", "x-goog-api-client"}
+                for key in headers
+            )
+        ):
+            return None
+        model = "gemini-3.5-flash-lite"
+        if kwargs.get("model") not in (
+            model,
+            f"publishers/google/models/{model}",
+            f"projects/{project}/locations/global/publishers/google/models/{model}",
+        ):
+            return None
+        return project
+    except Exception:
+        return None
+
+
+def _admit_vertex_content(
+    measurement: OperationMeasurement, response: object, project: str | None
+) -> OperationMeasurement:
+    try:
+        usage = _value(response, "usage_metadata")
+        counts = [
+            _count(_value(usage, name))
+            for name in (
+                "prompt_token_count",
+                "cached_content_token_count",
+                "candidates_token_count",
+                "thoughts_token_count",
+                "total_token_count",
+            )
+        ]
+        if any(value is None or value > 9_007_199_254_740_991 for value in counts):
+            return measurement
+        prompt, cached, output, thoughts, total = cast(list[int], counts)
+        candidates = _value(response, "candidates")
+        record = _value(response, "response_id")
+        if (
+            project is None
+            or _value(response, "model_version") != "gemini-3.5-flash-lite"
+            or not isinstance(record, str)
+            or not record.strip()
+            or len(record) > 256
+            or _value(usage, "traffic_type") != "ON_DEMAND"
+            or cached > prompt
+            or prompt <= 0
+            or total != prompt + output + thoughts
+            or (
+                _value(usage, "tool_use_prompt_token_count") is not None
+                and _count(_value(usage, "tool_use_prompt_token_count")) != 0
+            )
+            or not isinstance(candidates, (list, tuple))
+            or len(candidates) != 1
+            or _value(candidates[0], "finish_reason") not in ("STOP", "MAX_TOKENS")
+            or not _vertex_text(_value(candidates[0], "content"))
+            or any(
+                _value(candidates[0], key) is not None
+                for key in (
+                    "grounding_metadata",
+                    "url_context_metadata",
+                )
+            )
+        ):
+            return measurement
+        for name, count in (
+            ("prompt_tokens_details", prompt),
+            ("cache_tokens_details", cached),
+            ("candidates_tokens_details", output),
+        ):
+            details = _value(usage, name)
+            if details is None and count == 0:
+                continue
+            if not isinstance(details, (list, tuple)):
+                return measurement
+            pieces = [_count(_value(item, "token_count")) for item in details]
+            if (
+                any(_value(item, "modality") != "TEXT" for item in details)
+                or any(piece is None for piece in pieces)
+                or sum(cast(list[int], pieces)) != count
+            ):
+                return measurement
+        return replace(
+            measurement,
+            response_model="gemini-3.5-flash-lite",
+            provider_service="vertex_ai",
+            provider_region="global",
+            billing_dimensions=(
+                *measurement.billing_dimensions,
+                ("cloud_project", project),
+                ("vertex_pricing_lane", "global_standard_paygo_text"),
+            ),
+        )
+    except Exception:
+        return measurement
 
 
 def _direct_gemini_endpoint(instance: object, kwargs: dict[str, Any]) -> bool:
@@ -1256,6 +1432,7 @@ def _sync_direct_call(
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
+    vertex_project = _vertex_project(instance, kwargs)
     session = _session(
         instance,
         operation=operation,
@@ -1281,6 +1458,7 @@ def _sync_direct_call(
                     direct=direct,
                     paid=paid,
                 )
+                measurement = _admit_vertex_content(measurement, response, vertex_project)
         except Exception:
             _log.debug("dexcost: failed to extract Google provider usage", exc_info=True)
             measurement = _unknown_measurement(model, vertex=vertex)
@@ -1306,6 +1484,7 @@ def _async_direct_call(
         vertex = _is_vertex(instance)
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
+        vertex_project = _vertex_project(instance, kwargs)
         session = _session(
             instance,
             operation=operation,
@@ -1331,6 +1510,7 @@ def _async_direct_call(
                         direct=direct,
                         paid=paid,
                     )
+                    measurement = _admit_vertex_content(measurement, response, vertex_project)
             except Exception:
                 _log.debug(
                     "dexcost: failed to extract async Google provider usage",
@@ -1347,10 +1527,17 @@ def _async_direct_call(
 
 class _ContentStreamMeter:
     def __init__(
-        self, kwargs: dict[str, Any], *, vertex: bool, direct: bool = False, paid: bool = False
+        self,
+        kwargs: dict[str, Any],
+        *,
+        vertex: bool,
+        direct: bool = False,
+        paid: bool = False,
+        vertex_project: str | None = None,
     ) -> None:
         self.direct = direct
         self.paid = paid
+        self.vertex_project = vertex_project
         self.kwargs = kwargs
         self.vertex = vertex
         self.terminal: object | None = None
@@ -1363,12 +1550,13 @@ class _ContentStreamMeter:
         model = _model_name((), self.kwargs)
         if self.terminal is None:
             return _unknown_measurement(model, vertex=self.vertex)
-        return _admit_direct_content(
+        measurement = _admit_direct_content(
             _content_measurement(self.terminal, self.kwargs, vertex=self.vertex),
             self.terminal,
             direct=self.direct,
             paid=self.paid,
         )
+        return _admit_vertex_content(measurement, self.terminal, self.vertex_project)
 
 
 class _InteractionStreamMeter:
@@ -1411,6 +1599,7 @@ def _sync_stream_call(
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
+    vertex_project = _vertex_project(instance, kwargs)
     session = _session(
         instance,
         operation="google.genai.models.generate_content_stream",
@@ -1432,6 +1621,7 @@ def _sync_stream_call(
             vertex=vertex,
             direct=direct,
             paid=paid,
+            vertex_project=vertex_project,
         )
         session.release_context()
         return SyncProviderStream(
@@ -1455,6 +1645,7 @@ def _async_stream_call(
         vertex = _is_vertex(instance)
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
+        vertex_project = _vertex_project(instance, kwargs)
         session = _session(
             instance,
             operation="google.genai.models.generate_content_stream",
@@ -1476,6 +1667,7 @@ def _async_stream_call(
                 vertex=vertex,
                 direct=direct,
                 paid=paid,
+                vertex_project=vertex_project,
             )
             session.release_context()
             return AsyncProviderStream(

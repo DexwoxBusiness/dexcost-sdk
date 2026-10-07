@@ -422,4 +422,6 @@ export { validate, SchemaNotFoundError } from "./schema/validate.js";
 // Client Wrappers
 export { TrackedOpenAI, TrackedAnthropic, wrapOpenAI, wrapAnthropic } from "./clients.js";
 export { bindProviderBilling } from "./core/provider-billing.js";
+export { instrumentUpstashRedis, uninstrumentUpstashRedis, upstashRedisResourceId, type UpstashRedisBinding } from "./instruments/upstash-redis.js";
+export { createYouSearchFetch, uninstrumentYouSearch, type YouSearchOptions } from "./instruments/you-search.js";
 export type { ProviderBillingAssertion, ProviderBillingProvider, ProviderBillingTier } from "./core/provider-billing.js";
