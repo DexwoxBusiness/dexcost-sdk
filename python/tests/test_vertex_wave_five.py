@@ -22,6 +22,39 @@ CASES = json.loads(
 )["cases"]
 
 
+@pytest.fixture(autouse=True)
+def native_httpx_io(monkeypatch):
+    # Keep the pinned native client/transport and redirect pipeline. Only the
+    # network I/O boundary is mocked; MockTransport is an explicit negative.
+    gemini.uninstrument_gemini()
+    original_send, original_async_send = httpx.Client.send, httpx.AsyncClient.send
+
+    def send(transport, request):
+        return transport._fixture_handler(request)
+
+    async def send_async(transport, request):
+        return transport._fixture_handler(request)
+
+    def native_send(client, *args, **kwargs):
+        response = original_send(client, *args, **kwargs)
+        if response.extensions.get("fixture_missing_route"):
+            response._request = None
+        return response
+
+    async def native_async_send(client, *args, **kwargs):
+        response = await original_async_send(client, *args, **kwargs)
+        if response.extensions.get("fixture_missing_route"):
+            response._request = None
+        return response
+
+    monkeypatch.setattr(httpx.Client, "send", native_send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", native_async_send)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", send)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", send_async)
+    yield
+    gemini.uninstrument_gemini()
+
+
 @pytest.fixture
 def tracker(tmp_path):
     # Other suites exercise global/default auto-instrumentation. This native
@@ -138,6 +171,16 @@ def make_client(case, stream=False, reason="positive", status=200):
 
     def handler(request):
         requests.append(request)
+        if reason == "redirect" and len(requests) == 1:
+            return httpx.Response(307, headers={"location": "https://gateway.example/replay"})
+        if reason == "same-route redirect" and len(requests) == 1:
+            return httpx.Response(307, headers={"location": str(request.url)})
+        if reason == "recovered transport" and len(requests) == 1:
+            return httpx.Response(503, json={"error": {"code": 503, "message": "retry"}})
+        if reason == "wrong final URL":
+            request.url = httpx.URL("https://gateway.example/replay")
+        if reason == "changed method":
+            request.method = "GET"
         if status != 200:
             return httpx.Response(
                 status,
@@ -156,18 +199,56 @@ def make_client(case, stream=False, reason="positive", status=200):
                 200,
                 text="data: " + json.dumps(interim) + "\n\ndata: " + json.dumps(raw) + "\n\n",
                 headers={"content-type": "text/event-stream"},
+                extensions={"fixture_missing_route": reason == "missing final URL"},
             )
-        return httpx.Response(200, json=raw)
+        return httpx.Response(
+            200,
+            json=raw,
+            extensions={"fixture_missing_route": reason == "missing final URL"},
+        )
 
     credentials = AnonymousCredentials()
     credentials.token = "fixture"
+    transport = httpx.HTTPTransport()
+    async_transport = httpx.AsyncHTTPTransport()
+    transport._fixture_handler = handler
+    async_transport._fixture_handler = handler
+    if reason == "custom transport":
+        transport = httpx.MockTransport(handler)
+        async_transport = httpx.MockTransport(handler)
+    sync_type, async_type = httpx.Client, httpx.AsyncClient
+    if reason == "custom client":
+
+        class CustomClient(httpx.Client):
+            pass
+
+        class CustomAsyncClient(httpx.AsyncClient):
+            pass
+
+        sync_type, async_type = CustomClient, CustomAsyncClient
+    if reason == "recovered transport":
+        http["retry_options"] = {
+            "attempts": 2,
+            "initial_delay": 0.001,
+            "max_delay": 0.001,
+            "jitter": 0,
+        }
+    sync_client = sync_type(transport=transport, follow_redirects=True)
+    async_client = async_type(transport=async_transport, follow_redirects=True)
+    if reason == "custom response hook":
+        sync_client.event_hooks["response"].append(lambda response: None)
+
+        async def hook(response):
+            pass
+
+        async_client.event_hooks["response"].append(hook)
     client = genai.Client(
         **opts,
         credentials=credentials,
         http_options=types.HttpOptions(
             **http,
-            httpx_client=httpx.Client(transport=httpx.MockTransport(handler)),
-            httpx_async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            httpx_client=sync_client,
+            httpx_async_client=async_client,
         ),
     )
     return client, body, raw, requests
@@ -203,7 +284,16 @@ def invoke(tracker, case, stream=False, asynchronous=False, reason="positive"):
     client.close()
     assert result.response_id == raw.get("responseId")
     assert body == before
-    assert len(requests) == 1
+    assert len(requests) == (
+        2
+        if reason
+        in (
+            "redirect",
+            "same-route redirect",
+            "recovered transport",
+        )
+        else 1
+    )
     events = tracker.storage.query_events(task_id=str(task.task_id))
     assert len(events) == 1
     assert "private fixture prompt" not in str(events[0].to_dict())
@@ -269,6 +359,244 @@ NEGATIVES = [
 def test_native_unknown_is_unpriced(tracker, reason, stream):
     event, _ = invoke(tracker, CASES[0], stream, False, reason)
     assert lane(event) is None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "wrong final URL",
+        "missing final URL",
+        "changed method",
+        "redirect",
+        "same-route redirect",
+        "recovered transport",
+        "custom transport",
+        "custom client",
+        "custom response hook",
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_unverified_native_route_preserves_response_without_pricing(
+    tracker, reason, stream, asynchronous
+):
+    event, _ = invoke(tracker, CASES[0], stream, asynchronous, reason)
+    assert lane(event) is None
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_native_api_replay_without_transport_is_unpriced(
+    tracker, monkeypatch, stream, asynchronous
+):
+    from google.genai._api_client import HttpResponse
+
+    client, body, raw, requests = make_client(CASES[0], stream=stream)
+
+    def replay(*_args, **_kwargs):
+        return HttpResponse({}, [json.dumps(raw)])
+
+    async def replay_async(*_args, **_kwargs):
+        return replay()
+
+    monkeypatch.setattr(client._api_client, "_request_once", replay)
+    monkeypatch.setattr(client._api_client, "_async_request_once", replay_async)
+    gemini.instrument_gemini(tracker)
+    with tracker.task(task_type="vertex-replay") as task:
+        if asynchronous:
+
+            async def run():
+                try:
+                    if stream:
+                        chunks = [
+                            c
+                            async for c in await client.aio.models.generate_content_stream(**body)
+                        ]
+                        assert len(chunks) == 1
+                        return chunks[0]
+                    return await client.aio.models.generate_content(**body)
+                finally:
+                    await client.aio.aclose()
+
+            result = asyncio.run(run())
+        elif stream:
+            chunks = list(client.models.generate_content_stream(**body))
+            assert len(chunks) == 1
+            result = chunks[0]
+        else:
+            result = client.models.generate_content(**body)
+    client.close()
+    assert result.response_id == raw["responseId"]
+    assert requests == []
+    events = tracker.storage.query_events(task_id=str(task.task_id))
+    assert len(events) == 1
+    assert lane(to_attribution_observation_v3(events[0])) is None
+
+
+@pytest.mark.parametrize("transport", ["aiohttp", "mtls"])
+def test_unobserved_native_backend_is_ineligible(monkeypatch, transport):
+    from google.genai import _api_client
+
+    client, body, _, _ = make_client(CASES[0])
+    api = client._api_client
+    if transport == "aiohttp":
+        # The native SDK selects aiohttp automatically when available and no
+        # explicit async HTTPX client was supplied. Do not force a different one.
+        monkeypatch.setattr(_api_client, "has_aiohttp", True)
+        api._http_options.httpx_async_client = None
+        assert api._use_aiohttp()
+    else:
+        monkeypatch.setattr(_api_client.BaseApiClient, "_use_google_auth_sync", lambda _: True)
+    try:
+        project = gemini._vertex_project(client.models, body)
+        assert project == CASES[0]["project"]
+        assert (
+            gemini._vertex_transport_evidence(
+                client.models,
+                project,
+                asynchronous=transport == "aiohttp",
+            )
+            is None
+        )
+    finally:
+        client.close()
+
+
+def test_transport_observers_restore_and_reinstall_on_same_client(tracker):
+    client, body, _, requests = make_client(CASES[0])
+    originals = (
+        httpx.Client.send,
+        httpx.AsyncClient.send,
+        httpx.HTTPTransport.handle_request,
+        httpx.AsyncHTTPTransport.handle_async_request,
+    )
+    try:
+        for _ in range(2):
+            gemini.instrument_gemini(tracker)
+            assert gemini._vertex_project(client.models, body) == CASES[0]["project"]
+            with tracker.task(task_type="vertex-reinstall") as task:
+                client.models.generate_content(**body)
+            events = tracker.storage.query_events(task_id=str(task.task_id))
+            vector(to_attribution_observation_v3(events[0]), CASES[0])
+            assert gemini._vertex_transport_context.get() is None
+            gemini.uninstrument_gemini()
+            assert originals == (
+                httpx.Client.send,
+                httpx.AsyncClient.send,
+                httpx.HTTPTransport.handle_request,
+                httpx.AsyncHTTPTransport.handle_async_request,
+            )
+        assert len(requests) == 2
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("gemini_first", [False, True])
+def test_http_capture_uninstalled_out_of_order_does_not_reactivate_observers(
+    tracker, gemini_first
+):
+    from dexcost.adapters import http
+
+    client, body, _, requests = make_client(CASES[0])
+    try:
+        if gemini_first:
+            gemini.instrument_gemini(tracker)
+            http.track_http()
+        else:
+            http.track_http()
+            gemini.instrument_gemini(tracker)
+        gemini.uninstrument_gemini()
+        http.untrack_http()
+        gemini.instrument_gemini(tracker)
+        # Real HTTP auto-capture can coexist with the provider-specific wrapper.
+        http.track_http()
+        with tracker.task(task_type="vertex-wrapper-lifecycle") as task:
+            client.models.generate_content(**body)
+        assert len(requests) == 1
+        events = tracker.storage.query_events(task_id=str(task.task_id))
+        assert len(events) == 1
+        vector(to_attribution_observation_v3(events[0]), CASES[0])
+    finally:
+        http.untrack_http()
+        gemini.uninstrument_gemini()
+        client.close()
+
+
+def test_concurrent_same_client_calls_have_separate_transport_evidence(tracker):
+    client, body, _, requests = make_client(CASES[0])
+    gemini.instrument_gemini(tracker)
+
+    async def call():
+        with tracker.task(task_type="vertex-concurrent") as task:
+            result = await client.aio.models.generate_content(**body)
+        assert result.response_id == CASES[0]["response"]["responseId"]
+        assert gemini._vertex_transport_context.get() is None
+        return tracker.storage.query_events(task_id=str(task.task_id))
+
+    async def run():
+        try:
+            return await asyncio.gather(call(), call())
+        finally:
+            await client.aio.aclose()
+
+    try:
+        groups = asyncio.run(run())
+        assert len(requests) == 2
+        for events in groups:
+            assert len(events) == 1
+            vector(to_attribution_observation_v3(events[0]), CASES[0])
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_repeated_native_requests_remain_admitted_after_sdk_adds_auth(tracker, asynchronous):
+    client, body, _, requests = make_client(CASES[0])
+    gemini.instrument_gemini(tracker)
+    try:
+        with tracker.task(task_type="vertex-repeated") as task:
+            if asynchronous:
+
+                async def run():
+                    try:
+                        for _ in range(2):
+                            await client.aio.models.generate_content(**body)
+                    finally:
+                        await client.aio.aclose()
+
+                asyncio.run(run())
+            else:
+                for _ in range(2):
+                    client.models.generate_content(**body)
+        events = tracker.storage.query_events(task_id=str(task.task_id))
+        assert len(events) == len(requests) == 2
+        for event in events:
+            vector(to_attribution_observation_v3(event), CASES[0])
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "header,value,token,quota,admitted",
+    [
+        ("Authorization", "Bearer fixture", "fixture", None, True),
+        ("Authorization", "Bearer stale", "fixture", None, False),
+        ("Authorization", "Bearer fixture", None, None, False),
+        ("Authorization", "Bearer ", "", None, False),
+        ("X-Goog-User-Project", "billing-project", "fixture", "billing-project", True),
+        ("X-Goog-User-Project", "other-project", "fixture", "billing-project", False),
+        ("X-Goog-User-Project", "billing-project", "fixture", None, False),
+    ],
+)
+def test_only_exact_native_credential_headers_are_eligible(header, value, token, quota, admitted):
+    client, body, _, _ = make_client(CASES[0])
+    client._api_client._credentials.token = token
+    client._api_client._credentials._quota_project_id = quota
+    client._api_client._http_options.headers[header] = value
+    try:
+        assert (gemini._vertex_project(client.models, body) is not None) is admitted
+    finally:
+        client.close()
 
 
 def test_native_error_preserved(tracker):

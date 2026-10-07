@@ -55,6 +55,11 @@ uninstrumentYouSearch(searchFetch);
 - Only a successful HTTP 200 direct `/v1/search` with a valid provider
   `metadata.search_uuid` and structured `results` records one request, including
   empty results. Result count does not multiply the base request charge.
+- TypeScript also requires a nonempty final `Response.url` exactly matching the
+  snapshotted request URL (including its query) and `Response.redirected === false`.
+  A synthetic `new Response(...)` without final-route evidence remains unpriced,
+  even when its body contains a valid search UUID; the original response and body
+  still reach the caller unchanged.
 - A durable account-scoped hash of that UUID deduplicates repeated responses and
   keeps the first owning task. Separate successful UUIDs are separate requests.
   Python captures native retries but only successful provider responses count;

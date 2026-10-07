@@ -22,13 +22,19 @@ function setup() {
 }
 const record = (account = data.account, id = data.response.metadata.search_uuid) => createHash("sha256").update(JSON.stringify([account, id])).digest("hex");
 const request = (body = data.request): RequestInit => ({ method: "POST", headers: { "X-API-Key": "PRIVATE_KEY", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+function responseFor(url = `${data.endpoint}/v1/search`, body = data.response, status = 200): Response {
+  const response = new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  // Model native fetch's final route evidence; new Response alone is synthetic.
+  Object.defineProperty(response, "url", { value: url });
+  return response;
+}
 
 describe("current You.com base Search fetch capture", () => {
   it.each(["paid", "free", "unknown"] as const)("preserves response/body, nested HTTP dedup and durable replay for %s", async billingTier => {
     const { buffer, task, tracker } = setup(); let calls = 0;
     const native = createDexcostFetch({ tracker, fetch: async () => {
       expect(currentProviderCaptureOwner()).toBe("you_com"); calls++;
-      return new Response(JSON.stringify(data.response), { status: 200, headers: { "content-type": "application/json" } });
+      return responseFor();
     } });
     const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier, fetch: native });
     await runWithTask(task, async () => {
@@ -45,7 +51,7 @@ describe("current You.com base Search fetch capture", () => {
   });
   it.each(data.excluded_parameters)("excludes add-on request %j", async extra => {
     const { buffer, task, tracker } = setup();
-    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => new Response(JSON.stringify(data.response)) });
+    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => responseFor() });
     await runWithTask(task, () => fetch(`${data.endpoint}/v1/search`, request({ ...data.request, ...extra })));
     expect(buffer.getProviderJob("you_com", "search", record())).toBeUndefined();
   });
@@ -54,7 +60,7 @@ describe("current You.com base Search fetch capture", () => {
     if (reason === "missing-id") delete result.metadata.search_uuid;
     if (reason === "invalid-id") result.metadata.search_uuid = "PRIVATE_NOT_ID";
     if (reason === "missing-results") delete result.results;
-    const response = new Response(JSON.stringify(result), { status: reason === "failed" ? 500 : 200 });
+    const response = responseFor(undefined, result, reason === "failed" ? 500 : 200);
     if (reason === "redirect") Object.defineProperty(response, "redirected", { value: true });
     const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => { if (reason === "catch-recovery") throw new Error("provider failed"); return response; } });
     if (reason === "disabled") uninstrumentYouSearch(fetch);
@@ -69,14 +75,14 @@ describe("current You.com base Search fetch capture", () => {
   it("supports direct GET, empty results and separate genuine successful requests", async () => {
     const { buffer, task, tracker } = setup(); let calls = 0;
     const ids = [data.response.metadata.search_uuid, randomUUID()];
-    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => new Response(JSON.stringify({ results: { web: [] }, metadata: { search_uuid: ids[calls++] } })) });
+    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async input => responseFor(input instanceof Request ? input.url : String(input), { results: { web: [] }, metadata: { search_uuid: ids[calls++] } }) });
     await runWithTask(task, async () => { for (let n = 0; n < 2; n++) await fetch(`${data.endpoint}/v1/search?query=PRIVATE&count=100`, { headers: { "x-api-key": "PRIVATE" } }); });
     for (const id of ids) expect(buffer.getProviderJob("you_com", "search", record(data.account, id))).toBeDefined();
     expect(calls).toBe(2);
   });
   it("retains original task on replay, nested facades and account isolation", async () => {
     const { buffer, task, tracker } = setup();
-    const native: typeof globalThis.fetch = async () => new Response(JSON.stringify(data.response));
+    const native: typeof globalThis.fetch = async () => responseFor();
     const options = { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid" as const, fetch: native };
     const fetch = createYouSearchFetch(tracker, options);
     await runWithTask(task, () => fetch(`${data.endpoint}/v1/search`, request()));
@@ -88,7 +94,7 @@ describe("current You.com base Search fetch capture", () => {
   });
   it("dispatches synchronously before caller mutation and preserves native Response identity", async () => {
     const { buffer, task, tracker } = setup();
-    const response = new Response(JSON.stringify(data.response)); let sent: unknown;
+    const response = responseFor(); let sent: unknown;
     const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async (_input, init) => { sent = init?.body; return response; } });
     const init = request();
     await runWithTask(task, async () => {
@@ -101,12 +107,51 @@ describe("current You.com base Search fetch capture", () => {
   });
   it("captures Request input without consuming its returned body and ignores cancellation", async () => {
     const { buffer, task, tracker } = setup();
-    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => new Response(JSON.stringify(data.response)) });
+    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => responseFor() });
     const source = new Request(`${data.endpoint}/v1/search`, request());
     await runWithTask(task, async () => expect(await (await fetch(source)).json()).toEqual(data.response));
     const abort = new DOMException("cancelled", "AbortError");
     const failed = createYouSearchFetch(tracker, { billingAccountId: "aborted-account", endpoint: data.endpoint, billingTier: "paid", fetch: async () => { throw abort; } });
     await runWithTask(task, async () => expect(failed(`${data.endpoint}/v1/search`, request())).rejects.toBe(abort));
     expect(buffer.getProviderJob("you_com", "search", record("aborted-account"))).toBeUndefined();
+  });
+  it.each(["missing-url", "different-host", "different-path", "different-query", "redirect"])("requires complete final route evidence for %s and preserves response/body", async reason => {
+    const { buffer, task, tracker } = setup();
+    const url = `${data.endpoint}/v1/search?query=PRIVATE&count=10`;
+    const finalUrl = reason === "different-host" ? "https://api.you.com/v1/search?query=PRIVATE&count=10"
+      : reason === "different-path" ? `${data.endpoint}/v1/contents?query=PRIVATE&count=10`
+      : reason === "different-query" ? `${data.endpoint}/v1/search?query=OTHER&count=10` : url;
+    const unproven = reason === "missing-url" ? new Response(JSON.stringify(data.response)) : responseFor(finalUrl);
+    if (reason === "redirect") Object.defineProperty(unproven, "redirected", { value: true });
+    let calls = 0;
+    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async () => ++calls === 1 ? unproven : responseFor(url) });
+    await runWithTask(task, async () => {
+      const response = await fetch(url, { headers: { "x-api-key": "PRIVATE" } });
+      expect(response).toBe(unproven);
+      expect(response.bodyUsed).toBe(false);
+      expect(await response.json()).toEqual(data.response);
+      expect(buffer.getProviderJob("you_com", "search", record())).toBeUndefined();
+      // Missing evidence must not reserve the UUID and suppress a later proven response.
+      await fetch(url, { headers: { "x-api-key": "PRIVATE" } });
+    });
+    expect(calls).toBe(2);
+    expect(buffer.getProviderJob("you_com", "search", record())).toBeDefined();
+  });
+  it("compares the final URL to the invocation snapshot when a caller mutates a URL input", async () => {
+    const { buffer, task, tracker } = setup();
+    const input = new URL(`${data.endpoint}/v1/search?query=PRIVATE&count=10`);
+    const originalUrl = input.href;
+    let sentUrl: string | undefined;
+    const fetch = createYouSearchFetch(tracker, { billingAccountId: data.account, endpoint: data.endpoint, billingTier: "paid", fetch: async value => {
+      sentUrl = value instanceof Request ? value.url : String(value);
+      return responseFor(sentUrl);
+    } });
+    await runWithTask(task, async () => {
+      const pending = fetch(input, { headers: { "x-api-key": "PRIVATE" } });
+      input.searchParams.set("query", "CHANGED");
+      expect((await pending).url).toBe(originalUrl);
+    });
+    expect(sentUrl).toBe(originalUrl);
+    expect(buffer.getProviderJob("you_com", "search", record())).toBeDefined();
   });
 });

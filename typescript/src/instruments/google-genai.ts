@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ProviderJobRevision, providerJobFromDict, type ProviderJobStatus } from "../core/provider-jobs.js";
 import type { EventBuffer } from "../transport/buffer.js";
 import type { PricingEngine } from "../pricing/engine.js";
@@ -14,12 +15,92 @@ import { nonNegativeDecimal, nonNegativeInteger, prefixedModel } from "./provide
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type MethodPatch = { kind: "method"; owner: any; name: string; original: (...args: any[]) => any };
+type MethodPatch = { kind: "method"; owner: any; name: string; original: (...args: any[]) => any; inherited?: boolean };
 type DescriptorPatch = { kind: "descriptor"; owner: any; name: string; original: PropertyDescriptor };
 type Patch = MethodPatch | DescriptorPatch;
 const patches: Patch[] = [];
 let providedModule: any;
 let patched = false;
+
+interface VertexTransportProof {
+  client: any; project: string; stream: boolean; calls: number; verified: boolean;
+}
+const vertexTransport = new AsyncLocalStorage<VertexTransportProof>();
+let vertexTransportObservers = new WeakMap<object, (...args: any[]) => any>();
+
+function vertexRequestUrl(value: unknown, proof: VertexTransportProof): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    const suffix = proof.stream ? "streamGenerateContent" : "generateContent";
+    if (url.protocol !== "https:" || url.hostname !== "aiplatform.googleapis.com" || url.port ||
+        url.username || url.password || url.hash ||
+        !["v1", "v1beta1"].some(version => url.pathname ===
+          `/${version}/projects/${proof.project}/locations/global/publishers/google/models/gemini-3.5-flash-lite:${suffix}`) ||
+        url.search !== (proof.stream ? "?alt=sse" : "")) return undefined;
+    return url.href;
+  } catch { return undefined; }
+}
+
+/** The native transport still owns authentication, retries, redirects and the
+ * response body. Observe its actual request/final Response before Google drops
+ * route metadata while decoding unary responses or synthesizing SSE chunks. */
+function observeVertexTransport(client: any): boolean {
+  if (!client || typeof client !== "object") return false;
+  const installed = vertexTransportObservers.get(client);
+  if (installed) return client.apiCall === installed;
+  const prototype = Object.getPrototypeOf(client);
+  if (prototype?.constructor?.name !== "ApiClient" ||
+      Object.prototype.hasOwnProperty.call(client, "apiCall") ||
+      typeof prototype.apiCall !== "function" || client.apiCall !== prototype.apiCall) return false;
+  const original = client.apiCall;
+  const wrapper = async function (this: any, ...args: any[]): Promise<any> {
+    const proof = vertexTransport.getStore();
+    if (!proof || proof.client !== this) return original.apply(this, args);
+    proof.calls++;
+    // apiCall's sixth argument is the effective per-call/client fetch override.
+    // A custom fetch may reroute or fabricate results even with a valid base URL.
+    const requestUrl = vertexRequestUrl(args[0], proof);
+    // Without retry options, the pinned native apiCall performs exactly one
+    // fetch. Configured retry policies remain usage-only without changing them.
+    const eligible = args[1]?.method === "POST" && args[2] == null && args[5] == null && requestUrl !== undefined;
+    const response = await original.apply(this, args);
+    try {
+      proof.verified = eligible && response instanceof Response && response.status === 200 &&
+        response.redirected === false && vertexRequestUrl(response.url, proof) === requestUrl;
+    } catch { proof.verified = false; }
+    return response;
+  };
+  try { client.apiCall = wrapper; } catch { return false; }
+  if (client.apiCall !== wrapper) return false;
+  patches.push({ kind: "method", owner: client, name: "apiCall", original, inherited: true });
+  vertexTransportObservers.set(client, wrapper);
+  return true;
+}
+
+/** GenAI's AFC stream starts the HTTP request lazily on next(), after the public
+ * method returns. Carry only this call's proof through iteration, never globally. */
+function vertexContextStream<T>(raw: T, proof: VertexTransportProof | undefined): T {
+  if (!proof || typeof (raw as any)?.[Symbol.asyncIterator] !== "function") return raw;
+  return new Proxy(raw as object, {
+    get(target, key, receiver) {
+      if (key === Symbol.asyncIterator) return () => {
+        const iterator = vertexTransport.run(proof, () => (target as any)[Symbol.asyncIterator]());
+        return new Proxy(iterator, {
+          get(inner, method, innerReceiver) {
+            const value = Reflect.get(inner, method, innerReceiver);
+            if (["next", "return", "throw"].includes(String(method)) && typeof value === "function") {
+              return (...args: any[]) => vertexTransport.run(proof, () => value.apply(inner, args));
+            }
+            return typeof value === "function" ? value.bind(inner) : value;
+          },
+        });
+      };
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as T;
+}
 
 type DirectKind = "content" | "embedding" | "image" | "interaction";
 interface DirectSpec { kind: DirectKind; eventType: "llm_call" | "external_cost"; component: "llm" | "external" }
@@ -112,7 +193,7 @@ function vertexProject(owner: any, body: any, vertex: boolean): string | undefin
         endpoint.port !== "" || !["", "/"].includes(endpoint.pathname) ||
         endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
         !["v1", "v1beta1"].includes(client?.getApiVersion?.()) ||
-        options?.baseUrlResourceScope != null || options?.extraBody != null ||
+        options?.baseUrlResourceScope != null || options?.extraBody != null || options?.fetch != null ||
         typeof config !== "object" || Array.isArray(config) ||
         Object.keys(config).some(key => config[key] != null && ![
           "systemInstruction", "temperature", "topP", "topK", "maxOutputTokens", "stopSequences",
@@ -399,29 +480,36 @@ function patchDirect(
     const paid = body?.config?.httpOptions == null && typeof endpoint === "string" &&
       hasPaidProviderBilling(this, "google", endpoint);
     const project = vertexProject(this, body, vertex);
+    const proof: VertexTransportProof | undefined = project && spec.kind === "content" &&
+      observeVertexTransport(this?.apiClient) ? {
+        client: this.apiClient, project, stream: name.endsWith("Stream") || body?.stream === true,
+        calls: 0, verified: false,
+      } : undefined;
+    const verifiedProject = () => proof?.calls === 1 && proof.verified ? project : undefined;
     const operation = `google.genai.${ownerName}.${name}`.toLowerCase();
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: operation, provider: "google", service: service(vertex), operation,
       component: spec.component, model: modelName(body, undefined, vertex), eventType: spec.eventType,
     });
     let result: any;
-    try { result = session.invoke(() => original.apply(this, args)); }
+    try { result = session.invoke(() => proof
+      ? vertexTransport.run(proof, () => original.apply(this, args)) : original.apply(this, args)); }
     catch (error) { session.fail(error); throw error; }
     const complete = (response: any): any => {
       if (name.endsWith("Stream") || body?.stream === true) {
         let terminal = response;
-        return wrapProviderStream(response, session, (chunk) => {
+        return wrapProviderStream(vertexContextStream(response, proof), session, (chunk) => {
           terminal = (chunk as any)?.response ?? chunk;
         }, () => {
           const measurement = directMeasurement(spec.kind, terminal, body, vertex, name);
           return spec.kind === "content" ? admitVertexContent(
-            admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid), terminal, project,
+            admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid), terminal, verifiedProject(),
           ) : measurement;
         });
       }
       const measurement = directMeasurement(spec.kind, response, body, vertex, name);
       session.finish(spec.kind === "content" ? admitVertexContent(
-        admitDirectContent(measurement, response, routeOwner, {}, vertex, paid), response, project,
+        admitDirectContent(measurement, response, routeOwner, {}, vertex, paid), response, verifiedProject(),
       ) : measurement);
       return response;
     };
@@ -634,9 +722,13 @@ export async function instrumentGoogleGenAI(pricing: PricingEngine, buffer: Even
 
 export function uninstrumentGoogleGenAI(): void {
   for (const item of patches.splice(0).reverse()) {
-    if (item.kind === "method") item.owner[item.name] = item.original;
+    if (item.kind === "method") {
+      if (item.inherited) delete item.owner[item.name];
+      else item.owner[item.name] = item.original;
+    }
     else Object.defineProperty(item.owner, item.name, item.original);
   }
+  vertexTransportObservers = new WeakMap();
   patched = false;
 }
 export function provideGoogleGenAIModule(ref: unknown): void { providedModule = ref; }

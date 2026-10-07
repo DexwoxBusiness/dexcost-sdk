@@ -60,14 +60,19 @@ export function createYouSearchFetch(tracker: CostTracker, options: YouSearchOpt
     const task = getCurrentTask(), started = new Date();
     if (!state.active || !task || providerCaptureIsClaimed()) return native(input, init);
     return runWithProviderCapture("you_com", async () => {
-      let request: Request | undefined, eligible = false;
-      try { request = input instanceof Request ? new Request(input.clone(), init) : new Request(input, init); } catch { /* unknown request is unpriced */ }
+      let request: Request | undefined, requestUrl: string | undefined, eligible = false;
+      try {
+        request = input instanceof Request ? new Request(input.clone(), init) : new Request(input, init);
+        requestUrl = request.url;
+      } catch { /* unknown request is unpriced */ }
       // Invoke native fetch before the first await so caller mutation after
       // invocation cannot change the dispatched request after our snapshot.
       const response = await native(input, init);
       try {
         if (request) eligible = await isBase(request, origin);
-        if (!state.active || !eligible || response.status !== 200 || response.redirected || (response.url && response.url !== request!.url)) return response;
+        // A synthetic Response has no final URL: a success-shaped body alone
+        // cannot prove that the snapshotted direct request reached this route.
+        if (!state.active || !eligible || response.status !== 200 || response.redirected !== false || !response.url || response.url !== requestUrl) return response;
         const data = await response.clone().json() as { results?: unknown; metadata?: { search_uuid?: unknown } }, identifier = data?.metadata?.search_uuid;
         if (!data?.results || typeof data.results !== "object" || Array.isArray(data.results) || typeof identifier !== "string" || !UUID.test(identifier)) return response;
         const record = createHash("sha256").update(JSON.stringify([account, identifier.toLowerCase()])).digest("hex");
