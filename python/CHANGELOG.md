@@ -57,6 +57,13 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.28.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.27.0...python/v0.28.0) (2026-10-07)
+
+
+### Features
+
+* **attribution:** add paired chat and cloud vector evidence ([#198](https://github.com/DexwoxBusiness/dexcost-sdk/issues/198)) ([713fc23](https://github.com/DexwoxBusiness/dexcost-sdk/commit/713fc23d553421347cbc74845619205ead4e76b4))
+
 ## [0.27.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.26.0...python/v0.27.0) (2026-10-05)
 
 
