@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.30.0...typescript/v0.31.0) (2026-10-07)
+
+
+### Features
+
+* **attribution:** add paired chat and cloud vector evidence ([#198](https://github.com/DexwoxBusiness/dexcost-sdk/issues/198)) ([713fc23](https://github.com/DexwoxBusiness/dexcost-sdk/commit/713fc23d553421347cbc74845619205ead4e76b4))
+
 ## [0.30.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.29.0...typescript/v0.30.0) (2026-10-04)
 
 
