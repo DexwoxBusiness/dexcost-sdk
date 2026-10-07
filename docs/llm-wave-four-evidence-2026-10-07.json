@@ -1,0 +1,54 @@
+{
+  "verified_at": "2026-10-07",
+  "javascript_native_test_version": "Official openai 7.30.0 requires Node >=22; its mocked-native-client integration tests are declaration-skipped on Node20. Paired facade capture, negative admission and exact server money fixtures continue running on Node20. Bedrock native tests are not skipped.",
+  "verification": "Official API pages fetched; root rendered OpenAI Standard All models and AWS Anthropic Global cross-region pricing in browser. Public read-only pages; no paid calls.",
+  "basis": "Public standard marginal gross USD; not invoice cash. Credits, negotiated discounts, tax, commitment or account allowances not inferred.",
+  "native_parser_boundary": "Capture validates objects returned by the official SDK, not unseen raw HTTP JSON. Python OpenAI/Pydantic normalizes a boolean audio counter false to integer 0 before native capture; a regression records this boundary explicitly. Raw helper inputs retain strict boolean rejection. No pre-parse transport hook is installed. Only text/no-audio requests are admitted.",
+  "openai": {
+    "models": [
+      "gpt-6-astra",
+      "gpt-6.1-sol",
+      "gpt-6-luna",
+      "gpt-5.6-luna"
+    ],
+    "sources": [
+      "https://developers.openai.com/api/docs/pricing",
+      "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+      "https://developers.openai.com/api/docs/guides/prompt-caching",
+      "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    ],
+    "admitted": "Direct global https://api.openai.com/v1 Chat Completions, actual default service tier, exact served model, valid final usage. Short input <=272000; >272000 whole-request long tariff. Cache read/write replace uncached input; reasoning replaces ordinary output, no double counting. Streaming requires final aggregate choices=[] and clean exhaustion.",
+    "excluded": "Other models/aliases, Azure, gateways, regional data-residency/FedRAMP uplift endpoints, Fast/Priority/Flex/Batch, tool/function calls, audio, incomplete/failed/cancelled streams, missing or inconsistent usage."
+  },
+  "bedrock": {
+    "models": [
+      "global.anthropic.claude-sonnet-5-5",
+      "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
+    "source_region": "us-east-1",
+    "routing": "Global cross-region; source-region evidence is not destination-region data residency.",
+    "sources": [
+      "https://aws.amazon.com/bedrock/pricing/",
+      "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html",
+      "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html",
+      "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html",
+      "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html"
+    ],
+    "verified_usd_per_million": {
+      "sonnet_5_5": {
+        "input": "2",
+        "output": "10"
+      },
+      "haiku_4_5": {
+        "input": "1",
+        "output": "5"
+      }
+    },
+    "admitted": "Exact global profiles from default native bedrock-runtime us-east-1 endpoint, standard on-demand Converse and ConverseStream, text-only/no-cache, final usage+request ID+served default tier+standard latency.",
+    "excluded": "Bare model IDs, geo/application/provisioned profiles, other regions, Mantle, custom endpoints/resolvers, InvokeModel, prompt caching/checkpoints, guardrails, tools, multimodal input, additional model fields, missing/invalid/partial metadata, failed/cancelled streams.",
+    "feed_note": "Current AmazonBedrock public price feed 20261006144726 did not contain current Marketplace Claude models. New Claude numbers were verified from rendered AWS pricing, not old feed or direct Anthropic prices."
+  }
+}

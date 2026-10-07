@@ -45,7 +45,7 @@ from dexcost.idempotency import (
     apply_event_idempotency,
     capture_idempotency_key,
 )
-from dexcost.instruments._bedrock_converse import NOVA_MODELS, converse_call
+from dexcost.instruments._bedrock_converse import CONVERSE_MODELS, converse_call
 from dexcost.instruments._capture import provider_capture_wrapper
 from dexcost.instruments._errors import (
     finalize_failed_auto_task,
@@ -699,10 +699,15 @@ def _make_api_call_wrapper(
         api_params = {}
     if (
         operation_name in {"Converse", "ConverseStream"}
-        and api_params.get("modelId") in NOVA_MODELS
+        and api_params.get("modelId") in CONVERSE_MODELS
     ):
         return converse_call(
-            wrapped, instance, args, kwargs, api_params, _active_tracker,
+            wrapped,
+            instance,
+            args,
+            kwargs,
+            api_params,
+            _active_tracker,
             operation_name == "ConverseStream",
         )
     if operation_name == "ApplyGuardrail":

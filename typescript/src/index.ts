@@ -24,6 +24,8 @@ export type { RuntimeResource } from "./instruments/runtime.js";
 export { instrumentObjectStorage, uninstrumentObjectStorage } from "./instruments/object-storage.js";
 export { instrumentPinecone, instrumentTurbopuffer, uninstrumentPinecone, uninstrumentTurbopuffer, vectorDatabaseResourceId } from "./instruments/vector-database.js";
 export type { PineconeBinding, VectorDatabaseBinding } from "./instruments/vector-database.js";
+export { cloudVectorResourceId, instrumentQdrant, uninstrumentQdrant, instrumentZilliz, uninstrumentZilliz } from "./instruments/cloud-vector.js";
+export type { CloudVectorBinding } from "./instruments/cloud-vector.js";
 export type { ObjectStorageBinding } from "./instruments/object-storage.js";
 export { databaseResourceId, instrumentMongoClient, instrumentRedisClient, uninstrumentRedisClient } from "./instruments/database.js";
 export type { DatabaseResource, InstrumentedRedisClient } from "./instruments/database.js";
