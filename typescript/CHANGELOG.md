@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.31.0...typescript/v0.32.0) (2026-10-21)
+
+
+### Features
+
+* **attribution:** add Vertex, You Search, and Upstash Redis capture ([#201](https://github.com/DexwoxBusiness/dexcost-sdk/issues/201)) ([eb02c2f](https://github.com/DexwoxBusiness/dexcost-sdk/commit/eb02c2f84160bd5cc44a9e68a3ba72889b0739a4))
+
 ## [0.31.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/typescript/v0.30.0...typescript/v0.31.0) (2026-10-07)
 
 
