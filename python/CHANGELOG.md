@@ -57,6 +57,13 @@ All notable changes to dexcost will be documented in this file.
   expiry, and unsafe-observer rejection. Full bundles remain only as migration
   bootstraps until Python/TypeScript joint gates pass.
 
+## [0.29.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.28.0...python/v0.29.0) (2026-10-21)
+
+
+### Features
+
+* **attribution:** add Vertex, You Search, and Upstash Redis capture ([#201](https://github.com/DexwoxBusiness/dexcost-sdk/issues/201)) ([eb02c2f](https://github.com/DexwoxBusiness/dexcost-sdk/commit/eb02c2f84160bd5cc44a9e68a3ba72889b0739a4))
+
 ## [0.28.0](https://github.com/DexwoxBusiness/dexcost-sdk/compare/python/v0.27.0...python/v0.28.0) (2026-10-07)
 
 
