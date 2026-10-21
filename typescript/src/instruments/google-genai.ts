@@ -13,6 +13,7 @@ import {
   type ProviderUsageLine,
 } from "./provider-metering.js";
 import { nonNegativeDecimal, nonNegativeInteger, prefixedModel } from "./provider-extract.js";
+import { observeVertexNativeBody, type VertexNativeBodyObserver } from "./vertex-native-body.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -27,12 +28,13 @@ interface VertexTransportProof {
   client: any; project: string; stream: boolean; calls: number; verified: boolean;
   generation: object;
   requestUrl?: string;
-  native: { requests: number; writes: number; headers: number; eligible: boolean; status?: number; complete: boolean; failed: boolean };
+  native: { requests: number; writes: number; headers: number; eligible: boolean; status?: number; complete: boolean; failed: boolean; monetaryFingerprint?: string; body?: VertexNativeBodyObserver };
 }
 const vertexTransport = new AsyncLocalStorage<VertexTransportProof>();
 const vertexNativeTransport = new AsyncLocalStorage<VertexTransportProof>();
 let vertexTransportObservers = new WeakMap<object, (...args: any[]) => any>();
-let vertexNativeRequests = new WeakMap<object, VertexTransportProof>();
+let vertexNativeRequests = new WeakMap<object, { proof: VertexTransportProof; body?: VertexNativeBodyObserver }>();
+const vertexNativeBodies = new Set<VertexNativeBodyObserver>();
 let vertexGeneration: object | undefined;
 const vertexNativeSubscriptions: { name: string; listener: (message: unknown) => void }[] = [];
 
@@ -41,8 +43,9 @@ function currentVertexProof(proof: VertexTransportProof | undefined): proof is V
 }
 
 /** Response metadata can also be returned by a global fetch cache or recovery
- * wrapper. Require a fresh native wire request in this apiCall's context. Never
- * retain headers, request bodies or response bodies, and never alter I/O. */
+ * wrapper. Require a fresh native wire request and matching monetary evidence
+ * from its body. Bounded temporary body buffers are discarded on completion,
+ * failure or teardown; no request bodies/headers or response text are persisted. */
 function observeVertexNativeTransport(): void {
   if (vertexNativeSubscriptions.length) return;
   for (const name of ["undici:request:create", "undici:client:sendHeaders", "undici:request:headers",
@@ -51,23 +54,50 @@ function observeVertexNativeTransport(): void {
       try {
         const { request, response } = message as any;
         if (!request || typeof request !== "object") return;
+        const tracked = vertexNativeRequests.get(request);
         const proof = name === "undici:request:create"
-          ? vertexNativeTransport.getStore() : vertexNativeRequests.get(request);
+          ? vertexNativeTransport.getStore() : tracked?.proof;
         if (!currentVertexProof(proof)) return;
         if (name === "undici:request:create") {
-          vertexNativeRequests.set(request, proof);
           proof.native.requests++;
-          proof.native.eligible &&= request.method === "POST" && proof.requestUrl !== undefined &&
+          proof.native.eligible &&= proof.native.requests === 1 && request.method === "POST" && proof.requestUrl !== undefined &&
             vertexRequestUrl(String(request.origin) + request.path, proof) === proof.requestUrl;
+          if (!proof.native.eligible && proof.native.body) {
+            proof.native.body.cancel(); vertexNativeBodies.delete(proof.native.body);
+            proof.native.body = undefined;
+          }
+          const body = proof.native.eligible ? observeVertexNativeBody(request, proof.stream, terminal => {
+            if (currentVertexProof(proof) && proof.native.requests === 1) {
+              proof.native.monetaryFingerprint = vertexMonetaryFingerprint(terminal, proof.project);
+            }
+          }, () => currentVertexProof(proof) && proof.native.eligible) : undefined;
+          if (body) { vertexNativeBodies.add(body); proof.native.body = body; }
+          else proof.native.eligible = false;
+          vertexNativeRequests.set(request, { proof, body });
         } else if (name === "undici:client:sendHeaders") {
           proof.native.writes++;
-          proof.native.eligible &&= request.method === "POST" && proof.requestUrl !== undefined &&
+          proof.native.eligible &&= proof.native.writes === 1 && request.method === "POST" && proof.requestUrl !== undefined &&
             vertexRequestUrl(String(request.origin) + request.path, proof) === proof.requestUrl;
         } else if (name === "undici:request:headers") {
           proof.native.headers++;
           proof.native.status = response?.statusCode;
-        } else if (name === "undici:request:trailers") proof.native.complete = true;
-        else proof.native.failed = true;
+          proof.native.eligible &&= proof.native.headers === 1 && proof.native.status === 200;
+          tracked?.body?.headers(response?.headers);
+        } else {
+          if (name === "undici:request:trailers") {
+            proof.native.complete = true;
+            tracked?.body?.complete();
+          } else {
+            proof.native.failed = true;
+            tracked?.body?.cancel();
+          }
+          if (tracked?.body) vertexNativeBodies.delete(tracked.body);
+          proof.native.body = undefined;
+        }
+        if (!proof.native.eligible && tracked?.body) {
+          tracked.body.cancel(); vertexNativeBodies.delete(tracked.body);
+          proof.native.body = undefined;
+        }
       } catch { /* Unknown native diagnostics cannot establish monetary evidence. */ }
     };
     channel(name).subscribe(listener);
@@ -75,10 +105,12 @@ function observeVertexNativeTransport(): void {
   }
 }
 
-function verifiedVertexProof(proof: VertexTransportProof | undefined): boolean {
+function verifiedVertexProof(proof: VertexTransportProof | undefined, terminal: unknown): boolean {
   return currentVertexProof(proof) && proof.calls === 1 && proof.verified &&
     proof.native.requests === 1 && proof.native.writes === 1 && proof.native.headers === 1 &&
-    proof.native.eligible && proof.native.status === 200 && proof.native.complete && !proof.native.failed;
+    proof.native.eligible && proof.native.status === 200 && proof.native.complete && !proof.native.failed &&
+    proof.native.monetaryFingerprint !== undefined &&
+    proof.native.monetaryFingerprint === vertexMonetaryFingerprint(terminal, proof.project);
 }
 
 function vertexRequestUrl(value: unknown, proof: VertexTransportProof): string | undefined {
@@ -118,6 +150,7 @@ function observeVertexTransport(client: any): boolean {
     // Without retry options, the pinned native apiCall performs exactly one
     // fetch. Configured retry policies remain usage-only without changing them.
     const eligible = args[1]?.method === "POST" && args[2] == null && args[5] == null && requestUrl !== undefined;
+    proof.native.eligible &&= eligible && proof.calls === 1;
     proof.requestUrl = requestUrl;
     const response = await vertexNativeTransport.run(proof, () => original.apply(this, args));
     try {
@@ -292,6 +325,25 @@ function admitVertexContent(measurement: OperationMeasurement, response: any, pr
       providerRegion: "global", billingDimensions: [...(measurement.billingDimensions ?? []),
         ["cloud_project", project], ["vertex_pricing_lane", "global_standard_paygo_text"]] };
   } catch { return measurement; }
+}
+
+/** Both representations must independently satisfy every pricing admission
+ * check. Compare identity and monetary semantics, never private output text. */
+function vertexMonetaryFingerprint(response: any, project: string): string | undefined {
+  try {
+    const admitted = admitVertexContent(contentMeasurement(response, {}, true), response, project);
+    if (admitted.providerRegion !== "global") return undefined;
+    const usage = response.usageMetadata;
+    return JSON.stringify([
+      response.responseId, response.modelVersion, usage.trafficType,
+      usage.promptTokenCount, usage.cachedContentTokenCount, usage.candidatesTokenCount,
+      usage.thoughtsTokenCount, usage.totalTokenCount, usage.toolUsePromptTokenCount ?? 0,
+      [usage.promptTokensDetails, usage.cacheTokensDetails, usage.candidatesTokensDetails]
+        .map(items => items?.map((item: any) => [item.modality, item.tokenCount]) ?? []),
+      response.candidates[0].finishReason,
+      admitted.usageLines?.map(line => [line.metric, line.quantity.toString(), line.unit]),
+    ]);
+  } catch { return undefined; }
 }
 
 function admitDirectContent(measurement: OperationMeasurement, response: any, owner: any, body: any, vertex: boolean, paid = false): OperationMeasurement {
@@ -543,7 +595,7 @@ function patchDirect(
         calls: 0, verified: false, generation,
         native: { requests: 0, writes: 0, headers: 0, eligible: true, complete: false, failed: false },
       } : undefined;
-    const verifiedProject = () => verifiedVertexProof(proof) ? project : undefined;
+    const verifiedProject = (response: unknown) => verifiedVertexProof(proof, response) ? project : undefined;
     const operation = `google.genai.${ownerName}.${name}`.toLowerCase();
     const session = new ProviderOperationSession(pricing, buffer, {
       taskType: operation, provider: "google", service: service(vertex), operation,
@@ -561,13 +613,13 @@ function patchDirect(
         }, () => {
           const measurement = directMeasurement(spec.kind, terminal, body, vertex, name);
           return spec.kind === "content" ? admitVertexContent(
-            admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid), terminal, verifiedProject(),
+            admitDirectContent(measurement, terminal, routeOwner, {}, vertex, paid), terminal, verifiedProject(terminal),
           ) : measurement;
         });
       }
       const measurement = directMeasurement(spec.kind, response, body, vertex, name);
       session.finish(spec.kind === "content" ? admitVertexContent(
-        admitDirectContent(measurement, response, routeOwner, {}, vertex, paid), response, verifiedProject(),
+        admitDirectContent(measurement, response, routeOwner, {}, vertex, paid), response, verifiedProject(response),
       ) : measurement);
       return response;
     };
@@ -782,6 +834,8 @@ export async function instrumentGoogleGenAI(pricing: PricingEngine, buffer: Even
 export function uninstrumentGoogleGenAI(): void {
   // Invalidate in-flight unary calls and lazy streams before removing observers.
   vertexGeneration = undefined;
+  for (const body of vertexNativeBodies) body.cancel();
+  vertexNativeBodies.clear();
   for (const { name, listener } of vertexNativeSubscriptions.splice(0)) channel(name).unsubscribe(listener);
   vertexNativeRequests = new WeakMap();
   for (const item of patches.splice(0).reverse()) {

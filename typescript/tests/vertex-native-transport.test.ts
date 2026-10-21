@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { channel } from "node:diagnostics_channel";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { GoogleGenAI } from "@google/genai";
 import { EventBuffer } from "../src/transport/buffer.js";
 import { PricingEngine } from "../src/pricing/engine.js";
@@ -35,8 +36,8 @@ function lanes(target = buffer) {
   return target.getAllEvents().map(event => toAttributionObservationV3(event)?.usage
     .flatMap(line => line.dimensions).find(dimension => dimension.key === "vertex_pricing_lane")?.value);
 }
-function response(url: string, stream: boolean, status = 200) {
-  const terminal = structuredClone(example.response);
+function response(url: string, stream: boolean, status = 200, payload = example.response) {
+  const terminal = structuredClone(payload);
   const interim = structuredClone(terminal);
   delete interim.candidates[0].finishReason;
   const result = new Response(stream ? `data: ${JSON.stringify(interim)}\n\ndata: ${JSON.stringify(terminal)}\n\n` : JSON.stringify(terminal), {
@@ -94,6 +95,120 @@ describe("Vertex monetary admission requires fresh native wire evidence", () => 
       expect(state.send).toHaveBeenCalledOnce();
       expect(lanes()[0]).toEqual({ type: "string", value: example.lane });
       expect(lanes()[1]).toBeUndefined();
+    });
+
+    for (const replacementKind of ["synthetic", "cached"] as const) it(`rejects substituted output after an unrelated successful native response / stream=${stream} / replacement=${replacementKind}`, async () => {
+      const state = client(stream);
+      const replacementBody = structuredClone(example.response);
+      replacementBody.responseId = `replacement-${replacementKind}-${stream}`;
+      replacementBody.candidates[0].content.parts[0].text = "replacement output";
+      const usage = replacementBody.usageMetadata;
+      for (const key of ["promptTokenCount", "cachedContentTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "totalTokenCount"])
+        usage[key] *= 3;
+      for (const key of ["promptTokensDetails", "cacheTokensDetails", "candidatesTokensDetails"])
+        usage[key][0].tokenCount *= 3;
+      const replacement = (url: string) => {
+        const interim = structuredClone(replacementBody);
+        delete interim.candidates[0].finishReason;
+        const result = new Response(stream
+          ? `data: ${JSON.stringify(interim)}\n\ndata: ${JSON.stringify(replacementBody)}\n\n`
+          : JSON.stringify(replacementBody), {
+          status: 200, headers: { "content-type": stream ? "text/event-stream" : "application/json" },
+        });
+        Object.defineProperty(result, "url", { value: url });
+        return result;
+      };
+      const url = `https://aiplatform.googleapis.com/v1/projects/${example.project}/locations/global/publishers/google/models/${example.model}:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`;
+      // Prepare a real cached Response outside this operation's proof context.
+      const cached = replacementKind === "cached"
+        ? await network.fetch(url, { method: "POST" }, async () => replacement(url)) : undefined;
+      let substituted: Response | undefined;
+      vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+        const fresh = await state.send(input, init);
+        const nativeBody = await fresh.text();
+        expect(nativeBody).toContain(example.response.responseId);
+        expect(nativeBody).not.toContain(replacementBody.responseId);
+        substituted = cached ? cached.clone() : replacement(input);
+        expect(substituted.url).toBe(input);
+        expect(substituted.status).toBe(200);
+        expect(substituted.redirected).toBe(false);
+        return substituted;
+      });
+      await install(state.native);
+      const result = await state.native.models[state.name](state.body);
+      const chunks: any[] = [];
+      if (stream) for await (const chunk of result) chunks.push(chunk);
+      else chunks.push(result);
+      expect(chunks).toHaveLength(stream ? 2 : 1);
+      for (const chunk of chunks) {
+        expect(chunk.responseId).toBe(replacementBody.responseId);
+        expect(chunk.usageMetadata).toMatchObject(usage);
+        expect(chunk.candidates[0].content.parts[0].text).toBe("replacement output");
+      }
+      expect(substituted?.bodyUsed).toBe(true);
+      expect(state.send).toHaveBeenCalledOnce();
+      expect(buffer.getAllEvents()).toHaveLength(1);
+      expect(lanes()).toEqual([undefined]);
+    });
+
+    const substitutions: [string, (native: any, selected: any) => void][] = [
+      ["same id with different counters", (_native, selected) => {
+        const usage = selected.usageMetadata;
+        for (const key of ["promptTokenCount", "cachedContentTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "totalTokenCount"]) usage[key] *= 2;
+        for (const key of ["promptTokensDetails", "cacheTokensDetails", "candidatesTokensDetails"]) usage[key][0].tokenCount *= 2;
+      }],
+      ["different id with identical counters", (_native, selected) => { selected.responseId = "substituted-record-id"; }],
+      ["native provisioned throughput", native => { native.usageMetadata.trafficType = "PROVISIONED_THROUGHPUT"; }],
+      ["native missing counter", native => { delete native.usageMetadata.cachedContentTokenCount; }],
+      ["native grounding", native => { native.candidates[0].groundingMetadata = {}; }],
+      ["native output media", native => { native.candidates[0].content.parts = [{ inlineData: { mimeType: "image/png", data: "AA==" } }]; }],
+      ["native missing modality", native => { delete native.usageMetadata.promptTokensDetails; }],
+      ["different valid finish reason", (_native, selected) => { selected.candidates[0].finishReason = "MAX_TOKENS"; }],
+    ];
+    it.each(substitutions)(`binds every native monetary prerequisite: %s / stream=${stream}`, async (_label, edit) => {
+      const state = client(stream);
+      const nativeBody = structuredClone(example.response), selected = structuredClone(example.response);
+      edit(nativeBody, selected);
+      const replaced = vi.fn(async (input: string, init?: RequestInit) => {
+        const fresh = await network.fetch(input, init, async () => response(input, stream, 200, nativeBody));
+        await fresh.text();
+        return response(input, stream, 200, selected);
+      });
+      vi.stubGlobal("fetch", replaced);
+      await install(state.native);
+      const result = await state.native.models[state.name](state.body);
+      let terminal = result;
+      if (stream) for await (const chunk of result) terminal = chunk;
+      expect(terminal.responseId).toBe(selected.responseId);
+      expect(terminal.usageMetadata).toMatchObject(selected.usageMetadata);
+      expect(replaced).toHaveBeenCalledOnce();
+      expect(lanes()).toEqual([undefined]);
+    });
+
+    it(`compares monetary evidence rather than private output text / stream=${stream}`, async () => {
+      const state = client(stream), selected = structuredClone(example.response);
+      selected.candidates[0].content.parts[0].text = "changed private application output";
+      vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+        await (await state.send(input, init)).text();
+        return response(input, stream, 200, selected);
+      });
+      await install(state.native); await consume(state);
+      expect(lanes()).toEqual([{ type: "string", value: example.lane }]);
+      expect(JSON.stringify(buffer.getAllEvents())).not.toContain("changed private application output");
+    });
+
+    it(`admits matching native gzip-compressed monetary evidence / stream=${stream}`, async () => {
+      const state = client(stream);
+      vi.stubGlobal("fetch", (input: string, init?: RequestInit) => network.fetch(input, init, async () => {
+        const plain = response(input, stream);
+        const compressed = new Response(gzipSync(Buffer.from(await plain.arrayBuffer())), {
+          headers: { "content-type": plain.headers.get("content-type")!, "content-encoding": "gzip" },
+        });
+        Object.defineProperty(compressed, "url", { value: input });
+        return compressed;
+      }));
+      await install(state.native); await consume(state);
+      expect(lanes()).toEqual([{ type: "string", value: example.lane }]);
     });
 
     for (const failure of ["status", "connection", "body"] as const) it(`does not price global recovery after native ${failure} failure / stream=${stream}`, async () => {
