@@ -40,11 +40,12 @@ def test_service_catalog_is_safe_and_byte_equal_across_active_sdks() -> None:
     entries = {key: value for key, value in catalog.items() if key != "_meta"}
     metadata = catalog["_meta"]
 
-    assert metadata["safety_policy_version"] == "2026-10-04.1"
-    assert metadata["disabled_service_count"] == 104
-    assert metadata["service_count"] == len(entries) == 63
+    assert metadata["safety_policy_version"] == "2026-10-08.1"
+    assert metadata["disabled_service_count"] == 107
+    assert metadata["service_count"] == len(entries) == 60
     assert {
-        "llamaparse", "unstructured_io", "cohere_rerank", "amazon_textract", "google_document_ai"
+        "llamaparse", "unstructured_io", "cohere_rerank", "amazon_textract", "google_document_ai",
+        "you_search", "upstash_redis", "upstash_kafka",
     }.isdisjoint(entries)
 
     zero_rate_entries = [

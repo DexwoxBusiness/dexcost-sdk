@@ -8,9 +8,13 @@ recording only provider-reported quantities and bounded opaque response IDs.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+import re
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+from functools import partial
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -41,6 +45,7 @@ _active_tracker: Any | None = None
 _patched = False
 _originals: dict[str, Any] = {}
 _extra_originals: list[tuple[Any, str, Any]] = []
+_vertex_transport_generation: object | None = None
 
 
 def _value(value: object, name: str) -> Any:
@@ -331,6 +336,431 @@ def _measurement_from_usage(
         task_output_tokens=task_output,
         task_cached_tokens=cache_total,
     )
+
+
+def _vertex_fields(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if item is not None}
+    if type(value).__module__ == "google.genai.types":
+        return cast(dict[str, Any], value.model_dump(exclude_none=True))
+    return None
+
+
+def _vertex_text(value: Any, depth: int = 0) -> bool:
+    if depth > 4:
+        return False
+    if isinstance(value, str):
+        return True
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(_vertex_text(item, depth + 1) for item in value)
+    fields = _vertex_fields(value)
+    if fields is None:
+        return False
+    if set(fields) == {"text"}:
+        return isinstance(fields["text"], str)
+    return (
+        not (set(fields) - {"role", "parts"})
+        and fields.get("role") in (None, "user", "model", "system")
+        and isinstance(fields.get("parts"), (list, tuple))
+        and _vertex_text(fields["parts"], depth + 1)
+    )
+
+
+def _vertex_project(instance: object, kwargs: dict[str, Any]) -> str | None:
+    """Snapshot eligible configuration, not proof of the eventual transport route."""
+    try:
+        client = _value(instance, "_api_client")
+        options = _value(client, "_http_options")
+        project = _value(client, "project")
+        endpoint = urlparse(str(_value(options, "base_url") or ""))
+        config = _vertex_fields(kwargs.get("config")) if kwargs.get("config") is not None else {}
+        if (
+            not _is_vertex(instance)
+            or _value(client, "location") != "global"
+            or not isinstance(project, str)
+            or re.fullmatch(r"(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})", project) is None
+            or endpoint.scheme != "https"
+            or endpoint.hostname != "aiplatform.googleapis.com"
+            or endpoint.port not in (None, 443)
+            or endpoint.path not in ("", "/")
+            or endpoint.username
+            or endpoint.password
+            or endpoint.query
+            or endpoint.fragment
+            or _value(options, "api_version") not in ("v1", "v1beta1")
+            or _value(options, "base_url_resource_scope") is not None
+            or _value(options, "extra_body") is not None
+            or config is None
+            or set(config)
+            - {
+                "system_instruction",
+                "temperature",
+                "top_p",
+                "top_k",
+                "max_output_tokens",
+                "stop_sequences",
+                "seed",
+                "response_mime_type",
+                "response_schema",
+                "response_json_schema",
+                "thinking_config",
+                "safety_settings",
+                "candidate_count",
+            }
+            or config.get("candidate_count", 1) != 1
+            or isinstance(config.get("candidate_count"), bool)
+            or not _vertex_text(kwargs.get("contents"))
+            or ("system_instruction" in config and not _vertex_text(config["system_instruction"]))
+        ):
+            return None
+        headers = _value(options, "headers")
+        credentials = _value(client, "_credentials")
+        token = _value(credentials, "token")
+        quota_project = _value(credentials, "quota_project_id")
+        # GenAI mutates its own options after obtaining credentials. Permit only
+        # those exact native values, without refreshing, changing, or retaining
+        # credentials; otherwise later calls on the same client become unpriced.
+        native_headers = {}
+        if isinstance(token, str) and token:
+            native_headers["authorization"] = f"Bearer {token}"
+        if isinstance(quota_project, str) and quota_project:
+            native_headers["x-goog-user-project"] = quota_project
+        if headers is not None and (
+            not isinstance(headers, Mapping)
+            or any(
+                str(key).lower() not in {"content-type", "user-agent", "x-goog-api-client"}
+                and (
+                    str(key).lower() not in native_headers
+                    or value != native_headers[str(key).lower()]
+                )
+                for key, value in headers.items()
+            )
+        ):
+            return None
+        model = "gemini-3.5-flash-lite"
+        if kwargs.get("model") not in (
+            model,
+            f"publishers/google/models/{model}",
+            f"projects/{project}/locations/global/publishers/google/models/{model}",
+        ):
+            return None
+        return project
+    except Exception:
+        return None
+
+
+@dataclass
+class _VertexTransportEvidence:
+    client: Any
+    project: str
+    url: str
+    generation: object
+    sends: int = 0
+    attempts: int = 0
+    response: Any = None
+    verified: bool = False
+    invalid: bool = False
+
+    def request_matches(self, request: Any) -> bool:
+        return request.method == "POST" and str(request.url) == self.url
+
+    def finish(self, response: Any) -> None:
+        try:
+            self.verified = (
+                not self.invalid
+                and self.sends == self.attempts == 1
+                and response is self.response
+                and response.status_code == 200
+                and not response.history
+                and str(response.url) == self.url
+                and self.request_matches(response.request)
+            )
+        except Exception:
+            self.invalid = True
+
+    def admitted_project(self) -> str | None:
+        return (
+            self.project
+            if _vertex_transport_generation is not None
+            and self.generation is _vertex_transport_generation
+            and self.verified
+            and not self.invalid
+            else None
+        )
+
+
+_vertex_transport_context: ContextVar[_VertexTransportEvidence | None] = ContextVar(
+    "dexcost_vertex_transport", default=None
+)
+
+
+@contextmanager
+def _vertex_transport_scope(evidence: _VertexTransportEvidence | None) -> Iterator[None]:
+    token = _vertex_transport_context.set(evidence)
+    try:
+        yield
+    finally:
+        _vertex_transport_context.reset(token)
+
+
+def _vertex_transport_evidence(
+    instance: object, project: str | None, *, asynchronous: bool, stream: bool = False
+) -> _VertexTransportEvidence | None:
+    """Admit only observable native HTTPX I/O; custom/aiohttp transports stay unpriced."""
+    generation = _vertex_transport_generation
+    if project is None or generation is None:
+        return None
+    try:
+        import httpx
+        from google.genai import _api_client
+
+        api = _value(instance, "_api_client")
+        if type(api) is not _api_client.BaseApiClient or any(
+            key in vars(api)
+            for key in (
+                "request",
+                "async_request",
+                "request_streamed",
+                "async_request_streamed",
+                "_request",
+                "_async_request",
+                "_request_once",
+                "_async_request_once",
+                "_build_request",
+                "_use_aiohttp",
+                "_use_google_auth_sync",
+            )
+        ):
+            return None
+        if (asynchronous and api._use_aiohttp()) or (
+            not asynchronous and api._use_google_auth_sync()
+        ):
+            return None
+        client: Any = api._async_httpx_client if asynchronous else api._httpx_client
+        client_types = (
+            (httpx.AsyncClient, _api_client.AsyncHttpxClient)
+            if asynchronous
+            else (httpx.Client, _api_client.SyncHttpxClient)
+        )
+        transport_type = httpx.AsyncHTTPTransport if asynchronous else httpx.HTTPTransport
+        method = "handle_async_request" if asynchronous else "handle_request"
+        if (
+            type(client) not in client_types
+            or any(
+                key in vars(client)
+                for key in (
+                    "send",
+                    "request",
+                    "build_request",
+                    "_send_single_request",
+                    "_send_handling_redirects",
+                    "_send_handling_auth",
+                    "_transport_for_url",
+                )
+            )
+            or any(client.event_hooks.values())
+        ):
+            return None
+        transports = (client._transport, *client._mounts.values())
+        if any(
+            transport is not None
+            and (type(transport) is not transport_type or method in vars(transport))
+            for transport in transports
+        ):
+            return None
+        operation = "streamGenerateContent?alt=sse" if stream else "generateContent"
+        version = api._http_options.api_version
+        url = (
+            f"https://aiplatform.googleapis.com/{version}/projects/{project}/locations/global/"
+            f"publishers/google/models/gemini-3.5-flash-lite:{operation}"
+        )
+        return _VertexTransportEvidence(client, project, url, generation)
+    except Exception:
+        return None
+
+
+def _vertex_http_observer(*, asynchronous: bool, transport: bool) -> Callable[..., Any]:
+    # Another instrument can retain this wrapper while uninstalling in a
+    # different order. Retired observers must stay inert after reinstallation.
+    generation = _vertex_transport_generation
+
+    def wrapper(wrapped: Any, instance: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        evidence = (
+            _vertex_transport_context.get()
+            if generation is not None and generation is _vertex_transport_generation
+            else None
+        )
+        if (
+            evidence is not None
+            and evidence.generation is generation
+            and (transport or instance is evidence.client)
+        ):
+            try:
+                request = args[0] if args else kwargs["request"]
+                if transport:
+                    evidence.attempts += 1
+                else:
+                    evidence.sends += 1
+                if not evidence.request_matches(request):
+                    evidence.invalid = True
+            except Exception:
+                evidence.invalid = True
+        else:
+            evidence = None
+
+        def complete(response: Any) -> Any:
+            if evidence is not None:
+                if transport:
+                    evidence.response = response
+                else:
+                    evidence.finish(response)
+            return response
+
+        if asynchronous:
+
+            async def invoke() -> Any:
+                try:
+                    return complete(await wrapped(*args, **kwargs))
+                except BaseException:
+                    if evidence is not None:
+                        evidence.invalid = True
+                    raise
+
+            return invoke()
+        try:
+            return complete(wrapped(*args, **kwargs))
+        except BaseException:
+            if evidence is not None:
+                evidence.invalid = True
+            raise
+
+    return wrapper
+
+
+def _patch_vertex_transport() -> None:
+    import httpx
+
+    global _vertex_transport_generation
+    _vertex_transport_generation = object()
+    for owner, method, asynchronous, transport in (
+        (httpx.Client, "send", False, False),
+        (httpx.AsyncClient, "send", True, False),
+        (httpx.HTTPTransport, "handle_request", False, True),
+        (httpx.AsyncHTTPTransport, "handle_async_request", True, True),
+    ):
+        _extra_originals.append((owner, method, getattr(owner, method)))
+        wrapt.wrap_function_wrapper(
+            owner, method, _vertex_http_observer(asynchronous=asynchronous, transport=transport)
+        )
+
+
+class _VertexSyncStream:
+    def __init__(self, stream: Any, evidence: _VertexTransportEvidence | None) -> None:
+        self._stream, self._evidence = stream, evidence
+
+    def __iter__(self) -> _VertexSyncStream:
+        return self
+
+    def __next__(self) -> Any:
+        with _vertex_transport_scope(self._evidence):
+            return next(self._stream)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+class _VertexAsyncStream:
+    def __init__(self, stream: Any, evidence: _VertexTransportEvidence | None) -> None:
+        self._stream, self._evidence = stream, evidence
+
+    def __aiter__(self) -> _VertexAsyncStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        with _vertex_transport_scope(self._evidence):
+            return await self._stream.__anext__()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _admit_vertex_content(
+    measurement: OperationMeasurement, response: object, project: str | None
+) -> OperationMeasurement:
+    try:
+        usage = _value(response, "usage_metadata")
+        counts = [
+            _count(_value(usage, name))
+            for name in (
+                "prompt_token_count",
+                "cached_content_token_count",
+                "candidates_token_count",
+                "thoughts_token_count",
+                "total_token_count",
+            )
+        ]
+        if any(value is None or value > 9_007_199_254_740_991 for value in counts):
+            return measurement
+        prompt, cached, output, thoughts, total = cast(list[int], counts)
+        candidates = _value(response, "candidates")
+        record = _value(response, "response_id")
+        if (
+            project is None
+            or _value(response, "model_version") != "gemini-3.5-flash-lite"
+            or not isinstance(record, str)
+            or not record.strip()
+            or len(record) > 256
+            or _value(usage, "traffic_type") != "ON_DEMAND"
+            or cached > prompt
+            or prompt <= 0
+            or total != prompt + output + thoughts
+            or (
+                _value(usage, "tool_use_prompt_token_count") is not None
+                and _count(_value(usage, "tool_use_prompt_token_count")) != 0
+            )
+            or not isinstance(candidates, (list, tuple))
+            or len(candidates) != 1
+            or _value(candidates[0], "finish_reason") not in ("STOP", "MAX_TOKENS")
+            or not _vertex_text(_value(candidates[0], "content"))
+            or any(
+                _value(candidates[0], key) is not None
+                for key in (
+                    "grounding_metadata",
+                    "url_context_metadata",
+                )
+            )
+        ):
+            return measurement
+        for name, count in (
+            ("prompt_tokens_details", prompt),
+            ("cache_tokens_details", cached),
+            ("candidates_tokens_details", output),
+        ):
+            details = _value(usage, name)
+            if details is None and count == 0:
+                continue
+            if not isinstance(details, (list, tuple)):
+                return measurement
+            pieces = [_count(_value(item, "token_count")) for item in details]
+            if (
+                any(_value(item, "modality") != "TEXT" for item in details)
+                or any(piece is None for piece in pieces)
+                or sum(cast(list[int], pieces)) != count
+            ):
+                return measurement
+        return replace(
+            measurement,
+            response_model="gemini-3.5-flash-lite",
+            provider_service="vertex_ai",
+            provider_region="global",
+            billing_dimensions=(
+                *measurement.billing_dimensions,
+                ("cloud_project", project),
+                ("vertex_pricing_lane", "global_standard_paygo_text"),
+            ),
+        )
+    except Exception:
+        return measurement
 
 
 def _direct_gemini_endpoint(instance: object, kwargs: dict[str, Any]) -> bool:
@@ -1251,11 +1681,18 @@ def _sync_direct_call(
     component: str,
     event_type: str,
     extract: MeasurementExtractor,
+    vertex_generation: object | None = None,
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
+    vertex_project = _vertex_project(instance, kwargs)
+    vertex_evidence = (
+        _vertex_transport_evidence(instance, vertex_project, asynchronous=False)
+        if vertex_generation is _vertex_transport_generation
+        else None
+    )
     session = _session(
         instance,
         operation=operation,
@@ -1267,7 +1704,7 @@ def _sync_direct_call(
         return wrapped(*args, **kwargs)
     try:
         try:
-            with suppress_network_event():
+            with suppress_network_event(), _vertex_transport_scope(vertex_evidence):
                 response = wrapped(*args, **kwargs)
         except Exception as exc:
             session.fail(exc)
@@ -1280,6 +1717,11 @@ def _sync_direct_call(
                     response,
                     direct=direct,
                     paid=paid,
+                )
+                measurement = _admit_vertex_content(
+                    measurement,
+                    response,
+                    vertex_evidence.admitted_project() if vertex_evidence is not None else None,
                 )
         except Exception:
             _log.debug("dexcost: failed to extract Google provider usage", exc_info=True)
@@ -1300,12 +1742,19 @@ def _async_direct_call(
     component: str,
     event_type: str,
     extract: MeasurementExtractor,
+    vertex_generation: object | None = None,
 ) -> Any:
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
         vertex = _is_vertex(instance)
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
+        vertex_project = _vertex_project(instance, kwargs)
+        vertex_evidence = (
+            _vertex_transport_evidence(instance, vertex_project, asynchronous=True)
+            if vertex_generation is _vertex_transport_generation
+            else None
+        )
         session = _session(
             instance,
             operation=operation,
@@ -1317,7 +1766,7 @@ def _async_direct_call(
             return await wrapped(*args, **kwargs)
         try:
             try:
-                with suppress_network_event():
+                with suppress_network_event(), _vertex_transport_scope(vertex_evidence):
                     response = await wrapped(*args, **kwargs)
             except Exception as exc:
                 session.fail(exc)
@@ -1330,6 +1779,13 @@ def _async_direct_call(
                         response,
                         direct=direct,
                         paid=paid,
+                    )
+                    measurement = _admit_vertex_content(
+                        measurement,
+                        response,
+                        vertex_evidence.admitted_project()
+                        if vertex_evidence is not None
+                        else None,
                     )
             except Exception:
                 _log.debug(
@@ -1347,10 +1803,17 @@ def _async_direct_call(
 
 class _ContentStreamMeter:
     def __init__(
-        self, kwargs: dict[str, Any], *, vertex: bool, direct: bool = False, paid: bool = False
+        self,
+        kwargs: dict[str, Any],
+        *,
+        vertex: bool,
+        direct: bool = False,
+        paid: bool = False,
+        vertex_evidence: _VertexTransportEvidence | None = None,
     ) -> None:
         self.direct = direct
         self.paid = paid
+        self.vertex_evidence = vertex_evidence
         self.kwargs = kwargs
         self.vertex = vertex
         self.terminal: object | None = None
@@ -1363,11 +1826,16 @@ class _ContentStreamMeter:
         model = _model_name((), self.kwargs)
         if self.terminal is None:
             return _unknown_measurement(model, vertex=self.vertex)
-        return _admit_direct_content(
+        measurement = _admit_direct_content(
             _content_measurement(self.terminal, self.kwargs, vertex=self.vertex),
             self.terminal,
             direct=self.direct,
             paid=self.paid,
+        )
+        return _admit_vertex_content(
+            measurement,
+            self.terminal,
+            self.vertex_evidence.admitted_project() if self.vertex_evidence is not None else None,
         )
 
 
@@ -1406,11 +1874,19 @@ def _sync_stream_call(
     instance: object,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
+    *,
+    vertex_generation: object | None = None,
 ) -> Any:
     model = _model_name(args, kwargs)
     vertex = _is_vertex(instance)
     direct = _direct_gemini_endpoint(instance, kwargs)
     paid = _paid_gemini(instance, kwargs)
+    vertex_project = _vertex_project(instance, kwargs)
+    vertex_evidence = (
+        _vertex_transport_evidence(instance, vertex_project, asynchronous=False, stream=True)
+        if vertex_generation is _vertex_transport_generation
+        else None
+    )
     session = _session(
         instance,
         operation="google.genai.models.generate_content_stream",
@@ -1422,7 +1898,7 @@ def _sync_stream_call(
         return wrapped(*args, **kwargs)
     try:
         try:
-            with suppress_network_event():
+            with suppress_network_event(), _vertex_transport_scope(vertex_evidence):
                 stream = wrapped(*args, **kwargs)
         except Exception as exc:
             session.fail(exc)
@@ -1432,10 +1908,11 @@ def _sync_stream_call(
             vertex=vertex,
             direct=direct,
             paid=paid,
+            vertex_evidence=vertex_evidence,
         )
         session.release_context()
         return SyncProviderStream(
-            stream,
+            _VertexSyncStream(stream, vertex_evidence),
             session,
             observe=meter.observe,
             measurement=meter.measurement,
@@ -1449,12 +1926,20 @@ def _async_stream_call(
     instance: object,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
+    *,
+    vertex_generation: object | None = None,
 ) -> Any:
     async def invoke() -> Any:
         model = _model_name(args, kwargs)
         vertex = _is_vertex(instance)
         direct = _direct_gemini_endpoint(instance, kwargs)
         paid = _paid_gemini(instance, kwargs)
+        vertex_project = _vertex_project(instance, kwargs)
+        vertex_evidence = (
+            _vertex_transport_evidence(instance, vertex_project, asynchronous=True, stream=True)
+            if vertex_generation is _vertex_transport_generation
+            else None
+        )
         session = _session(
             instance,
             operation="google.genai.models.generate_content_stream",
@@ -1466,7 +1951,7 @@ def _async_stream_call(
             return await wrapped(*args, **kwargs)
         try:
             try:
-                with suppress_network_event():
+                with suppress_network_event(), _vertex_transport_scope(vertex_evidence):
                     stream = await wrapped(*args, **kwargs)
             except Exception as exc:
                 session.fail(exc)
@@ -1476,10 +1961,11 @@ def _async_stream_call(
                 vertex=vertex,
                 direct=direct,
                 paid=paid,
+                vertex_evidence=vertex_evidence,
             )
             session.release_context()
             return AsyncProviderStream(
-                stream,
+                _VertexAsyncStream(stream, vertex_evidence),
                 session,
                 observe=meter.observe,
                 measurement=meter.measurement,
@@ -2094,6 +2580,8 @@ def _image_extract(operation: str) -> MeasurementExtractor:
 def _sync_direct_wrapper(
     operation: str, *, event_type: str, extract: MeasurementExtractor
 ) -> Callable[..., Any]:
+    generation = _vertex_transport_generation
+
     def wrapper(
         wrapped: Any,
         instance: object,
@@ -2109,6 +2597,7 @@ def _sync_direct_wrapper(
             component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
+            vertex_generation=generation,
         )
 
     return wrapper
@@ -2117,6 +2606,8 @@ def _sync_direct_wrapper(
 def _async_direct_wrapper(
     operation: str, *, event_type: str, extract: MeasurementExtractor
 ) -> Callable[..., Any]:
+    generation = _vertex_transport_generation
+
     def wrapper(
         wrapped: Any,
         instance: object,
@@ -2132,6 +2623,7 @@ def _async_direct_wrapper(
             component="llm" if event_type == "llm_call" else "external",
             event_type=event_type,
             extract=extract,
+            vertex_generation=generation,
         )
 
     return wrapper
@@ -2360,6 +2852,7 @@ def instrument_gemini(tracker: Any) -> None:
 
     _active_tracker = tracker
     try:
+        _patch_vertex_transport()
         for class_name in ("Models", "AsyncModels"):
             owner = getattr(models, class_name, None)
             if owner is None:
@@ -2401,7 +2894,10 @@ def instrument_gemini(tracker: Any) -> None:
                     key,
                     provider_capture_wrapper(
                         "google_genai",
-                        _async_stream_call if async_owner else _sync_stream_call,
+                        partial(
+                            _async_stream_call if async_owner else _sync_stream_call,
+                            vertex_generation=_vertex_transport_generation,
+                        ),
                     ),
                 )
         _patch_interactions()
@@ -2415,6 +2911,8 @@ def instrument_gemini(tracker: Any) -> None:
 
 
 def _restore_originals(models: Any) -> None:
+    global _vertex_transport_generation
+    _vertex_transport_generation = None
     for key, original in _originals.items():
         class_name, method = key.split(".", 1)
         owner = getattr(models, class_name, None)
@@ -2428,7 +2926,8 @@ def _restore_originals(models: Any) -> None:
 
 def uninstrument_gemini() -> None:
     """Restore every Google Gen AI method patched by :func:`instrument_gemini`."""
-    global _active_tracker, _patched
+    global _active_tracker, _patched, _vertex_transport_generation
+    _vertex_transport_generation = None
     if not _patched and not _originals and not _extra_originals:
         return
     try:

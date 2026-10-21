@@ -198,6 +198,11 @@ from dexcost.instruments.runtime import (
     uninstrument_e2b_sandbox,
     wrap_runtime_handler,
 )
+from dexcost.instruments.upstash_redis import (
+    instrument_upstash_redis,
+    uninstrument_upstash_redis,
+    upstash_redis_resource_id,
+)
 from dexcost.instruments.vector_database import (
     instrument_pinecone,
     instrument_turbopuffer,
@@ -216,6 +221,7 @@ from dexcost.instruments.web_tools import (
     uninstrument_apify,
     uninstrument_firecrawl,
 )
+from dexcost.instruments.you_search import instrument_you_search, uninstrument_you_search
 from dexcost.integrations import track_crewai, track_griptape
 from dexcost.models import (
     CostConfidence,
@@ -1457,6 +1463,8 @@ __all__ = [
     "instrument_redis_client",
     "instrument_textract",
     "instrument_turbopuffer",
+    "instrument_upstash_redis",
+    "instrument_you_search",
     "instrument_zilliz",
     "mongodb_command_listener",
     "on_delivery_error",
@@ -1509,7 +1517,10 @@ __all__ = [
     "uninstrument_redis_client",
     "uninstrument_textract",
     "uninstrument_turbopuffer",
+    "uninstrument_upstash_redis",
+    "uninstrument_you_search",
     "uninstrument_zilliz",
+    "upstash_redis_resource_id",
     "validate",
     "validate_api_key",
     "validate_attribution_event_v2",

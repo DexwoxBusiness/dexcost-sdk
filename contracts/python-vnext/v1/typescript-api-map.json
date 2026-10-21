@@ -1,9 +1,9 @@
 {
   "freeze_version": 1,
   "authority": "contracts/python-vnext/v1/public-api.json",
-  "python_export_count": 214,
-  "typescript_export_count": 384,
-  "equivalent_count": 211,
+  "python_export_count": 219,
+  "typescript_export_count": 391,
+  "equivalent_count": 216,
   "language_specific_count": 3,
   "unresolved_count": 0,
   "mappings": [
@@ -1393,6 +1393,24 @@
       "notes": null
     },
     {
+      "python_name": "instrument_upstash_redis",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "instrumentUpstashRedis"
+      ],
+      "notes": "Both languages wrap an explicitly bound single-region PAYG REST client, with retries and automatic pipelining disabled by the caller. Supported successful commands are allocation weights, never request-local money."
+    },
+    {
+      "python_name": "instrument_you_search",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "createYouSearchFetch"
+      ],
+      "notes": "Python instruments a youdotcom client instance; TypeScript wraps the application fetch function because the provider's TypeScript SDK is deprecated. Both require a paid direct Search binding and a successful provider search UUID, and capture the same base-search meter without add-on prices."
+    },
+    {
       "python_name": "instrument_zilliz",
       "python_kind": "function",
       "classification": "equivalent",
@@ -1857,11 +1875,38 @@
       "notes": null
     },
     {
+      "python_name": "uninstrument_upstash_redis",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentUpstashRedis"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "uninstrument_you_search",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "uninstrumentYouSearch"
+      ],
+      "notes": "Python accepts the returned capture facade; TypeScript accepts the wrapped fetch function. Both stop capture without closing application-owned clients or transports."
+    },
+    {
       "python_name": "uninstrument_zilliz",
       "python_kind": "function",
       "classification": "equivalent",
       "typescript_exports": [
         "uninstrumentZilliz"
+      ],
+      "notes": null
+    },
+    {
+      "python_name": "upstash_redis_resource_id",
+      "python_kind": "function",
+      "classification": "equivalent",
+      "typescript_exports": [
+        "upstashRedisResourceId"
       ],
       "notes": null
     },

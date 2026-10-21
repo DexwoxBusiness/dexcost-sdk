@@ -28,6 +28,13 @@ import {
   instrumentZilliz,
   uninstrumentZilliz,
   type CloudVectorBinding,
+  instrumentUpstashRedis,
+  uninstrumentUpstashRedis,
+  upstashRedisResourceId,
+  type UpstashRedisBinding,
+  createYouSearchFetch,
+  uninstrumentYouSearch,
+  type YouSearchOptions,
   recordOutcome,
   recordRevenue,
   trackTool,
@@ -100,6 +107,23 @@ function checkCloudVectorTypes(tracker: CostTracker): void {
   cloudVectorResourceId("unverified", binding.billingAccountId, binding.region, binding.clusterHost);
 }
 void checkCloudVectorTypes;
+function checkWaveFiveTypes(tracker: CostTracker): void {
+  const binding: UpstashRedisBinding = {
+    billingAccountId: "account", region: "us-east-1", databaseId: "database",
+    endpointHost: "example.upstash.io", billingPlan: "pay_as_you_go", topology: "single_region",
+  };
+  const native = { get: async (_key: string): Promise<string | null> => null };
+  const redis: typeof native = instrumentUpstashRedis(native, tracker, binding);
+  const value: Promise<string | null> = redis.get("not-executed");
+  const id: string = upstashRedisResourceId(binding.billingAccountId, binding.region, binding.databaseId, binding.endpointHost);
+  const searchOptions: YouSearchOptions = { billingAccountId: "account", endpoint: "https://ydc-index.io", billingTier: "paid" };
+  const fetchSearch: typeof globalThis.fetch = createYouSearchFetch(tracker, searchOptions);
+  uninstrumentUpstashRedis(redis); uninstrumentYouSearch(fetchSearch);
+  void value; void id;
+  // @ts-expect-error account eligibility cannot be inferred from an arbitrary plan name
+  createYouSearchFetch(tracker, { ...searchOptions, billingTier: "enterprise" });
+}
+void checkWaveFiveTypes;
 import {
   createExpressMiddleware,
   dexcostFastifyPlugin,

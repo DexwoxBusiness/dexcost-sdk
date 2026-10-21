@@ -1,0 +1,233 @@
+{
+  "version": "2026-10-08.1",
+  "cases": [
+    {
+      "id": "cached-thinking",
+      "model": "gemini-3.5-flash-lite",
+      "project": "fixture-project",
+      "region": "global",
+      "lane": "global_standard_paygo_text",
+      "response": {
+        "responseId": "cached-thinking",
+        "modelVersion": "gemini-3.5-flash-lite",
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "fixture result"
+                }
+              ]
+            },
+            "finishReason": "STOP"
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 1000,
+          "cachedContentTokenCount": 200,
+          "candidatesTokenCount": 300,
+          "thoughtsTokenCount": 100,
+          "totalTokenCount": 1400,
+          "toolUsePromptTokenCount": 0,
+          "trafficType": "ON_DEMAND",
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1000
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 200
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 300
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "800",
+        "cache_read_input_tokens": "200",
+        "output_tokens": "300",
+        "reasoning_output_tokens": "100"
+      },
+      "expected_usd": "0.001246"
+    },
+    {
+      "id": "explicit-zero-cache-thinking",
+      "model": "gemini-3.5-flash-lite",
+      "project": "fixture-project",
+      "region": "global",
+      "lane": "global_standard_paygo_text",
+      "response": {
+        "responseId": "explicit-zero-cache-thinking",
+        "modelVersion": "gemini-3.5-flash-lite",
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "fixture result"
+                }
+              ]
+            },
+            "finishReason": "STOP"
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 100,
+          "cachedContentTokenCount": 0,
+          "candidatesTokenCount": 10,
+          "thoughtsTokenCount": 0,
+          "totalTokenCount": 110,
+          "toolUsePromptTokenCount": 0,
+          "trafficType": "ON_DEMAND",
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 100
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 0
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 10
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "100",
+        "output_tokens": "10"
+      },
+      "expected_usd": "0.000055"
+    },
+    {
+      "id": "fully-cached",
+      "model": "gemini-3.5-flash-lite",
+      "project": "fixture-project",
+      "region": "global",
+      "lane": "global_standard_paygo_text",
+      "response": {
+        "responseId": "fully-cached",
+        "modelVersion": "gemini-3.5-flash-lite",
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "fixture result"
+                }
+              ]
+            },
+            "finishReason": "STOP"
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 100,
+          "cachedContentTokenCount": 100,
+          "candidatesTokenCount": 10,
+          "thoughtsTokenCount": 0,
+          "totalTokenCount": 110,
+          "toolUsePromptTokenCount": 0,
+          "trafficType": "ON_DEMAND",
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 100
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 100
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 10
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "cache_read_input_tokens": "100",
+        "output_tokens": "10"
+      },
+      "expected_usd": "0.000028"
+    },
+    {
+      "id": "over-200k-same-rate",
+      "model": "gemini-3.5-flash-lite",
+      "project": "fixture-project",
+      "region": "global",
+      "lane": "global_standard_paygo_text",
+      "response": {
+        "responseId": "over-200k-same-rate",
+        "modelVersion": "gemini-3.5-flash-lite",
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "fixture result"
+                }
+              ]
+            },
+            "finishReason": "STOP"
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 200001,
+          "cachedContentTokenCount": 1,
+          "candidatesTokenCount": 2,
+          "thoughtsTokenCount": 3,
+          "totalTokenCount": 200006,
+          "toolUsePromptTokenCount": 0,
+          "trafficType": "ON_DEMAND",
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 200001
+            }
+          ],
+          "cacheTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 1
+            }
+          ],
+          "candidatesTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 2
+            }
+          ]
+        }
+      },
+      "expected_usage": {
+        "input_tokens": "200000",
+        "cache_read_input_tokens": "1",
+        "output_tokens": "2",
+        "reasoning_output_tokens": "3"
+      },
+      "expected_usd": "0.06001253"
+    }
+  ]
+}

@@ -35,6 +35,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr-test = ["google-cloud-documentai==3.16.0"]
+upstash = ["upstash-redis==1.8.0"]
+you = ["youdotcom==3.5.0"]
 vectors = ["pinecone>=10.0.0,<11", "turbopuffer>=2.10.2,<3", "qdrant-client==1.19.1", "pymilvus==3.0.2"]
 databases = ["pymongo>=4.13,<5", "redis>=5,<7"]
 crewai = [
@@ -99,6 +101,8 @@ gpu = [
     "nvidia-ml-py>=12.535,<14.0",
 ]
 all = [
+    "upstash-redis==1.8.0",
+    "youdotcom==3.5.0",
     "pinecone>=10.0.0,<11",
     "turbopuffer>=2.10.2,<3",
     "qdrant-client==1.19.1",

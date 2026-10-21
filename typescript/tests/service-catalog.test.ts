@@ -22,6 +22,9 @@ describe("ServiceCatalog", () => {
   it("does not replace native billed units or invoice authority with stale flat rates", () => {
     const catalog = new ServiceCatalog();
     expect(catalog.lookup("https://api.cohere.com/v2/rerank")).toBeNull();
+    expect(catalog.lookup("https://api.ydc-index.io/search")).toBeNull();
+    expect(catalog.lookup("https://ydc-index.io/v1/search")).toBeNull();
+    expect(catalog.lookup("https://example.upstash.io/get/key")).toBeNull();
   });
 
   it("resolves exact MCP tool aliases from the active catalog", () => {
@@ -329,7 +332,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 1,
-          safety_policy_version: "2026-10-03.2",
+          safety_policy_version: "2026-10-08.1",
         },
         custom_search: {
           display_name: "Custom Search",
@@ -344,7 +347,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-10-03.2",
+        safety_policy_version: "2026-10-08.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 1,
@@ -377,7 +380,7 @@ describe("ServiceCatalog", () => {
           version: "test",
           service_count: 1,
           disabled_service_count: 0,
-          safety_policy_version: "2026-10-03.2",
+          safety_policy_version: "2026-10-08.1",
         },
         synthetic_zero: {
           display_name: "Synthetic Zero",
@@ -392,7 +395,7 @@ describe("ServiceCatalog", () => {
       },
       meta: {
         catalog_version: "test",
-        safety_policy_version: "2026-10-03.2",
+        safety_policy_version: "2026-10-08.1",
         source: "bundled",
         service_count: 1,
         disabled_service_count: 0,
